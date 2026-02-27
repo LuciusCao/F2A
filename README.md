@@ -8,6 +8,10 @@
 
 **纯 P2P Agent 协作网络，无需服务器，局域网直连。**
 
+[![AgentSkills](https://img.shields.io/badge/AgentSkills-Specification-blue)](https://agentskills.io/specification)
+
+---
+
 ## 项目结构
 
 ```
@@ -214,10 +218,18 @@ npm run test:skills
 
 ## 文档
 
-- [SKILL.md](skill/SKILL.md) - 详细使用文档
+- [SKILL.md](skill/SKILL.md) - 详细使用文档 (符合 [AgentSkills Specification](https://agentskills.io/specification))
 - [protocol.md](skill/references/protocol.md) - 协议规范
 - [security-design.md](docs/security-design.md) - 安全设计
 - [v0.3-roadmap.md](docs/v0.3-roadmap.md) - 功能路线图
+
+## 规范合规
+
+本项目遵循 [AgentSkills Specification](https://agentskills.io/specification) 规范：
+- ✅ SKILL.md 包含 YAML frontmatter (name + description)
+- ✅ 资源分离: scripts/, references/, assets/
+- ✅ 渐进式披露设计
+- ✅ 无冗余文档文件
 
 ## License
 

@@ -1,7 +1,7 @@
 /**
  * F2A Main Module
  * 
- * 统一导出所有 F2A 功能模块
+ * 统一导出所有 F2A 功能模块 (纯 P2P 无 Server 版本)
  */
 
 const { Messaging } = require('./messaging');
@@ -11,23 +11,185 @@ const { P2PManager } = require('./p2p');
 const { WebRTCManager } = require('./webrtc');
 const { E2ECrypto } = require('./crypto');
 const { GroupChat } = require('./group');
-const { autoDiscover } = require('./discover');
-const { loadIdentity, savePeer } = require('./pair');
+const { ServerlessP2P } = require('./serverless');
 
 class F2A {
   constructor(options = {}) {
     this.options = options;
-    this.myAgentId = null;
-    this.identity = null;
-    this.useWebRTC = options.useWebRTC !== false; // 默认启用 WebRTC
-    this.useEncryption = options.useEncryption !== false; // 默认启用加密
+    this.myAgentId = options.myAgentId;
+    this.myPublicKey = options.myPublicKey;
+    this.myPrivateKey = options.myPrivateKey;
     
-    // 初始化各模块
-    this.p2p = new P2PManager(options.p2p);
-    this.webrtc = this.useWebRTC ? new WebRTCManager(options.webrtc) : null;
-    this.crypto = this.useEncryption ? new E2ECrypto() : null;
+    // 初始化 Serverless P2P
+    this.p2p = new ServerlessP2P({
+      myAgentId: this.myAgentId,
+      myPublicKey: this.myPublicKey,
+      myPrivateKey: this.myPrivateKey,
+      p2pPort: options.p2pPort || 9000,
+      security: options.security
+    });
+    
+    // 初始化功能模块
     this.messaging = new Messaging(options.messaging);
     this.skills = new SkillsManager(options.skills);
+    this.files = new FileTransfer(options.files);
+    this.groups = new GroupChat({ myAgentId: this.myAgentId });
+    
+    // 绑定事件
+    this._bindEvents();
+  }
+
+  /**
+   * 启动 F2A
+   */
+  async start() {
+    this.groups.initialize(this.myAgentId);
+    await this.p2p.start();
+    return this;
+  }
+
+  /**
+   * 停止 F2A
+   */
+  stop() {
+    this.p2p.stop();
+  }
+
+  /**
+   * 绑定事件
+   */
+  _bindEvents() {
+    // P2P 消息路由
+    this.p2p.on('message', ({ peerId, message }) => {
+      this._handleMessage(peerId, message);
+    });
+
+    // 群聊事件转发
+    this.groups.on('group_message', (data) => {
+      this.emit('group_message', data);
+    });
+  }
+
+  /**
+   * 处理消息
+   */
+  _handleMessage(peerId, message) {
+    switch (message.type) {
+      case 'message':
+      case 'message_ack':
+        this.messaging._handleMessage(peerId, JSON.stringify(message));
+        break;
+      case 'group_message':
+        this.groups.handleGroupMessage(message);
+        break;
+      case 'skill_query':
+        this.skills.handleSkillQuery(message.requestId, {
+          send: (data) => this.p2p.sendToPeer(peerId, JSON.parse(data))
+        });
+        break;
+      case 'skill_response':
+        this.skills.handleSkillResponse(message.requestId, message.skills);
+        break;
+      case 'skill_invoke':
+        this.skills.handleSkillInvoke(
+          message.requestId,
+          message.skill,
+          message.parameters,
+          { send: (data) => this.p2p.sendToPeer(peerId, JSON.parse(data)) },
+          { authorized: true }
+        );
+        break;
+      case 'skill_result':
+        this.skills.handleSkillResult(message.requestId, message.status, message.result, message.error);
+        break;
+      case 'file_offer':
+        this.files.handleFileOffer(message, peerId, {
+          send: (data) => this.p2p.sendToPeer(peerId, JSON.parse(data))
+        });
+        break;
+    }
+  }
+
+  // ==================== 公开 API ====================
+
+  /**
+   * 发送消息
+   */
+  sendMessage(peerId, content) {
+    return this.p2p.sendToPeer(peerId, {
+      type: 'message',
+      id: require('crypto').randomUUID(),
+      from: this.myAgentId,
+      to: peerId,
+      content,
+      timestamp: Date.now()
+    });
+  }
+
+  /**
+   * 创建群组
+   */
+  createGroup(name, options = {}) {
+    return this.groups.createGroup(name, options);
+  }
+
+  /**
+   * 邀请成员
+   */
+  inviteToGroup(groupId, peerId) {
+    const invite = this.groups.inviteMember(groupId, peerId);
+    this.p2p.sendToPeer(peerId, invite);
+    return invite;
+  }
+
+  /**
+   * 发送群消息
+   */
+  sendGroupMessage(groupId, content) {
+    return this.groups.sendGroupMessage(groupId, content, (peerId, message) => {
+      this.p2p.sendToPeer(peerId, message);
+    });
+  }
+
+  /**
+   * 注册技能
+   */
+  registerSkill(name, definition) {
+    this.skills.registerSkill(name, definition);
+    return this;
+  }
+
+  /**
+   * 获取发现的 Agents
+   */
+  getDiscoveredAgents() {
+    return this.p2p.getDiscoveredAgents();
+  }
+
+  /**
+   * 获取已连接 Peers
+   */
+  getConnectedPeers() {
+    return this.p2p.getConnectedPeers();
+  }
+}
+
+// 使 F2A 支持事件
+const EventEmitter = require('events');
+Object.setPrototypeOf(F2A.prototype, EventEmitter.prototype);
+
+// 导出模块
+module.exports = {
+  F2A,
+  ServerlessP2P,
+  Messaging,
+  SkillsManager,
+  FileTransfer,
+  GroupChat,
+  E2ECrypto,
+  P2PManager,
+  WebRTCManager
+};
     this.files = new FileTransfer(options.files);
     this.groups = new GroupChat({ myAgentId: this.myAgentId });
     

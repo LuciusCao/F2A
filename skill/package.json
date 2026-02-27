@@ -1,6 +1,6 @@
 {
   "name": "f2a-network-skill",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "F2A (Friend-to-Agent) P2P networking skill for OpenClaw with E2E encryption, WebRTC, and group chat support",
   "main": "scripts/index.js",
   "scripts": {
@@ -13,7 +13,9 @@
     "test:skills": "node tests/skills.test.js"
   },
   "dependencies": {
-    "ws": "^8.16.0",
+    "ws": "^8.16.0"
+  },
+  "optionalDependencies": {
     "wrtc": "^0.4.7"
   },
   "engines": {

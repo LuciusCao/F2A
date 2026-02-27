@@ -77,7 +77,21 @@ UDP 广播自动发现局域网内的 Agent，无需配置。
 
 ## 快速开始
 
-### 安装
+### 一键安装 (推荐)
+
+使用 curl 一键安装：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bash
+```
+
+指定 P2P 端口安装：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bash -s -- --port 9001
+```
+
+### 手动安装
 
 ```bash
 git clone https://github.com/LuciusCao/F2A.git
@@ -136,6 +150,10 @@ p2p.sendToPeer('peer-uuid', { type: 'hello', content: 'Hi!' });
 ### 运行示例
 
 ```bash
+# 如果通过 install.sh 安装
+f2a
+
+# 或手动运行
 cd F2A/skill/examples
 node serverless-example.js
 ```

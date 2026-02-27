@@ -5,6 +5,7 @@
  */
 
 const EventEmitter = require('events');
+const crypto = require('crypto');
 
 class SkillsManager extends EventEmitter {
   constructor(options = {}) {

@@ -466,3 +466,160 @@ Agent A                              Agent B
 ### 连接回退
 
 如果 WebRTC 连接失败，自动回退到 WebSocket 连接。
+
+---
+
+## v0.4.0 协议扩展：无 Server 模式 (Serverless)
+
+### 概述
+
+纯 P2P 模式，无需 Rendezvous Server，适用于局域网环境。
+
+### 发现机制
+
+#### UDP 广播发现
+```
+Agent A                    局域网                    Agent B
+   |                         |                         |
+   |-- UDP "F2A_DISCOVER" -->|------------------------>|
+   |   (agentId, publicKey,  |                         |
+   |    port, timestamp)     |                         |
+   |                         |                         |
+   |<-- UDP "F2A_DISCOVER" --|<-- 广播响应 ------------|
+   |   (其他 Agent 同样广播)  |                         |
+```
+
+#### 发现消息格式
+```json
+{
+  "type": "F2A_DISCOVER",
+  "agentId": "uuid",
+  "publicKey": "ed25519-public-key",
+  "port": 9000,
+  "timestamp": 1709000000000
+}
+```
+
+### 身份验证流程
+
+#### 1. 身份挑战
+连接建立后，立即发送身份挑战：
+```json
+{
+  "type": "identity_challenge",
+  "agentId": "uuid",
+  "publicKey": "ed25519-public-key",
+  "challenge": "随机数(32字节hex)",
+  "timestamp": 1709000000000
+}
+```
+
+#### 2. 身份响应
+使用私钥签名挑战：
+```json
+{
+  "type": "identity_response",
+  "agentId": "uuid",
+  "publicKey": "ed25519-public-key",
+  "signature": "签名(challenge + timestamp)"
+}
+```
+
+#### 3. 手动确认（可选）
+如果 Agent 不在白名单，请求手动确认：
+```json
+// 确认请求
+{
+  "type": "confirmation_request",
+  "confirmationId": "uuid",
+  "agentId": "请求方uuid"
+}
+
+// 确认响应
+{
+  "type": "confirmation_response",
+  "confirmationId": "uuid",
+  "accepted": true
+}
+```
+
+### 安全机制
+
+| 机制 | 说明 |
+|------|------|
+| **签名验证** | Ed25519 签名验证身份 |
+| **时间戳** | 5分钟有效期，防重放 |
+| **白名单** | 预配置的信任列表 |
+| **手动确认** | 新 Agent 需要用户确认 |
+| **黑名单** | 自动屏蔽恶意 Agent |
+| **速率限制** | 10次/分钟，防 DoS |
+| **消息 ID** | 唯一 ID 防重放攻击 |
+
+### 连接流程
+
+```
+Agent A (已知)                           Agent B (新加入)
+     |                                         |
+     | 1. UDP 广播发现                         |
+     |<-------- 发现 A ------------------------|
+     |                                         |
+     | 2. TCP 直接连接                         |
+     |<-------- 连接 A:9000 -------------------|
+     |                                         |
+     | 3. 身份挑战                             |
+     |-------- identity_challenge ------------>|
+     |                                         |
+     | 4. 身份响应                             |
+     |<------- identity_response --------------|
+     |                                         |
+     | 5. 验证签名                             |
+     |   - 验证 challenge 签名                 |
+     |   - 检查白名单/黑名单                   |
+     |                                         |
+     | 6. 手动确认 (如果需要)                   |
+     |-------- confirmation_request ---------->|
+     |<------- confirmation_response ----------|
+     |                                         |
+     |<======== 验证通过，建立连接 ===========>|
+     |                                         |
+     | 7. 加密通信                             |
+     |-------- ECDH 密钥交换 ----------------->|
+     |<------- AES-GCM 加密通信 ---------------|
+```
+
+### 使用示例
+
+```javascript
+const { ServerlessP2P } = require('./serverless');
+
+const p2p = new ServerlessP2P({
+  myAgentId: 'my-uuid',
+  myPublicKey: 'my-public-key',
+  myPrivateKey: 'my-private-key',
+  p2pPort: 9000,
+  security: {
+    level: 'medium',
+    requireConfirmation: true,
+    whitelist: ['trusted-agent-uuid']
+  }
+});
+
+await p2p.start();
+
+// 自动发现局域网内的 Agent
+p2p.on('agent_discovered', ({ agentId, address, port }) => {
+  console.log(`Found: ${agentId} at ${address}:${port}`);
+});
+
+// 新连接需要确认
+p2p.on('confirmation_required', ({ agentId, accept, reject }) => {
+  // 显示确认对话框
+  showDialog(`Allow ${agentId}?`, {
+    onYes: () => accept(),
+    onNo: () => reject()
+  });
+});
+
+// 发送消息
+p2p.sendToPeer('peer-uuid', { type: 'hello', content: 'Hi!' });
+```

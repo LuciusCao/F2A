@@ -1,77 +1,196 @@
 ---
 name: f2a-network
-description: F2A (Friend-to-Agent) pure P2P networking for OpenClaw Agent. Enables agents to discover and connect directly in LAN without servers, exchange public keys, and establish trusted peer relationships for messaging, skill invocation, file sharing, and group chat with end-to-end encryption (ECDH + AES-GCM) and Ed25519 identity verification.
+description: Activate when the user wants to discover, connect, or communicate with other OpenClaw Agents in the local network. Use for P2P networking, messaging between agents, invoking skills on remote agents, file sharing, or group chat. Triggers include phrases like "find other agents", "connect to peer", "send message to agent", "call skill on remote agent", "share file with agent", or "create group chat".
 ---
 
-# F2A
+# F2A Agent 使用指南
 
-纯 P2P Agent 协作网络，无需服务器，局域网直连。
+## 何时使用
 
-## 核心功能
+当用户需要：
+- 发现局域网内的其他 Agent
+- 连接到特定 Agent
+- 发送消息给其他 Agent
+- 在其他 Agent 上执行技能
+- 分享文件给其他 Agent
+- 创建群组聊天
 
-- **自动发现** - UDP 广播自动发现局域网 Agent
-- **端到端加密** - ECDH 密钥交换 + AES-256-GCM
-- **身份验证** - Ed25519 签名验证
-- **消息通信** - 1对1和群聊
-- **技能调用** - 远程执行 peer 的 skills
-- **文件分享** - 分块传输 + MD5 校验
+## 核心工具
 
-## 快速开始
+### 1. 启动 P2P 网络
 
+**用户说**: "启动 F2A" / "开始 P2P 网络"
+
+**执行**:
 ```javascript
 const { ServerlessP2P } = require('./scripts/serverless');
 const crypto = require('crypto');
 
-// 生成身份
+// 生成或使用已有身份
 const keyPair = crypto.generateKeyPairSync('ed25519', {
   publicKeyEncoding: { type: 'spki', format: 'pem' },
   privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
 });
 
-// 创建 P2P 实例
 const p2p = new ServerlessP2P({
-  myAgentId: crypto.randomUUID(),
+  myAgentId: process.env.F2A_AGENT_ID || crypto.randomUUID(),
   myPublicKey: keyPair.publicKey,
   myPrivateKey: keyPair.privateKey,
-  p2pPort: 9000,
+  p2pPort: process.env.F2A_PORT || 9000,
   security: {
     level: 'medium',
     requireConfirmation: true
   }
 });
 
-// 启动
 await p2p.start();
 
-// 监听事件
+// 监听发现事件
 p2p.on('agent_discovered', ({ agentId, address, port }) => {
-  console.log(`Found: ${agentId.slice(0, 8)}... at ${address}:${port}`);
+  notifyUser(`发现 Agent: ${agentId.slice(0, 8)}... 在 ${address}:${port}`);
 });
 
+// 监听连接确认
 p2p.on('confirmation_required', ({ agentId, accept, reject }) => {
-  // 显示确认对话框
-  accept(); // 或 reject()
+  askUser(`是否允许 ${agentId.slice(0, 8)}... 连接?`, {
+    onYes: () => accept(),
+    onNo: () => reject()
+  });
+});
+```
+
+### 2. 发现 Agents
+
+**用户说**: "发现其他 Agent" / "搜索局域网内的 Agent"
+
+**执行**:
+```javascript
+const agents = p2p.getDiscoveredAgents();
+if (agents.length === 0) {
+  tellUser("未发现其他 Agent，请确保其他 Agent 已启动并在同一局域网");
+} else {
+  tellUser(`发现 ${agents.length} 个 Agent:`);
+  agents.forEach(a => {
+    tellUser(`- ${a.agentId.slice(0, 8)}... 在 ${a.address}:${a.port}`);
+  });
+}
+```
+
+### 3. 连接到 Agent
+
+**用户说**: "连接到 [agent-id]" / "连接第一个发现的 Agent"
+
+**执行**:
+```javascript
+// 通过 ID 连接
+await p2p.connectToAgent(agentId, address, port);
+tellUser(`已连接到 ${agentId.slice(0, 8)}...`);
+
+// 或连接第一个发现的
+const agents = p2p.getDiscoveredAgents();
+if (agents.length > 0) {
+  const first = agents[0];
+  await p2p.connectToAgent(first.agentId, first.address, first.port);
+}
+```
+
+### 4. 发送消息
+
+**用户说**: "发送消息给 [agent-id]: [内容]"
+
+**执行**:
+```javascript
+p2p.sendToPeer(agentId, {
+  type: 'message',
+  content: messageContent,
+  timestamp: Date.now()
+});
+tellUser(`消息已发送给 ${agentId.slice(0, 8)}...`);
+```
+
+### 5. 调用远程技能
+
+**用户说**: "在 [agent-id] 上执行 [skill-name]" / "调用 [agent] 的 [skill]"
+
+**执行**:
+```javascript
+// 先查询技能
+const skills = await querySkills(agentId);
+tellUser(`该 Agent 有 ${skills.length} 个技能: ${skills.map(s => s.name).join(', ')}`);
+
+// 调用特定技能
+const result = await invokeSkill(agentId, skillName, parameters);
+tellUser(`执行结果: ${JSON.stringify(result)}`);
+```
+
+### 6. 分享文件
+
+**用户说**: "发送文件 [path] 给 [agent-id]"
+
+**执行**:
+```javascript
+const fileId = await sendFile(agentId, filePath);
+tellUser(`文件发送中，ID: ${fileId}`);
+
+// 监听进度
+p2p.on('file_progress', ({ fileId, progress }) => {
+  tellUser(`文件传输进度: ${Math.round(progress * 100)}%`);
+});
+```
+
+### 7. 创建群聊
+
+**用户说**: "创建群组 [name]" / "创建群聊"
+
+**执行**:
+```javascript
+const groupId = createGroup(groupName);
+tellUser(`群组 "${groupName}" 创建成功，ID: ${groupId.slice(0, 8)}...`);
+
+// 邀请成员
+connectedPeers.forEach(peerId => {
+  inviteToGroup(groupId, peerId);
+  tellUser(`已邀请 ${peerId.slice(0, 8)}...`);
+});
+```
+
+### 8. 发送群消息
+
+**用户说**: "在群组 [group-id] 发送: [内容]"
+
+**执行**:
+```javascript
+sendGroupMessage(groupId, messageContent);
+tellUser(`消息已发送到群组`);
+```
+
+## 事件处理
+
+当收到消息时，通知用户：
+
+```javascript
+p2p.on('message', ({ peerId, message }) => {
+  if (message.type === 'message') {
+    tellUser(`收到来自 ${peerId.slice(0, 8)}... 的消息: ${message.content}`);
+  } else if (message.type === 'skill_result') {
+    tellUser(`技能执行结果: ${JSON.stringify(message.result)}`);
+  }
 });
 
-// 发送消息
-p2p.sendToPeer('peer-uuid', { type: 'hello', content: 'Hi!' });
+p2p.on('group_message', ({ groupId, groupName, from, content }) => {
+  tellUser(`[${groupName}] ${from.slice(0, 8)}...: ${content}`);
+});
 ```
 
-## 安全等级
+## 安全提示
 
-| 等级 | 配置 | 场景 |
-|------|------|------|
-| low | 仅加密 | 家庭局域网 |
-| medium | 加密 + 手动确认 | 办公室/共享网络 |
-| high | 加密 + 白名单 + 签名 | 公共网络 |
+- 新连接默认需要用户确认
+- 只接受已验证身份的 Agent
+- 所有通信自动端到端加密
+- 可配置白名单/黑名单
 
-## 详细参考
+## 环境变量
 
-- [protocol.md](references/protocol.md) - 协议规范
-- [security-design.md](../docs/security-design.md) - 安全设计
-
-## 示例
-
-```bash
-node examples/serverless-example.js
-```
+- `F2A_AGENT_ID` - 指定 Agent ID
+- `F2A_PORT` - 指定 P2P 端口 (默认 9000)
+- `F2A_SECURITY_LEVEL` - 安全等级 (low/medium/high)

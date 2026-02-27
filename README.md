@@ -12,84 +12,15 @@
 
 ---
 
-## 项目结构
-
-```
-F2A/
-├── skill/              # F2A Skill (OpenClaw Agent)
-│   ├── scripts/
-│   │   ├── serverless.js    # 无 Server P2P 核心
-│   │   ├── crypto.js        # 端到端加密
-│   │   ├── webrtc.js        # WebRTC 直连
-│   │   ├── messaging.js     # 消息通信
-│   │   ├── skills.js        # 技能管理
-│   │   ├── files.js         # 文件传输
-│   │   ├── group.js         # 群聊
-│   │   └── ...
-│   ├── tests/               # 测试代码
-│   ├── examples/            # 使用示例
-│   ├── references/
-│   │   └── protocol.md      # 协议规范
-│   ├── SKILL.md             # 技能文档
-│   └── package.json
-│
-└── docs/
-    ├── v0.3-roadmap.md      # 功能路线图
-    └── security-design.md   # 安全设计
-```
-
-## 核心特性
-
-### 🔍 自动发现
-UDP 广播自动发现局域网内的 Agent，无需配置。
-
-### 🔐 端到端加密
-- ECDH (X25519) 密钥交换
-- AES-256-GCM 对称加密
-- Ed25519 身份签名验证
-
-### 🔗 WebRTC 直连
-- NAT 穿透
-- 失败自动回退到 TCP
-
-### 💬 消息通信
-- 1对1私聊
-- 群聊广播
-- 消息送达确认
-
-### 🛠️ 技能调用
-- 查询 peer 的可用 skills
-- 远程执行 skill
-- 参数类型验证
-
-### 📁 文件分享
-- 分块传输
-- MD5 完整性校验
-- 传输进度追踪
-
-### 👥 群聊
-- 创建群组
-- 邀请成员
-- 消息广播
-
-### 🛡️ 安全防护
-- 白名单机制
-- 手动确认新连接
-- 黑名单屏蔽
-- 速率限制防 DoS
-- 消息防重放
-
-## 快速开始
+## 安装
 
 ### 一键安装 (推荐)
-
-使用 curl 一键安装：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bash
 ```
 
-指定 P2P 端口安装：
+指定端口安装：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bash -s -- --port 9001
@@ -103,55 +34,11 @@ cd F2A/skill
 npm install
 ```
 
-### 使用无 Server 模式
+---
 
-```javascript
-const { ServerlessP2P } = require('./scripts/serverless');
-const crypto = require('crypto');
+## 使用
 
-// 生成身份
-const keyPair = crypto.generateKeyPairSync('ed25519', {
-  publicKeyEncoding: { type: 'spki', format: 'pem' },
-  privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-});
-
-const myAgentId = crypto.randomUUID();
-
-// 创建 P2P 实例
-const p2p = new ServerlessP2P({
-  myAgentId,
-  myPublicKey: keyPair.publicKey,
-  myPrivateKey: keyPair.privateKey,
-  p2pPort: 9000,
-  security: {
-    level: 'medium',
-    requireConfirmation: true
-  }
-});
-
-// 启动
-await p2p.start();
-
-// 监听事件
-p2p.on('agent_discovered', ({ agentId, address, port }) => {
-  console.log(`🔍 Found: ${agentId.slice(0, 8)}... at ${address}:${port}`);
-});
-
-p2p.on('confirmation_required', ({ agentId, accept, reject }) => {
-  console.log(`⚠️  Connection request from: ${agentId.slice(0, 8)}...`);
-  // 显示确认对话框，用户选择允许或拒绝
-  accept(); // 或 reject()
-});
-
-p2p.on('peer_connected', ({ agentId }) => {
-  console.log(`✅ Connected: ${agentId.slice(0, 8)}...`);
-});
-
-// 发送消息
-p2p.sendToPeer('peer-uuid', { type: 'hello', content: 'Hi!' });
-```
-
-### 运行示例
+### 启动
 
 ```bash
 # 如果通过 install.sh 安装
@@ -162,74 +49,71 @@ cd F2A/skill/examples
 node serverless-example.js
 ```
 
-## 安全等级
+### 命令行交互
 
-| 等级 | 配置 | 适用场景 |
-|------|------|----------|
-| **Low** | 仅加密 | 完全信任的家庭局域网 |
-| **Medium** | 加密 + 手动确认 | 办公室/共享网络 |
-| **High** | 加密 + 白名单 + 签名 | 公共网络/高安全需求 |
-
-## 协议流程
-
-### 无 Server 连接流程
+启动后会进入交互模式：
 
 ```
-Agent A (已知)                           Agent B (新加入)
-     |                                         |
-     | 1. UDP 广播发现                         |
-     |<-------- 发现 A ------------------------|
-     |                                         |
-     | 2. TCP 直接连接                         |
-     |<-------- 连接 A:9000 -------------------|
-     |                                         |
-     | 3. 身份挑战                             |
-     |-------- identity_challenge ------------>|
-     |                                         |
-     | 4. 身份响应                             |
-     |<------- identity_response --------------|
-     |                                         |
-     | 5. 验证签名                             |
-     |   - 验证 challenge 签名                 |
-     |   - 检查白名单/黑名单                   |
-     |                                         |
-     | 6. 手动确认 (如果需要)                   |
-     |-------- confirmation_request ---------->|
-     |<------- confirmation_response ----------|
-     |                                         |
-     |<======== 验证通过，建立连接 ===========>|
-     |                                         |
-     | 7. 加密通信                             |
-     |-------- ECDH 密钥交换 ----------------->|
-     |<------- AES-GCM 加密通信 -------------->|
+Commands:
+  /list          - 列出发现的 Agents
+  /peers         - 列出已连接的 Peers
+  /connect <id>  - 连接到指定 Agent
+  /msg <id> <text> - 发送消息
+  /broadcast <text> - 广播消息
+  /quit          - 退出
 ```
 
-## 测试
+### 环境变量
 
-```bash
-# 运行所有测试
-npm test
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `F2A_AGENT_ID` | Agent 唯一标识 | 随机生成 |
+| `F2A_PORT` | P2P 监听端口 | 9000 |
+| `F2A_SECURITY_LEVEL` | 安全等级 | medium |
 
-# 运行单个模块测试
-npm run test:crypto
-npm run test:group
-npm run test:skills
+---
+
+## 安全特性
+
+- 🔐 **端到端加密** - ECDH + AES-256-GCM
+- 🛡️ **身份验证** - Ed25519 签名
+- ✋ **手动确认** - 新连接需要确认
+- 🚫 **黑白名单** - 可配置信任/屏蔽列表
+- ⏱️ **速率限制** - 防 DoS 攻击
+
+---
+
+## 项目结构
+
 ```
+F2A/
+├── skill/              # Agent Skill
+│   ├── SKILL.md        # Agent 使用指南
+│   ├── scripts/        # 核心模块
+│   ├── examples/       # 使用示例
+│   └── references/     # 协议规范
+├── docs/               # 文档
+└── install.sh          # 安装脚本
+```
+
+---
 
 ## 文档
 
-- [SKILL.md](skill/SKILL.md) - 详细使用文档 (符合 [AgentSkills Specification](https://agentskills.io/specification))
+- [SKILL.md](skill/SKILL.md) - Agent 使用指南 (符合 [AgentSkills Specification](https://agentskills.io/specification))
 - [protocol.md](skill/references/protocol.md) - 协议规范
 - [security-design.md](docs/security-design.md) - 安全设计
-- [v0.3-roadmap.md](docs/v0.3-roadmap.md) - 功能路线图
+
+---
 
 ## 规范合规
 
-本项目遵循 [AgentSkills Specification](https://agentskills.io/specification) 规范：
-- ✅ SKILL.md 包含 YAML frontmatter (name + description)
-- ✅ 资源分离: scripts/, references/, assets/
+本项目遵循 [AgentSkills Specification](https://agentskills.io/specification)：
+- ✅ SKILL.md 包含 YAML frontmatter
 - ✅ 渐进式披露设计
-- ✅ 无冗余文档文件
+- ✅ 资源分离: scripts/, references/, examples/
+
+---
 
 ## License
 

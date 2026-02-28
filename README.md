@@ -86,6 +86,34 @@ node serverless-example.js
 /quit          - 退出
 ```
 
+### 启动后台服务（推荐）
+
+让 F2A 作为后台服务持续运行：
+
+```bash
+cd F2A/skill
+
+# 启动后台服务
+nohup node start-daemon.js start > /dev/null 2>&1 &
+
+# 或使用环境变量指定配置
+F2A_AGENT_ID="my-agent" F2A_PORT=9000 nohup node start-daemon.js start > /dev/null 2>&1 &
+
+# 查看状态
+node start-daemon.js status
+
+# 停止服务
+node start-daemon.js stop
+```
+
+或使用 npm 命令：
+
+```bash
+npm run daemon:start   # 启动（需要配合 nohup 使用）
+npm run daemon:status  # 查看状态
+npm run daemon:stop    # 停止
+```
+
 ### 环境变量
 
 | 变量 | 说明 | 默认值 |

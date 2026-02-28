@@ -65,25 +65,32 @@ p2p.on('confirmation_required', ({ agentId, accept, reject }) => {
 
 **执行**:
 ```bash
-# 启动后台服务
-npm run daemon:start
+# 使用 nohup 启动后台服务（推荐方式）
+nohup node start-daemon.js start > /dev/null 2>&1 &
 
-# 或使用环境变量
-F2A_AGENT_ID="my-agent" F2A_PORT=9000 npm run daemon:start
+# 或使用环境变量指定配置
+F2A_AGENT_ID="my-agent" F2A_PORT=9000 nohup node start-daemon.js start > /dev/null 2>&1 &
 
 # 查看状态
-npm run daemon:status
+node start-daemon.js status
 
 # 停止服务
-npm run daemon:stop
+node start-daemon.js stop
+```
+
+**或使用 npm 命令**:
+```bash
+npm run daemon:start   # 启动（需要配合 nohup 使用）
+npm run daemon:status  # 查看状态
+npm run daemon:stop    # 停止
 ```
 
 **Node.js 方式**:
 ```javascript
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 
-// 启动后台进程
-const daemon = spawn('node', ['start-daemon.js', 'start'], {
+// 启动后台进程（使用 nohup 确保进程在后台持续运行）
+const daemon = spawn('nohup', ['node', 'start-daemon.js', 'start'], {
   detached: true,
   stdio: 'ignore'
 });

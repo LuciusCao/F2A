@@ -59,7 +59,53 @@ p2p.on('confirmation_required', ({ agentId, accept, reject }) => {
 });
 ```
 
-### 2. 发现 Agents
+### 1.1 启动后台服务（推荐）
+
+**用户说**: "启动 F2A 后台服务" / "让 F2A 持续运行"
+
+**执行**:
+```bash
+# 使用 nohup 启动后台服务（推荐方式）
+nohup node start-daemon.js start > /dev/null 2>&1 &
+
+# 或使用环境变量指定配置
+F2A_AGENT_ID="my-agent" F2A_PORT=9000 nohup node start-daemon.js start > /dev/null 2>&1 &
+
+# 查看状态
+node start-daemon.js status
+
+# 停止服务
+node start-daemon.js stop
+```
+
+**或使用 npm 命令**:
+```bash
+npm run daemon:start   # 启动（需要配合 nohup 使用）
+npm run daemon:status  # 查看状态
+npm run daemon:stop    # 停止
+```
+
+**Node.js 方式**:
+```javascript
+const { spawn, execSync } = require('child_process');
+
+// 启动后台进程（使用 nohup 确保进程在后台持续运行）
+const daemon = spawn('nohup', ['node', 'start-daemon.js', 'start'], {
+  detached: true,
+  stdio: 'ignore'
+});
+
+daemon.unref();
+tellUser('F2A 后台服务已启动');
+
+// 查看状态
+const status = execSync('node start-daemon.js status').toString();
+tellUser(status);
+
+// 停止服务
+execSync('node start-daemon.js stop');
+tellUser('F2A 后台服务已停止');
+```
 
 **用户说**: "发现其他 Agent" / "搜索局域网内的 Agent"
 

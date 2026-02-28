@@ -11,10 +11,14 @@ const net = require('net');
 const crypto = require('crypto');
 const os = require('os');
 
-const DISCOVERY_PORT = 8767; // 发现端口
-const DEFAULT_P2P_PORT = 9000; // 默认 P2P 端口
-const DISCOVERY_INTERVAL = 5000; // 5秒广播一次
-const DISCOVERY_TIMEOUT = 15000; // 15秒超时
+// 配置常量
+const DISCOVERY_PORT = 8767;
+const DEFAULT_P2P_PORT = 9000;
+const DISCOVERY_INTERVAL = 5000;
+const DISCOVERY_TIMEOUT = 15000;
+const MAX_MESSAGE_SIZE = 1024 * 1024; // 1MB 消息大小限制
+const MAX_PROCESSED_MESSAGES = 5000; // 防重放缓存大小
+const CLEANUP_INTERVAL = 60000; // 清理间隔
 
 class ServerlessP2P extends EventEmitter {
   constructor(options = {}) {
@@ -46,6 +50,50 @@ class ServerlessP2P extends EventEmitter {
     this.udpSocket = null;
     this.tcpServer = null;
     this.discoveryInterval = null;
+    this.cleanupInterval = null;
+    
+    // 启动定期清理
+    this._startCleanup();
+  }
+  
+  /**
+   * 启动定期清理任务
+   */
+  _startCleanup() {
+    this.cleanupInterval = setInterval(() => {
+      this._cleanup();
+    }, CLEANUP_INTERVAL);
+  }
+  
+  /**
+   * 清理过期数据
+   */
+  _cleanup() {
+    const now = Date.now();
+    
+    // 清理过期的 rateLimiter 记录
+    for (const [key, record] of this.rateLimiter) {
+      if (now > record.resetTime) {
+        this.rateLimiter.delete(key);
+      }
+    }
+    
+    // 清理过期的 pendingConnections (超过 5 分钟)
+    for (const [socket, pending] of this.pendingConnections) {
+      if (pending.timestamp && now - pending.timestamp > 5 * 60 * 1000) {
+        this.pendingConnections.delete(socket);
+        try {
+          socket.end();
+        } catch (e) {}
+      }
+    }
+    
+    // 清理过期的 discoveredAgents
+    for (const [agentId, info] of this.discoveredAgents) {
+      if (now - info.lastSeen > DISCOVERY_TIMEOUT * 2) {
+        this.discoveredAgents.delete(agentId);
+      }
+    }
   }
 
   /**
@@ -73,6 +121,10 @@ class ServerlessP2P extends EventEmitter {
       clearInterval(this.discoveryInterval);
     }
     
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+    }
+    
     if (this.udpSocket) {
       this.udpSocket.close();
     }
@@ -86,6 +138,9 @@ class ServerlessP2P extends EventEmitter {
     }
     
     this.peers.clear();
+    this.pendingConnections.clear();
+    this.rateLimiter.clear();
+    this.processedMessages.clear();
     this.emit('stopped');
   }
 
@@ -332,19 +387,33 @@ class ServerlessP2P extends EventEmitter {
    * 处理收到的消息
    */
   _handleMessage(socket, data) {
+    // 消息大小限制
+    if (data.length > MAX_MESSAGE_SIZE) {
+      console.warn(`[ServerlessP2P] Message too large (${data.length} bytes), ignoring`);
+      return;
+    }
+    
     try {
       const message = JSON.parse(data);
       
-      // 防重放检查
-      if (message.id && this.processedMessages.has(message.id)) {
+      // 基本结构验证
+      if (!message || typeof message !== 'object') {
+        console.warn('[ServerlessP2P] Invalid message structure');
         return;
       }
+      
+      // 防重放检查
       if (message.id) {
+        if (this.processedMessages.has(message.id)) {
+          return;
+        }
         this.processedMessages.add(message.id);
-        // 清理旧的消息 ID
-        if (this.processedMessages.size > 10000) {
+        
+        // 清理旧消息ID (保持缓存大小)
+        if (this.processedMessages.size > MAX_PROCESSED_MESSAGES) {
+          const toDelete = this.processedMessages.size - MAX_PROCESSED_MESSAGES + 1000;
           const iterator = this.processedMessages.values();
-          for (let i = 0; i < 1000; i++) {
+          for (let i = 0; i < toDelete; i++) {
             this.processedMessages.delete(iterator.next().value);
           }
         }

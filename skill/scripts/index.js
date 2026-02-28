@@ -1,9 +1,12 @@
 /**
- * F2A Main Module
+ * F2A Main Module - 统一入口
  * 
- * 统一导出所有 F2A 功能模块 (纯 P2P 无 Server 版本)
+ * 整合所有 F2A 功能模块 (纯 P2P 无 Server 版本)
+ * 支持 TCP/UDP 直连、WebRTC 升级、E2E 加密
  */
 
+const crypto = require('crypto');
+const EventEmitter = require('events');
 const { Messaging } = require('./messaging');
 const { SkillsManager } = require('./skills');
 const { FileTransfer } = require('./files');
@@ -13,14 +16,23 @@ const { E2ECrypto } = require('./crypto');
 const { GroupChat } = require('./group');
 const { ServerlessP2P } = require('./serverless');
 
-class F2A {
+class F2A extends EventEmitter {
   constructor(options = {}) {
+    super();
+    
     this.options = options;
-    this.myAgentId = options.myAgentId;
+    this.myAgentId = options.myAgentId || crypto.randomUUID();
     this.myPublicKey = options.myPublicKey;
     this.myPrivateKey = options.myPrivateKey;
     
-    // 初始化 Serverless P2P
+    // 功能开关
+    this.useWebRTC = options.useWebRTC !== false;
+    this.useEncryption = options.useEncryption !== false;
+    
+    // 连接类型追踪: 'tcp' | 'webrtc'
+    this.connectionTypes = new Map();
+    
+    // 初始化 Serverless P2P (TCP/UDP)
     this.p2p = new ServerlessP2P({
       myAgentId: this.myAgentId,
       myPublicKey: this.myPublicKey,
@@ -28,6 +40,17 @@ class F2A {
       p2pPort: options.p2pPort || 9000,
       security: options.security
     });
+    
+    // 初始化 WebRTC (可选)
+    this.webrtc = this.useWebRTC ? new WebRTCManager({
+      iceServers: options.iceServers
+    }) : null;
+    
+    // 初始化 E2E 加密 (可选)
+    this.crypto = this.useEncryption ? new E2ECrypto() : null;
+    if (this.crypto && this.myPublicKey && this.myPrivateKey) {
+      this.crypto.loadKeyPair(this.myPublicKey, this.myPrivateKey);
+    }
     
     // 初始化功能模块
     this.messaging = new Messaging(options.messaging);
@@ -45,6 +68,11 @@ class F2A {
   async start() {
     this.groups.initialize(this.myAgentId);
     await this.p2p.start();
+    
+    console.log(`[F2A] Started as ${this.myAgentId}`);
+    console.log(`[F2A] WebRTC: ${this.useWebRTC ? 'enabled' : 'disabled'}`);
+    console.log(`[F2A] E2E Encryption: ${this.useEncryption ? 'enabled' : 'disabled'}`);
+    
     return this;
   }
 
@@ -53,189 +81,41 @@ class F2A {
    */
   stop() {
     this.p2p.stop();
-  }
-
-  /**
-   * 绑定事件
-   */
-  _bindEvents() {
-    // P2P 消息路由
-    this.p2p.on('message', ({ peerId, message }) => {
-      this._handleMessage(peerId, message);
-    });
-
-    // 群聊事件转发
-    this.groups.on('group_message', (data) => {
-      this.emit('group_message', data);
-    });
-  }
-
-  /**
-   * 处理消息
-   */
-  _handleMessage(peerId, message) {
-    switch (message.type) {
-      case 'message':
-      case 'message_ack':
-        this.messaging._handleMessage(peerId, JSON.stringify(message));
-        break;
-      case 'group_message':
-        this.groups.handleGroupMessage(message);
-        break;
-      case 'skill_query':
-        this.skills.handleSkillQuery(message.requestId, {
-          send: (data) => this.p2p.sendToPeer(peerId, JSON.parse(data))
-        });
-        break;
-      case 'skill_response':
-        this.skills.handleSkillResponse(message.requestId, message.skills);
-        break;
-      case 'skill_invoke':
-        this.skills.handleSkillInvoke(
-          message.requestId,
-          message.skill,
-          message.parameters,
-          { send: (data) => this.p2p.sendToPeer(peerId, JSON.parse(data)) },
-          { authorized: true }
-        );
-        break;
-      case 'skill_result':
-        this.skills.handleSkillResult(message.requestId, message.status, message.result, message.error);
-        break;
-      case 'file_offer':
-        this.files.handleFileOffer(message, peerId, {
-          send: (data) => this.p2p.sendToPeer(peerId, JSON.parse(data))
-        });
-        break;
+    if (this.webrtc) {
+      this.webrtc.closeAll();
     }
-  }
-
-  // ==================== 公开 API ====================
-
-  /**
-   * 发送消息
-   */
-  sendMessage(peerId, content) {
-    return this.p2p.sendToPeer(peerId, {
-      type: 'message',
-      id: require('crypto').randomUUID(),
-      from: this.myAgentId,
-      to: peerId,
-      content,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * 创建群组
-   */
-  createGroup(name, options = {}) {
-    return this.groups.createGroup(name, options);
-  }
-
-  /**
-   * 邀请成员
-   */
-  inviteToGroup(groupId, peerId) {
-    const invite = this.groups.inviteMember(groupId, peerId);
-    this.p2p.sendToPeer(peerId, invite);
-    return invite;
-  }
-
-  /**
-   * 发送群消息
-   */
-  sendGroupMessage(groupId, content) {
-    return this.groups.sendGroupMessage(groupId, content, (peerId, message) => {
-      this.p2p.sendToPeer(peerId, message);
-    });
-  }
-
-  /**
-   * 注册技能
-   */
-  registerSkill(name, definition) {
-    this.skills.registerSkill(name, definition);
-    return this;
-  }
-
-  /**
-   * 获取发现的 Agents
-   */
-  getDiscoveredAgents() {
-    return this.p2p.getDiscoveredAgents();
-  }
-
-  /**
-   * 获取已连接 Peers
-   */
-  getConnectedPeers() {
-    return this.p2p.getConnectedPeers();
-  }
-}
-
-// 使 F2A 支持事件
-const EventEmitter = require('events');
-Object.setPrototypeOf(F2A.prototype, EventEmitter.prototype);
-
-// 导出模块
-module.exports = {
-  F2A,
-  ServerlessP2P,
-  Messaging,
-  SkillsManager,
-  FileTransfer,
-  GroupChat,
-  E2ECrypto,
-  P2PManager,
-  WebRTCManager
-};
-    this.files = new FileTransfer(options.files);
-    this.groups = new GroupChat({ myAgentId: this.myAgentId });
-    
-    // 连接类型: 'websocket' | 'webrtc'
-    this.connectionTypes = new Map(); // peerId -> type
-    
-    // 绑定事件
-    this._bindEvents();
-  }
-
-  /**
-   * 初始化 F2A
-   */
-  async initialize() {
-    // 加载身份
-    this.identity = await loadIdentity();
-    this.myAgentId = this.identity.agentId;
-    
-    // 初始化群聊
-    this.groups.initialize(this.myAgentId);
-    
-    // 绑定群聊事件
-    this._bindGroupEvents();
-    
-    // 初始化加密
     if (this.crypto) {
-      this.crypto.loadKeyPair(
-        Buffer.from(this.identity.publicKey, 'base64').toString('pem'),
-        Buffer.from(this.identity.privateKey, 'base64').toString('pem')
-      );
+      this.crypto.clearAllSessions();
     }
-    
-    console.log(`[F2A] Initialized as ${this.myAgentId}`);
-    console.log(`[F2A] WebRTC: ${this.useWebRTC ? 'enabled' : 'disabled'}`);
-    console.log(`[F2A] E2E Encryption: ${this.useEncryption ? 'enabled' : 'disabled'}`);
-    console.log(`[F2A] Group Chat: enabled`);
-    return this;
+    this.emit('stopped');
   }
 
   /**
    * 绑定模块间事件
    */
   _bindEvents() {
-    // WebSocket P2P 消息路由
-    this.p2p.on('message', ({ peerId, data }) => {
-      this._handleMessage(peerId, data);
+    // TCP P2P 消息路由
+    this.p2p.on('message', ({ peerId, message }) => {
+      this._handleMessage(peerId, message);
+    });
+
+    this.p2p.on('peer_connected', ({ agentId }) => {
+      this.connectionTypes.set(agentId, 'tcp');
+      
+      // 执行密钥交换
+      if (this.crypto) {
+        this._performKeyExchange(agentId);
+      }
+      
+      this.emit('connected', { peerId: agentId, type: 'tcp' });
+    });
+
+    this.p2p.on('peer_disconnected', ({ peerId }) => {
+      this.connectionTypes.delete(peerId);
+      if (this.crypto) {
+        this.crypto.clearSession(peerId);
+      }
+      this.emit('disconnected', { peerId });
     });
 
     // WebRTC 消息路由
@@ -246,104 +126,98 @@ module.exports = {
 
       this.webrtc.on('connected', ({ peerId }) => {
         this.connectionTypes.set(peerId, 'webrtc');
-        console.log(`[F2A] WebRTC connected to ${peerId}`);
+        console.log(`[F2A] Upgraded to WebRTC: ${peerId}`);
         this.emit('connected', { peerId, type: 'webrtc' });
       });
 
       this.webrtc.on('disconnected', ({ peerId }) => {
-        this.connectionTypes.delete(peerId);
-        // 回退到 WebSocket
-        if (this.p2p.isConnected(peerId)) {
-          this.connectionTypes.set(peerId, 'websocket');
+        // 回退到 TCP
+        if (this.p2p.getConnectedPeers().includes(peerId)) {
+          this.connectionTypes.set(peerId, 'tcp');
+          console.log(`[F2A] Fell back to TCP: ${peerId}`);
         }
       });
     }
 
-    // 连接建立时注册到 messaging
-    this.p2p.on('connected', ({ peerId }) => {
-      if (!this.connectionTypes.has(peerId)) {
-        this.connectionTypes.set(peerId, 'websocket');
-      }
-      const conn = this._getConnection(peerId);
-      if (conn) {
-        this.messaging.registerPeer(peerId, {
-          send: (data) => this._sendRaw(peerId, data),
-          on: (event, handler) => {},
-          close: () => this.disconnect(peerId)
-        });
-      }
+    // 群聊事件转发
+    this.groups.on('group_message', (data) => {
+      this.emit('group_message', data);
+    });
+
+    this.groups.on('group_invite_received', (data) => {
+      this.emit('group_invite', data);
     });
   }
 
   /**
-   * 处理收到的消息
+   * 处理消息 (统一入口)
    */
-  _handleMessage(peerId, data) {
-    try {
-      // 如果启用了加密，先解密
-      let plaintext = data;
-      if (this.crypto && this.crypto.sessionKeys.has(peerId)) {
-        try {
-          plaintext = this.crypto.decrypt(peerId, data);
-        } catch (err) {
-          // 解密失败，可能是明文消息
-          console.warn(`[F2A] Decryption failed for ${peerId}, treating as plaintext`);
-        }
-      }
+  _handleMessage(peerId, message) {
+    // 消息类型检查
+    if (!message || typeof message !== 'object') {
+      return;
+    }
 
-      const message = JSON.parse(plaintext);
-      
-      // 处理密钥交换
-      if (message.type === 'key_exchange') {
-        this._handleKeyExchange(peerId, message);
-        return;
-      }
-      
-      // 处理 WebRTC 信令
-      if (message.type === 'webrtc_offer' || message.type === 'webrtc_answer' || message.type === 'webrtc_ice') {
-        this._handleWebRTCSignal(peerId, message);
-        return;
-      }
+    // 处理密钥交换
+    if (message.type === 'key_exchange') {
+      this._handleKeyExchange(peerId, message);
+      return;
+    }
+    
+    // 处理 WebRTC 信令
+    if (this.webrtc && (
+      message.type === 'webrtc_offer' || 
+      message.type === 'webrtc_answer' || 
+      message.type === 'webrtc_ice'
+    )) {
+      this._handleWebRTCSignal(peerId, message);
+      return;
+    }
 
-      // 路由到对应模块
-      switch (message.type) {
-        case 'message':
-        case 'message_ack':
-          this.messaging._handleMessage(peerId, plaintext);
-          break;
-        case 'group_message':
-          this.groups.handleGroupMessage(message);
-          break;
-        case 'group_invite':
-          this.groups.handleGroupInvite(message);
-          break;
-        case 'skill_query':
-          this.skills.handleSkillQuery(message.requestId, this._createConnectionProxy(peerId));
-          break;
-        case 'skill_response':
-          this.skills.handleSkillResponse(message.requestId, message.skills);
-          break;
-        case 'skill_invoke':
-          this.skills.handleSkillInvoke(
-            message.requestId,
-            message.skill,
-            message.parameters,
-            this._createConnectionProxy(peerId),
-            { authorized: true }
-          );
-          break;
-        case 'skill_result':
-          this.skills.handleSkillResult(message.requestId, message.status, message.result, message.error);
-          break;
-        case 'file_offer':
-          this.files.handleFileOffer(message, peerId, this._createConnectionProxy(peerId));
-          break;
-        case 'pong':
-          this.p2p.handlePong(peerId);
-          break;
-      }
-    } catch (err) {
-      console.error('[F2A] Message routing error:', err.message);
+    // 路由到对应模块
+    switch (message.type) {
+      case 'message':
+      case 'message_ack':
+        this.messaging._handleMessage(peerId, JSON.stringify(message));
+        break;
+        
+      case 'group_message':
+        this.groups.handleGroupMessage(message);
+        break;
+        
+      case 'group_invite':
+        this.groups.handleGroupInvite(message);
+        break;
+        
+      case 'skill_query':
+        this.skills.handleSkillQuery(message.requestId, this._createConnectionProxy(peerId));
+        break;
+        
+      case 'skill_response':
+        this.skills.handleSkillResponse(message.requestId, message.skills);
+        break;
+        
+      case 'skill_invoke':
+        this.skills.handleSkillInvoke(
+          message.requestId,
+          message.skill,
+          message.parameters,
+          this._createConnectionProxy(peerId),
+          { authorized: true }
+        );
+        break;
+        
+      case 'skill_result':
+        this.skills.handleSkillResult(message.requestId, message.status, message.result, message.error);
+        break;
+        
+      case 'file_offer':
+      case 'file_accept':
+      case 'file_chunk':
+      case 'file_complete':
+        // 文件传输功能 (WIP)
+        this.emit('file_event', { peerId, message });
+        break;
     }
   }
 
@@ -357,18 +231,7 @@ module.exports = {
   }
 
   /**
-   * 获取连接
-   */
-  _getConnection(peerId) {
-    const type = this.connectionTypes.get(peerId);
-    if (type === 'webrtc' && this.webrtc) {
-      return this.webrtc;
-    }
-    return this.p2p.connections.get(peerId);
-  }
-
-  /**
-   * 发送原始数据
+   * 发送原始数据 (根据连接类型选择通道)
    */
   _sendRaw(peerId, data) {
     // 如果启用了加密且已有会话密钥，加密发送
@@ -381,21 +244,21 @@ module.exports = {
     if (type === 'webrtc' && this.webrtc) {
       this.webrtc.send(peerId, payload);
     } else {
-      this.p2p.send(peerId, payload);
+      this.p2p.sendToPeer(peerId, JSON.parse(data));
     }
   }
 
   /**
    * 执行密钥交换
    */
-  async performKeyExchange(peerId) {
+  _performKeyExchange(peerId) {
     if (!this.crypto) return;
 
     const publicKey = this.crypto.getPublicKey();
-    this._sendRaw(peerId, JSON.stringify({
+    this.p2p.sendToPeer(peerId, {
       type: 'key_exchange',
       publicKey: Buffer.from(publicKey).toString('base64')
-    }));
+    });
   }
 
   /**
@@ -404,9 +267,13 @@ module.exports = {
   _handleKeyExchange(peerId, message) {
     if (!this.crypto) return;
 
-    const peerPublicKey = Buffer.from(message.publicKey, 'base64').toString('pem');
-    this.crypto.deriveSessionKey(peerId, peerPublicKey);
-    console.log(`[F2A] E2E encryption established with ${peerId}`);
+    try {
+      const peerPublicKey = Buffer.from(message.publicKey, 'base64').toString('pem');
+      this.crypto.deriveSessionKey(peerId, peerPublicKey);
+      console.log(`[F2A] E2E encryption established with ${peerId.slice(0, 8)}...`);
+    } catch (err) {
+      console.error(`[F2A] Key exchange failed: ${err.message}`);
+    }
   }
 
   /**
@@ -415,11 +282,15 @@ module.exports = {
   async upgradeToWebRTC(peerId) {
     if (!this.webrtc) return;
 
-    const offer = await this.webrtc.createConnection(peerId);
-    this._sendRaw(peerId, JSON.stringify({
-      type: 'webrtc_offer',
-      offer
-    }));
+    try {
+      const offer = await this.webrtc.createConnection(peerId);
+      this.p2p.sendToPeer(peerId, {
+        type: 'webrtc_offer',
+        offer
+      });
+    } catch (err) {
+      console.log(`[F2A] WebRTC upgrade failed for ${peerId}: ${err.message}`);
+    }
   }
 
   /**
@@ -428,40 +299,41 @@ module.exports = {
   async _handleWebRTCSignal(peerId, message) {
     if (!this.webrtc) return;
 
-    switch (message.type) {
-      case 'webrtc_offer':
-        const answer = await this.webrtc.handleOffer(peerId, message.offer);
-        this._sendRaw(peerId, JSON.stringify({
-          type: 'webrtc_answer',
-          answer
-        }));
-        break;
-      case 'webrtc_answer':
-        await this.webrtc.handleAnswer(peerId, message.answer);
-        break;
-      case 'webrtc_ice':
-        await this.webrtc.addIceCandidate(peerId, message.candidate);
-        break;
+    try {
+      switch (message.type) {
+        case 'webrtc_offer':
+          const answer = await this.webrtc.handleOffer(peerId, message.offer);
+          this.p2p.sendToPeer(peerId, {
+            type: 'webrtc_answer',
+            answer
+          });
+          break;
+          
+        case 'webrtc_answer':
+          await this.webrtc.handleAnswer(peerId, message.answer);
+          break;
+          
+        case 'webrtc_ice':
+          await this.webrtc.addIceCandidate(peerId, message.candidate);
+          break;
+      }
+    } catch (err) {
+      console.error(`[F2A] WebRTC signaling error: ${err.message}`);
     }
   }
 
+  // ==================== 公开 API ====================
+
   /**
-   * 连接到 peer
+   * 连接到指定 Agent
    */
-  async connect(peerId, peerAddress) {
-    await this.p2p.connect(peerId, peerAddress);
-    
-    // 执行密钥交换
-    if (this.crypto) {
-      await this.performKeyExchange(peerId);
-    }
+  async connectToAgent(agentId, address, port) {
+    await this.p2p.connectToAgent(agentId, address, port);
     
     // 尝试升级到 WebRTC
     if (this.webrtc) {
       setTimeout(() => {
-        this.upgradeToWebRTC(peerId).catch(() => {
-          console.log(`[F2A] WebRTC upgrade failed for ${peerId}, using WebSocket`);
-        });
+        this.upgradeToWebRTC(agentId).catch(() => {});
       }, 1000);
     }
     
@@ -471,9 +343,14 @@ module.exports = {
   /**
    * 发送消息
    */
-  async sendMessage(peerId, content) {
-    return this.messaging.sendMessage(peerId, content, {
-      myAgentId: this.myAgentId
+  sendMessage(peerId, content) {
+    return this.p2p.sendToPeer(peerId, {
+      type: 'message',
+      id: crypto.randomUUID(),
+      from: this.myAgentId,
+      to: peerId,
+      content,
+      timestamp: Date.now()
     });
   }
 
@@ -481,8 +358,6 @@ module.exports = {
    * 查询 peer 的技能
    */
   async querySkills(peerId) {
-    const conn = this._getConnection(peerId);
-    if (!conn) throw new Error(`Not connected to peer: ${peerId}`);
     return this.skills.querySkills(peerId, this._createConnectionProxy(peerId));
   }
 
@@ -490,8 +365,6 @@ module.exports = {
    * 调用 peer 的技能
    */
   async invokeSkill(peerId, skillName, parameters) {
-    const conn = this._getConnection(peerId);
-    if (!conn) throw new Error(`Not connected to peer: ${peerId}`);
     return this.skills.invokeSkill(peerId, skillName, parameters, this._createConnectionProxy(peerId));
   }
 
@@ -504,15 +377,14 @@ module.exports = {
   }
 
   /**
-   * 发送文件
+   * 发送文件 (WIP - 功能开发中)
    */
   async sendFile(peerId, filePath) {
-    const conn = this._getConnection(peerId);
-    if (!conn) throw new Error(`Not connected to peer: ${peerId}`);
+    console.warn('[F2A] File transfer is still in development');
     return this.files.sendFile(peerId, filePath, this._createConnectionProxy(peerId));
   }
 
-  // ==================== 群聊方法 ====================
+  // ==================== 群聊 API ====================
 
   /**
    * 创建群组
@@ -524,12 +396,9 @@ module.exports = {
   /**
    * 邀请成员加入群组
    */
-  async inviteToGroup(groupId, peerId) {
+  inviteToGroup(groupId, peerId) {
     const invite = this.groups.inviteMember(groupId, peerId);
-    
-    // 发送邀请给 peer
-    this._sendRaw(peerId, JSON.stringify(invite));
-    
+    this.p2p.sendToPeer(peerId, invite);
     return invite;
   }
 
@@ -563,39 +432,20 @@ module.exports = {
     return this.groups.getAllGroups();
   }
 
+  // ==================== 状态查询 API ====================
+
   /**
-   * 获取我加入的群组
+   * 获取发现的 Agents
    */
-  getMyGroups() {
-    return this.groups.getMyGroups();
+  getDiscoveredAgents() {
+    return this.p2p.getDiscoveredAgents();
   }
 
   /**
-   * 绑定群聊事件
-   */
-  _bindGroupEvents() {
-    this.groups.on('group_message', (data) => {
-      this.emit('group_message', data);
-    });
-
-    this.groups.on('group_invite_received', (data) => {
-      this.emit('group_invite', data);
-    });
-
-    this.groups.on('group_created', (data) => {
-      this.emit('group_created', data);
-    });
-
-    this.groups.on('group_joined', (data) => {
-      this.emit('group_joined', data);
-    });
-  }
-
-  /**
-   * 获取已连接 peers
+   * 获取已连接 Peers
    */
   getConnectedPeers() {
-    return Array.from(this.connectionTypes.keys());
+    return this.p2p.getConnectedPeers();
   }
 
   /**
@@ -609,7 +459,7 @@ module.exports = {
    * 断开连接
    */
   disconnect(peerId) {
-    this.p2p.disconnect(peerId);
+    this.p2p.blacklist(peerId);
     if (this.webrtc) {
       this.webrtc.close(peerId);
     }
@@ -624,32 +474,19 @@ module.exports = {
    * 关闭所有连接
    */
   close() {
-    this.p2p.disconnectAll();
-    if (this.webrtc) {
-      this.webrtc.closeAll();
-    }
-    if (this.crypto) {
-      this.crypto.clearAllSessions();
-    }
-    this.messaging.disconnectAll();
+    this.stop();
   }
 }
-
-// 使 F2A 支持事件
-const EventEmitter = require('events');
-Object.setPrototypeOf(F2A.prototype, EventEmitter.prototype);
 
 // 导出模块
 module.exports = {
   F2A,
+  ServerlessP2P,
   Messaging,
   SkillsManager,
   FileTransfer,
-  P2PManager,
-  WebRTCManager,
-  E2ECrypto,
   GroupChat,
-  autoDiscover,
-  loadIdentity,
-  savePeer
+  E2ECrypto,
+  P2PManager,
+  WebRTCManager
 };

@@ -8,17 +8,22 @@ const EventEmitter = require('events');
 
 // WebRTC 适配（Node.js 环境使用 wrtc 包，浏览器环境使用原生 RTCPeerConnection）
 let RTCPeerConnection, RTCSessionDescription, RTCIceCandidate;
+let hasWebRTC = false;
 
 try {
   const wrtc = require('wrtc');
   RTCPeerConnection = wrtc.RTCPeerConnection;
   RTCSessionDescription = wrtc.RTCSessionDescription;
   RTCIceCandidate = wrtc.RTCIceCandidate;
+  hasWebRTC = true;
 } catch {
   // 浏览器环境
-  RTCPeerConnection = global.RTCPeerConnection;
-  RTCSessionDescription = global.RTCSessionDescription;
-  RTCIceCandidate = global.RTCIceCandidate;
+  if (typeof global !== 'undefined' && global.RTCPeerConnection) {
+    RTCPeerConnection = global.RTCPeerConnection;
+    RTCSessionDescription = global.RTCSessionDescription;
+    RTCIceCandidate = global.RTCIceCandidate;
+    hasWebRTC = true;
+  }
 }
 
 const ICE_SERVERS = [

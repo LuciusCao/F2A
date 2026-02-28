@@ -171,6 +171,7 @@ class Messaging extends EventEmitter {
 
   /**
    * 签名消息
+   * 支持 Ed25519 密钥 (使用 crypto.sign) 和 RSA 密钥 (使用 createSign)
    */
   _signMessage(message, privateKey) {
     const data = JSON.stringify({
@@ -181,10 +182,20 @@ class Messaging extends EventEmitter {
       timestamp: message.timestamp
     });
     
-    const sign = crypto.createSign('SHA256');
-    sign.update(data);
-    sign.end();
-    return sign.sign(privateKey, 'base64');
+    const privateKeyObj = crypto.createPrivateKey(privateKey);
+    
+    // Ed25519 需要 crypto.sign()，RSA 需要 createSign()
+    // 通过密钥类型判断使用哪种方式
+    if (privateKeyObj.asymmetricKeyType === 'ed25519') {
+      const signature = crypto.sign(null, Buffer.from(data), privateKeyObj);
+      return signature.toString('base64');
+    } else {
+      // RSA 或其他支持 createSign 的算法
+      const sign = crypto.createSign('SHA256');
+      sign.update(data);
+      sign.end();
+      return sign.sign(privateKey, 'base64');
+    }
   }
 
   /**

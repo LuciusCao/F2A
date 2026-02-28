@@ -39,6 +39,9 @@ class E2ECrypto {
 
   /**
    * 执行 ECDH 密钥交换，生成会话密钥
+   * 
+   * 关键：需要确保 A.sendKey == B.recvKey 且 A.recvKey == B.sendKey
+   * 使用 peerId 比较来确定密钥派生顺序
    */
   deriveSessionKey(peerId, peerPublicKey) {
     if (!this.keyPair) {
@@ -51,9 +54,20 @@ class E2ECrypto {
       publicKey: crypto.createPublicKey(peerPublicKey)
     });
 
+    // 确定性排序：比较 myAgentId 和 peerId
+    // 较大的一方使用 'send' 作为第一个密钥的 salt
+    const myId = this.keyPair.publicKey; // 使用公钥作为标识符
+    const isHigh = myId > peerPublicKey;
+
     // 使用 HKDF 派生两个方向的密钥
-    const sendKey = crypto.hkdfSync('sha256', sharedSecret, Buffer.from('send'), '', KEY_LENGTH);
-    const recvKey = crypto.hkdfSync('sha256', sharedSecret, Buffer.from('recv'), '', KEY_LENGTH);
+    // 高方: sendKey=salt'send', recvKey=salt'recv'
+    // 低方: sendKey=salt'recv', recvKey=salt'send'
+    // 这样高方的 sendKey == 低方的 recvKey
+    const firstSalt = isHigh ? Buffer.from('send') : Buffer.from('recv');
+    const secondSalt = isHigh ? Buffer.from('recv') : Buffer.from('send');
+
+    const sendKey = crypto.hkdfSync('sha256', sharedSecret, firstSalt, '', KEY_LENGTH);
+    const recvKey = crypto.hkdfSync('sha256', sharedSecret, secondSalt, '', KEY_LENGTH);
 
     this.sessionKeys.set(peerId, {
       sendKey: Buffer.from(sendKey),

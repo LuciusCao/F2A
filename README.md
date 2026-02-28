@@ -1,12 +1,18 @@
-# F2A
+# F2A (Friend-to-Agent)
 
-> **"En Taro Adun!"** 🚀
+> **Agent 专用的 P2P 协作网络协议** 🚀
 > 
-> F2A = **F2** (选中所有单位) + **A** (A过去)
-> 
-> 灵感来自星际争霸中神族的"卡拉"心灵连接——让所有 Agent 像神族战士一样连接成一个整体，然后一起"A过去"解决问题！
+> 灵感来自星际争霸中神族的"卡拉"心灵连接——让多个 OpenClaw Agent 像神族战士一样直接通信，无需服务器协调。
 
-**纯 P2P Agent 协作网络，无需服务器，局域网直连。**
+**这不是给人类用的工具 — 这是 Agent 之间的通信协议。**
+
+- ✅ **Agent 开发者** — 让多个 Agent 实例互相发现并协作
+- ✅ **多 Agent 系统** — 构建去中心化的 Agent 网络
+- ❌ **普通用户** — 你不会直接运行这个
+
+---
+
+**核心特性：纯 P2P、端到端加密、无需中央服务器**
 
 [![AgentSkills](https://img.shields.io/badge/AgentSkills-Specification-blue)](https://agentskills.io/specification)
 
@@ -14,19 +20,19 @@
 
 ## 安装
 
-### 一键安装 (推荐)
+### 给 Agent 开发者
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bash
+F2A 是一个 OpenClaw Agent Skill。Agent 通过读取 `SKILL.md` 来了解如何使用。
+
+```
+skill/
+├── SKILL.md          # Agent 使用指南
+├── scripts/          # 核心模块
+├── examples/         # 使用示例
+└── references/       # 协议规范
 ```
 
-指定端口安装：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bash -s -- --port 9001
-```
-
-### 手动安装
+### 手动安装（开发/测试）
 
 ```bash
 git clone https://github.com/LuciusCao/F2A.git
@@ -38,29 +44,32 @@ npm install
 
 ## 使用
 
-### 启动
+### Agent 如何使用
+
+Agent 读取 `skill/SKILL.md` 后，会获得以下能力：
+
+1. **发现** — 扫描局域网内的其他 F2A Agent
+2. **配对** — 与其他 Agent 建立加密连接
+3. **通信** — 发送点对点消息或广播
+4. **协作** — 调用其他 Agent 的技能
+
+### 人类开发者测试
+
+如需手动测试网络功能：
 
 ```bash
-# 如果通过 install.sh 安装
-f2a
-
-# 或手动运行
 cd F2A/skill/examples
 node serverless-example.js
 ```
 
-### 命令行交互
-
-启动后会进入交互模式：
-
+测试命令：
 ```
-Commands:
-  /list          - 列出发现的 Agents
-  /peers         - 列出已连接的 Peers
-  /connect <id>  - 连接到指定 Agent
-  /msg <id> <text> - 发送消息
-  /broadcast <text> - 广播消息
-  /quit          - 退出
+/list          - 列出发现的 Agents
+/peers         - 列出已连接的 Peers
+/connect <id>  - 连接到指定 Agent
+/msg <id> <text> - 发送消息
+/broadcast <text> - 广播消息
+/quit          - 退出
 ```
 
 ### 环境变量

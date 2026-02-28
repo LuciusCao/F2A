@@ -25,9 +25,11 @@ class F2A extends EventEmitter {
     
     // 初始化身份管理器
     const identityManager = new IdentityManager(options.identity);
-    
-    // 获取或创建 Agent ID
-    const identity = identityManager.getOrCreateIdentity(options.myAgentId);
+
+    // 获取或创建 Agent ID（优先使用环境变量，其次是 options）
+    const envAgentId = process.env.F2A_AGENT_ID;
+    const preferredId = options.myAgentId || envAgentId;
+    const identity = identityManager.getOrCreateIdentity(preferredId);
     this.myAgentId = identity.agentId;
     this._identityInfo = identity;
     

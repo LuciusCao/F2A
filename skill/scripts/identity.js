@@ -32,6 +32,8 @@ class IdentityManager {
       const identity = {
         agentId: preferredId,
         createdAt: new Date().toISOString(),
+        // publicKey: 预留字段，用于未来支持将公钥与身份绑定
+        // 目前未使用，始终为 null
         publicKey: null
       };
       this._saveIdentity(identity);
@@ -54,6 +56,8 @@ class IdentityManager {
     const identity = {
       agentId: newAgentId,
       createdAt: new Date().toISOString(),
+      // publicKey: 预留字段，用于未来支持将公钥与身份绑定
+      // 目前未使用，始终为 null
       publicKey: null
     };
     this._saveIdentity(identity);
@@ -100,7 +104,8 @@ class IdentityManager {
         fs.mkdirSync(this.configDir, { recursive: true });
       }
       
-      fs.writeFileSync(this.configFile, JSON.stringify(identity, null, 2));
+      // 保存文件并设置权限为 0o600（只有所有者读写）
+      fs.writeFileSync(this.configFile, JSON.stringify(identity, null, 2), { mode: 0o600 });
       this._identity = identity;
       return true;
     } catch (err) {

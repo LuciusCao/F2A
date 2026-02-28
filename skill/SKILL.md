@@ -59,6 +59,47 @@ p2p.on('confirmation_required', ({ agentId, accept, reject }) => {
 });
 ```
 
+### 1.1 启动后台服务（推荐）
+
+**用户说**: "启动 F2A 后台服务" / "让 F2A 持续运行"
+
+**执行**:
+```bash
+# 启动后台服务
+npm run daemon:start
+
+# 或使用环境变量
+F2A_AGENT_ID="my-agent" F2A_PORT=9000 npm run daemon:start
+
+# 查看状态
+npm run daemon:status
+
+# 停止服务
+npm run daemon:stop
+```
+
+**Node.js 方式**:
+```javascript
+const { spawn } = require('child_process');
+
+// 启动后台进程
+const daemon = spawn('node', ['start-daemon.js', 'start'], {
+  detached: true,
+  stdio: 'ignore'
+});
+
+daemon.unref();
+tellUser('F2A 后台服务已启动');
+
+// 查看状态
+const status = execSync('node start-daemon.js status').toString();
+tellUser(status);
+
+// 停止服务
+execSync('node start-daemon.js stop');
+tellUser('F2A 后台服务已停止');
+```
+
 ### 2. 发现 Agents
 
 **用户说**: "发现其他 Agent" / "搜索局域网内的 Agent"

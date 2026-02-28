@@ -40,6 +40,20 @@ cd F2A/skill
 npm install
 ```
 
+### 给其他 Agent 一键安装
+
+其他 OpenClaw Agent 可以通过 curl 直接安装到本机 skills 目录：
+
+```bash
+# 安装到默认 skills 目录
+curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install-agent.sh | bash
+
+# 或指定自定义路径
+curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install-agent.sh | bash -s -- --dir /path/to/skills/f2a-network
+```
+
+安装后，Agent 会自动读取 `SKILL.md` 并获取 F2A 网络能力。
+
 ---
 
 ## 使用

@@ -119,22 +119,38 @@ class ServerlessP2P extends EventEmitter {
   stop() {
     if (this.discoveryInterval) {
       clearInterval(this.discoveryInterval);
+      this.discoveryInterval = null;
     }
     
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
     }
     
     if (this.udpSocket) {
-      this.udpSocket.close();
+      try {
+        this.udpSocket.close();
+      } catch (e) {
+        // Ignore close errors
+      }
+      this.udpSocket = null;
     }
     
     if (this.tcpServer) {
-      this.tcpServer.close();
+      try {
+        this.tcpServer.close();
+      } catch (e) {
+        // Ignore close errors
+      }
+      this.tcpServer = null;
     }
     
     for (const [peerId, peer] of this.peers) {
-      peer.socket.end();
+      try {
+        peer.socket.end();
+      } catch (e) {
+        // Ignore close errors
+      }
     }
     
     this.peers.clear();

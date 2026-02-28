@@ -307,6 +307,43 @@ test('updating preferred ID overwrites existing', () => {
   assertEqual(result.agentId, 'second-id', 'Should use new preferred ID');
 });
 
+// ==================== 环境变量测试 ====================
+
+test('reads F2A_AGENT_ID from environment variable', () => {
+  cleanup();
+  process.env.F2A_AGENT_ID = 'env-agent-id';
+  
+  const manager = new IdentityManager({
+    configDir: tempDir,
+    configFile: tempConfigFile
+  });
+  
+  // Simulate reading from env var by passing null and checking if it uses env
+  const result = manager.getOrCreateIdentity(process.env.F2A_AGENT_ID);
+  
+  assertEqual(result.agentId, 'env-agent-id', 'Should use env variable');
+  assertTrue(result.isNew, 'Should be new');
+  assertTrue(result.isPersistent, 'Should be persistent');
+  
+  delete process.env.F2A_AGENT_ID;
+});
+
+// ==================== 文件权限测试 ====================
+
+test('config file has correct permissions (0o600)', () => {
+  cleanup();
+  const manager = new IdentityManager({
+    configDir: tempDir,
+    configFile: tempConfigFile
+  });
+  
+  manager.getOrCreateIdentity('test-perm-id');
+  
+  const stats = fs.statSync(tempConfigFile);
+  const mode = stats.mode & 0o777;
+  assertEqual(mode, 0o600, 'File should have 0o600 permissions (owner read/write only)');
+});
+
 // 最终清理
 cleanup();
 

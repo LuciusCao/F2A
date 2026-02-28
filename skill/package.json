@@ -7,7 +7,7 @@
     "pair:host": "node scripts/pair.js host",
     "pair:join": "node scripts/pair.js join",
     "peers": "node scripts/peers.js",
-    "test": "node tests/crypto.test.js && node tests/group.test.js && node tests/skills.test.js && node tests/serverless.test.js && node tests/files.test.js && node tests/messaging.test.js && node tests/p2p.test.js && node tests/webrtc.test.js && node tests/f2a.test.js",
+    "test": "node tests/crypto.test.js && node tests/group.test.js && node tests/skills.test.js && node tests/serverless.test.js && node tests/files.test.js && node tests/messaging.test.js && node tests/p2p.test.js && node tests/webrtc.test.js && node tests/f2a.test.js && node tests/identity.test.js",
     "test:crypto": "node tests/crypto.test.js",
     "test:group": "node tests/group.test.js",
     "test:skills": "node tests/skills.test.js",
@@ -16,7 +16,8 @@
     "test:messaging": "node tests/messaging.test.js",
     "test:p2p": "node tests/p2p.test.js",
     "test:webrtc": "node tests/webrtc.test.js",
-    "test:f2a": "node tests/f2a.test.js"
+    "test:f2a": "node tests/f2a.test.js",
+    "test:identity": "node tests/identity.test.js"
   },
   "dependencies": {
     "ws": "^8.16.0"

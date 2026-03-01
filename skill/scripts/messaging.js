@@ -74,6 +74,10 @@ class Messaging extends EventEmitter {
     
     // 监听断开
     connection.on('close', () => {
+      // 检查是否已经被 disconnectPeer 处理过
+      if (!this.peers.has(peerId)) {
+        return; // 已被手动处理，跳过
+      }
       this._cleanupPeerMessages(peerId);
       this.peers.delete(peerId);
       this.emit('peer_disconnected', { peerId });
@@ -105,7 +109,10 @@ class Messaging extends EventEmitter {
     }
 
     return new Promise((resolve, reject) => {
-      // 如果需要确认，设置超时
+      // 发送消息
+      connection.send(JSON.stringify(message));
+
+      // 如果需要确认，设置超时并跟踪
       if (message.requireAck) {
         const timeout = setTimeout(() => {
           this.pendingMessages.delete(message.id);
@@ -120,19 +127,9 @@ class Messaging extends EventEmitter {
           peerId // 记录 peerId 用于连接断开时清理
         });
       } else {
-        // 即使不需要确认，也添加到 pending 中以便后续清理
-        this.pendingMessages.set(message.id, {
-          resolve,
-          reject,
-          timeout: null,
-          createdAt: Date.now(),
-          peerId
-        });
+        // 不需要确认，直接 resolve
         resolve({ messageId: message.id, status: 'sent' });
       }
-
-      // 发送消息
-      connection.send(JSON.stringify(message));
     });
   }
 
@@ -270,20 +267,20 @@ class Messaging extends EventEmitter {
    * 断开指定 peer，并清理相关 pending 消息
    */
   disconnectPeer(peerId) {
-    // 清理该 peer 相关的 pending messages
-    for (const [id, pending] of this.pendingMessages) {
-      if (pending.peerId === peerId) {
-        if (pending.timeout) clearTimeout(pending.timeout);
-        pending.reject(new Error('Peer disconnected'));
-        this.pendingMessages.delete(id);
-      }
-    }
-    
     const connection = this.peers.get(peerId);
-    if (connection) {
-      connection.close();
-      this.peers.delete(peerId);
-    }
+    if (!connection) return;
+    
+    // 从 peers 中移除（避免 'close' 事件再次处理）
+    this.peers.delete(peerId);
+    
+    // 清理该 peer 相关的 pending messages
+    this._cleanupPeerMessages(peerId);
+    
+    // 关闭连接（此时 'close' 事件不会重复处理，因为 peer 已从 map 中移除）
+    connection.close();
+    
+    // 触发断开事件
+    this.emit('peer_disconnected', { peerId });
   }
 
   /**

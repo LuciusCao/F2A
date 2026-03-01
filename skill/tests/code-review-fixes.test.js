@@ -82,22 +82,18 @@ asyncTest('messaging: pending messages cleaned up on peer disconnect', async () 
   messaging.stop();
 });
 
-asyncTest('messaging: no-ack messages tracked for cleanup', async () => {
+asyncTest('messaging: no-ack messages not tracked', async () => {
   const messaging = new Messaging({ messageTimeout: 50 });
   const conn = new MockConnection();
   messaging.registerPeer('peer-2', conn);
   
+  // 发送不需要确认的消息
   await messaging.sendMessage('peer-2', 'test', {
     myAgentId: 'agent-a', requireAck: false
   });
   
-  assertEqual(messaging.pendingMessages.size, 1, 'Should track no-ack messages');
-  
-  // 手动触发清理（而不是等待定时器）
-  await new Promise(r => setTimeout(r, 150));
-  messaging._cleanupPendingMessages();
-  
-  assertEqual(messaging.pendingMessages.size, 0, 'Should clean up expired');
+  // no-ack 消息不应该被跟踪到 pendingMessages 中
+  assertEqual(messaging.pendingMessages.size, 0, 'Should not track no-ack messages');
   
   messaging.stop();
 });
@@ -160,8 +156,12 @@ test('group: cannot invite already member', () => {
   groups.initialize('agent-a');
   const groupId = groups.createGroup('Test Group');
   
+  // 先邀请 agent-b
+  groups.inviteMember(groupId, 'agent-b');
+  
+  // 再次邀请 agent-b 应该报错
   let threw = false;
-  try { groups.inviteMember(groupId, 'agent-a'); }
+  try { groups.inviteMember(groupId, 'agent-b'); }
   catch (err) {
     threw = true;
     assertTrue(err.message.includes('already a member'));
@@ -174,6 +174,7 @@ test('group: cannot invite self', () => {
   groups.initialize('agent-a');
   const groupId = groups.createGroup('Test Group');
   
+  // agent-a 是创建者，邀请自己应该报错
   let threw = false;
   try { groups.inviteMember(groupId, 'agent-a'); }
   catch (err) {

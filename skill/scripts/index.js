@@ -148,6 +148,11 @@ class F2A extends EventEmitter {
       });
     }
 
+    // Messaging 层 peer 断开时清理 skills 的 pending requests
+    this.messaging.on('peer_disconnected', ({ peerId }) => {
+      this.skills.cleanupPeerRequests(peerId);
+    });
+
     // 群聊事件转发
     this.groups.on('group_message', (data) => {
       this.emit('group_message', data);

@@ -239,17 +239,12 @@ class ServerlessP2P extends EventEmitter {
    * 处理发现消息
    */
   _handleDiscoveryMessage(msg, rinfo) {
-    console.log(`[DEBUG] UDP message from ${rinfo.address}:${rinfo.port}: ${msg.toString().slice(0, 100)}`);
-    
     try {
       const data = JSON.parse(msg.toString());
       
       if (data.type === 'F2A_DISCOVER' && data.agentId !== this.myAgentId) {
-        console.log(`[DEBUG] F2A_DISCOVER from ${data.agentId}`);
-        
         // 检查黑名单
         if (this.security.blacklist.has(data.agentId)) {
-          console.log(`[DEBUG] ${data.agentId} is blacklisted`);
           return;
         }
         
@@ -260,8 +255,6 @@ class ServerlessP2P extends EventEmitter {
           publicKey: data.publicKey,
           lastSeen: Date.now()
         });
-        
-        console.log(`[DEBUG] Agent ${data.agentId} discovered at ${rinfo.address}:${data.port}`);
         
         this.emit('agent_discovered', {
           agentId: data.agentId,

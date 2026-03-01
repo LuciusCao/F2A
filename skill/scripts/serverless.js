@@ -10,6 +10,7 @@ const dgram = require('dgram');
 const net = require('net');
 const crypto = require('crypto');
 const os = require('os');
+const { Logger } = require('./logger');
 
 // 配置常量
 const DISCOVERY_PORT = 8767;
@@ -34,6 +35,14 @@ class ServerlessP2P extends EventEmitter {
     
     this.p2pPort = options.p2pPort || DEFAULT_P2P_PORT;
     this.discoveryPort = options.discoveryPort || DISCOVERY_PORT;
+    
+    // 初始化日志
+    this.logger = new Logger({
+      level: options.logLevel || 'INFO',  // 默认 INFO 级别
+      enableConsole: true,
+      enableFile: true
+    });
+    this.logger.info('ServerlessP2P initializing', { agentId: this.myAgentId, port: this.p2pPort });
     
     // 安全配置
     this.security = {
@@ -339,13 +348,17 @@ class ServerlessP2P extends EventEmitter {
   async connectToAgent(agentId, address, port) {
     // 检查是否已连接
     if (this.peers.has(agentId)) {
+      this.logger.info(`Already connected to ${agentId.slice(0, 12)}...`);
       return this.peers.get(agentId);
     }
     
     // 检查黑名单
     if (this.security.blacklist.has(agentId)) {
+      this.logger.warn(`Rejected blacklisted agent: ${agentId}`);
       throw new Error('Agent is blacklisted');
     }
+    
+    this.logger.info(`Connecting to ${agentId.slice(0, 12)}... at ${address}:${port}`);
     
     return new Promise((resolve, reject) => {
       const socket = new net.Socket();
@@ -363,15 +376,17 @@ class ServerlessP2P extends EventEmitter {
         }
       };
       
-      socket.connect(port, address, () => {
-        console.log(`[ServerlessP2P] Connected to ${agentId} at ${address}:${port}`);
+      socket.on('connect', () => {
+        this.logger.info(`TCP connected to ${agentId.slice(0, 12)}... at ${address}:${port}`);
         
         // 发送身份挑战
+        this.logger.protocol('SEND_CHALLENGE', agentId, { local: true });
         this._sendIdentityChallenge(socket, agentId);
         
         // 等待验证完成
         onVerified = (verifiedAgentId) => {
           if (verifiedAgentId === agentId) {
+            this.logger.info(`Peer verified: ${agentId.slice(0, 12)}...`);
             cleanup();
             resolve(this.peers.get(agentId));
           }
@@ -381,6 +396,7 @@ class ServerlessP2P extends EventEmitter {
         
         // 超时处理
         timeoutId = setTimeout(() => {
+          this.logger.error(`Verification timeout for ${agentId.slice(0, 12)}...`);
           cleanup();
           if (!this.peers.has(agentId)) {
             socket.end();
@@ -390,10 +406,12 @@ class ServerlessP2P extends EventEmitter {
       });
       
       socket.on('error', (err) => {
+        this.logger.error(`Socket error for ${agentId.slice(0, 12)}...: ${err.message}`);
         cleanup();
         reject(err);
       });
       
+      socket.connect(port, address);
       this._setupSocketHandlers(socket);
     });
   }
@@ -405,17 +423,18 @@ class ServerlessP2P extends EventEmitter {
     const remoteAddress = socket.remoteAddress;
     const remotePort = socket.remotePort;
     
-    console.log(`[ServerlessP2P] Incoming connection from ${remoteAddress}:${remotePort}`);
+    this.logger.info(`[CONN] Incoming TCP connection from ${remoteAddress}:${remotePort}`);
     
     // 速率限制检查
     const clientKey = `${remoteAddress}:${remotePort}`;
     if (!this._checkRateLimit(clientKey)) {
-      console.log(`[ServerlessP2P] Rate limit exceeded for ${clientKey}`);
+      this.logger.warn(`[CONN] Rate limit exceeded for ${clientKey}`);
       socket.end();
       return;
     }
     
     // 发送身份挑战（被动连接方也需要验证对方身份）
+    this.logger.protocol('SEND_CHALLENGE', 'unknown', { passive: true, from: `${remoteAddress}:${remotePort}` });
     this._sendIdentityChallenge(socket, null);
     
     this._setupSocketHandlers(socket);
@@ -478,6 +497,11 @@ class ServerlessP2P extends EventEmitter {
       timestamp
     });
     
+    this.logger.protocol('CHALLENGE_SENT', expectedAgentId || 'unknown', { 
+      challenge: challenge.slice(0, 16) + '...',
+      timestamp 
+    });
+    
     socket.write(message + '\n');
   }
 
@@ -487,22 +511,25 @@ class ServerlessP2P extends EventEmitter {
   _handleMessage(socket, data) {
     // 消息大小限制
     if (data.length > MAX_MESSAGE_SIZE) {
-      console.warn(`[ServerlessP2P] Message too large (${data.length} bytes), ignoring`);
+      this.logger.warn(`Message too large (${data.length} bytes), ignoring`);
       return;
     }
     
     try {
       const message = JSON.parse(data);
       
+      this.logger.debug('[MSG] Received:', { type: message.type, from: message.agentId?.slice(0, 12) });
+      
       // 基本结构验证
       if (!message || typeof message !== 'object') {
-        console.warn('[ServerlessP2P] Invalid message structure');
+        this.logger.warn('[MSG] Invalid message structure');
         return;
       }
       
       // 防重放检查
       if (message.id) {
         if (this.processedMessages.has(message.id)) {
+          this.logger.debug('[MSG] Duplicate message ignored:', message.id);
           return;
         }
         this.processedMessages.add(message.id);
@@ -517,11 +544,15 @@ class ServerlessP2P extends EventEmitter {
         }
       }
       
+      this.logger.protocol('MSG_TYPE', message.agentId || 'unknown', { type: message.type });
+      
       switch (message.type) {
         case 'identity_challenge':
+          this.logger.protocol('RECV_CHALLENGE', message.agentId, { challenge: message.challenge?.slice(0, 16) });
           this._handleIdentityChallenge(socket, message);
           break;
         case 'identity_response':
+          this.logger.protocol('RECV_RESPONSE', 'unknown', { agentId: message.agentId?.slice(0, 12) });
           this._handleIdentityResponse(socket, message);
           break;
         case 'confirmation_request':
@@ -538,7 +569,7 @@ class ServerlessP2P extends EventEmitter {
           }
       }
     } catch (err) {
-      console.error('[ServerlessP2P] Message handling error:', err.message);
+      this.logger.error('[MSG] Message handling error:', err.message);
     }
   }
 

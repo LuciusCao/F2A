@@ -196,7 +196,9 @@ class ServerlessP2P extends EventEmitter {
         console.error('[ServerlessP2P] UDP error:', err.message);
       });
       
-      this.udpSocket.bind(this.discoveryPort, () => {
+      this.udpSocket.bind(this.discoveryPort, '0.0.0.0', () => {
+        // 启用广播
+        this.udpSocket.setBroadcast(true);
         console.log(`[ServerlessP2P] UDP discovery on port ${this.discoveryPort}`);
         
         // 开始广播
@@ -210,6 +212,9 @@ class ServerlessP2P extends EventEmitter {
    * 开始发现广播
    */
   _startDiscoveryBroadcast() {
+    // 启用广播
+    this.udpSocket.setBroadcast(true);
+    
     const broadcastMessage = JSON.stringify({
       type: 'F2A_DISCOVER',
       agentId: this.myAgentId,
@@ -260,7 +265,8 @@ class ServerlessP2P extends EventEmitter {
         
         // 自动连接（如果白名单或低安全等级）
         if (this.security.level === 'low' || this.security.whitelist.has(data.agentId)) {
-          this.connectToAgent(data.agentId, rinfo.address, data.port);
+          this.connectToAgent(data.agentId, rinfo.address, data.port)
+            .catch(err => console.error(`[ServerlessP2P] Auto-connect failed for ${data.agentId}: ${err.message}`));
         }
       }
     } catch (err) {
@@ -284,6 +290,19 @@ class ServerlessP2P extends EventEmitter {
     
     return new Promise((resolve, reject) => {
       const socket = new net.Socket();
+      let onVerified = null;
+      let timeoutId = null;
+      
+      const cleanup = () => {
+        if (onVerified) {
+          this.off('peer_verified', onVerified);
+          onVerified = null;
+        }
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+      };
       
       socket.connect(port, address, () => {
         console.log(`[ServerlessP2P] Connected to ${agentId} at ${address}:${port}`);
@@ -292,9 +311,9 @@ class ServerlessP2P extends EventEmitter {
         this._sendIdentityChallenge(socket, agentId);
         
         // 等待验证完成
-        const onVerified = (verifiedAgentId) => {
+        onVerified = (verifiedAgentId) => {
           if (verifiedAgentId === agentId) {
-            this.off('peer_verified', onVerified);
+            cleanup();
             resolve(this.peers.get(agentId));
           }
         };
@@ -302,8 +321,8 @@ class ServerlessP2P extends EventEmitter {
         this.on('peer_verified', onVerified);
         
         // 超时处理
-        setTimeout(() => {
-          this.off('peer_verified', onVerified);
+        timeoutId = setTimeout(() => {
+          cleanup();
           if (!this.peers.has(agentId)) {
             socket.end();
             reject(new Error('Verification timeout'));
@@ -312,6 +331,7 @@ class ServerlessP2P extends EventEmitter {
       });
       
       socket.on('error', (err) => {
+        cleanup();
         reject(err);
       });
       

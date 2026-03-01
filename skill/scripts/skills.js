@@ -12,8 +12,53 @@ class SkillsManager extends EventEmitter {
     super();
     this.localSkills = new Map(); // skillName -> skillDefinition
     this.peerSkills = new Map(); // peerId -> { skills: [], lastUpdated }
-    this.pendingRequests = new Map(); // requestId -> { resolve, reject, timeout }
+    this.pendingRequests = new Map(); // requestId -> { resolve, reject, timeout, createdAt, peerId }
     this.requestTimeout = options.requestTimeout || 30000;
+    this.cleanupInterval = null;
+    
+    // 启动定期清理
+    this._startCleanupInterval();
+  }
+
+  /**
+   * 启动定期清理任务
+   */
+  _startCleanupInterval() {
+    this.cleanupInterval = setInterval(() => {
+      this._cleanupPendingRequests();
+    }, 60000); // 每分钟清理一次
+  }
+
+  /**
+   * 清理过期的 pending requests
+   */
+  _cleanupPendingRequests() {
+    const now = Date.now();
+    const timeout = this.requestTimeout * 2;
+    
+    for (const [id, pending] of this.pendingRequests) {
+      if (pending.createdAt && now - pending.createdAt > timeout) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error('Request expired'));
+        this.pendingRequests.delete(id);
+      }
+    }
+  }
+
+  /**
+   * 停止清理任务
+   */
+  stop() {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+    // 清理所有 pending requests
+    for (const [id, pending] of this.pendingRequests) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error('SkillsManager stopped'));
+    }
+    this.pendingRequests.clear();
   }
 
   /**
@@ -62,7 +107,13 @@ class SkillsManager extends EventEmitter {
         reject(new Error('Query skills timeout'));
       }, this.requestTimeout);
       
-      this.pendingRequests.set(requestId, { resolve, reject, timeout });
+      this.pendingRequests.set(requestId, { 
+        resolve, 
+        reject, 
+        timeout,
+        createdAt: Date.now(),
+        peerId
+      });
       
       connection.send(JSON.stringify({
         type: 'skill_query',
@@ -107,7 +158,13 @@ class SkillsManager extends EventEmitter {
         reject(new Error('Invoke skill timeout'));
       }, this.requestTimeout);
       
-      this.pendingRequests.set(requestId, { resolve, reject, timeout });
+      this.pendingRequests.set(requestId, { 
+        resolve, 
+        reject, 
+        timeout,
+        createdAt: Date.now(),
+        peerId
+      });
       
       connection.send(JSON.stringify({
         type: 'skill_invoke',
@@ -181,6 +238,19 @@ class SkillsManager extends EventEmitter {
         pending.resolve(result);
       } else {
         pending.reject(new Error(error || 'Skill invocation failed'));
+      }
+    }
+  }
+
+  /**
+   * 清理指定 peer 相关的 pending requests
+   */
+  cleanupPeerRequests(peerId) {
+    for (const [id, pending] of this.pendingRequests) {
+      if (pending.peerId === peerId) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error('Peer disconnected'));
+        this.pendingRequests.delete(id);
       }
     }
   }

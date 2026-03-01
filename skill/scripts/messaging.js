@@ -11,8 +11,54 @@ class Messaging extends EventEmitter {
   constructor(options = {}) {
     super();
     this.peers = new Map(); // peerId -> connection
-    this.pendingMessages = new Map(); // messageId -> { resolve, reject, timeout }
+    this.pendingMessages = new Map(); // messageId -> { resolve, reject, timeout, createdAt }
     this.messageTimeout = options.messageTimeout || 30000; // 30秒超时
+    this.cleanupInterval = null;
+    
+    // 启动定期清理
+    this._startCleanupInterval();
+  }
+
+  /**
+   * 启动定期清理任务
+   */
+  _startCleanupInterval() {
+    this.cleanupInterval = setInterval(() => {
+      this._cleanupPendingMessages();
+    }, 60000); // 每分钟清理一次
+  }
+
+  /**
+   * 清理过期的 pending messages
+   */
+  _cleanupPendingMessages() {
+    const now = Date.now();
+    const timeout = this.messageTimeout * 2; // 2倍超时时间作为清理阈值
+    
+    for (const [id, pending] of this.pendingMessages) {
+      if (pending.createdAt && now - pending.createdAt > timeout) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error('Message expired'));
+        this.pendingMessages.delete(id);
+      }
+    }
+  }
+
+  /**
+   * 停止清理任务
+   */
+  stop() {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+    // 清理所有 pending messages
+    for (const [id, pending] of this.pendingMessages) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error('Messaging stopped'));
+    }
+    this.pendingMessages.clear();
+    this.disconnectAll();
   }
 
   /**
@@ -28,6 +74,11 @@ class Messaging extends EventEmitter {
     
     // 监听断开
     connection.on('close', () => {
+      // 检查是否已经被 disconnectPeer 处理过
+      if (!this.peers.has(peerId)) {
+        return; // 已被手动处理，跳过
+      }
+      this._cleanupPeerMessages(peerId);
       this.peers.delete(peerId);
       this.emit('peer_disconnected', { peerId });
     });
@@ -58,20 +109,27 @@ class Messaging extends EventEmitter {
     }
 
     return new Promise((resolve, reject) => {
-      // 如果需要确认，设置超时
+      // 发送消息
+      connection.send(JSON.stringify(message));
+
+      // 如果需要确认，设置超时并跟踪
       if (message.requireAck) {
         const timeout = setTimeout(() => {
           this.pendingMessages.delete(message.id);
           reject(new Error('Message timeout'));
         }, this.messageTimeout);
         
-        this.pendingMessages.set(message.id, { resolve, reject, timeout });
+        this.pendingMessages.set(message.id, { 
+          resolve, 
+          reject, 
+          timeout,
+          createdAt: Date.now(),
+          peerId // 记录 peerId 用于连接断开时清理
+        });
       } else {
+        // 不需要确认，直接 resolve
         resolve({ messageId: message.id, status: 'sent' });
       }
-
-      // 发送消息
-      connection.send(JSON.stringify(message));
     });
   }
 
@@ -206,13 +264,35 @@ class Messaging extends EventEmitter {
   }
 
   /**
-   * 断开指定 peer
+   * 断开指定 peer，并清理相关 pending 消息
    */
   disconnectPeer(peerId) {
     const connection = this.peers.get(peerId);
-    if (connection) {
-      connection.close();
-      this.peers.delete(peerId);
+    if (!connection) return;
+    
+    // 从 peers 中移除（避免 'close' 事件再次处理）
+    this.peers.delete(peerId);
+    
+    // 清理该 peer 相关的 pending messages
+    this._cleanupPeerMessages(peerId);
+    
+    // 关闭连接（此时 'close' 事件不会重复处理，因为 peer 已从 map 中移除）
+    connection.close();
+    
+    // 触发断开事件
+    this.emit('peer_disconnected', { peerId });
+  }
+
+  /**
+   * 清理指定 peer 相关的 pending messages
+   */
+  _cleanupPeerMessages(peerId) {
+    for (const [id, pending] of this.pendingMessages) {
+      if (pending.peerId === peerId) {
+        if (pending.timeout) clearTimeout(pending.timeout);
+        pending.reject(new Error('Peer disconnected'));
+        this.pendingMessages.delete(id);
+      }
     }
   }
 

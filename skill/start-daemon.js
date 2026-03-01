@@ -6,7 +6,7 @@
  *   node start-daemon.js [start|stop|status]
  * 
  * 环境变量:
- *   F2A_AGENT_ID       - Agent ID
+ *   F2A_DISPLAY_NAME   - 显示名称（可选，仅用于展示）
  *   F2A_PORT           - P2P 端口 (默认 9000)
  *   F2A_SECURITY_LEVEL - 安全等级 (默认 medium)
  *   F2A_DATA_DIR       - 数据目录 (默认 ~/.f2a)
@@ -15,7 +15,7 @@
  */
 
 const { F2A } = require('./scripts/index');
-const crypto = require('crypto');
+const { IdentityManager } = require('./scripts/identity');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -33,28 +33,6 @@ const LOG_MAX_FILES = parseInt(process.env.F2A_LOG_MAX_FILES) || 5; // 保留 5 
 // 确保数据目录存在
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
-}
-
-// 生成或加载密钥对
-function getKeyPair() {
-  const keyFile = path.join(DATA_DIR, 'keys.json');
-  
-  if (fs.existsSync(keyFile)) {
-    try {
-      const keys = JSON.parse(fs.readFileSync(keyFile, 'utf8'));
-      return keys;
-    } catch (e) {
-      console.error('[F2A] Failed to load keys, generating new ones');
-    }
-  }
-  
-  const keyPair = crypto.generateKeyPairSync('ed25519', {
-    publicKeyEncoding: { type: 'spki', format: 'pem' },
-    privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-  });
-  
-  fs.writeFileSync(keyFile, JSON.stringify(keyPair, null, 2), { mode: 0o600 });
-  return keyPair;
 }
 
 // 获取文件锁（防止 PID 文件竞态）
@@ -131,12 +109,28 @@ async function start() {
       }
     }
     
-    const keyPair = getKeyPair();
+    // 初始化身份管理器并获取/创建身份
+    const identityManager = new IdentityManager({ configDir: DATA_DIR });
+    const displayName = process.env.F2A_DISPLAY_NAME;
+    const identity = identityManager.getOrCreateIdentity(displayName);
+    
+    // 显示身份信息
+    if (identity.isNew) {
+      console.log('🆕 新身份已创建');
+    } else {
+      console.log('📋 已加载现有身份');
+    }
+    console.log(`🆔 Agent ID: ${identity.agentId}`);
+    if (identity.displayName) {
+      console.log(`🏷️  显示名称: ${identity.displayName}`);
+    }
+    console.log(`💾 身份文件: ${identityManager.getConfigPath()}`);
+    console.log('');
     
     const f2a = new F2A({
-      myAgentId: process.env.F2A_AGENT_ID,
-      myPublicKey: keyPair.publicKey,
-      myPrivateKey: keyPair.privateKey,
+      myAgentId: identity.agentId,
+      myPublicKey: identity.publicKey,
+      myPrivateKey: identity.privateKey,
       p2pPort: parseInt(process.env.F2A_PORT) || 9000,
       security: {
         level: process.env.F2A_SECURITY_LEVEL || 'medium',
@@ -235,6 +229,16 @@ function status() {
   try {
     process.kill(parseInt(pid), 0);
     console.log(`[F2A] Daemon running (PID: ${pid})`);
+    
+    // 显示身份信息
+    const identityManager = new IdentityManager({ configDir: DATA_DIR });
+    const info = identityManager.getIdentityInfo();
+    if (info) {
+      console.log(`🆔 Agent ID: ${info.agentId}`);
+      if (info.displayName) {
+        console.log(`🏷️  显示名称: ${info.displayName}`);
+      }
+    }
     
     // 显示日志
     if (fs.existsSync(LOG_FILE)) {

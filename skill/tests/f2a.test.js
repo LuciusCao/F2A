@@ -68,7 +68,12 @@ function generateEd25519KeyPair() {
 // ==================== 构造函数测试 ====================
 
 test('constructor with minimal options', () => {
-  const f2a = new F2A();
+  const keyPair = generateEd25519KeyPair();
+  const f2a = new F2A({
+    myAgentId: 'test-minimal-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey
+  });
   
   assertTrue(f2a.myAgentId, 'Should have agent ID');
   assertTrue(f2a.p2p, 'Should have P2P instance');
@@ -90,7 +95,11 @@ test('constructor with custom agent ID', () => {
 });
 
 test('constructor with WebRTC disabled', () => {
+  const keyPair = generateEd25519KeyPair();
   const f2a = new F2A({
+    myAgentId: 'test-webrtc-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey,
     useWebRTC: false
   });
   

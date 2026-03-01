@@ -54,10 +54,18 @@ class E2ECrypto {
       publicKey: crypto.createPublicKey(peerPublicKey)
     });
 
-    // 确定性排序：比较 myAgentId 和 peerId
-    // 较大的一方使用 'send' 作为第一个密钥的 salt
-    const myId = this.keyPair.publicKey; // 使用公钥作为标识符
-    const isHigh = myId > peerPublicKey;
+    // 确定性排序：比较公钥哈希
+    // 使用公钥的原始 DER 字节计算哈希，确保比较结果一致
+    const myPublicKeyObj = crypto.createPublicKey(this.keyPair.publicKey);
+    const peerPublicKeyObj = crypto.createPublicKey(peerPublicKey);
+    
+    const myPublicKeyDer = myPublicKeyObj.export({ type: 'spki', format: 'der' });
+    const peerPublicKeyDer = peerPublicKeyObj.export({ type: 'spki', format: 'der' });
+    
+    // 使用 SHA-256 哈希后比较，避免直接比较可能包含不同 PEM 格式的字符串
+    const myKeyHash = crypto.createHash('sha256').update(myPublicKeyDer).digest('hex');
+    const peerKeyHash = crypto.createHash('sha256').update(peerPublicKeyDer).digest('hex');
+    const isHigh = myKeyHash > peerKeyHash;
 
     // 使用 HKDF 派生两个方向的密钥
     // 高方: sendKey=salt'send', recvKey=salt'recv'

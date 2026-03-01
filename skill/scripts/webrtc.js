@@ -44,117 +44,135 @@ class WebRTCManager extends EventEmitter {
    * 创建 WebRTC 连接（作为发起方）
    */
   async createConnection(peerId) {
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
-    this.connections.set(peerId, pc);
+    try {
+      const pc = new RTCPeerConnection({ iceServers: this.iceServers });
+      this.connections.set(peerId, pc);
 
-    // 创建数据通道
-    const dataChannel = pc.createDataChannel('f2a', {
-      ordered: true,
-      maxRetransmits: 3
-    });
-    this._setupDataChannel(peerId, dataChannel);
-
-    // 监听 ICE 候选
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        this.emit('ice_candidate', {
-          peerId,
-          candidate: event.candidate
-        });
-      }
-    };
-
-    // 监听连接状态
-    pc.onconnectionstatechange = () => {
-      this.emit('connection_state', {
-        peerId,
-        state: pc.connectionState
+      // 创建数据通道
+      const dataChannel = pc.createDataChannel('f2a', {
+        ordered: true,
+        maxRetransmits: 3
       });
+      this._setupDataChannel(peerId, dataChannel);
 
-      if (pc.connectionState === 'connected') {
-        this.emit('connected', { peerId });
-      } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-        this.emit('disconnected', { peerId });
-      }
-    };
+      // 监听 ICE 候选
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          this.emit('ice_candidate', {
+            peerId,
+            candidate: event.candidate
+          });
+        }
+      };
 
-    // 创建 offer
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
+      // 监听连接状态
+      pc.onconnectionstatechange = () => {
+        this.emit('connection_state', {
+          peerId,
+          state: pc.connectionState
+        });
 
-    return {
-      type: 'offer',
-      sdp: offer.sdp
-    };
+        if (pc.connectionState === 'connected') {
+          this.emit('connected', { peerId });
+        } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+          this.emit('disconnected', { peerId });
+        }
+      };
+
+      // 创建 offer
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      return {
+        type: 'offer',
+        sdp: offer.sdp
+      };
+    } catch (err) {
+      // 清理失败的连接
+      this.close(peerId);
+      throw new Error(`Failed to create WebRTC connection: ${err.message}`);
+    }
   }
 
   /**
    * 处理收到的 offer（作为应答方）
    */
   async handleOffer(peerId, offer) {
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
-    this.connections.set(peerId, pc);
+    try {
+      const pc = new RTCPeerConnection({ iceServers: this.iceServers });
+      this.connections.set(peerId, pc);
 
-    // 监听数据通道
-    pc.ondatachannel = (event) => {
-      const dataChannel = event.channel;
-      this._setupDataChannel(peerId, dataChannel);
-    };
+      // 监听数据通道
+      pc.ondatachannel = (event) => {
+        const dataChannel = event.channel;
+        this._setupDataChannel(peerId, dataChannel);
+      };
 
-    // 监听 ICE 候选
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        this.emit('ice_candidate', {
+      // 监听 ICE 候选
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          this.emit('ice_candidate', {
+            peerId,
+            candidate: event.candidate
+          });
+        }
+      };
+
+      // 监听连接状态
+      pc.onconnectionstatechange = () => {
+        this.emit('connection_state', {
           peerId,
-          candidate: event.candidate
+          state: pc.connectionState
         });
-      }
-    };
+      };
 
-    // 监听连接状态
-    pc.onconnectionstatechange = () => {
-      this.emit('connection_state', {
-        peerId,
-        state: pc.connectionState
-      });
-    };
+      // 设置 remote description
+      await pc.setRemoteDescription(new RTCSessionDescription({
+        type: 'offer',
+        sdp: offer.sdp
+      }));
 
-    // 设置 remote description
-    await pc.setRemoteDescription(new RTCSessionDescription({
-      type: 'offer',
-      sdp: offer.sdp
-    }));
+      // 创建 answer
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
 
-    // 创建 answer
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-
-    return {
-      type: 'answer',
-      sdp: answer.sdp
-    };
+      return {
+        type: 'answer',
+        sdp: answer.sdp
+      };
+    } catch (err) {
+      // 清理失败的连接
+      this.close(peerId);
+      throw new Error(`Failed to handle WebRTC offer: ${err.message}`);
+    }
   }
 
   /**
    * 处理收到的 answer
    */
   async handleAnswer(peerId, answer) {
-    const pc = this.connections.get(peerId);
-    if (!pc) {
-      throw new Error(`No connection found for peer: ${peerId}`);
-    }
+    try {
+      const pc = this.connections.get(peerId);
+      if (!pc) {
+        throw new Error(`No connection found for peer: ${peerId}`);
+      }
 
-    await pc.setRemoteDescription(new RTCSessionDescription({
-      type: 'answer',
-      sdp: answer.sdp
-    }));
+      await pc.setRemoteDescription(new RTCSessionDescription({
+        type: 'answer',
+        sdp: answer.sdp
+      }));
 
-    // 添加缓存的候选
-    const candidates = this.pendingCandidates.get(peerId) || [];
-    for (const candidate of candidates) {
-      await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      // 添加缓存的候选
+      const candidates = this.pendingCandidates.get(peerId) || [];
+      for (const candidate of candidates) {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+      this.pendingCandidates.delete(peerId);
+    } catch (err) {
+      // 清理失败的连接
+      this.close(peerId);
+      throw new Error(`Failed to handle WebRTC answer: ${err.message}`);
     }
-    this.pendingCandidates.delete(peerId);
   }
 
   /**

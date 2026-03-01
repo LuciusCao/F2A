@@ -156,7 +156,7 @@ async function start() {
     await f2a.start();
     
     // 保存 PID
-    fs.writeFileSync(PID_FILE, process.pid.toString());
+    fs.writeFileSync(PID_FILE, process.pid.toString(), { mode: 0o600 });
     
     log(`F2A Daemon started as ${f2a.myAgentId}`);
     log(`P2P Port: ${f2a.p2p.p2pPort}`);

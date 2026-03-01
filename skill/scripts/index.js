@@ -88,6 +88,8 @@ class F2A extends EventEmitter {
    */
   stop() {
     this.p2p.stop();
+    this.messaging.stop();
+    this.skills.stop();
     if (this.webrtc) {
       this.webrtc.closeAll();
     }

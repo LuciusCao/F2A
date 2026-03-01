@@ -72,6 +72,14 @@ class GroupChat extends EventEmitter {
       throw new Error('Only group creator can invite members');
     }
 
+    if (group.members.has(peerId)) {
+      throw new Error(`Peer ${peerId} is already a member of this group`);
+    }
+
+    if (peerId === this.myAgentId) {
+      throw new Error('Cannot invite yourself');
+    }
+
     group.members.add(peerId);
     this.emit('member_invited', { groupId, peerId });
 

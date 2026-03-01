@@ -415,6 +415,9 @@ class ServerlessP2P extends EventEmitter {
       return;
     }
     
+    // 发送身份挑战（被动连接方也需要验证对方身份）
+    this._sendIdentityChallenge(socket, null);
+    
     this._setupSocketHandlers(socket);
   }
 

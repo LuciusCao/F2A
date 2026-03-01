@@ -247,9 +247,24 @@ p2p.on('group_message', ({ groupId, groupName, from, content }) => {
 
 ## 环境变量
 
-- `F2A_AGENT_ID` - 指定 Agent ID
+- `F2A_DISPLAY_NAME` - 显示名称（可选，仅用于展示）
 - `F2A_PORT` - 指定 P2P 端口 (默认 9000)
 - `F2A_SECURITY_LEVEL` - 安全等级 (low/medium/high)
 - `F2A_DATA_DIR` - 数据目录路径 (默认 ~/.f2a)
 - `F2A_LOG_MAX_SIZE` - 日志文件最大大小，单位字节 (默认 10MB)
 - `F2A_LOG_MAX_FILES` - 保留的日志文件数量 (默认 5)
+
+## 身份管理
+
+**Agent ID 与密钥对绑定**：
+- Agent ID 由 Ed25519 公钥派生（格式：`f2a-xxxx-xxxx`）
+- 首次启动自动生成密钥对和 Agent ID
+- 身份持久化保存在 `~/.f2a/identity.json`
+- **⚠️ 警告**：删除身份文件将导致其他 Agent 无法识别你
+
+**修改显示名称**（不影响 Agent ID）：
+```bash
+export F2A_DISPLAY_NAME="CatPuru"
+node start-daemon.js stop
+nohup node start-daemon.js start > /dev/null 2>&1 &
+```

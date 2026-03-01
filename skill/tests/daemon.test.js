@@ -73,8 +73,9 @@ test('daemon script uses log file', () => {
 
 test('daemon script handles environment variables', () => {
   const content = fs.readFileSync(daemonScript, 'utf8');
-  assertTrue(content.includes('F2A_AGENT_ID'), 'Should handle F2A_AGENT_ID');
+  assertTrue(content.includes('F2A_DISPLAY_NAME'), 'Should handle F2A_DISPLAY_NAME');
   assertTrue(content.includes('F2A_PORT'), 'Should handle F2A_PORT');
+  assertTrue(content.includes('F2A_DATA_DIR'), 'Should handle F2A_DATA_DIR');
 });
 
 // ==================== package.json 脚本测试 ====================

@@ -68,7 +68,12 @@ function generateEd25519KeyPair() {
 // ==================== 构造函数测试 ====================
 
 test('constructor with minimal options', () => {
-  const f2a = new F2A();
+  const keyPair = generateEd25519KeyPair();
+  const f2a = new F2A({
+    myAgentId: 'test-minimal-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey
+  });
   
   assertTrue(f2a.myAgentId, 'Should have agent ID');
   assertTrue(f2a.p2p, 'Should have P2P instance');
@@ -90,7 +95,11 @@ test('constructor with custom agent ID', () => {
 });
 
 test('constructor with WebRTC disabled', () => {
+  const keyPair = generateEd25519KeyPair();
   const f2a = new F2A({
+    myAgentId: 'test-webrtc-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey,
     useWebRTC: false
   });
   
@@ -99,7 +108,11 @@ test('constructor with WebRTC disabled', () => {
 });
 
 test('constructor with encryption disabled', () => {
+  const keyPair = generateEd25519KeyPair();
   const f2a = new F2A({
+    myAgentId: 'test-encrypt-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey,
     useEncryption: false
   });
   
@@ -108,7 +121,11 @@ test('constructor with encryption disabled', () => {
 });
 
 test('constructor with custom port', () => {
+  const keyPair = generateEd25519KeyPair();
   const f2a = new F2A({
+    myAgentId: 'test-port-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey,
     p2pPort: 9999
   });
   
@@ -178,7 +195,12 @@ asyncTest('emits stopped event', async () => {
 // ==================== 技能注册测试 ====================
 
 test('registerSkill adds skill', () => {
-  const f2a = new F2A();
+  const keyPair = generateEd25519KeyPair();
+  const f2a = new F2A({
+    myAgentId: 'test-skill-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey
+  });
   
   f2a.registerSkill('test-skill', {
     description: 'Test skill',
@@ -193,7 +215,12 @@ test('registerSkill adds skill', () => {
 // ==================== 群聊功能测试 ====================
 
 test('createGroup creates group', () => {
-  const f2a = new F2A();
+  const keyPair = generateEd25519KeyPair();
+  const f2a = new F2A({
+    myAgentId: 'test-group-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey
+  });
   
   const groupId = f2a.createGroup('Test Group');
   
@@ -203,7 +230,12 @@ test('createGroup creates group', () => {
 });
 
 test('getAllGroups returns groups', () => {
-  const f2a = new F2A();
+  const keyPair = generateEd25519KeyPair();
+  const f2a = new F2A({
+    myAgentId: 'test-groups-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey
+  });
   
   f2a.createGroup('Group 1');
   f2a.createGroup('Group 2');
@@ -213,7 +245,12 @@ test('getAllGroups returns groups', () => {
 });
 
 test('leaveGroup removes group', () => {
-  const f2a = new F2A();
+  const keyPair = generateEd25519KeyPair();
+  const f2a = new F2A({
+    myAgentId: 'test-leave-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey
+  });
   
   const groupId = f2a.createGroup('Test Group');
   f2a.leaveGroup(groupId);
@@ -225,21 +262,36 @@ test('leaveGroup removes group', () => {
 // ==================== 状态查询测试 ====================
 
 test('getDiscoveredAgents returns array', () => {
-  const f2a = new F2A();
+  const keyPair = generateEd25519KeyPair();
+  const f2a = new F2A({
+    myAgentId: 'test-discover-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey
+  });
   
   const agents = f2a.getDiscoveredAgents();
   assertTrue(Array.isArray(agents), 'Should return array');
 });
 
 test('getConnectedPeers returns array', () => {
-  const f2a = new F2A();
+  const keyPair = generateEd25519KeyPair();
+  const f2a = new F2A({
+    myAgentId: 'test-peers-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey
+  });
   
   const peers = f2a.getConnectedPeers();
   assertTrue(Array.isArray(peers), 'Should return array');
 });
 
 test('getConnectionType returns undefined for unknown peer', () => {
-  const f2a = new F2A();
+  const keyPair = generateEd25519KeyPair();
+  const f2a = new F2A({
+    myAgentId: 'test-conn-type-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey
+  });
   
   const type = f2a.getConnectionType('unknown-peer');
   assertEqual(type, undefined, 'Should return undefined');
@@ -248,7 +300,12 @@ test('getConnectionType returns undefined for unknown peer', () => {
 // ==================== 消息发送测试 ====================
 
 test('sendMessage throws for unconnected peer', () => {
-  const f2a = new F2A();
+  const keyPair = generateEd25519KeyPair();
+  const f2a = new F2A({
+    myAgentId: 'test-msg-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey
+  });
   
   let threw = false;
   try {
@@ -263,7 +320,12 @@ test('sendMessage throws for unconnected peer', () => {
 // ==================== 技能调用测试 ====================
 
 test('querySkills method exists and returns promise', () => {
-  const f2a = new F2A();
+  const keyPair = generateEd25519KeyPair();
+  const f2a = new F2A({
+    myAgentId: 'test-query-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey
+  });
   
   // 测试方法存在
   assertTrue(typeof f2a.querySkills === 'function', 'Should have querySkills method');
@@ -272,7 +334,12 @@ test('querySkills method exists and returns promise', () => {
 });
 
 test('invokeSkill method exists and returns promise', () => {
-  const f2a = new F2A();
+  const keyPair = generateEd25519KeyPair();
+  const f2a = new F2A({
+    myAgentId: 'test-invoke-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey
+  });
   
   // 测试方法存在
   assertTrue(typeof f2a.invokeSkill === 'function', 'Should have invokeSkill method');
@@ -281,7 +348,12 @@ test('invokeSkill method exists and returns promise', () => {
 // ==================== 文件传输测试 ====================
 
 test('sendFile returns promise and handles errors', async () => {
-  const f2a = new F2A();
+  const keyPair = generateEd25519KeyPair();
+  const f2a = new F2A({
+    myAgentId: 'test-file-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey
+  });
   
   // sendFile 应该返回 Promise，即使文件不存在也会 reject
   let threw = false;
@@ -296,7 +368,12 @@ test('sendFile returns promise and handles errors', async () => {
 // ==================== 断开连接测试 ====================
 
 test('disconnect removes peer from all maps', () => {
-  const f2a = new F2A();
+  const keyPair = generateEd25519KeyPair();
+  const f2a = new F2A({
+    myAgentId: 'test-disconnect-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey
+  });
   
   // Manually add a peer to test disconnect
   f2a.connectionTypes.set('peer-1', 'tcp');

@@ -390,6 +390,7 @@ asyncTest('multicast discovery joins group on start', async () => {
 
 asyncTest('multicast discovery sends to multicast address', async () => {
   const keyPair = generateTestKeyPair();
+  const MULTICAST_TEST_PORT = 8782; // 使用不同端口避免冲突
   const p2p = new ServerlessP2P({
     myAgentId: 'test-multicast-send',
     myPublicKey: keyPair.publicKey,
@@ -404,7 +405,7 @@ asyncTest('multicast discovery sends to multicast address', async () => {
   let received = null;
   
   await new Promise((resolve) => {
-    listener.bind(8768, () => {
+    listener.bind(MULTICAST_TEST_PORT, () => {
       listener.addMembership('239.255.255.250');
       listener.on('message', (msg) => {
         try {
@@ -420,8 +421,17 @@ asyncTest('multicast discovery sends to multicast address', async () => {
   
   await p2p.start();
   
+  // 手动发送一条多播消息到测试端口
+  const msg = JSON.stringify({
+    type: 'F2A_DISCOVER',
+    agentId: 'test-multicast-send',
+    port: 9021,
+    timestamp: Date.now()
+  });
+  p2p.udpSocket.send(msg, MULTICAST_TEST_PORT, '239.255.255.250');
+  
   // 等待多播消息
-  await new Promise((resolve) => setTimeout(resolve, 6000));
+  await new Promise((resolve) => setTimeout(resolve, 1000));
   
   assertTrue(received !== null, 'Should receive multicast discovery message');
   assertEqual(received.type, 'F2A_DISCOVER', 'Message type should be F2A_DISCOVER');

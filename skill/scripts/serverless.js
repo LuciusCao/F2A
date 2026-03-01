@@ -16,6 +16,11 @@ const DISCOVERY_PORT = 8767;
 const DEFAULT_P2P_PORT = 9000;
 const DISCOVERY_INTERVAL = 5000;
 const DISCOVERY_TIMEOUT = 15000;
+
+// 多播配置 (Multicast Discovery)
+const MULTICAST_ADDR = '239.255.255.250';  // 多播组地址
+const MULTICAST_PORT = 8768;                // 多播端口 (与广播端口分开，避免冲突)
+const MULTICAST_TTL = 128;                  // 多播 TTL
 const MAX_MESSAGE_SIZE = 1024 * 1024; // 1MB 消息大小限制
 const MAX_PROCESSED_MESSAGES = 5000; // 防重放缓存大小
 const CLEANUP_INTERVAL = 60000; // 清理间隔
@@ -183,6 +188,7 @@ class ServerlessP2P extends EventEmitter {
 
   /**
    * 启动 UDP 发现服务
+   * 支持多播 (Multicast) 和广播 (Broadcast) 两种模式
    */
   _startUDPDiscovery() {
     return new Promise((resolve, reject) => {
@@ -194,14 +200,31 @@ class ServerlessP2P extends EventEmitter {
       
       this.udpSocket.on('error', (err) => {
         console.error('[ServerlessP2P] UDP error:', err.message);
+        // 如果多播端口被占用，仍然继续（广播模式可用）
+        if (err.code === 'EADDRINUSE') {
+          console.warn('[ServerlessP2P] Multicast port in use, falling back to broadcast only');
+          resolve();
+        }
       });
       
-      this.udpSocket.bind(this.discoveryPort, '0.0.0.0', () => {
-        // 启用广播
-        this.udpSocket.setBroadcast(true);
-        console.log(`[ServerlessP2P] UDP discovery on port ${this.discoveryPort}`);
+      // 绑定到多播端口（允许配置）
+      const multicastPort = this.multicastPort || MULTICAST_PORT;
+      
+      this.udpSocket.bind(multicastPort, '0.0.0.0', () => {
+        // 加入多播组
+        try {
+          this.udpSocket.addMembership(MULTICAST_ADDR);
+          this.udpSocket.setMulticastTTL(MULTICAST_TTL);
+          console.log(`[ServerlessP2P] Multicast group joined: ${MULTICAST_ADDR}:${multicastPort}`);
+        } catch (err) {
+          console.error('[ServerlessP2P] Failed to join multicast group:', err.message);
+        }
         
-        // 开始广播
+        // 同时启用广播 (作为备用)
+        this.udpSocket.setBroadcast(true);
+        console.log(`[ServerlessP2P] UDP discovery enabled (multicast + broadcast)`);
+        
+        // 开始发现
         this._startDiscoveryBroadcast();
         resolve();
       });
@@ -209,13 +232,10 @@ class ServerlessP2P extends EventEmitter {
   }
 
   /**
-   * 开始发现广播
+   * 开始发现广播 (多播为主，广播为辅)
    */
   _startDiscoveryBroadcast() {
-    // 启用广播
-    this.udpSocket.setBroadcast(true);
-    
-    const broadcastMessage = JSON.stringify({
+    const discoveryMessage = JSON.stringify({
       type: 'F2A_DISCOVER',
       agentId: this.myAgentId,
       publicKey: this.myPublicKey,
@@ -223,20 +243,59 @@ class ServerlessP2P extends EventEmitter {
       timestamp: Date.now()
     });
     
+    // 初始化广播计数器
+    this._broadcastCounter = 0;
+    this._lastBroadcastTime = 0;
+    this._multicastFailed = false;
+    
     this.discoveryInterval = setInterval(() => {
-      const addresses = this._getBroadcastAddresses();
-      for (const addr of addresses) {
-        this.udpSocket.send(broadcastMessage, this.discoveryPort, addr, (err) => {
-          if (err) {
-            // 忽略发送错误
-          }
-        });
+      // 更新消息时间戳
+      const msg = JSON.stringify({
+        type: 'F2A_DISCOVER',
+        agentId: this.myAgentId,
+        publicKey: this.myPublicKey,
+        port: this.p2pPort,
+        timestamp: Date.now()
+      });
+      
+      // 1. 多播 (主要方式)
+      this.udpSocket.send(msg, MULTICAST_PORT, MULTICAST_ADDR, (err) => {
+        if (err) {
+          this._multicastFailed = true;
+          // 多播失败，立即发送广播（不受计数器限制）
+          this._sendBroadcast(msg);
+        } else {
+          this._multicastFailed = false;
+        }
+      });
+      
+      // 2. 广播 (备用方式)
+      // 如果多播正常，每 3 次才发一次广播
+      // 如果多播失败，上面已经处理过了，这里不再重复
+      if (!this._multicastFailed) {
+        this._broadcastCounter++;
+        if (this._broadcastCounter >= 3) {
+          this._broadcastCounter = 0;
+          this._sendBroadcast(msg);
+        }
       }
     }, DISCOVERY_INTERVAL);
   }
 
   /**
-   * 处理发现消息
+   * 发送广播消息
+   */
+  _sendBroadcast(message) {
+    const addresses = this._getBroadcastAddresses();
+    for (const addr of addresses) {
+      this.udpSocket.send(message, this.discoveryPort, addr, (err) => {
+        // 忽略发送错误
+      });
+    }
+  }
+
+  /**
+   * 处理发现消息 (支持多播和广播)
    */
   _handleDiscoveryMessage(msg, rinfo) {
     try {

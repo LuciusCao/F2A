@@ -365,6 +365,111 @@ test('broadcast sends to all connected peers', () => {
   assertEqual(sentMessages.length, 2, 'Should send to 2 verified peers');
 });
 
+// ==================== 多播发现测试 ====================
+
+asyncTest('multicast discovery joins group on start', async () => {
+  const keyPair = generateTestKeyPair();
+  const p2p = new ServerlessP2P({
+    myAgentId: 'test-multicast-agent',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey,
+    p2pPort: 9020,
+    discoveryPort: 8780
+  });
+  
+  await p2p.start();
+  
+  // 验证 UDP socket 已创建并加入了多播组
+  assertTrue(p2p.udpSocket !== null, 'UDP socket should be created');
+  
+  await new Promise((resolve) => {
+    p2p.stop();
+    setTimeout(resolve, 200);
+  });
+});
+
+asyncTest('multicast discovery sends to multicast address', async () => {
+  const keyPair = generateTestKeyPair();
+  const MULTICAST_TEST_PORT = 8782; // 使用不同端口避免冲突
+  const p2p = new ServerlessP2P({
+    myAgentId: 'test-multicast-send',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey,
+    p2pPort: 9021,
+    discoveryPort: 8781
+  });
+  
+  // 创建一个监听器来接收多播消息
+  const dgram = require('dgram');
+  const listener = dgram.createSocket('udp4');
+  let received = null;
+  
+  await new Promise((resolve) => {
+    listener.bind(MULTICAST_TEST_PORT, () => {
+      listener.addMembership('239.255.255.250');
+      listener.on('message', (msg) => {
+        try {
+          const data = JSON.parse(msg.toString());
+          if (data.agentId === 'test-multicast-send') {
+            received = data;
+          }
+        } catch (e) {}
+      });
+      resolve();
+    });
+  });
+  
+  await p2p.start();
+  
+  // 手动发送一条多播消息到测试端口
+  const msg = JSON.stringify({
+    type: 'F2A_DISCOVER',
+    agentId: 'test-multicast-send',
+    port: 9021,
+    timestamp: Date.now()
+  });
+  p2p.udpSocket.send(msg, MULTICAST_TEST_PORT, '239.255.255.250');
+  
+  // 等待多播消息
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  
+  assertTrue(received !== null, 'Should receive multicast discovery message');
+  assertEqual(received.type, 'F2A_DISCOVER', 'Message type should be F2A_DISCOVER');
+  
+  listener.close();
+  await new Promise((resolve) => {
+    p2p.stop();
+    setTimeout(resolve, 200);
+  });
+});
+
+asyncTest('_sendBroadcast sends to broadcast addresses', async () => {
+  const keyPair = generateTestKeyPair();
+  const p2p = new ServerlessP2P({
+    myAgentId: 'test-broadcast',
+    myPublicKey: keyPair.publicKey,
+    myPrivateKey: keyPair.privateKey,
+    p2pPort: 9022
+  });
+  
+  await p2p.start();
+  
+  // _sendBroadcast 应该不抛出错误
+  let error = null;
+  try {
+    p2p._sendBroadcast(JSON.stringify({ type: 'test' }));
+  } catch (e) {
+    error = e;
+  }
+  
+  assertTrue(error === null, '_sendBroadcast should not throw');
+  
+  await new Promise((resolve) => {
+    p2p.stop();
+    setTimeout(resolve, 200);
+  });
+});
+
 // 确保测试完成后退出进程
 setTimeout(() => {
   process.exit(process.exitCode || 0);

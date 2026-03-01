@@ -196,10 +196,102 @@ class ServerlessP2P extends EventEmitter {
   }
 
   /**
+   * 检查端口占用并尝试释放（如果是 F2A 进程）
+   */
+  async _checkAndReleasePort(port) {
+    // 先尝试绑定，如果失败则说明被占用
+    const testSocket = dgram.createSocket('udp4');
+    
+    return new Promise((resolve) => {
+      testSocket.on('error', (err) => {
+        testSocket.close();
+        
+        if (err.code === 'EADDRINUSE') {
+          this.logger.warn(`[PORT] Port ${port} is occupied, attempting to release...`);
+          
+          // 尝试读取 PID 文件
+          const fs = require('fs');
+          const path = require('path');
+          const os = require('os');
+          const pidFile = path.join(os.homedir(), '.f2a', 'daemon.pid');
+          
+          try {
+            if (fs.existsSync(pidFile)) {
+              const pid = fs.readFileSync(pidFile, 'utf8').trim();
+              this.logger.info(`[PORT] Found F2A PID file: ${pid}`);
+              
+              try {
+                // 检查进程是否存在
+                process.kill(parseInt(pid), 0);
+                
+                // 是 F2A 进程，停止它
+                this.logger.info(`[PORT] Stopping F2A process ${pid}...`);
+                process.kill(parseInt(pid), 'SIGTERM');
+                
+                // 等待进程退出
+                let attempts = 0;
+                const waitForExit = () => {
+                  attempts++;
+                  try {
+                    process.kill(parseInt(pid), 0);
+                    if (attempts >= 10) {
+                      // 强制终止
+                      this.logger.warn(`[PORT] Force killing F2A process...`);
+                      try {
+                        process.kill(parseInt(pid), 'SIGKILL');
+                      } catch (e) {}
+                      // 删除 PID 文件
+                      try { fs.unlinkSync(pidFile); } catch (e) {}
+                      resolve(true);
+                    } else {
+                      setTimeout(waitForExit, 300);
+                    }
+                  } catch (e) {
+                    // 进程已退出
+                    this.logger.info(`[PORT] F2A process stopped successfully`);
+                    try { fs.unlinkSync(pidFile); } catch (e) {}
+                    resolve(true);
+                  }
+                };
+                setTimeout(waitForExit, 300);
+              } catch (e) {
+                // 进程不存在，删除过期的 PID 文件
+                this.logger.info(`[PORT] Stale PID file found, removing...`);
+                try { fs.unlinkSync(pidFile); } catch (e) {}
+                resolve(false);
+              }
+            } else {
+              this.logger.warn(`[PORT] Port ${port} occupied by unknown process`);
+              resolve(false);
+            }
+          } catch (e) {
+            this.logger.error(`[PORT] Error checking PID file: ${e.message}`);
+            resolve(false);
+          }
+        } else {
+          resolve(false);
+        }
+      });
+      
+      testSocket.bind(port, () => {
+        // 绑定成功，端口未被占用
+        testSocket.close();
+        this.logger.debug(`[PORT] Port ${port} is free`);
+        resolve(false);
+      });
+    });
+  }
+
+  /**
    * 启动 UDP 发现服务
    * 支持多播 (Multicast) 和广播 (Broadcast) 两种模式
    */
-  _startUDPDiscovery() {
+  async _startUDPDiscovery() {
+    const multicastPort = this.multicastPort || MULTICAST_PORT;
+    
+    // 检查并释放被占用的端口
+    await this._checkAndReleasePort(multicastPort);
+    
     return new Promise((resolve, reject) => {
       this.udpSocket = dgram.createSocket('udp4');
       
@@ -208,32 +300,25 @@ class ServerlessP2P extends EventEmitter {
       });
       
       this.udpSocket.on('error', (err) => {
-        console.error('[ServerlessP2P] UDP error:', err.message);
-        // 如果多播端口被占用，仍然继续（广播模式可用）
+        this.logger.error('[UDP] Error:', err.message);
         if (err.code === 'EADDRINUSE') {
-          console.warn('[ServerlessP2P] Multicast port in use, falling back to broadcast only');
+          this.logger.warn('[UDP] Port still in use after cleanup, falling back to broadcast only');
           resolve();
         }
       });
       
-      // 绑定到多播端口（允许配置）
-      const multicastPort = this.multicastPort || MULTICAST_PORT;
-      
       this.udpSocket.bind(multicastPort, '0.0.0.0', () => {
-        // 加入多播组
         try {
           this.udpSocket.addMembership(MULTICAST_ADDR);
           this.udpSocket.setMulticastTTL(MULTICAST_TTL);
-          console.log(`[ServerlessP2P] Multicast group joined: ${MULTICAST_ADDR}:${multicastPort}`);
+          this.logger.info(`[UDP] Multicast joined: ${MULTICAST_ADDR}:${multicastPort}`);
         } catch (err) {
-          console.error('[ServerlessP2P] Failed to join multicast group:', err.message);
+          this.logger.error('[UDP] Failed to join multicast:', err.message);
         }
         
-        // 同时启用广播 (作为备用)
         this.udpSocket.setBroadcast(true);
-        console.log(`[ServerlessP2P] UDP discovery enabled (multicast + broadcast)`);
+        this.logger.info('[UDP] Broadcast enabled');
         
-        // 开始发现
         this._startDiscoveryBroadcast();
         resolve();
       });

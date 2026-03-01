@@ -200,15 +200,22 @@ class ServerlessP2P extends EventEmitter {
       
       this.udpSocket.on('error', (err) => {
         console.error('[ServerlessP2P] UDP error:', err.message);
+        // 如果多播端口被占用，仍然继续（广播模式可用）
+        if (err.code === 'EADDRINUSE') {
+          console.warn('[ServerlessP2P] Multicast port in use, falling back to broadcast only');
+          resolve();
+        }
       });
       
-      // 绑定到多播端口
-      this.udpSocket.bind(MULTICAST_PORT, '0.0.0.0', () => {
+      // 绑定到多播端口（允许配置）
+      const multicastPort = this.multicastPort || MULTICAST_PORT;
+      
+      this.udpSocket.bind(multicastPort, '0.0.0.0', () => {
         // 加入多播组
         try {
           this.udpSocket.addMembership(MULTICAST_ADDR);
           this.udpSocket.setMulticastTTL(MULTICAST_TTL);
-          console.log(`[ServerlessP2P] Multicast group joined: ${MULTICAST_ADDR}:${MULTICAST_PORT}`);
+          console.log(`[ServerlessP2P] Multicast group joined: ${MULTICAST_ADDR}:${multicastPort}`);
         } catch (err) {
           console.error('[ServerlessP2P] Failed to join multicast group:', err.message);
         }
@@ -236,21 +243,41 @@ class ServerlessP2P extends EventEmitter {
       timestamp: Date.now()
     });
     
+    // 初始化广播计数器
+    this._broadcastCounter = 0;
+    this._lastBroadcastTime = 0;
+    this._multicastFailed = false;
+    
     this.discoveryInterval = setInterval(() => {
+      // 更新消息时间戳
+      const msg = JSON.stringify({
+        type: 'F2A_DISCOVER',
+        agentId: this.myAgentId,
+        publicKey: this.myPublicKey,
+        port: this.p2pPort,
+        timestamp: Date.now()
+      });
+      
       // 1. 多播 (主要方式)
-      this.udpSocket.send(discoveryMessage, MULTICAST_PORT, MULTICAST_ADDR, (err) => {
+      this.udpSocket.send(msg, MULTICAST_PORT, MULTICAST_ADDR, (err) => {
         if (err) {
-          // 多播失败，尝试广播
-          this._sendBroadcast(discoveryMessage);
+          this._multicastFailed = true;
+          // 多播失败，立即发送广播（不受计数器限制）
+          this._sendBroadcast(msg);
+        } else {
+          this._multicastFailed = false;
         }
       });
       
-      // 2. 广播 (备用方式，每 3 次才发一次)
-      if (this._broadcastCounter === undefined) this._broadcastCounter = 0;
-      this._broadcastCounter++;
-      if (this._broadcastCounter >= 3) {
-        this._broadcastCounter = 0;
-        this._sendBroadcast(discoveryMessage);
+      // 2. 广播 (备用方式)
+      // 如果多播正常，每 3 次才发一次广播
+      // 如果多播失败，上面已经处理过了，这里不再重复
+      if (!this._multicastFailed) {
+        this._broadcastCounter++;
+        if (this._broadcastCounter >= 3) {
+          this._broadcastCounter = 0;
+          this._sendBroadcast(msg);
+        }
       }
     }, DISCOVERY_INTERVAL);
   }

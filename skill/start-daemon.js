@@ -6,9 +6,12 @@
  *   node start-daemon.js [start|stop|status]
  * 
  * 环境变量:
- *   F2A_AGENT_ID - Agent ID
- *   F2A_PORT - P2P 端口 (默认 9000)
+ *   F2A_AGENT_ID       - Agent ID
+ *   F2A_PORT           - P2P 端口 (默认 9000)
  *   F2A_SECURITY_LEVEL - 安全等级 (默认 medium)
+ *   F2A_DATA_DIR       - 数据目录 (默认 ~/.f2a)
+ *   F2A_LOG_MAX_SIZE   - 日志文件最大大小，单位字节 (默认 10MB)
+ *   F2A_LOG_MAX_FILES  - 保留的日志文件数量 (默认 5)
  */
 
 const { F2A } = require('./scripts/index');
@@ -17,12 +20,24 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const PID_FILE = path.join(os.homedir(), '.f2a', 'daemon.pid');
-const LOG_FILE = path.join(os.homedir(), '.f2a', 'daemon.log');
+// 支持 F2A_DATA_DIR 环境变量配置数据目录
+const DATA_DIR = process.env.F2A_DATA_DIR || path.join(os.homedir(), '.f2a');
+const PID_FILE = path.join(DATA_DIR, 'daemon.pid');
+const PID_LOCK_FILE = path.join(DATA_DIR, 'daemon.pid.lock');
+const LOG_FILE = path.join(DATA_DIR, 'daemon.log');
+
+// 日志配置
+const LOG_MAX_SIZE = parseInt(process.env.F2A_LOG_MAX_SIZE) || 10 * 1024 * 1024; // 默认 10MB
+const LOG_MAX_FILES = parseInt(process.env.F2A_LOG_MAX_FILES) || 5; // 保留 5 个备份
+
+// 确保数据目录存在
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+}
 
 // 生成或加载密钥对
 function getKeyPair() {
-  const keyFile = path.join(os.homedir(), '.f2a', 'keys.json');
+  const keyFile = path.join(DATA_DIR, 'keys.json');
   
   if (fs.existsSync(keyFile)) {
     try {
@@ -42,74 +57,153 @@ function getKeyPair() {
   return keyPair;
 }
 
+// 获取文件锁（防止 PID 文件竞态）
+function acquireLock() {
+  try {
+    // 使用独占模式创建锁文件（原子操作）
+    const fd = fs.openSync(PID_LOCK_FILE, 'wx');
+    fs.writeSync(fd, process.pid.toString());
+    fs.closeSync(fd);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// 释放文件锁
+function releaseLock() {
+  try {
+    if (fs.existsSync(PID_LOCK_FILE)) {
+      fs.unlinkSync(PID_LOCK_FILE);
+    }
+  } catch (e) {
+    // 忽略错误
+  }
+}
+
+// 检查并轮转日志文件
+function rotateLogIfNeeded() {
+  try {
+    if (!fs.existsSync(LOG_FILE)) return;
+    
+    const stats = fs.statSync(LOG_FILE);
+    if (stats.size < LOG_MAX_SIZE) return;
+    
+    // 轮转日志：daemon.log -> daemon.log.1 -> daemon.log.2 -> ...
+    for (let i = LOG_MAX_FILES - 1; i >= 1; i--) {
+      const oldFile = `${LOG_FILE}.${i}`;
+      const newFile = `${LOG_FILE}.${i + 1}`;
+      
+      if (fs.existsSync(oldFile)) {
+        if (i === LOG_MAX_FILES - 1) {
+          fs.unlinkSync(oldFile); // 删除最老的
+        } else {
+          fs.renameSync(oldFile, newFile);
+        }
+      }
+    }
+    
+    fs.renameSync(LOG_FILE, `${LOG_FILE}.1`);
+  } catch (e) {
+    console.error('[F2A] Log rotation failed:', e.message);
+  }
+}
+
 // 启动守护进程
 async function start() {
-  // 检查是否已在运行
-  if (fs.existsSync(PID_FILE)) {
-    const pid = fs.readFileSync(PID_FILE, 'utf8');
-    try {
-      process.kill(parseInt(pid), 0);
-      console.log(`[F2A] Daemon already running (PID: ${pid})`);
-      return;
-    } catch (e) {
-      // 进程不存在，继续启动
-    }
+  // 获取文件锁防止竞态
+  if (!acquireLock()) {
+    console.log('[F2A] Another instance is starting, please wait...');
+    process.exit(1);
   }
-  
-  const keyPair = getKeyPair();
-  
-  const f2a = new F2A({
-    myAgentId: process.env.F2A_AGENT_ID,
-    myPublicKey: keyPair.publicKey,
-    myPrivateKey: keyPair.privateKey,
-    p2pPort: parseInt(process.env.F2A_PORT) || 9000,
-    security: {
-      level: process.env.F2A_SECURITY_LEVEL || 'medium',
-      requireConfirmation: true
+
+  try {
+    // 检查是否已在运行
+    if (fs.existsSync(PID_FILE)) {
+      const pid = fs.readFileSync(PID_FILE, 'utf8');
+      try {
+        process.kill(parseInt(pid), 0);
+        console.log(`[F2A] Daemon already running (PID: ${pid})`);
+        releaseLock();
+        return;
+      } catch (e) {
+        // 进程不存在，继续启动
+      }
     }
-  });
-  
-  // 事件监听
-  f2a.on('connected', ({ peerId, type }) => {
-    log(`Connected to: ${peerId.slice(0, 16)}... via ${type}`);
-  });
-  
-  f2a.on('disconnected', ({ peerId }) => {
-    log(`Disconnected from: ${peerId.slice(0, 16)}...`);
-  });
-  
-  f2a.on('message', ({ peerId, message }) => {
-    if (message.type === 'message') {
-      log(`Message from ${peerId.slice(0, 16)}...: ${message.content}`);
+    
+    const keyPair = getKeyPair();
+    
+    const f2a = new F2A({
+      myAgentId: process.env.F2A_AGENT_ID,
+      myPublicKey: keyPair.publicKey,
+      myPrivateKey: keyPair.privateKey,
+      p2pPort: parseInt(process.env.F2A_PORT) || 9000,
+      security: {
+        level: process.env.F2A_SECURITY_LEVEL || 'medium',
+        requireConfirmation: true
+      }
+    });
+    
+    // 事件监听
+    f2a.on('connected', ({ peerId, type }) => {
+      log(`Connected to: ${peerId.slice(0, 16)}... via ${type}`);
+    });
+    
+    f2a.on('disconnected', ({ peerId }) => {
+      log(`Disconnected from: ${peerId.slice(0, 16)}...`);
+    });
+    
+    f2a.on('message', ({ peerId, message }) => {
+      if (message.type === 'message') {
+        log(`Message from ${peerId.slice(0, 16)}...: ${message.content}`);
+      }
+    });
+    
+    await f2a.start();
+    
+    // 保存 PID
+    fs.writeFileSync(PID_FILE, process.pid.toString());
+    
+    log(`F2A Daemon started as ${f2a.myAgentId}`);
+    log(`P2P Port: ${f2a.p2p.p2pPort}`);
+    log(`PID: ${process.pid}`);
+    
+    // 释放启动锁，保留 PID 文件用于运行时检查
+    releaseLock();
+    
+    // 保持运行
+    process.stdin.resume();
+    
+    // 优雅退出
+    process.on('SIGINT', () => {
+      log('Shutting down...');
+      f2a.stop();
+      cleanup();
+      process.exit(0);
+    });
+    
+    process.on('SIGTERM', () => {
+      log('Shutting down...');
+      f2a.stop();
+      cleanup();
+      process.exit(0);
+    });
+  } catch (err) {
+    releaseLock();
+    throw err;
+  }
+}
+
+// 清理函数
+function cleanup() {
+  try {
+    if (fs.existsSync(PID_FILE)) {
+      fs.unlinkSync(PID_FILE);
     }
-  });
-  
-  await f2a.start();
-  
-  // 保存 PID
-  fs.writeFileSync(PID_FILE, process.pid.toString());
-  
-  log(`F2A Daemon started as ${f2a.myAgentId}`);
-  log(`P2P Port: ${f2a.p2p.p2pPort}`);
-  log(`PID: ${process.pid}`);
-  
-  // 保持运行
-  process.stdin.resume();
-  
-  // 优雅退出
-  process.on('SIGINT', () => {
-    log('Shutting down...');
-    f2a.stop();
-    fs.unlinkSync(PID_FILE);
-    process.exit(0);
-  });
-  
-  process.on('SIGTERM', () => {
-    log('Shutting down...');
-    f2a.stop();
-    fs.unlinkSync(PID_FILE);
-    process.exit(0);
-  });
+    releaseLock();
+  } catch (e) {
+    // 忽略错误
+  }
 }
 
 // 停止守护进程
@@ -158,6 +252,9 @@ function status() {
 
 // 日志函数
 function log(message) {
+  // 检查并轮转日志
+  rotateLogIfNeeded();
+  
   const timestamp = new Date().toISOString();
   const line = `[${timestamp}] ${message}\n`;
   fs.appendFileSync(LOG_FILE, line);

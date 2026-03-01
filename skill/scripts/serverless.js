@@ -16,6 +16,11 @@ const DISCOVERY_PORT = 8767;
 const DEFAULT_P2P_PORT = 9000;
 const DISCOVERY_INTERVAL = 5000;
 const DISCOVERY_TIMEOUT = 15000;
+
+// 多播配置 (Multicast Discovery)
+const MULTICAST_ADDR = '239.255.255.250';  // 多播组地址
+const MULTICAST_PORT = 8768;                // 多播端口 (与广播端口分开，避免冲突)
+const MULTICAST_TTL = 128;                  // 多播 TTL
 const MAX_MESSAGE_SIZE = 1024 * 1024; // 1MB 消息大小限制
 const MAX_PROCESSED_MESSAGES = 5000; // 防重放缓存大小
 const CLEANUP_INTERVAL = 60000; // 清理间隔
@@ -183,6 +188,7 @@ class ServerlessP2P extends EventEmitter {
 
   /**
    * 启动 UDP 发现服务
+   * 支持多播 (Multicast) 和广播 (Broadcast) 两种模式
    */
   _startUDPDiscovery() {
     return new Promise((resolve, reject) => {
@@ -196,12 +202,22 @@ class ServerlessP2P extends EventEmitter {
         console.error('[ServerlessP2P] UDP error:', err.message);
       });
       
-      this.udpSocket.bind(this.discoveryPort, '0.0.0.0', () => {
-        // 启用广播
-        this.udpSocket.setBroadcast(true);
-        console.log(`[ServerlessP2P] UDP discovery on port ${this.discoveryPort}`);
+      // 绑定到多播端口
+      this.udpSocket.bind(MULTICAST_PORT, '0.0.0.0', () => {
+        // 加入多播组
+        try {
+          this.udpSocket.addMembership(MULTICAST_ADDR);
+          this.udpSocket.setMulticastTTL(MULTICAST_TTL);
+          console.log(`[ServerlessP2P] Multicast group joined: ${MULTICAST_ADDR}:${MULTICAST_PORT}`);
+        } catch (err) {
+          console.error('[ServerlessP2P] Failed to join multicast group:', err.message);
+        }
         
-        // 开始广播
+        // 同时启用广播 (作为备用)
+        this.udpSocket.setBroadcast(true);
+        console.log(`[ServerlessP2P] UDP discovery enabled (multicast + broadcast)`);
+        
+        // 开始发现
         this._startDiscoveryBroadcast();
         resolve();
       });
@@ -209,13 +225,10 @@ class ServerlessP2P extends EventEmitter {
   }
 
   /**
-   * 开始发现广播
+   * 开始发现广播 (多播为主，广播为辅)
    */
   _startDiscoveryBroadcast() {
-    // 启用广播
-    this.udpSocket.setBroadcast(true);
-    
-    const broadcastMessage = JSON.stringify({
+    const discoveryMessage = JSON.stringify({
       type: 'F2A_DISCOVER',
       agentId: this.myAgentId,
       publicKey: this.myPublicKey,
@@ -224,19 +237,38 @@ class ServerlessP2P extends EventEmitter {
     });
     
     this.discoveryInterval = setInterval(() => {
-      const addresses = this._getBroadcastAddresses();
-      for (const addr of addresses) {
-        this.udpSocket.send(broadcastMessage, this.discoveryPort, addr, (err) => {
-          if (err) {
-            // 忽略发送错误
-          }
-        });
+      // 1. 多播 (主要方式)
+      this.udpSocket.send(discoveryMessage, MULTICAST_PORT, MULTICAST_ADDR, (err) => {
+        if (err) {
+          // 多播失败，尝试广播
+          this._sendBroadcast(discoveryMessage);
+        }
+      });
+      
+      // 2. 广播 (备用方式，每 3 次才发一次)
+      if (this._broadcastCounter === undefined) this._broadcastCounter = 0;
+      this._broadcastCounter++;
+      if (this._broadcastCounter >= 3) {
+        this._broadcastCounter = 0;
+        this._sendBroadcast(discoveryMessage);
       }
     }, DISCOVERY_INTERVAL);
   }
 
   /**
-   * 处理发现消息
+   * 发送广播消息
+   */
+  _sendBroadcast(message) {
+    const addresses = this._getBroadcastAddresses();
+    for (const addr of addresses) {
+      this.udpSocket.send(message, this.discoveryPort, addr, (err) => {
+        // 忽略发送错误
+      });
+    }
+  }
+
+  /**
+   * 处理发现消息 (支持多播和广播)
    */
   _handleDiscoveryMessage(msg, rinfo) {
     try {

@@ -78,7 +78,17 @@ node start-daemon.js status
 node start-daemon.js stop
 ```
 
-**或使用 npm 命令**:
+**或使用环境变量配置**:
+```bash
+# 自定义数据目录
+export F2A_DATA_DIR="/var/lib/f2a"
+
+# 自定义日志配置
+export F2A_LOG_MAX_SIZE=20971520  # 20MB
+export F2A_LOG_MAX_FILES=10       # 保留10个日志文件
+
+nohup node start-daemon.js start > /dev/null 2>&1 &
+```
 ```bash
 npm run daemon:start   # 启动（需要配合 nohup 使用）
 npm run daemon:status  # 查看状态
@@ -240,3 +250,6 @@ p2p.on('group_message', ({ groupId, groupName, from, content }) => {
 - `F2A_AGENT_ID` - 指定 Agent ID
 - `F2A_PORT` - 指定 P2P 端口 (默认 9000)
 - `F2A_SECURITY_LEVEL` - 安全等级 (low/medium/high)
+- `F2A_DATA_DIR` - 数据目录路径 (默认 ~/.f2a)
+- `F2A_LOG_MAX_SIZE` - 日志文件最大大小，单位字节 (默认 10MB)
+- `F2A_LOG_MAX_FILES` - 保留的日志文件数量 (默认 5)

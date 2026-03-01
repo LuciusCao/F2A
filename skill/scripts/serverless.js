@@ -38,7 +38,7 @@ class ServerlessP2P extends EventEmitter {
     
     // 初始化日志
     this.logger = new Logger({
-      level: options.logLevel || 'DEBUG',
+      level: options.logLevel || 'INFO',  // 默认 INFO 级别
       enableConsole: true,
       enableFile: true
     });

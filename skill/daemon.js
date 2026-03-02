@@ -41,6 +41,7 @@ const OPENCLAW_HOOK_URL = process.env.OPENCLAW_HOOK_URL || 'http://127.0.0.1:187
 const OPENCLAW_HOOK_TOKEN = process.env.OPENCLAW_HOOK_TOKEN || '';
 
 // 控制服务器配置
+const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT) || 9001;
 const CONTROL_TOKEN = process.env.F2A_CONTROL_TOKEN || 'f2a-default-token';
 
 // 日志配置

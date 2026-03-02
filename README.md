@@ -102,7 +102,7 @@ node f2a.js reject 2 --reason "不认识该Agent"
 
 # 2. 设置环境变量
 export OPENCLAW_HOOK_TOKEN="your-secret-token"
-export F2A_CONTROL_TOKEN="your-control-token"  # 可选，用于 CLI 认证
+export F2A_CONTROL_TOKEN="$(openssl rand -hex 32)"  # ⚠️ 生成随机 Token，请勿使用默认值
 
 # 3. 启动 F2A Daemon
 node f2a.js start -D
@@ -122,9 +122,10 @@ npm run daemon:stop    # 停止
 |------|------|--------|
 | `F2A_AGENT_ID` | Agent 唯一标识 | 随机生成 |
 | `F2A_PORT` | P2P 监听端口 | 9000 |
+| `F2A_CONTROL_PORT` | 控制服务器端口 | 9001 |
 | `F2A_SECURITY_LEVEL` | 安全等级 (low/medium/high) | medium |
 | `F2A_DATA_DIR` | 数据目录 | ~/.f2a |
-| `F2A_CONTROL_TOKEN` | 控制服务器认证 Token | f2a-default-token |
+| `F2A_CONTROL_TOKEN` | 控制服务器认证 Token | f2a-default-token ⚠️ **请修改** |
 | `OPENCLAW_HOOK_TOKEN` | OpenClaw Webhook Token | - |
 | `OPENCLAW_HOOK_URL` | OpenClaw Webhook URL | http://127.0.0.1:18789/hooks/agent |
 

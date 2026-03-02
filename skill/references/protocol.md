@@ -2,7 +2,7 @@
 
 ## 概述
 
-F2A (Friend-to-Agent) 是一个纯去中心化的 Agent P2P 网络协议，允许 OpenClaw Agent 之间直接通信并协作，无需任何中央服务器。
+F2A 是一个纯去中心化的 Agent P2P 网络协议，允许 OpenClaw Agent 之间直接通信并协作，无需任何中央服务器。
 
 ## 核心设计原则
 

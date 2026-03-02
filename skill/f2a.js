@@ -29,7 +29,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 
-const DAEMON_SCRIPT = path.join(__dirname, 'start-daemon.js');
+const DAEMON_SCRIPT = path.join(__dirname, 'daemon.js');
 
 // 解析参数
 function parseArgs(argv) {

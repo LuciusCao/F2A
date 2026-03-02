@@ -39,12 +39,12 @@ function assertEqual(actual, expected, message) {
 console.log('\n📦 Daemon Tests');
 
 const skillDir = path.join(__dirname, '..');
-const daemonScript = path.join(skillDir, 'start-daemon.js');
+const daemonScript = path.join(skillDir, 'daemon.js');
 const f2aScript = path.join(skillDir, 'f2a.js');
 
 // ==================== 文件存在测试 ====================
 
-test('start-daemon.js exists', () => {
+test('daemon.js exists', () => {
   assertTrue(fs.existsSync(daemonScript), 'Daemon script should exist');
 });
 
@@ -52,7 +52,7 @@ test('f2a.js exists', () => {
   assertTrue(fs.existsSync(f2aScript), 'f2a.js should exist');
 });
 
-test('start-daemon.js is executable', () => {
+test('daemon.js is executable', () => {
   const stats = fs.statSync(daemonScript);
   assertTrue(stats.isFile(), 'Should be a file');
 });
@@ -79,9 +79,9 @@ test('f2a.js contains required commands', () => {
   assertTrue(content.includes('status'), 'Should support status command');
 });
 
-test('f2a.js forwards arguments to start-daemon.js', () => {
+test('f2a.js forwards arguments to daemon.js', () => {
   const content = fs.readFileSync(f2aScript, 'utf8');
-  assertTrue(content.includes('start-daemon.js'), 'Should reference start-daemon.js');
+  assertTrue(content.includes('daemon.js'), 'Should reference daemon.js');
   assertTrue(content.includes('daemonArgs'), 'Should forward arguments');
 });
 
@@ -115,7 +115,7 @@ test('package.json has daemon scripts', () => {
 
 test('daemon script shows help for unknown command', () => {
   try {
-    execSync('node start-daemon.js unknown', { cwd: skillDir, stdio: 'pipe' });
+    execSync('node daemon.js unknown', { cwd: skillDir, stdio: 'pipe' });
   } catch (e) {
     // Should exit with error code and show usage
     assertTrue(e.status !== 0, 'Should exit with error code');
@@ -141,7 +141,7 @@ test('status shows not running when daemon is not active', () => {
   }
   
   try {
-    const output = execSync('node start-daemon.js status', { 
+    const output = execSync('node daemon.js status', { 
       cwd: skillDir, 
       encoding: 'utf8',
       timeout: 5000 

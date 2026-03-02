@@ -10,7 +10,6 @@ const EventEmitter = require('events');
 const { Messaging } = require('./messaging');
 const { SkillsManager } = require('./skills');
 const { FileTransfer } = require('./files');
-const { P2PManager } = require('./p2p');
 const { WebRTCManager } = require('./webrtc');
 const { E2ECrypto } = require('./crypto');
 const { GroupChat } = require('./group');
@@ -45,6 +44,7 @@ class F2A extends EventEmitter {
       myPublicKey: this.myPublicKey,
       myPrivateKey: this.myPrivateKey,
       p2pPort: options.p2pPort || 9000,
+      logLevel: options.logLevel || 'INFO',
       security: options.security
     });
     
@@ -501,7 +501,6 @@ module.exports = {
   FileTransfer,
   GroupChat,
   E2ECrypto,
-  P2PManager,
   WebRTCManager,
   IdentityManager
 };

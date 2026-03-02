@@ -402,7 +402,9 @@ switch (args.command) {
 
       console.log('[F2A] Starting daemon in background...');
 
-      const child = spawn(process.execPath, [__filename, ...childArgs], {
+      // 使用 __filename 确保指向 start-daemon.js
+      const scriptPath = __filename;
+      const child = spawn(process.execPath, [scriptPath, ...childArgs], {
         detached: true,
         stdio: ['ignore', 'ignore', 'ignore']
       });

@@ -37,7 +37,7 @@ const path = require('path');
 const http = require('http');
 
 const DAEMON_SCRIPT = path.join(__dirname, 'daemon.js');
-const CONTROL_PORT = 9001; // Daemon 控制端口
+const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT) || 9001;
 const CONTROL_TOKEN = process.env.F2A_CONTROL_TOKEN || 'f2a-default-token';
 
 // 解析参数

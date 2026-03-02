@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const { Logger } = require('./logger');
+const { ConnectionManager } = require('./connection-manager');
 
 // 配置常量
 const DISCOVERY_PORT = 8767;
@@ -61,7 +62,8 @@ class ServerlessP2P extends EventEmitter {
     // 状态
     this.peers = new Map(); // peerId -> { socket, address, port, verified }
     this.discoveredAgents = new Map(); // agentId -> { address, port, lastSeen }
-    this.pendingConnections = new Map(); // socket -> { challenge, timestamp }
+    this.pendingConnections = new Map(); // socket -> { challenge, timestamp } (身份验证用)
+    this.connectionManager = new ConnectionManager(); // 连接确认管理
     this.rateLimiter = new Map(); // peerId -> { count, resetTime }
     this.processedMessages = new Set(); // 防重放
 
@@ -181,6 +183,12 @@ class ServerlessP2P extends EventEmitter {
     this.pendingConnections.clear();
     this.rateLimiter.clear();
     this.processedMessages.clear();
+    
+    // 停止 ConnectionManager
+    if (this.connectionManager) {
+      this.connectionManager.stop();
+    }
+    
     this.emit('stopped');
   }
 
@@ -862,32 +870,31 @@ class ServerlessP2P extends EventEmitter {
    * 请求手动确认
    */
   _requestConfirmation(socket, agentId, publicKey) {
-    const confirmationId = crypto.randomUUID();
-
-    this.pendingConnections.set(socket, {
-      ...this.pendingConnections.get(socket),
-      confirmationId,
+    // 使用 ConnectionManager 管理待确认连接
+    const result = this.connectionManager.addPending(
       agentId,
+      socket,
       publicKey,
-      waitingConfirmation: true
+      socket.remoteAddress,
+      socket.remotePort
+    );
+
+    // 发送 pending 状态给 A
+    const pending = JSON.stringify({
+      type: 'connection_pending',
+      confirmationId: result.confirmationId,
+      message: '等待用户确认',
+      timeout: 60 * 60 * 1000 // 1小时
     });
+    socket.write(pending + '\n');
 
-    // 发送确认请求
-    const request = JSON.stringify({
-      type: 'confirmation_request',
-      confirmationId,
-      agentId: this.myAgentId
-    });
-
-    socket.write(request + '\n');
-
-    // 触发事件，让 UI 层显示确认对话框
+    // 触发事件通知上层（Daemon 或 Skill）
     this.emit('confirmation_required', {
-      confirmationId,
+      confirmationId: result.confirmationId,
       agentId,
-      publicKey: publicKey.slice(0, 50) + '...',
-      accept: () => this._confirmConnection(confirmationId, true),
-      reject: () => this._confirmConnection(confirmationId, false)
+      address: socket.remoteAddress,
+      port: socket.remotePort,
+      isDuplicate: result.isDuplicate
     });
   }
 
@@ -923,19 +930,40 @@ class ServerlessP2P extends EventEmitter {
   }
 
   /**
-   * 确认连接
+   * 确认连接（通过 ConnectionManager）
+   */
+  confirmConnection(idOrIndex) {
+    const result = this.connectionManager.confirm(idOrIndex);
+    
+    if (result.success) {
+      this._verifyPeer(result.pending.socket, result.pending.agentId, result.pending.publicKey);
+    }
+    
+    return result;
+  }
+
+  /**
+   * 拒绝连接（通过 ConnectionManager）
+   */
+  rejectConnection(idOrIndex, reason) {
+    return this.connectionManager.reject(idOrIndex, reason);
+  }
+
+  /**
+   * 获取待确认连接列表
+   */
+  getPendingConnections() {
+    return this.connectionManager.getPendingList();
+  }
+
+  /**
+   * 确认连接（旧方法，保留兼容）
    */
   _confirmConnection(confirmationId, accepted) {
-    for (const [socket, pending] of this.pendingConnections) {
-      if (pending.confirmationId === confirmationId) {
-        if (accepted) {
-          this._verifyPeer(socket, pending.agentId, pending.publicKey);
-        } else {
-          this.security.blacklist.add(pending.agentId);
-          socket.end();
-        }
-        return;
-      }
+    if (accepted) {
+      this.confirmConnection(confirmationId);
+    } else {
+      this.rejectConnection(confirmationId, '用户拒绝');
     }
   }
 

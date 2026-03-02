@@ -40,11 +40,16 @@ console.log('\n📦 Daemon Tests');
 
 const skillDir = path.join(__dirname, '..');
 const daemonScript = path.join(skillDir, 'start-daemon.js');
+const f2aScript = path.join(skillDir, 'f2a.js');
 
 // ==================== 文件存在测试 ====================
 
 test('start-daemon.js exists', () => {
   assertTrue(fs.existsSync(daemonScript), 'Daemon script should exist');
+});
+
+test('f2a.js exists', () => {
+  assertTrue(fs.existsSync(f2aScript), 'f2a.js should exist');
 });
 
 test('start-daemon.js is executable', () => {
@@ -59,6 +64,25 @@ test('daemon script contains required functions', () => {
   assertTrue(content.includes('function start'), 'Should have start function');
   assertTrue(content.includes('function stop'), 'Should have stop function');
   assertTrue(content.includes('function status'), 'Should have status function');
+});
+
+test('daemon script supports --daemon flag', () => {
+  const content = fs.readFileSync(daemonScript, 'utf8');
+  assertTrue(content.includes('--daemon') || content.includes("'--daemon'"), 'Should support --daemon flag');
+  assertTrue(content.includes('-D') || content.includes("'-D'"), 'Should support -D shorthand');
+});
+
+test('f2a.js contains required commands', () => {
+  const content = fs.readFileSync(f2aScript, 'utf8');
+  assertTrue(content.includes('start'), 'Should support start command');
+  assertTrue(content.includes('stop'), 'Should support stop command');
+  assertTrue(content.includes('status'), 'Should support status command');
+});
+
+test('f2a.js forwards arguments to start-daemon.js', () => {
+  const content = fs.readFileSync(f2aScript, 'utf8');
+  assertTrue(content.includes('start-daemon.js'), 'Should reference start-daemon.js');
+  assertTrue(content.includes('daemonArgs'), 'Should forward arguments');
 });
 
 test('daemon script uses PID file', () => {

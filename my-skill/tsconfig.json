@@ -14,23 +14,13 @@
     "declarationMap": true,
     "sourceMap": true,
     "moduleResolution": "node",
-    "allowSyntheticDefaultImports": true,
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-    "noImplicitAny": true,
-    "noImplicitReturns": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "strictNullChecks": true,
-    "strictPropertyInitialization": true
+    "allowSyntheticDefaultImports": true
   },
   "include": [
     "src/**/*"
   ],
   "exclude": [
     "node_modules",
-    "dist",
-    "tests",
-    "**/*.test.ts"
+    "dist"
   ]
 }

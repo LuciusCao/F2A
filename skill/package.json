@@ -1,45 +1,20 @@
 {
-  "name": "f2a-network-skill",
-  "version": "0.3.1",
-  "description": "F2A (Friend-to-Agent) P2P networking skill for OpenClaw with E2E encryption, WebRTC, and group chat support",
-  "main": "scripts/index.js",
+  "name": "f2a-skill",
+  "version": "1.0.0",
+  "description": "Friend-to-Agent P2P networking protocol for OpenClaw Agents",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
-    "pair:host": "node scripts/pair.js host",
-    "pair:join": "node scripts/pair.js join",
-    "peers": "node scripts/peers.js",
-    "daemon:start": "node daemon.js start",
-    "daemon:stop": "node daemon.js stop",
-    "daemon:status": "node daemon.js status",
-    "test": "node tests/crypto.test.js && node tests/group.test.js && node tests/skills.test.js && node tests/serverless.test.js && node tests/files.test.js && node tests/messaging.test.js && node tests/p2p.test.js && node tests/webrtc.test.js && node tests/f2a.test.js && node tests/identity.test.js && node tests/daemon.test.js",
-    "test:crypto": "node tests/crypto.test.js",
-    "test:group": "node tests/group.test.js",
-    "test:skills": "node tests/skills.test.js",
-    "test:serverless": "node tests/serverless.test.js",
-    "test:files": "node tests/files.test.js",
-    "test:messaging": "node tests/messaging.test.js",
-    "test:p2p": "node tests/p2p.test.js",
-    "test:webrtc": "node tests/webrtc.test.js",
-    "test:f2a": "node tests/f2a.test.js",
-    "test:identity": "node tests/identity.test.js",
-    "test:daemon": "node tests/daemon.test.js"
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "clean": "rm -rf dist"
   },
   "dependencies": {
-    "ws": "^8.16.0"
+    "eventemitter3": "^5.0.0",
+    "zod": "^3.22.0"
   },
-  "optionalDependencies": {
-    "wrtc": "^0.4.7"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  },
-  "keywords": [
-    "openclaw",
-    "skill",
-    "p2p",
-    "networking",
-    "f2a",
-    "webrtc",
-    "e2ee"
-  ],
-  "license": "MIT"
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
 }

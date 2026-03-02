@@ -10,6 +10,9 @@ const dgram = require('dgram');
 const net = require('net');
 const crypto = require('crypto');
 const os = require('os');
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
 const { Logger } = require('./logger');
 
 // 配置常量
@@ -196,83 +199,172 @@ class ServerlessP2P extends EventEmitter {
   }
 
   /**
+   * 获取占用指定端口的进程 PID（跨平台）
+   * @param {number} port - 端口号
+   * @returns {number|null} - 进程 PID 或 null
+   */
+  _getProcessByPort(port) {
+    try {
+      const platform = os.platform();
+      let result;
+
+      if (platform === 'darwin' || platform === 'linux') {
+        // macOS/Linux: 使用 lsof
+        result = execSync(`lsof -t -i UDP:${port} 2>/dev/null`).toString().trim();
+      } else if (platform === 'win32') {
+        // Windows: 使用 netstat
+        result = execSync(`netstat -ano | findstr :${port}`).toString().trim();
+        const lines = result.split('\n');
+        for (const line of lines) {
+          const parts = line.trim().split(/\s+/);
+          if (parts.length >= 5) {
+            return parseInt(parts[4]);
+          }
+        }
+        return null;
+      }
+
+      return result ? parseInt(result) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * 验证进程是否是 F2A 进程
+   * @param {number} pid - 进程 PID
+   * @returns {boolean}
+   */
+  _isF2AProcess(pid) {
+    try {
+      const platform = os.platform();
+      let cmdline;
+
+      if (platform === 'linux') {
+        // Linux: 读取 /proc/PID/cmdline
+        cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+      } else if (platform === 'darwin') {
+        // macOS: 使用 ps
+        cmdline = execSync(`ps -p ${pid} -o command= 2>/dev/null`).toString().trim();
+      } else if (platform === 'win32') {
+        // Windows: 使用 wmic
+        cmdline = execSync(`wmic process where ProcessId=${pid} get CommandLine 2>nul`).toString().trim();
+      }
+
+      // 检查命令行是否包含 F2A 相关标识
+      return cmdline && (
+        cmdline.includes('f2a') ||
+        cmdline.includes('start-daemon') ||
+        cmdline.includes('serverless.js') ||
+        cmdline.includes('F2A')
+      );
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
    * 检查端口占用并尝试释放（如果是 F2A 进程）
    */
   async _checkAndReleasePort(port) {
     // 先尝试绑定，如果失败则说明被占用
     const testSocket = dgram.createSocket('udp4');
-    
+
     return new Promise((resolve) => {
       testSocket.on('error', (err) => {
         testSocket.close();
-        
+
         if (err.code === 'EADDRINUSE') {
           this.logger.warn(`[PORT] Port ${port} is occupied, attempting to release...`);
-          
-          // 尝试读取 PID 文件
-          const fs = require('fs');
-          const path = require('path');
-          const os = require('os');
+
           const pidFile = path.join(os.homedir(), '.f2a', 'daemon.pid');
-          
+
           try {
+            // 1. 获取真正占用端口的进程
+            const actualPid = this._getProcessByPort(port);
+
+            if (!actualPid) {
+              this.logger.warn(`[PORT] Could not identify process using port ${port}`);
+              resolve(false);
+              return;
+            }
+
+            this.logger.info(`[PORT] Port ${port} is used by PID: ${actualPid}`);
+
+            // 2. 验证该进程是否是 F2A
+            if (!this._isF2AProcess(actualPid)) {
+              this.logger.warn(`[PORT] Port ${port} is occupied by non-F2A process (PID: ${actualPid}), skipping cleanup`);
+              resolve(false);
+              return;
+            }
+
+            this.logger.info(`[PORT] Confirmed F2A process (PID: ${actualPid})`);
+
+            // 3. 验证 PID 文件（如果存在）
+            let pidFromFile = null;
             if (fs.existsSync(pidFile)) {
-              const pid = fs.readFileSync(pidFile, 'utf8').trim();
-              this.logger.info(`[PORT] Found F2A PID file: ${pid}`);
-              
-              try {
-                // 检查进程是否存在
-                process.kill(parseInt(pid), 0);
-                
-                // 是 F2A 进程，停止它
-                this.logger.info(`[PORT] Stopping F2A process ${pid}...`);
-                process.kill(parseInt(pid), 'SIGTERM');
-                
-                // 等待进程退出
-                let attempts = 0;
-                const waitForExit = () => {
-                  attempts++;
-                  try {
-                    process.kill(parseInt(pid), 0);
-                    if (attempts >= 10) {
-                      // 强制终止
-                      this.logger.warn(`[PORT] Force killing F2A process...`);
-                      try {
-                        process.kill(parseInt(pid), 'SIGKILL');
-                      } catch (e) {}
-                      // 删除 PID 文件
-                      try { fs.unlinkSync(pidFile); } catch (e) {}
-                      resolve(true);
-                    } else {
-                      setTimeout(waitForExit, 300);
-                    }
-                  } catch (e) {
-                    // 进程已退出
-                    this.logger.info(`[PORT] F2A process stopped successfully`);
+              pidFromFile = parseInt(fs.readFileSync(pidFile, 'utf8').trim());
+              this.logger.info(`[PORT] PID file content: ${pidFromFile}`);
+
+              // 如果 PID 文件中的 PID 与实际占用者不同，发出警告
+              if (pidFromFile !== actualPid) {
+                this.logger.warn(`[PORT] PID mismatch: file=${pidFromFile}, actual=${actualPid}`);
+                // 继续处理，因为实际占用者已确认是 F2A
+              }
+            }
+
+            // 4. 使用实际占用的 PID 进行终止
+            const targetPid = actualPid;
+
+            try {
+              // 检查进程是否存在
+              process.kill(targetPid, 0);
+
+              // 是 F2A 进程，优雅停止它
+              this.logger.info(`[PORT] Stopping F2A process ${targetPid}...`);
+              process.kill(targetPid, 'SIGTERM');
+
+              // 等待进程退出
+              let attempts = 0;
+              const waitForExit = () => {
+                attempts++;
+                try {
+                  process.kill(targetPid, 0);
+                  if (attempts >= 10) {
+                    // 强制终止
+                    this.logger.warn(`[PORT] Force killing F2A process...`);
+                    try {
+                      process.kill(targetPid, 'SIGKILL');
+                    } catch (e) {}
+                    // 删除 PID 文件
                     try { fs.unlinkSync(pidFile); } catch (e) {}
                     resolve(true);
+                  } else {
+                    setTimeout(waitForExit, 300);
                   }
-                };
-                setTimeout(waitForExit, 300);
-              } catch (e) {
-                // 进程不存在，删除过期的 PID 文件
-                this.logger.info(`[PORT] Stale PID file found, removing...`);
-                try { fs.unlinkSync(pidFile); } catch (e) {}
-                resolve(false);
-              }
-            } else {
-              this.logger.warn(`[PORT] Port ${port} occupied by unknown process`);
+                } catch (e) {
+                  // 进程已退出
+                  this.logger.info(`[PORT] F2A process stopped successfully`);
+                  try { fs.unlinkSync(pidFile); } catch (e) {}
+                  resolve(true);
+                }
+              };
+              setTimeout(waitForExit, 300);
+            } catch (e) {
+              // 进程不存在，删除过期的 PID 文件
+              this.logger.info(`[PORT] Process ${targetPid} already exited`);
+              try { fs.unlinkSync(pidFile); } catch (e) {}
               resolve(false);
             }
           } catch (e) {
-            this.logger.error(`[PORT] Error checking PID file: ${e.message}`);
+            this.logger.error(`[PORT] Error releasing port: ${e.message}`);
             resolve(false);
           }
         } else {
           resolve(false);
         }
       });
-      
+
       testSocket.bind(port, () => {
         // 绑定成功，端口未被占用
         testSocket.close();

@@ -212,7 +212,7 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
    */
   private bindEvents(): void {
     // 转发 ConnectionManager 事件
-    this.connectionManager.on('confirmation_required', (event) => {
+    this.connectionManager.on('pending_added', (event) => {
       this.emit('confirmation_required', event);
     });
 

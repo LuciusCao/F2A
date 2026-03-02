@@ -518,7 +518,8 @@ export class ServerlessP2P extends EventEmitter<{
       type: 'identity_response',
       agentId: this.identity.agentId,
       publicKey: this.identity.publicKey,
-      signature
+      signature,
+      timestamp: Date.now()
     };
 
     socket.write(JSON.stringify(response) + '\n');

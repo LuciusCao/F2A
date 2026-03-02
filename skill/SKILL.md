@@ -80,16 +80,16 @@ p2p.on('confirmation_required', ({ agentId, accept, reject }) => {
 **执行**:
 ```bash
 # 使用 nohup 启动后台服务（推荐方式）
-nohup node start-daemon.js start > /dev/null 2>&1 &
+nohup node daemon.js start > /dev/null 2>&1 &
 
 # 或使用环境变量指定配置
-F2A_AGENT_ID="my-agent" F2A_PORT=9000 nohup node start-daemon.js start > /dev/null 2>&1 &
+F2A_AGENT_ID="my-agent" F2A_PORT=9000 nohup node daemon.js start > /dev/null 2>&1 &
 
 # 查看状态
-node start-daemon.js status
+node daemon.js status
 
 # 停止服务
-node start-daemon.js stop
+node daemon.js stop
 ```
 
 **或使用环境变量配置**:
@@ -114,7 +114,7 @@ npm run daemon:stop    # 停止
 const { spawn, execSync } = require('child_process');
 
 // 启动后台进程（使用 nohup 确保进程在后台持续运行）
-const daemon = spawn('nohup', ['node', 'start-daemon.js', 'start'], {
+const daemon = spawn('nohup', ['node', 'daemon.js', 'start'], {
   detached: true,
   stdio: 'ignore'
 });
@@ -123,11 +123,11 @@ daemon.unref();
 tellUser('F2A 后台服务已启动');
 
 // 查看状态
-const status = execSync('node start-daemon.js status').toString();
+const status = execSync('node daemon.js status').toString();
 tellUser(status);
 
 // 停止服务
-execSync('node start-daemon.js stop');
+execSync('node daemon.js stop');
 tellUser('F2A 后台服务已停止');
 ```
 
@@ -279,6 +279,6 @@ p2p.on('group_message', ({ groupId, groupName, from, content }) => {
 **修改显示名称**（不影响 Agent ID）：
 ```bash
 export F2A_DISPLAY_NAME="CatPuru"
-node start-daemon.js stop
-nohup node start-daemon.js start > /dev/null 2>&1 &
+node daemon.js stop
+nohup node daemon.js start > /dev/null 2>&1 &
 ```

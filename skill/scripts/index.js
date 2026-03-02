@@ -15,6 +15,7 @@ const { E2ECrypto } = require('./crypto');
 const { GroupChat } = require('./group');
 const { ServerlessP2P } = require('./serverless');
 const { IdentityManager } = require('./identity');
+const { ConnectionManager } = require('./connection-manager');
 
 class F2A extends EventEmitter {
   constructor(options = {}) {
@@ -446,6 +447,29 @@ class F2A extends EventEmitter {
     return this.groups.getAllGroups();
   }
 
+  // ==================== 连接确认 API ====================
+
+  /**
+   * 获取待确认连接列表
+   */
+  getPendingConnections() {
+    return this.p2p.getPendingConnections();
+  }
+
+  /**
+   * 确认连接
+   */
+  confirmConnection(idOrIndex) {
+    return this.p2p.confirmConnection(idOrIndex);
+  }
+
+  /**
+   * 拒绝连接
+   */
+  rejectConnection(idOrIndex, reason) {
+    return this.p2p.rejectConnection(idOrIndex, reason);
+  }
+
   // ==================== 状态查询 API ====================
 
   /**
@@ -496,6 +520,7 @@ class F2A extends EventEmitter {
 module.exports = {
   F2A,
   ServerlessP2P,
+  ConnectionManager,
   Messaging,
   SkillsManager,
   FileTransfer,

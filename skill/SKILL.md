@@ -146,7 +146,51 @@ if (agents.length === 0) {
 }
 ```
 
-### 3. 连接到 Agent
+### 2. 查询待确认连接
+
+**用户说**: "f2a 待确认" / "查看待确认连接"
+
+**执行**:
+```javascript
+const pending = p2p.getPendingConnections();
+if (pending.length === 0) {
+  tellUser("没有待确认的连接请求");
+} else {
+  tellUser(`待确认连接 (${pending.length}个):`);
+  pending.forEach(p => {
+    tellUser(`${p.index}. ${p.agentIdShort} 来自 ${p.address}:${p.port} [剩余${p.remainingMinutes}分钟]`);
+  });
+  tellUser('回复 "允许 [序号]" 或 "拒绝 [序号]"');
+}
+```
+
+### 3. 确认/拒绝连接
+
+**用户说**: "允许 1" / "拒绝 2"
+
+**执行**:
+```javascript
+// 通过序号确认
+const result = p2p.confirmConnection(1);
+if (result.success) {
+  tellUser(`✅ 已接受 ${result.pending.agentId.slice(0, 16)}... 的连接`);
+} else {
+  tellUser(`❌ ${result.error}`);
+}
+
+// 通过序号拒绝
+const result = p2p.rejectConnection(2, '不认识该 Agent');
+if (result.success) {
+  tellUser(`❌ 已拒绝 ${result.pending.agentId.slice(0, 16)}... 的连接`);
+}
+```
+
+**规则**:
+- 每个请求有效期 **1小时**
+- 同一 Agent 的重复请求会自动去重（保留最新）
+- 超时会自动清理
+
+### 4. 连接到 Agent
 
 **用户说**: "连接到 [agent-id]" / "连接第一个发现的 Agent"
 

@@ -279,6 +279,7 @@ function parseArgs(argv) {
   const args = {
     command: 'start',
     debug: false,
+    daemon: false,
     port: null,
     name: null,
     security: null,
@@ -308,6 +309,9 @@ function parseArgs(argv) {
 
     if (arg === '--debug' || arg === '-d') {
       args.debug = true;
+      i++;
+    } else if (arg === '--daemon' || arg === '-D') {
+      args.daemon = true;
       i++;
     } else if ((arg === '--port' || arg === '-p') && argv[i + 1]) {
       args.port = parseInt(argv[i + 1]);
@@ -343,6 +347,7 @@ Commands:
 
 Options:
   -d, --debug              Enable DEBUG log level
+  -D, --daemon             Run as daemon (background)
   -p, --port <number>      Set P2P port (default: 9000)
   -n, --name <name>        Set display name
       --security <level>   Set security level (low|medium|high)
@@ -350,9 +355,9 @@ Options:
   -h, --help               Show this help message
 
 Examples:
-  node start-daemon.js start --debug
-  node start-daemon.js start -p 9001 -n "MyAgent"
-  node start-daemon.js start --debug --port 9001 --security low
+  node start-daemon.js start --daemon
+  node start-daemon.js start -D --debug
+  node start-daemon.js start -D -p 9001 -n "MyAgent"
   node start-daemon.js status
   node start-daemon.js stop
 `);
@@ -386,10 +391,35 @@ if (args.dataDir) {
 
 switch (args.command) {
   case 'start':
-    start().catch(err => {
-      console.error('[F2A] Failed to start:', err.message);
-      process.exit(1);
-    });
+    // 如果指定了 --daemon，则 fork 到后台运行
+    if (args.daemon) {
+      const { spawn } = require('child_process');
+
+      // 获取当前脚本的参数，去掉 --daemon/-D
+      const childArgs = process.argv.slice(2).filter(
+        arg => arg !== '--daemon' && arg !== '-D'
+      );
+
+      console.log('[F2A] Starting daemon in background...');
+
+      const child = spawn(process.execPath, [__filename, ...childArgs], {
+        detached: true,
+        stdio: ['ignore', 'ignore', 'ignore']
+      });
+
+      child.unref();
+
+      // 等待一小段时间确认启动成功
+      setTimeout(() => {
+        status();
+        process.exit(0);
+      }, 1500);
+    } else {
+      start().catch(err => {
+        console.error('[F2A] Failed to start:', err.message);
+        process.exit(1);
+      });
+    }
     break;
   case 'stop':
     stop();

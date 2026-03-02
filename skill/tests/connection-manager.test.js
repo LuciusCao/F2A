@@ -82,7 +82,8 @@ asyncTest('should get pending list', async () => {
   cm.addPending('agent-2', createMockSocket(), 'key2', '192.168.1.101', 9002);
   const list = cm.getPendingList();
   assertEqual(list.length, 2, 'should have 2 items');
-  assertTrue(list[0].index, 'should have index');
+  assertTrue(list[0].index === 1, 'first should have index 1');
+  assertTrue(list[1].index === 2, 'second should have index 2');
   cm.stop();
 });
 

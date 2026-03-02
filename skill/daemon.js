@@ -40,6 +40,9 @@ const CONTROL_PORT = 9001; // HTTP 控制端口
 const OPENCLAW_HOOK_URL = process.env.OPENCLAW_HOOK_URL || 'http://127.0.0.1:18789/hooks/agent';
 const OPENCLAW_HOOK_TOKEN = process.env.OPENCLAW_HOOK_TOKEN || '';
 
+// 控制服务器配置
+const CONTROL_TOKEN = process.env.F2A_CONTROL_TOKEN || 'f2a-default-token';
+
 // 日志配置
 const LOG_MAX_SIZE = parseInt(process.env.F2A_LOG_MAX_SIZE) || 10 * 1024 * 1024; // 默认 10MB
 const LOG_MAX_FILES = parseInt(process.env.F2A_LOG_MAX_FILES) || 5; // 保留 5 个备份
@@ -169,11 +172,11 @@ async function start() {
     });
 
     // 连接请求通知 - 发送到 OpenClaw
-    f2a.on('confirmation_required', ({ agentId, address, port, confirmationId }) => {
+    f2a.on('confirmation_required', async ({ agentId, address, port, confirmationId }) => {
       log(`Connection request from: ${agentId.slice(0, 16)}... at ${address}:${port}`);
       
       // 发送 webhook 通知到 OpenClaw
-      sendOpenClawNotification(agentId, address, port, confirmationId);
+      await sendOpenClawNotification(agentId, address, port, confirmationId);
     });
 
     await f2a.start();
@@ -453,8 +456,8 @@ switch (args.command) {
     process.exit(1);
 }
 
-// 发送 OpenClaw 通知
-function sendOpenClawNotification(agentId, address, port, confirmationId) {
+// 发送 OpenClaw 通知（带重试）
+async function sendOpenClawNotification(agentId, address, port, confirmationId, retries = 3) {
   if (!OPENCLAW_HOOK_TOKEN) {
     log('[HOOK] OPENCLAW_HOOK_TOKEN not set, skipping notification');
     return;
@@ -475,27 +478,52 @@ Agent ID: ${agentId.slice(0, 16)}...
     deliver: true
   });
 
-  const req = http.request(OPENCLAW_HOOK_URL, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${OPENCLAW_HOOK_TOKEN}`,
-      'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(payload)
-    }
-  }, (res) => {
-    if (res.statusCode === 200 || res.statusCode === 202) {
-      log(`[HOOK] Notification sent to OpenClaw`);
-    } else {
-      log(`[HOOK] Failed to send notification: ${res.statusCode}`);
-    }
-  });
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      await new Promise((resolve, reject) => {
+        const req = http.request(OPENCLAW_HOOK_URL, {
+          method: 'POST',
+          timeout: 5000, // 5秒超时
+          headers: {
+            'Authorization': `Bearer ${OPENCLAW_HOOK_TOKEN}`,
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(payload)
+          }
+        }, (res) => {
+          if (res.statusCode === 200 || res.statusCode === 202) {
+            log(`[HOOK] Notification sent to OpenClaw (attempt ${attempt})`);
+            resolve();
+          } else {
+            reject(new Error(`HTTP ${res.statusCode}`));
+          }
+        });
 
-  req.on('error', (err) => {
-    log(`[HOOK] Error sending notification: ${err.message}`);
-  });
+        req.on('error', (err) => {
+          reject(err);
+        });
 
-  req.write(payload);
-  req.end();
+        req.on('timeout', () => {
+          req.destroy();
+          reject(new Error('Timeout'));
+        });
+
+        req.write(payload);
+        req.end();
+      });
+      
+      // 成功发送，退出重试循环
+      return;
+    } catch (err) {
+      log(`[HOOK] Attempt ${attempt} failed: ${err.message}`);
+      
+      if (attempt < retries) {
+        // 等待 1 秒后重试
+        await new Promise(r => setTimeout(r, 1000));
+      } else {
+        log(`[HOOK] All ${retries} attempts failed, notification not sent`);
+      }
+    }
+  }
 }
 
 // 启动 HTTP 控制服务器
@@ -504,11 +532,19 @@ function startControlServer(f2a) {
     // 设置 CORS 头
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-F2A-Token');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(200);
       res.end();
+      return;
+    }
+
+    // 验证 token
+    const token = req.headers['x-f2a-token'];
+    if (token !== CONTROL_TOKEN) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
       return;
     }
 

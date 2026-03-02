@@ -38,6 +38,7 @@ const http = require('http');
 
 const DAEMON_SCRIPT = path.join(__dirname, 'daemon.js');
 const CONTROL_PORT = 9001; // Daemon 控制端口
+const CONTROL_TOKEN = process.env.F2A_CONTROL_TOKEN || 'f2a-default-token';
 
 // 解析参数
 function parseArgs(argv) {
@@ -134,6 +135,7 @@ function sendControlCommand(action, idOrIndex, reason) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-F2A-Token': CONTROL_TOKEN,
         'Content-Length': Buffer.byteLength(payload)
       }
     }, (res) => {
@@ -168,8 +170,11 @@ async function handleControlCommand(command, idOrIndex, reason) {
     process.exit(1);
   }
 
+  // 尝试转换为数字（如果是纯数字）
+  const parsedId = /^\d+$/.test(idOrIndex) ? parseInt(idOrIndex) : idOrIndex;
+
   try {
-    const result = await sendControlCommand(command, idOrIndex, reason);
+    const result = await sendControlCommand(command, parsedId, reason);
     if (result.success) {
       console.log(`[F2A] ${result.message}`);
     } else {

@@ -1,4 +1,4 @@
-# F2A (Friend-to-Agent)
+# F2A
 
 > **Agent 专用的 P2P 协作网络协议** 🚀
 > 

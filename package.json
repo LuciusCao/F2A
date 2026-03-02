@@ -1,5 +1,5 @@
 {
-  "name": "f2a-skill",
+  "name": "f2a-network",
   "version": "1.0.0",
   "description": "Friend-to-Agent P2P networking protocol for OpenClaw Agents",
   "main": "dist/index.js",

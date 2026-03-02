@@ -27,12 +27,18 @@ const { IdentityManager } = require('./scripts/identity');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const http = require('http');
 
 // 支持 F2A_DATA_DIR 环境变量配置数据目录
 const DATA_DIR = process.env.F2A_DATA_DIR || path.join(os.homedir(), '.f2a');
 const PID_FILE = path.join(DATA_DIR, 'daemon.pid');
 const PID_LOCK_FILE = path.join(DATA_DIR, 'daemon.pid.lock');
 const LOG_FILE = path.join(DATA_DIR, 'daemon.log');
+const CONTROL_PORT = 9001; // HTTP 控制端口
+
+// OpenClaw Webhook 配置
+const OPENCLAW_HOOK_URL = process.env.OPENCLAW_HOOK_URL || 'http://127.0.0.1:18789/hooks/agent';
+const OPENCLAW_HOOK_TOKEN = process.env.OPENCLAW_HOOK_TOKEN || '';
 
 // 日志配置
 const LOG_MAX_SIZE = parseInt(process.env.F2A_LOG_MAX_SIZE) || 10 * 1024 * 1024; // 默认 10MB
@@ -162,13 +168,25 @@ async function start() {
       }
     });
 
+    // 连接请求通知 - 发送到 OpenClaw
+    f2a.on('confirmation_required', ({ agentId, address, port, confirmationId }) => {
+      log(`Connection request from: ${agentId.slice(0, 16)}... at ${address}:${port}`);
+      
+      // 发送 webhook 通知到 OpenClaw
+      sendOpenClawNotification(agentId, address, port, confirmationId);
+    });
+
     await f2a.start();
+
+    // 启动 HTTP 控制端点
+    startControlServer(f2a);
 
     // 保存 PID
     fs.writeFileSync(PID_FILE, process.pid.toString(), { mode: 0o600 });
 
     log(`F2A Daemon started as ${f2a.myAgentId}`);
     log(`P2P Port: ${f2a.p2p.p2pPort}`);
+    log(`Control Port: ${CONTROL_PORT}`);
     log(`PID: ${process.pid}`);
 
     // 释放启动锁，保留 PID 文件用于运行时检查
@@ -433,4 +451,126 @@ switch (args.command) {
     console.log(`Unknown command: ${args.command}`);
     showHelp();
     process.exit(1);
+}
+
+// 发送 OpenClaw 通知
+function sendOpenClawNotification(agentId, address, port, confirmationId) {
+  if (!OPENCLAW_HOOK_TOKEN) {
+    log('[HOOK] OPENCLAW_HOOK_TOKEN not set, skipping notification');
+    return;
+  }
+
+  const shortId = confirmationId.slice(0, 8);
+  const payload = JSON.stringify({
+    message: `[F2A] 收到新的连接请求
+
+Agent ID: ${agentId.slice(0, 16)}...
+地址: ${address}:${port}
+请求ID: ${shortId}
+
+回复 "f2a 允许 ${shortId}" 来接受连接
+回复 "f2a 拒绝 ${shortId}" 来拒绝连接`,
+    name: 'F2A',
+    wakeMode: 'now',
+    deliver: true
+  });
+
+  const req = http.request(OPENCLAW_HOOK_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${OPENCLAW_HOOK_TOKEN}`,
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(payload)
+    }
+  }, (res) => {
+    if (res.statusCode === 200 || res.statusCode === 202) {
+      log(`[HOOK] Notification sent to OpenClaw`);
+    } else {
+      log(`[HOOK] Failed to send notification: ${res.statusCode}`);
+    }
+  });
+
+  req.on('error', (err) => {
+    log(`[HOOK] Error sending notification: ${err.message}`);
+  });
+
+  req.write(payload);
+  req.end();
+}
+
+// 启动 HTTP 控制服务器
+function startControlServer(f2a) {
+  const server = http.createServer((req, res) => {
+    // 设置 CORS 头
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+
+    if (req.method !== 'POST' || req.url !== '/control') {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Not found' }));
+      return;
+    }
+
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const { action, idOrIndex, reason } = JSON.parse(body);
+        let result;
+
+        switch (action) {
+          case 'list-pending':
+            const pending = f2a.getPendingConnections();
+            result = { success: true, pending };
+            break;
+
+          case 'confirm':
+            const confirmResult = f2a.confirmConnection(idOrIndex);
+            if (confirmResult.success) {
+              result = { 
+                success: true, 
+                message: `已接受 ${confirmResult.pending.agentId.slice(0, 16)}... 的连接` 
+              };
+            } else {
+              result = { success: false, error: confirmResult.error };
+            }
+            break;
+
+          case 'reject':
+            const rejectResult = f2a.rejectConnection(idOrIndex, reason);
+            if (rejectResult.success) {
+              result = { 
+                success: true, 
+                message: `已拒绝 ${rejectResult.pending.agentId.slice(0, 16)}... 的连接` 
+              };
+            } else {
+              result = { success: false, error: rejectResult.error };
+            }
+            break;
+
+          default:
+            result = { success: false, error: 'Unknown action' };
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Invalid request' }));
+      }
+    });
+  });
+
+  server.listen(CONTROL_PORT, () => {
+    log(`Control server listening on port ${CONTROL_PORT}`);
+  });
+
+  return server;
 }

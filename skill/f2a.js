@@ -11,6 +11,9 @@
  *   status      查看服务状态
  *   peers       查看已连接的 peers
  *   discover    发现局域网内的其他 Agent
+ *   pending     查看待确认连接
+ *   confirm     确认连接请求
+ *   reject      拒绝连接请求
  *
  * 选项:
  *   -D, --daemon     后台运行
@@ -24,12 +27,17 @@
  *   node f2a.js start -D -p 9001 -n "MyAgent"
  *   node f2a.js status
  *   node f2a.js stop
+ *   node f2a.js pending
+ *   node f2a.js confirm 1
+ *   node f2a.js reject abc-123 --reason "不认识"
  */
 
 const { spawn } = require('child_process');
 const path = require('path');
+const http = require('http');
 
 const DAEMON_SCRIPT = path.join(__dirname, 'daemon.js');
+const CONTROL_PORT = 9001; // Daemon 控制端口
 
 // 解析参数
 function parseArgs(argv) {
@@ -37,7 +45,9 @@ function parseArgs(argv) {
     command: 'start',
     daemon: false,
     debug: false,
-    help: false
+    help: false,
+    idOrIndex: null,
+    reason: null
   };
 
   let i = 2;
@@ -54,13 +64,18 @@ function parseArgs(argv) {
     i++;
   }
 
-  // 解析选项
+  // 解析选项和参数
   for (; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--daemon' || arg === '-D') {
       args.daemon = true;
     } else if (arg === '--debug' || arg === '-d') {
       args.debug = true;
+    } else if (arg === '--reason' && argv[i + 1]) {
+      args.reason = argv[i + 1];
+      i++;
+    } else if (!arg.startsWith('-') && !args.idOrIndex) {
+      args.idOrIndex = arg;
     }
   }
 
@@ -79,22 +94,108 @@ Commands:
   status      Show service status
   peers       List connected peers
   discover    Discover agents on the network
+  pending     List pending connection requests
+  confirm     Confirm a pending connection
+  reject      Reject a pending connection
 
 Options:
   -D, --daemon         Run as daemon (background)
   -d, --debug          Enable DEBUG log level
   -p, --port <port>    Set P2P port (default: 9000)
   -n, --name <name>    Set display name
+  --reason <text>      Reason for rejection
   -h, --help           Show this help message
 
 Examples:
-  node f2a.js start -D              # Start in background
-  node f2a.js start -D --debug      # Start in background with debug logs
-  node f2a.js start -D -p 9001      # Start on custom port
-  node f2a.js status                # Check status
-  node f2a.js stop                  # Stop service
-  node f2a.js peers                 # List peers
+  node f2a.js start -D                    # Start in background
+  node f2a.js start -D --debug            # Start with debug logs
+  node f2a.js pending                     # List pending requests
+  node f2a.js confirm 1                   # Confirm by index
+  node f2a.js confirm abc-123             # Confirm by ID
+  node f2a.js reject 2 --reason "unknown" # Reject with reason
+  node f2a.js status                      # Check status
+  node f2a.js stop                        # Stop service
 `);
+}
+
+// 发送控制命令到 Daemon
+function sendControlCommand(action, idOrIndex, reason) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify({
+      action,
+      idOrIndex,
+      reason
+    });
+
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: CONTROL_PORT,
+      path: '/control',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      }
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const result = JSON.parse(data);
+          resolve(result);
+        } catch (e) {
+          resolve({ success: false, error: 'Invalid response' });
+        }
+      });
+    });
+
+    req.on('error', (err) => {
+      console.error(`[F2A] Cannot connect to daemon: ${err.message}`);
+      console.error('[F2A] Is the daemon running? Try: node f2a.js status');
+      reject(err);
+    });
+
+    req.write(payload);
+    req.end();
+  });
+}
+
+// 处理控制命令
+async function handleControlCommand(command, idOrIndex, reason) {
+  if (!idOrIndex) {
+    console.error('[F2A] Error: ID or index required');
+    console.error(`Usage: node f2a.js ${command} <id-or-index>`);
+    process.exit(1);
+  }
+
+  try {
+    const result = await sendControlCommand(command, idOrIndex, reason);
+    if (result.success) {
+      console.log(`[F2A] ${result.message}`);
+    } else {
+      console.error(`[F2A] Error: ${result.error}`);
+      process.exit(1);
+    }
+  } catch (err) {
+    process.exit(1);
+  }
+}
+
+// 获取待连接列表
+async function listPending() {
+  try {
+    const result = await sendControlCommand('list-pending');
+    if (result.success && result.pending && result.pending.length > 0) {
+      console.log(`待确认连接 (${result.pending.length}个):`);
+      result.pending.forEach(p => {
+        console.log(`${p.index}. ${p.agentIdShort} 来自 ${p.address}:${p.port} [剩余${p.remainingMinutes}分钟]`);
+      });
+    } else {
+      console.log('没有待确认的连接请求');
+    }
+  } catch (err) {
+    process.exit(1);
+  }
 }
 
 const args = parseArgs(process.argv);
@@ -104,7 +205,23 @@ if (args.help) {
   process.exit(0);
 }
 
-// 构建传递给 start-daemon.js 的参数
+// 处理控制命令
+if (args.command === 'pending') {
+  listPending();
+  return;
+}
+
+if (args.command === 'confirm') {
+  handleControlCommand('confirm', args.idOrIndex);
+  return;
+}
+
+if (args.command === 'reject') {
+  handleControlCommand('reject', args.idOrIndex, args.reason);
+  return;
+}
+
+// 其他命令传递给 daemon.js
 const daemonArgs = [args.command];
 
 // 传递所有原始选项（除了命令本身）

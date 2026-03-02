@@ -253,3 +253,64 @@ F2A 使用简单的 JSON 消息，缺乏严格的结构定义：
 
 - [A2A Protocol Specification](https://a2a-protocol.org/latest/specification/)
 - [A2A GitHub Repository](https://github.com/a2aproject/A2A)
+
+---
+
+# F2A 未来改进方向
+
+## 1. mDNS 服务发现
+
+### 现状
+当前 F2A 使用 UDP 多播（239.255.255.250:8768）进行设备发现，但部分路由器会阻止该多播地址。
+
+### mDNS 优势
+```
+mDNS (Multicast DNS) - 224.0.0.251:5353
+- 更可靠：路由器通常允许（用于 AirDrop、打印机发现）
+- 服务类型：只发现 F2A Agent，不混杂其他流量
+- 元数据：可以携带 Agent ID、公钥、版本等 TXT 记录
+- 冲突解决：自动处理主机名冲突
+```
+
+### 推荐方案：混合发现机制
+```javascript
+// 发现优先级
+1. mDNS (Bonjour/Avahi)      ← 首选
+2. UDP 多播 239.255.0.250    ← 备用
+3. UDP 广播 255.255.255.255  ← 最后手段
+```
+
+### 实现示例
+```javascript
+const bonjour = require('bonjour')();
+
+// 发布 F2A 服务
+bonjour.publish({
+  name: `F2A-${agentId.slice(0, 8)}`,
+  type: 'f2a',
+  port: 9000,
+  txt: {
+    agentId: 'f2a-xxx-xxx',
+    publicKey: 'xxx...',
+    version: '1.0.0',
+    capabilities: 'chat,file_transfer'
+  }
+});
+
+// 发现其他 F2A Agent
+bonjour.find({ type: 'f2a' }, (service) => {
+  console.log('发现:', service.name);
+  console.log('地址:', service.referer.address);
+  console.log('端口:', service.port);
+  console.log('元数据:', service.txt);
+});
+```
+
+### 参考
+- [Bonjour](https://github.com/watson/bonjour) - Node.js mDNS 实现
+- [Avahi](https://www.avahi.org/) - Linux mDNS/DNS-SD 实现
+- [RFC 6762](https://tools.ietf.org/html/rfc6762) - mDNS 标准
+
+---
+
+*最后更新：2026-03-02*

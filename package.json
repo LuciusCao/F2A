@@ -4,6 +4,9 @@
   "description": "Friend-to-Agent P2P networking protocol for OpenClaw Agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "f2a": "dist/cli/index.js"
+  },
   "files": [
     "dist/",
     "SKILL.md",

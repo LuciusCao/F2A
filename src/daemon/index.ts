@@ -1,44 +1,28 @@
 /**
  * F2A Daemon
- * 后台服务主入口
+ * 后台服务主入口 - P2P 版本
  */
 
 import { F2A } from '../core/f2a';
-import { ConnectionManager } from '../core/connection-manager';
-import { ServerlessP2P } from '../core/serverless';
-import { WebhookService } from './webhook';
 import { ControlServer } from './control-server';
-import { IdentityManager } from '../core/identity';
-import {
-  F2AOptions,
-  AgentIdentity,
-  ConnectionConfig,
-  WebhookConfig
-} from '../types';
+import { F2AOptions, WebhookConfig } from '../types';
 
 export interface DaemonOptions extends F2AOptions {
   webhook?: WebhookConfig;
+  controlPort?: number;
 }
 
 export class F2ADaemon {
   private options: DaemonOptions;
-  private identity: AgentIdentity;
-  private connectionManager: ConnectionManager;
-  private p2p?: ServerlessP2P;
-  private webhook?: WebhookService;
+  private f2a?: F2A;
   private controlServer?: ControlServer;
   private running: boolean = false;
 
-  constructor(options: DaemonOptions) {
-    this.options = options;
-    
-    // 加载身份
-    const identityManager = new IdentityManager({ configDir: options.dataDir });
-    const identityInfo = identityManager.getOrCreateIdentity();
-    this.identity = identityInfo;
-    
-    // 创建连接管理器
-    this.connectionManager = new ConnectionManager();
+  constructor(options: DaemonOptions = {}) {
+    this.options = {
+      controlPort: 9001,
+      ...options
+    };
   }
 
   /**
@@ -49,115 +33,53 @@ export class F2ADaemon {
       throw new Error('Daemon already running');
     }
 
-    console.log('🚀 Starting F2A Daemon...');
-    console.log(`🆔 Agent ID: ${this.identity.agentId}`);
+    console.log('[Daemon] Starting F2A Daemon...');
 
-    // 创建配置
-    const config: ConnectionConfig = {
-      p2pPort: this.options.p2pPort || 9000,
-      controlPort: this.options.controlPort || 9001,
-      security: {
-        level: 'medium',
-        requireConfirmation: true,
-        verifySignatures: true,
-        whitelist: new Set(),
-        blacklist: new Set(),
-        rateLimit: { maxRequests: 10, windowMs: 60000 },
-        ...this.options.security
-      }
-    };
-
-    // 启动 P2P 网络
-    this.p2p = new ServerlessP2P({
-      identity: this.identity,
-      config,
-      connectionManager: this.connectionManager
-    });
-
-    await this.p2p.start();
-
-    // 绑定事件
-    this.bindEvents();
-
-    // 启动 Webhook 服务
-    if (this.options.webhook?.token) {
-      this.webhook = new WebhookService(this.options.webhook);
+    // 创建并启动 F2A
+    this.f2a = await F2A.create(this.options);
+    const result = await this.f2a.start();
+    
+    if (!result.success) {
+      throw new Error(`Failed to start F2A: ${result.error}`);
     }
 
     // 启动控制服务器
-    this.controlServer = new ControlServer({
-      port: config.controlPort,
-      token: process.env.F2A_CONTROL_TOKEN || 'f2a-default-token',
-      connectionManager: this.connectionManager
-    });
+    this.controlServer = new ControlServer(this.f2a, this.options.controlPort!);
     await this.controlServer.start();
 
     this.running = true;
-    console.log('✅ F2A Daemon started');
-
-    // 优雅退出
-    process.on('SIGINT', () => this.stop());
-    process.on('SIGTERM', () => this.stop());
+    console.log(`[Daemon] F2A Daemon started with peerId: ${this.f2a.peerId.slice(0, 16)}...`);
   }
 
   /**
    * 停止 Daemon
    */
-  stop(): void {
+  async stop(): Promise<void> {
     if (!this.running) return;
 
-    console.log('🛑 Stopping F2A Daemon...');
+    console.log('[Daemon] Stopping F2A Daemon...');
 
-    this.controlServer?.stop();
-    this.p2p?.stop();
-    this.connectionManager.stop();
+    await this.controlServer?.stop();
+    await this.f2a?.stop();
 
     this.running = false;
-    console.log('✅ F2A Daemon stopped');
-    process.exit(0);
+    console.log('[Daemon] F2A Daemon stopped');
   }
 
   /**
-   * 绑定事件
+   * 获取 F2A 实例
    */
-  private bindEvents(): void {
-    if (!this.p2p) return;
+  getF2A(): F2A | undefined {
+    return this.f2a;
+  }
 
-    // 发现 Agent
-    this.p2p.on('agent_discovered', (agent) => {
-      console.log(`[Daemon] Discovered: ${agent.agentId.slice(0, 16)}...`);
-    });
-
-    // Peer 连接
-    this.p2p.on('peer_connected', ({ peerId }) => {
-      console.log(`[Daemon] Connected: ${peerId.slice(0, 16)}...`);
-    });
-
-    // Peer 断开
-    this.p2p.on('peer_disconnected', ({ peerId }) => {
-      console.log(`[Daemon] Disconnected: ${peerId.slice(0, 16)}...`);
-    });
-
-    // 收到消息
-    this.p2p.on('message', ({ peerId, message }) => {
-      if (message.type === 'message') {
-        console.log(`[Daemon] Message from ${peerId.slice(0, 16)}...: ${(message as any).content}`);
-      }
-    });
-
-    // 连接请求 - 发送 Webhook 通知
-    this.connectionManager.on('pending_added', async (event) => {
-      console.log(`[Daemon] Pending connection: ${event.agentId.slice(0, 16)}...`);
-      
-      if (this.webhook) {
-        const shortId = event.confirmationId.slice(0, 8);
-        await this.webhook.send({
-          message: `[F2A] 收到新的连接请求\n\nAgent ID: ${event.agentId.slice(0, 16)}...\n地址: ${event.address}:${event.port}\n请求ID: ${shortId}\n\n回复 "f2a 允许 ${shortId}" 来接受连接\n回复 "f2a 拒绝 ${shortId}" 来拒绝连接`,
-          name: 'F2A',
-          wakeMode: 'now',
-          deliver: true
-        });
-      }
-    });
+  /**
+   * 是否运行中
+   */
+  isRunning(): boolean {
+    return this.running;
   }
 }
+
+// 默认导出
+export default F2ADaemon;

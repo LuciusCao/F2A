@@ -3,7 +3,6 @@
  * 基于 libp2p 的 Agent 协作网络
  */
 
-import { PeerId } from '@libp2p/interface';
 import { Multiaddr } from '@multiformats/multiaddr';
 import { EventEmitter } from 'eventemitter3';
 

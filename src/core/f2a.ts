@@ -435,6 +435,3 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     this.agentInfo.capabilities = this.getCapabilities();
   }
 }
-
-// 导出类型
-export * from '../types';

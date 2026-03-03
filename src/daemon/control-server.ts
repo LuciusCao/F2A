@@ -1,23 +1,24 @@
 /**
  * HTTP 控制服务器
- * 接收 CLI 命令
+ * 接收 CLI 命令 - P2P 版本
  */
 
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
-import { ConnectionManager } from '../core/connection-manager';
+import { F2A } from '../core/f2a';
 
 export interface ControlServerOptions {
   port: number;
   token: string;
-  connectionManager: ConnectionManager;
 }
 
 export class ControlServer {
   private server?: Server;
-  private options: ControlServerOptions;
+  private f2a: F2A;
+  private port: number;
 
-  constructor(options: ControlServerOptions) {
-    this.options = options;
+  constructor(f2a: F2A, port: number) {
+    this.f2a = f2a;
+    this.port = port;
   }
 
   /**
@@ -31,8 +32,8 @@ export class ControlServer {
 
       this.server.on('error', reject);
 
-      this.server.listen(this.options.port, () => {
-        console.log(`[ControlServer] Listening on port ${this.options.port}`);
+      this.server.listen(this.port, () => {
+        console.log(`[ControlServer] Listening on port ${this.port}`);
         resolve();
       });
     });
@@ -55,7 +56,7 @@ export class ControlServer {
     // 设置 CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-F2A-Token');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(200);
@@ -63,76 +64,87 @@ export class ControlServer {
       return;
     }
 
-    // 验证 Token
-    const token = req.headers['x-f2a-token'];
-    if (token !== this.options.token) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
-      return;
-    }
-
-    if (req.method !== 'POST' || req.url !== '/control') {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'Not found' }));
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end(JSON.stringify({ success: false, error: 'Method not allowed' }));
       return;
     }
 
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
-      this.handleControlRequest(body, res);
+      this.processCommand(body, res);
     });
   }
 
   /**
-   * 处理控制请求
+   * 处理命令
    */
-  private handleControlRequest(body: string, res: ServerResponse): void {
+  private processCommand(body: string, res: ServerResponse): void {
     try {
-      const { action, idOrIndex, reason } = JSON.parse(body);
-      let result: { success: boolean; message?: string; pending?: unknown; error?: string };
-
-      switch (action) {
-        case 'list-pending':
-          result = {
-            success: true,
-            pending: this.options.connectionManager.getPendingList()
-          };
+      const command = JSON.parse(body);
+      
+      switch (command.action) {
+        case 'status':
+          this.handleStatus(res);
           break;
-
-        case 'confirm':
-          const confirmResult = this.options.connectionManager.confirm(idOrIndex);
-          if (confirmResult.success) {
-            result = {
-              success: true,
-              message: `已接受 ${confirmResult.data.agentId.slice(0, 16)}... 的连接`
-            };
-          } else {
-            result = { success: false, error: confirmResult.error };
-          }
+        case 'peers':
+          this.handlePeers(res);
           break;
-
-        case 'reject':
-          const rejectResult = this.options.connectionManager.reject(idOrIndex, reason);
-          if (rejectResult.success) {
-            result = {
-              success: true,
-              message: `已拒绝 ${rejectResult.data.agentId.slice(0, 16)}... 的连接`
-            };
-          } else {
-            result = { success: false, error: rejectResult.error };
-          }
+        case 'discover':
+          this.handleDiscover(command.capability, res);
           break;
-
         default:
-          result = { success: false, error: 'Unknown action' };
+          res.writeHead(400);
+          res.end(JSON.stringify({ success: false, error: 'Unknown action' }));
       }
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(result));
     } catch {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'Invalid request' }));
+      res.writeHead(400);
+      res.end(JSON.stringify({ success: false, error: 'Invalid JSON' }));
+    }
+  }
+
+  /**
+   * 获取状态
+   */
+  private handleStatus(res: ServerResponse): void {
+    res.writeHead(200);
+    res.end(JSON.stringify({
+      success: true,
+      peerId: this.f2a.peerId,
+      agentInfo: this.f2a.agentInfo
+    }));
+  }
+
+  /**
+   * 获取已连接的 Peers
+   */
+  private handlePeers(res: ServerResponse): void {
+    const peers = this.f2a.getConnectedPeers();
+    res.writeHead(200);
+    res.end(JSON.stringify({
+      success: true,
+      peers
+    }));
+  }
+
+  /**
+   * 发现 Agents
+   */
+  private async handleDiscover(capability: string | undefined, res: ServerResponse): Promise<void> {
+    try {
+      const agents = await this.f2a.discoverAgents(capability);
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        success: true,
+        agents
+      }));
+    } catch (error) {
+      res.writeHead(500);
+      res.end(JSON.stringify({
+        success: false,
+        error: String(error)
+      }));
     }
   }
 }

@@ -3,21 +3,20 @@
  * 基于 libp2p 实现 Agent 发现与通信
  */
 
-import { createLibp2p, Libp2pOptions } from 'libp2p';
+import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { generateKeyPair } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
+import { multiaddr } from '@multiformats/multiaddr';
 import { EventEmitter } from 'eventemitter3';
 import { randomUUID } from 'crypto';
 import type { Libp2p } from '@libp2p/interface';
-import type { Multiaddr } from '@multiformats/multiaddr';
 
 import {
   P2PNetworkConfig,
   AgentInfo,
   AgentCapability,
   F2AMessage,
-  F2AMessageType,
   PeerInfo,
   PeerDiscoveredEvent,
   PeerConnectedEvent,
@@ -32,7 +31,6 @@ import {
 
 // F2A 协议标识
 const F2A_PROTOCOL = '/f2a/1.0.0';
-const F2A_BROADCAST_TOPIC = 'f2a:broadcast';
 
 export interface P2PNetworkEvents {
   'peer:discovered': (event: PeerDiscoveredEvent) => void;
@@ -427,7 +425,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       this.peerTable.set(peerId, {
         peerId,
         agentInfo,
-        multiaddrs: agentInfo.multiaddrs.map(ma => new (require('@multiformats/multiaddr').Multiaddr)(ma)),
+        multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma)),
         connected: false,
         reputation: 50, // 初始信誉分
         lastSeen: Date.now()
@@ -447,7 +445,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     this.emit('peer:discovered', {
       peerId,
       agentInfo,
-      multiaddrs: agentInfo.multiaddrs.map(ma => new (require('@multiformats/multiaddr').Multiaddr)(ma))
+      multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma))
     });
   }
 
@@ -497,7 +495,6 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
     for (const addr of peers) {
       try {
-        const { multiaddr } = await import('@multiformats/multiaddr');
         const ma = multiaddr(addr);
         await this.node.dial(ma);
         console.log(`[P2P] Connected to bootstrap: ${addr}`);

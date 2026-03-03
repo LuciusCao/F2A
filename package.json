@@ -7,12 +7,17 @@
   "bin": {
     "f2a": "./dist/cli/index.js"
   },
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
+    "build:all": "npm run build && npm run build --workspaces",
     "clean": "rm -rf dist",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:all": "npm test && npm test --workspaces",
     "prepare": "npm run build"
   },
   "engines": {

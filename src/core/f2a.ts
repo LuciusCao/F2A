@@ -19,7 +19,9 @@ import {
   PeerConnectedEvent,
   PeerDisconnectedEvent,
   RegisteredCapability,
-  NetworkStartedEvent
+  NetworkStartedEvent,
+  success,
+  failureFromError
 } from '../types';
 
 // 版本号
@@ -117,7 +119,7 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
    */
   async start(): Promise<Result<void>> {
     if (this.running) {
-      return { success: false, error: 'F2A already running' };
+      return failureFromError('NETWORK_ALREADY_RUNNING', 'F2A already running');
     }
 
     console.log(`[F2A] Starting ${this.agentInfo.displayName}...`);
@@ -218,10 +220,10 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     const agents = await this.discoverAgents(options.capability);
     
     if (agents.length === 0) {
-      return {
-        success: false,
-        error: `No agent found with capability: ${options.capability}`
-      };
+      return failureFromError(
+        'CAPABILITY_NOT_SUPPORTED',
+        `No agent found with capability: ${options.capability}`
+      );
     }
 
     console.log(`[F2A] Found ${agents.length} agents with capability: ${options.capability}`);
@@ -249,7 +251,7 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
           peerId: agent.peerId,
           status: result.success ? 'success' as const : 'error' as const,
           result: result.success ? result.data : undefined,
-          error: result.success ? undefined : result.error,
+          error: result.success ? undefined : (result.error?.message || String(result.error)),
           latency
         };
       });
@@ -266,10 +268,10 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       // 检查是否达到最小响应数
       const successCount = results.filter(r => r.status === 'success').length;
       if (successCount < minResponses) {
-        return {
-          success: false,
-          error: `Only ${successCount} successful responses, required ${minResponses}`
-        };
+        return failureFromError(
+          'TASK_FAILED',
+          `Only ${successCount} successful responses, required ${minResponses}`
+        );
       }
     } else {
       // 串行发送，取第一个成功的
@@ -288,7 +290,7 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
           peerId: agent.peerId,
           status: result.success ? 'success' : 'error',
           result: result.success ? result.data : undefined,
-          error: result.success ? undefined : result.error,
+          error: result.success ? undefined : (result.error?.message || String(result.error)),
           latency
         });
 
@@ -299,17 +301,11 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
 
       // 检查是否有成功结果
       if (!results.some(r => r.status === 'success')) {
-        return {
-          success: false,
-          error: 'All agents failed to execute the task'
-        };
+        return failureFromError('TASK_FAILED', 'All agents failed to execute the task');
       }
     }
 
-    return {
-      success: true,
-      data: { taskId, results }
-    };
+    return success({ taskId, results });
   }
 
   /**

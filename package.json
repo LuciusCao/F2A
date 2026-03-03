@@ -1,6 +1,6 @@
 {
   "name": "f2a-network",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Friend-to-Agent P2P networking protocol for OpenClaw Agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -36,6 +36,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@chainsafe/libp2p-noise": "^15.1.2",
     "@libp2p/crypto": "^4.0.0",
     "@libp2p/interface": "^1.0.0",
     "@libp2p/peer-id": "^4.0.0",

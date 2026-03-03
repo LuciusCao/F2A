@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ControlServer } from './control-server';
+import { TokenManager } from '../core/token-manager';
 
 // Track mock server instances
 let lastMockServer: any = null;
+
+const TEST_TOKEN = 'test-token-12345';
 
 vi.mock('http', () => ({
   createServer: vi.fn((handler) => {
@@ -19,6 +22,15 @@ vi.mock('http', () => ({
     };
     return lastMockServer;
   })
+}));
+
+// Mock TokenManager
+vi.mock('../core/token-manager', () => ({
+  TokenManager: vi.fn().mockImplementation(() => ({
+    getToken: vi.fn().mockReturnValue(TEST_TOKEN),
+    verifyToken: vi.fn((token) => token === TEST_TOKEN),
+    getTokenPath: vi.fn().mockReturnValue('/mock/path')
+  }))
 }));
 
 describe('ControlServer', () => {
@@ -62,8 +74,13 @@ describe('ControlServer', () => {
   });
 
   describe('request handling', () => {
-    const createMockReq = (method: string, body?: object) => ({
+    const createMockReq = (method: string, body?: object, headers?: Record<string, string>) => ({
       method,
+      headers: {
+        'x-f2a-token': TEST_TOKEN,
+        ...headers
+      },
+      socket: { remoteAddress: '127.0.0.1' },
       on: vi.fn((event, callback) => {
         if (event === 'data' && body) {
           callback(Buffer.from(JSON.stringify(body)));
@@ -175,6 +192,8 @@ describe('ControlServer', () => {
       const handler = lastMockServer._handler;
       const req = {
         method: 'POST',
+        headers: { 'x-f2a-token': TEST_TOKEN },
+        socket: { remoteAddress: '127.0.0.1' },
         on: vi.fn((event, callback) => {
           if (event === 'data') {
             callback(Buffer.from('invalid json'));

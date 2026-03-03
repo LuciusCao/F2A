@@ -5,6 +5,7 @@
 
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
+import { noise } from '@chainsafe/libp2p-noise';
 import { generateKeyPair } from '@libp2p/crypto/keys';
 import { peerIdFromKeys } from '@libp2p/peer-id';
 import { multiaddr } from '@multiformats/multiaddr';
@@ -26,11 +27,19 @@ import {
   TaskResponsePayload,
   DiscoverPayload,
   CapabilityQueryPayload,
-  CapabilityResponsePayload
+  CapabilityResponsePayload,
+  success,
+  failureFromError,
+  createError
 } from '../types';
 
 // F2A 协议标识
 const F2A_PROTOCOL = '/f2a/1.0.0';
+
+// 清理配置
+const PEER_TABLE_CLEANUP_INTERVAL = 5 * 60 * 1000; // 5分钟
+const PEER_STALE_THRESHOLD = 24 * 60 * 60 * 1000; // 24小时
+const PEER_TABLE_MAX_SIZE = 1000; // 最大peer数
 
 export interface P2PNetworkEvents {
   'peer:discovered': (event: PeerDiscoveredEvent) => void;
@@ -45,7 +54,13 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private config: P2PNetworkConfig;
   private peerTable: Map<string, PeerInfo> = new Map();
   private agentInfo: AgentInfo;
-  private pendingTasks: Map<string, { resolve: Function; reject: Function; timeout: NodeJS.Timeout }> = new Map();
+  private pendingTasks: Map<string, { 
+    resolve: (result: unknown) => void; 
+    reject: (error: string) => void; 
+    timeout: NodeJS.Timeout;
+    resolved: boolean; // 标记是否已解决，防止超时后重复 resolve
+  }> = new Map();
+  private cleanupInterval?: NodeJS.Timeout;
 
   constructor(agentInfo: AgentInfo, config: P2PNetworkConfig = {}) {
     super();
@@ -72,14 +87,14 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         `/ip4/0.0.0.0/tcp/${this.config.listenPort}`
       ];
 
-      // 创建 libp2p 节点
+      // 创建 libp2p 节点 - 启用 noise 加密
       this.node = await createLibp2p({
         privateKey,
         addresses: {
           listen: listenAddresses
         },
         transports: [tcp()],
-        connectionEncryption: [], // 使用明文，应用层加密
+        connectionEncryption: [noise()], // 启用 Noise 协议加密
         services: {}
       });
 
@@ -104,16 +119,16 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       // 启动定期发现广播
       this.startDiscoveryBroadcast();
 
+      // 启动定期清理任务
+      this.startCleanupTask();
+
       console.log(`[P2P] Started with peerId: ${peerId.toString().slice(0, 16)}...`);
       console.log(`[P2P] Listening on:`, addrs);
+      console.log(`[P2P] Connection encryption: Noise protocol enabled`);
 
-      return {
-        success: true,
-        data: { peerId: peerId.toString(), addresses: addrs }
-      };
+      return success({ peerId: peerId.toString(), addresses: addrs });
     } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      return { success: false, error: err.message };
+      return failureFromError('NETWORK_NOT_STARTED', 'Failed to start P2P network', error as Error);
     }
   }
 
@@ -121,10 +136,17 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    * 停止 P2P 网络
    */
   async stop(): Promise<void> {
+    // 停止清理任务
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = undefined;
+    }
+
     if (this.node) {
       // 清理待处理任务
-      for (const [taskId, { timeout }] of this.pendingTasks) {
+      for (const [taskId, { timeout, resolve }] of this.pendingTasks) {
         clearTimeout(timeout);
+        resolve({ success: false, error: 'Network stopped' });
       }
       this.pendingTasks.clear();
 
@@ -207,24 +229,30 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
     // 等待响应
     return new Promise((resolve) => {
-      const timeoutId = setTimeout(() => {
-        this.pendingTasks.delete(taskId);
-        resolve({ success: false, error: 'Task timeout' });
-      }, timeout);
-
-      this.pendingTasks.set(taskId, {
+      const taskEntry = {
         resolve: (result: unknown) => {
-          clearTimeout(timeoutId);
-          this.pendingTasks.delete(taskId);
-          resolve({ success: true, data: result });
+          if (!taskEntry.resolved) {
+            taskEntry.resolved = true;
+            resolve(success(result));
+          }
         },
         reject: (error: string) => {
-          clearTimeout(timeoutId);
-          this.pendingTasks.delete(taskId);
-          resolve({ success: false, error });
+          if (!taskEntry.resolved) {
+            taskEntry.resolved = true;
+            resolve({ success: false, error: createError('TASK_FAILED', error) } as Result<unknown>);
+          }
         },
-        timeout: timeoutId
-      });
+        timeout: setTimeout(() => {
+          if (!taskEntry.resolved) {
+            taskEntry.resolved = true;
+            this.pendingTasks.delete(taskId);
+            resolve(failureFromError('TIMEOUT', 'Task timeout'));
+          }
+        }, timeout),
+        resolved: false
+      };
+
+      this.pendingTasks.set(taskId, taskEntry);
     });
   }
 
@@ -291,14 +319,14 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    */
   private async sendMessage(peerId: string, message: F2AMessage): Promise<Result<void>> {
     if (!this.node) {
-      return { success: false, error: 'P2P network not started' };
+      return failureFromError('NETWORK_NOT_STARTED', 'P2P network not started');
     }
 
     try {
       // 获取 PeerInfo
       const peerInfo = this.peerTable.get(peerId);
       if (!peerInfo || peerInfo.multiaddrs.length === 0) {
-        return { success: false, error: `Peer ${peerId} not found` };
+        return failureFromError('PEER_NOT_FOUND', `Peer ${peerId} not found`);
       }
 
       // 拨号连接（如果未连接）
@@ -310,10 +338,10 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       await stream.sink([data]);
       await stream.close();
 
-      return { success: true, data: undefined };
+      return success(undefined);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      return { success: false, error: err.message };
+      return failureFromError('CONNECTION_FAILED', err.message, err);
     }
   }
 
@@ -418,6 +446,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    * 处理发现消息
    */
   private handleDiscover(agentInfo: AgentInfo, peerId: string): void {
+    // 检查是否需要清理以腾出空间
+    if (this.peerTable.size >= PEER_TABLE_MAX_SIZE && !this.peerTable.has(peerId)) {
+      this.cleanupStalePeers(true); // 强制清理
+    }
+
     // 更新路由表
     const existing = this.peerTable.get(peerId);
     if (existing) {
@@ -480,7 +513,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    */
   private handleTaskResponse(payload: TaskResponsePayload): void {
     const pending = this.pendingTasks.get(payload.taskId);
-    if (pending) {
+    if (pending && !pending.resolved) {
+      pending.resolved = true;
+      clearTimeout(pending.timeout);
+      this.pendingTasks.delete(payload.taskId);
+      
       if (payload.status === 'success') {
         pending.resolve(payload.result);
       } else {
@@ -517,6 +554,57 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     setInterval(() => {
       this.broadcastDiscovery();
     }, 30000);
+  }
+
+  /**
+   * 启动定期清理任务
+   */
+  private startCleanupTask(): void {
+    // 立即执行一次
+    this.cleanupStalePeers();
+
+    // 每 5 分钟清理一次
+    this.cleanupInterval = setInterval(() => {
+      this.cleanupStalePeers();
+    }, PEER_TABLE_CLEANUP_INTERVAL);
+  }
+
+  /**
+   * 清理过期的 Peer 记录
+   */
+  private cleanupStalePeers(force = false): void {
+    const now = Date.now();
+    const threshold = force ? 0 : PEER_STALE_THRESHOLD;
+    let cleaned = 0;
+
+    for (const [peerId, peer] of this.peerTable) {
+      // 清理条件：长时间未活跃，或者未连接且超过一定时间
+      const shouldClean = 
+        now - peer.lastSeen > threshold ||
+        (!peer.connected && now - peer.lastSeen > 60 * 60 * 1000); // 未连接超过1小时
+
+      if (shouldClean) {
+        this.peerTable.delete(peerId);
+        cleaned++;
+      }
+    }
+
+    if (cleaned > 0) {
+      console.log(`[P2P] Cleaned up ${cleaned} stale peer(s), remaining: ${this.peerTable.size}`);
+    }
+
+    // 如果仍然超过最大容量，按最后活跃时间排序后删除最旧的
+    if (this.peerTable.size > PEER_TABLE_MAX_SIZE) {
+      const sorted = Array.from(this.peerTable.entries())
+        .sort((a, b) => a[1].lastSeen - b[1].lastSeen);
+      
+      const toRemove = sorted.slice(0, this.peerTable.size - PEER_TABLE_MAX_SIZE);
+      for (const [peerId] of toRemove) {
+        this.peerTable.delete(peerId);
+      }
+      
+      console.log(`[P2P] Removed ${toRemove.length} oldest peers to maintain limit`);
+    }
   }
 
   /**

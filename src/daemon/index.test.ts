@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { F2ADaemon } from './index';
 
 // Mock dependencies
@@ -34,6 +34,11 @@ describe('F2ADaemon', () => {
       expect(daemon.isRunning()).toBe(false);
     });
 
+    it('should start successfully', async () => {
+      await daemon.start();
+      expect(daemon.isRunning()).toBe(true);
+    });
+
     it('should not start twice', async () => {
       await daemon.start();
       expect(daemon.isRunning()).toBe(true);
@@ -63,6 +68,18 @@ describe('F2ADaemon', () => {
     it('should return undefined when not running', () => {
       const f2a = daemon.getF2A();
       expect(f2a).toBeUndefined();
+    });
+  });
+
+  describe('options', () => {
+    it('should use default control port', () => {
+      const defaultDaemon = new F2ADaemon();
+      expect(defaultDaemon).toBeDefined();
+    });
+
+    it('should accept custom control port', () => {
+      const customDaemon = new F2ADaemon({ controlPort: 8080 });
+      expect(customDaemon).toBeDefined();
     });
   });
 });

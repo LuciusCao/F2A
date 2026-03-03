@@ -1,27 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { P2PNetwork } from './p2p-network';
 import { AgentInfo } from '../types';
-
-// Mock libp2p modules
-vi.mock('libp2p', () => ({
-  createLibp2p: vi.fn()
-}));
-
-vi.mock('@libp2p/tcp', () => ({
-  tcp: vi.fn()
-}));
-
-vi.mock('@libp2p/crypto/keys', () => ({
-  generateKeyPair: vi.fn()
-}));
-
-vi.mock('@libp2p/peer-id', () => ({
-  peerIdFromKeys: vi.fn()
-}));
-
-vi.mock('@multiformats/multiaddr', () => ({
-  multiaddr: vi.fn((addr: string) => ({ toString: () => addr }))
-}));
 
 describe('P2PNetwork', () => {
   let network: P2PNetwork;
@@ -45,7 +24,7 @@ describe('P2PNetwork', () => {
     await network.stop();
   });
 
-  describe('start/stop', () => {
+  describe('initialization', () => {
     it('should initialize with correct default config', () => {
       expect(network).toBeDefined();
       expect(network.getPeerId()).toBe('');
@@ -79,7 +58,6 @@ describe('P2PNetwork', () => {
         ]
       };
 
-      // Access private method through any cast for testing
       const hasCap = (network as any).hasCapability(agentWithCaps, 'file-operation');
       expect(hasCap).toBe(true);
     });
@@ -103,7 +81,6 @@ describe('P2PNetwork', () => {
         });
       });
 
-      // Simulate error
       (network as any).emit('error', new Error('Test error'));
       
       const error = await errorPromise;

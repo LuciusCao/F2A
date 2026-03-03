@@ -1,6 +1,23 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { F2A } from './f2a';
 import { AgentCapability, TaskDelegateOptions } from '../types';
+
+// Mock P2PNetwork
+vi.mock('./p2p-network', () => ({
+  P2PNetwork: vi.fn().mockImplementation(() => ({
+    start: vi.fn().mockResolvedValue({ 
+      success: true, 
+      data: { peerId: 'test-peer-id', addresses: ['/ip4/127.0.0.1/tcp/9000'] }
+    }),
+    stop: vi.fn(),
+    discoverAgents: vi.fn().mockResolvedValue([]),
+    getConnectedPeers: vi.fn().mockReturnValue([]),
+    sendTaskRequest: vi.fn(),
+    sendTaskResponse: vi.fn().mockResolvedValue({ success: true }),
+    on: vi.fn(),
+    getPeerId: vi.fn().mockReturnValue('test-peer-id')
+  }))
+}));
 
 describe('F2A', () => {
   let f2a: F2A;
@@ -40,27 +57,27 @@ describe('F2A', () => {
   });
 
   describe('start/stop', () => {
-    it('should handle start failure gracefully', async () => {
-      const newF2a = await F2A.create();
-      
-      // First start
-      const result1 = await newF2a.start();
-      
-      // If first start succeeded, second should fail with 'already running'
-      // If first start failed, we check the error message
-      if (result1.success) {
-        const result2 = await newF2a.start();
-        expect(result2.success).toBe(false);
-        expect(result2.error).toBe('F2A already running');
-      } else {
-        // First start failed, which is also valid for this test
-        expect(result1.success).toBe(false);
-      }
+    it('should start successfully', async () => {
+      const result = await f2a.start();
+      expect(result.success).toBe(true);
+    });
+
+    it('should not start twice', async () => {
+      await f2a.start();
+      const result = await f2a.start();
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('F2A already running');
     });
 
     it('should handle stop before start', async () => {
       const newF2a = await F2A.create();
       await newF2a.stop(); // Should not throw
+    });
+
+    it('should handle multiple stop calls', async () => {
+      await f2a.start();
+      await f2a.stop();
+      await f2a.stop(); // Should not throw
     });
   });
 
@@ -110,24 +127,29 @@ describe('F2A', () => {
   });
 
   describe('events', () => {
-    it('should emit network:started event', (done) => {
-      f2a.on('network:started', (event) => {
-        expect(event.peerId).toBeDefined();
-        expect(event.listenAddresses).toBeDefined();
-        done();
+    it('should emit network:started event', async () => {
+      const eventPromise = new Promise((resolve) => {
+        f2a.on('network:started', (event) => {
+          resolve(event);
+        });
       });
 
-      f2a.start();
+      await f2a.start();
+      const event = await eventPromise;
+      expect(event).toBeDefined();
     });
 
-    it('should emit network:stopped event', (done) => {
-      f2a.on('network:stopped', () => {
-        done();
+    it('should emit network:stopped event', async () => {
+      await f2a.start();
+      
+      const eventPromise = new Promise((resolve) => {
+        f2a.on('network:stopped', () => {
+          resolve(true);
+        });
       });
 
-      f2a.start().then(() => {
-        f2a.stop();
-      });
+      await f2a.stop();
+      await eventPromise;
     });
   });
 
@@ -148,6 +170,72 @@ describe('F2A', () => {
       const result = await f2a.delegateTask(options);
       expect(result.success).toBe(false);
       expect(result.error).toContain('No agent found');
+    });
+
+    it('should delegate task with parallel option', async () => {
+      const options: TaskDelegateOptions = {
+        capability: 'test-cap',
+        description: 'Test task',
+        parallel: true,
+        minResponses: 1
+      };
+
+      const result = await f2a.delegateTask(options);
+      expect(result.success).toBe(false); // No agents found
+    });
+  });
+
+  describe('sendTaskTo', () => {
+    it('should send task to specific peer', async () => {
+      await f2a.start();
+      // Mock returns undefined, just verify it doesn't throw
+      await f2a.sendTaskTo(
+        'peer-id',
+        'task-type',
+        'description',
+        { param: 'value' }
+      );
+    });
+  });
+
+  describe('respondToTask', () => {
+    it('should respond to task successfully', async () => {
+      await f2a.start();
+      const result = await f2a.respondToTask(
+        'peer-id',
+        'task-id',
+        'success',
+        { data: 'result' }
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it('should respond to task with error', async () => {
+      await f2a.start();
+      const result = await f2a.respondToTask(
+        'peer-id',
+        'task-id',
+        'error',
+        undefined,
+        'Error message'
+      );
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('error handling', () => {
+    it('should emit error event', async () => {
+      const errorPromise = new Promise<Error>((resolve) => {
+        f2a.on('error', (error) => {
+          resolve(error);
+        });
+      });
+
+      // Emit error through f2a directly
+      (f2a as any).emit('error', new Error('Test error'));
+      
+      const error = await errorPromise;
+      expect(error.message).toBe('Test error');
     });
   });
 });

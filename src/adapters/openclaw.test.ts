@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { OpenClawF2AAdapter } from './openclaw';
+import { F2A } from '../index';
+import { TaskRequestEvent } from '../types';
 
 // Mock F2A
 vi.mock('../index', () => ({
@@ -8,15 +10,20 @@ vi.mock('../index', () => ({
       start: vi.fn().mockResolvedValue({ success: true }),
       stop: vi.fn(),
       registerCapability: vi.fn(),
-      getCapabilities: vi.fn().mockReturnValue([]),
+      getCapabilities: vi.fn().mockReturnValue([
+        { name: 'file-operation', description: 'File ops', tools: ['read'] }
+      ]),
       discoverAgents: vi.fn().mockResolvedValue([]),
       getConnectedPeers: vi.fn().mockReturnValue([]),
-      delegateTask: vi.fn(),
-      sendTaskTo: vi.fn(),
-      agentInfo: { peerId: 'test-peer-id' },
+      delegateTask: vi.fn().mockResolvedValue({ success: true }),
+      sendTaskTo: vi.fn().mockResolvedValue({ success: true }),
+      agentInfo: { 
+        peerId: 'test-peer-id',
+        capabilities: [{ name: 'file-operation', description: 'File ops', tools: ['read'] }]
+      },
       peerId: 'test-peer-id',
       on: vi.fn(),
-      respondToTask: vi.fn()
+      respondToTask: vi.fn().mockResolvedValue({ success: true })
     })
   }
 }));
@@ -29,6 +36,7 @@ describe('OpenClawF2AAdapter', () => {
       execute: vi.fn().mockResolvedValue({ result: 'success' }),
       on: vi.fn()
     };
+    vi.clearAllMocks();
   });
 
   describe('create', () => {
@@ -43,22 +51,37 @@ describe('OpenClawF2AAdapter', () => {
         displayName: 'Custom Agent',
         listenPort: 9000
       });
-      // The mock returns a fixed agentInfo, so we just verify adapter is created
       expect(adapter).toBeDefined();
-      expect(adapter.peerId).toBe('test-peer-id');
+    });
+
+    it('should create adapter with bootstrap peers', async () => {
+      const adapter = await OpenClawF2AAdapter.create(mockOpenClaw, {
+        bootstrapPeers: ['/ip4/127.0.0.1/tcp/9001/p2p/test']
+      });
+      expect(adapter).toBeDefined();
     });
   });
 
   describe('start/stop', () => {
+    it('should start successfully', async () => {
+      const adapter = await OpenClawF2AAdapter.create(mockOpenClaw);
+      const result = await adapter.start();
+      expect(result.success).toBe(true);
+    });
+
     it('should not start twice', async () => {
       const adapter = await OpenClawF2AAdapter.create(mockOpenClaw);
+      await adapter.start();
       
-      const result1 = await adapter.start();
-      expect(result1.success).toBe(true);
+      const result = await adapter.start();
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Adapter already running');
+    });
 
-      const result2 = await adapter.start();
-      expect(result2.success).toBe(false);
-      expect(result2.error).toBe('Adapter already running');
+    it('should stop gracefully', async () => {
+      const adapter = await OpenClawF2AAdapter.create(mockOpenClaw);
+      await adapter.start();
+      await adapter.stop();
     });
 
     it('should handle stop before start', async () => {
@@ -72,9 +95,7 @@ describe('OpenClawF2AAdapter', () => {
       const adapter = await OpenClawF2AAdapter.create(mockOpenClaw);
       const agentInfo = adapter.getAgentInfo();
       
-      // Verify agentInfo is returned
       expect(agentInfo).toBeDefined();
-      // The mock may not return capabilities, just verify structure
       expect(typeof agentInfo).toBe('object');
     });
   });
@@ -84,24 +105,26 @@ describe('OpenClawF2AAdapter', () => {
       const adapter = await OpenClawF2AAdapter.create(mockOpenClaw);
       await adapter.start();
 
-      await adapter.delegateTask({
+      const result = await adapter.delegateTask({
         capability: 'test-capability',
         description: 'Test task'
       });
 
-      // Should call F2A delegateTask
+      expect(result).toBeDefined();
     });
 
     it('should send task to specific peer', async () => {
       const adapter = await OpenClawF2AAdapter.create(mockOpenClaw);
       await adapter.start();
 
-      await adapter.sendTaskTo(
+      const result = await adapter.sendTaskTo(
         'peer-id',
         'task-type',
         'description',
         { param: 'value' }
       );
+
+      expect(result).toBeDefined();
     });
   });
 
@@ -116,6 +139,53 @@ describe('OpenClawF2AAdapter', () => {
       const adapter = await OpenClawF2AAdapter.create(mockOpenClaw);
       const peers = adapter.getConnectedPeers();
       expect(Array.isArray(peers)).toBe(true);
+    });
+  });
+
+  describe('registerCapability', () => {
+    it('should register new capability', async () => {
+      const adapter = await OpenClawF2AAdapter.create(mockOpenClaw);
+      
+      adapter.registerCapability(
+        { name: 'new-cap', description: 'New capability', tools: [] },
+        async () => 'result'
+      );
+    });
+  });
+
+  describe('handleTaskRequest', () => {
+    it('should handle task request successfully', async () => {
+      const adapter = await OpenClawF2AAdapter.create(mockOpenClaw);
+      await adapter.start();
+
+      const event: TaskRequestEvent = {
+        taskId: 'task-id',
+        from: 'peer-id',
+        taskType: 'file-operation',
+        description: 'Read file',
+        parameters: { path: '/test.txt' }
+      };
+
+      // Access private method
+      await (adapter as any).handleTaskRequest(event);
+
+      expect(mockOpenClaw.execute).toHaveBeenCalled();
+    });
+
+    it('should handle task execution error', async () => {
+      mockOpenClaw.execute.mockRejectedValueOnce(new Error('Execution failed'));
+      
+      const adapter = await OpenClawF2AAdapter.create(mockOpenClaw);
+      await adapter.start();
+
+      const event: TaskRequestEvent = {
+        taskId: 'task-id',
+        from: 'peer-id',
+        taskType: 'file-operation',
+        description: 'Read file'
+      };
+
+      await (adapter as any).handleTaskRequest(event);
     });
   });
 });

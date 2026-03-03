@@ -32,7 +32,23 @@
 npm install
 ```
 
-### 2. 基础使用
+### 2. 构建
+
+```bash
+npm run build
+```
+
+### 3. 运行测试
+
+```bash
+# 运行所有测试
+npm test
+
+# 运行测试并查看覆盖率
+npm run test:coverage
+```
+
+### 4. 基础使用
 
 ```typescript
 import { F2A } from 'f2a-network';
@@ -72,7 +88,7 @@ const result = await f2a.delegateTask({
 });
 ```
 
-### 3. OpenClaw 集成
+### 5. OpenClaw 集成
 
 ```typescript
 import { OpenClawF2AAdapter } from 'f2a-network';
@@ -92,6 +108,22 @@ const result = await adapter.delegateTask({
   capability: 'file-operation',
   description: 'Read and analyze /var/log/system.log'
 });
+```
+
+## CLI 使用
+
+```bash
+# 查看节点状态
+f2a status
+
+# 查看已连接的 Peers
+f2a peers
+
+# 发现网络中的 Agents
+f2a discover
+
+# 按能力过滤发现
+f2a discover --capability code-generation
 ```
 
 ## 双节点测试
@@ -244,11 +276,63 @@ if (agents.length > 0) {
 | `network:started` | 网络已启动 |
 | `network:stopped` | 网络已停止 |
 
+## 测试覆盖率
+
+```bash
+npm run test:coverage
+```
+
+当前覆盖率：
+- 语句: ~61%
+- 分支: ~87%
+- 函数: ~70%
+
+主要模块覆盖率：
+- `src/index.ts`: 100%
+- `src/types/index.ts`: 100%
+- `src/adapters/openclaw.ts`: 95%
+- `src/core/f2a.ts`: 73%
+- `src/daemon/index.ts`: 98%
+- `src/daemon/webhook.ts`: 97%
+
+## 开发
+
+### 项目结构
+
+```
+src/
+├── adapters/
+│   └── openclaw.ts       # OpenClaw 适配器
+├── cli/
+│   └── index.ts          # CLI 入口
+├── core/
+│   ├── f2a.ts            # F2A 主类
+│   └── p2p-network.ts    # P2P 网络层
+├── daemon/
+│   ├── control-server.ts # HTTP 控制服务器
+│   ├── index.ts          # Daemon 入口
+│   └── webhook.ts        # Webhook 服务
+├── types/
+│   └── index.ts          # 类型定义
+└── index.ts              # SDK 入口
+```
+
+### 提交规范
+
+- `feat:` 新功能
+- `fix:` 修复
+- `test:` 测试
+- `docs:` 文档
+- `refactor:` 重构
+
 ## 路线图
 
 - [x] 基础 P2P 网络 (libp2p)
 - [x] Agent 发现与能力广播
 - [x] 任务委托与响应
+- [x] OpenClaw 适配器
+- [x] CLI 工具
+- [x] 基础测试覆盖
 - [ ] 引导节点支持
 - [ ] DHT 全局发现
 - [ ] 端到端加密

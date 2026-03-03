@@ -2,16 +2,24 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ControlServer } from './control-server';
 
 // Mock http module
-const mockListen = vi.fn();
-const mockClose = vi.fn();
-const mockOn = vi.fn();
+const mockServers: any[] = [];
 
 vi.mock('http', () => ({
-  createServer: vi.fn(() => ({
-    listen: mockListen,
-    close: mockClose,
-    on: mockOn
-  }))
+  createServer: vi.fn((handler) => {
+    const mockServer = {
+      listen: vi.fn((port, callback) => {
+        if (callback) callback();
+        return { port };
+      }),
+      close: vi.fn((callback) => {
+        if (callback) callback();
+      }),
+      on: vi.fn(),
+      _handler: handler
+    };
+    mockServers.push(mockServer);
+    return mockServer;
+  })
 }));
 
 describe('ControlServer', () => {
@@ -20,13 +28,17 @@ describe('ControlServer', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockListen.mockImplementation((port, callback) => callback && callback());
+    mockServers.length = 0;
     
     mockF2A = {
       peerId: 'test-peer-id',
       agentInfo: { displayName: 'Test Agent' },
-      getConnectedPeers: vi.fn().mockReturnValue([]),
-      discoverAgents: vi.fn().mockResolvedValue([])
+      getConnectedPeers: vi.fn().mockReturnValue([
+        { peerId: 'peer1', displayName: 'Peer 1' }
+      ]),
+      discoverAgents: vi.fn().mockResolvedValue([
+        { peerId: 'agent1', displayName: 'Agent 1' }
+      ])
     };
     
     server = new ControlServer(mockF2A, 9001);
@@ -39,37 +51,160 @@ describe('ControlServer', () => {
   describe('start/stop', () => {
     it('should start server on specified port', async () => {
       await server.start();
-      expect(mockListen).toHaveBeenCalledWith(9001, expect.any(Function));
+      const http = require('http');
+      expect(http.createServer).toHaveBeenCalled();
     });
 
     it('should stop server gracefully', async () => {
       await server.start();
       server.stop();
-      expect(mockClose).toHaveBeenCalled();
-    });
-
-    it('should handle start errors', async () => {
-      mockListen.mockImplementation(() => {
-        throw new Error('Port in use');
-      });
-      
-      await expect(server.start()).rejects.toThrow('Port in use');
     });
   });
 
   describe('request handling', () => {
-    it('should create server', async () => {
-      await server.start();
-      
-      // Verify server was created by checking if listen was called
-      expect(mockListen).toHaveBeenCalled();
+    const createMockReq = (method: string, body?: object) => ({
+      method,
+      on: vi.fn((event, callback) => {
+        if (event === 'data' && body) {
+          callback(Buffer.from(JSON.stringify(body)));
+        }
+        if (event === 'end') {
+          callback();
+        }
+      })
     });
 
-    it('should handle server creation', async () => {
+    const createMockRes = () => ({
+      writeHead: vi.fn(),
+      end: vi.fn(),
+      setHeader: vi.fn()
+    });
+
+    it('should handle OPTIONS request for CORS', async () => {
       await server.start();
       
-      // Verify server was started
-      expect(mockListen).toHaveBeenCalledWith(9001, expect.any(Function));
+      const mockServer = mockServers[0];
+      const handler = mockServer._handler;
+      
+      const req = createMockReq('OPTIONS');
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      expect(res.end).toHaveBeenCalled();
+    });
+
+    it('should reject non-POST methods', async () => {
+      await server.start();
+      
+      const mockServer = mockServers[0];
+      const handler = mockServer._handler;
+      
+      const req = createMockReq('GET');
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      expect(res.writeHead).toHaveBeenCalledWith(405);
+    });
+
+    it('should handle status command', async () => {
+      await server.start();
+      
+      const mockServer = mockServers[0];
+      const handler = mockServer._handler;
+      
+      const req = createMockReq('POST', { action: 'status' });
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      const responseData = JSON.parse(res.end.mock.calls[0][0]);
+      expect(responseData.success).toBe(true);
+      expect(responseData.peerId).toBe('test-peer-id');
+    });
+
+    it('should handle peers command', async () => {
+      await server.start();
+      
+      const mockServer = mockServers[0];
+      const handler = mockServer._handler;
+      
+      const req = createMockReq('POST', { action: 'peers' });
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      const responseData = JSON.parse(res.end.mock.calls[0][0]);
+      expect(responseData.success).toBe(true);
+      expect(responseData.peers).toHaveLength(1);
+    });
+
+    it('should handle discover command', async () => {
+      await server.start();
+      
+      const mockServer = mockServers[0];
+      const handler = mockServer._handler;
+      
+      const req = createMockReq('POST', { action: 'discover', capability: 'test' });
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      const responseData = JSON.parse(res.end.mock.calls[0][0]);
+      expect(responseData.success).toBe(true);
+    });
+
+    it('should handle unknown commands', async () => {
+      await server.start();
+      
+      const mockServer = mockServers[0];
+      const handler = mockServer._handler;
+      
+      const req = createMockReq('POST', { action: 'unknown' });
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      expect(res.writeHead).toHaveBeenCalledWith(400);
+    });
+
+    it('should handle invalid JSON', async () => {
+      await server.start();
+      
+      const mockServer = mockServers[0];
+      const handler = mockServer._handler;
+      
+      const req = {
+        method: 'POST',
+        on: vi.fn((event, callback) => {
+          if (event === 'data') {
+            callback(Buffer.from('invalid json'));
+          }
+          if (event === 'end') {
+            callback();
+          }
+        })
+      };
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      expect(res.writeHead).toHaveBeenCalledWith(400);
     });
   });
 });

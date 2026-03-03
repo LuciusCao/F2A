@@ -11,14 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@libp2p/crypto": "^4.0.0",
-    "@libp2p/interface": "^1.0.0",
-    "@libp2p/peer-id": "^4.0.0",
-    "@libp2p/tcp": "^9.0.0",
-    "@multiformats/multiaddr": "^12.0.0",
     "eventemitter3": "^5.0.0",
-    "libp2p": "^1.0.0",
-    "uint8arrays": "^5.0.0",
     "zod": "^3.22.0"
   },
   "devDependencies": {

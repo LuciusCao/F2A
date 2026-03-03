@@ -112,6 +112,20 @@ const result = await adapter.delegateTask({
 
 ## CLI 使用
 
+### 安装 CLI
+
+```bash
+# 方式一：直接运行（需要先构建）
+npm run build
+node dist/cli/index.js status
+
+# 方式二：全局链接
+npm link
+f2a status
+```
+
+### CLI 命令
+
 ```bash
 # 查看节点状态
 f2a status
@@ -124,6 +138,34 @@ f2a discover
 
 # 按能力过滤发现
 f2a discover --capability code-generation
+```
+
+## Daemon 模式
+
+```bash
+# 后台运行
+node dist/daemon/index.js &
+
+# 或使用 PM2
+pm2 start dist/daemon/index.js --name f2a
+
+# 查看 Daemon 状态
+pm2 status f2a
+```
+
+## 环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `F2A_CONTROL_PORT` | 9001 | HTTP 控制端口 |
+| `F2A_CONTROL_TOKEN` | `f2a-default-token` | 控制服务器认证 Token |
+
+## 安全注意事项
+
+⚠️ **默认 `F2A_CONTROL_TOKEN` 不安全！** 生产环境请务必设置：
+
+```bash
+export F2A_CONTROL_TOKEN=$(openssl rand -hex 32)
 ```
 
 ## 双节点测试

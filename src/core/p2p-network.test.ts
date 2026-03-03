@@ -73,6 +73,32 @@ describe('P2PNetwork', () => {
     });
   });
 
+  describe('DHT features', () => {
+    it('should return false for isDHTEnabled when not started', () => {
+      expect(network.isDHTEnabled()).toBe(false);
+    });
+
+    it('should return 0 for getDHTPeerCount when not started', () => {
+      expect(network.getDHTPeerCount()).toBe(0);
+    });
+
+    it('should return error when findPeerViaDHT called before start', async () => {
+      const result = await network.findPeerViaDHT('test-peer-id');
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('NETWORK_NOT_STARTED');
+    });
+  });
+
+  describe('E2EE features', () => {
+    it('should return null for getEncryptionPublicKey when not started', () => {
+      expect(network.getEncryptionPublicKey()).toBeNull();
+    });
+
+    it('should return 0 for getEncryptedPeerCount when not started', () => {
+      expect(network.getEncryptedPeerCount()).toBe(0);
+    });
+  });
+
   describe('events', () => {
     it('should emit error event', async () => {
       const errorPromise = new Promise<Error>((resolve) => {

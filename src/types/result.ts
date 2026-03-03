@@ -9,6 +9,9 @@ export type ErrorCode =
   | 'PEER_NOT_FOUND'
   | 'CONNECTION_FAILED'
   | 'TIMEOUT'
+  // DHT 错误
+  | 'DHT_NOT_AVAILABLE'
+  | 'DHT_LOOKUP_FAILED'
   // 任务错误
   | 'TASK_NOT_FOUND'
   | 'TASK_REJECTED'

@@ -6,8 +6,9 @@
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { noise } from '@chainsafe/libp2p-noise';
+import { kadDHT } from '@libp2p/kad-dht';
 import { generateKeyPair } from '@libp2p/crypto/keys';
-import { peerIdFromKeys } from '@libp2p/peer-id';
+import { peerIdFromKeys, peerIdFromString } from '@libp2p/peer-id';
 import { multiaddr } from '@multiformats/multiaddr';
 import { EventEmitter } from 'eventemitter3';
 import { randomUUID } from 'crypto';
@@ -90,15 +91,23 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         `/ip4/0.0.0.0/tcp/${this.config.listenPort}`
       ];
 
-      // 创建 libp2p 节点 - 启用 noise 加密
+      // 创建 libp2p 节点 - 启用 noise 加密和 DHT
+      const services: Record<string, any> = {};
+      
+      if (this.config.enableDHT !== false) {
+        services.dht = kadDHT({
+          clientMode: !this.config.dhtServerMode, // 默认客户端模式
+        });
+      }
+
       this.node = await createLibp2p({
         privateKey,
         addresses: {
           listen: listenAddresses
         },
         transports: [tcp()],
-        connectionEncryption: [noise()], // 启用 Noise 协议加密
-        services: {}
+        connectionEncryption: [noise()],
+        services
       });
 
       // 设置事件监听
@@ -129,6 +138,12 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
       // 启动定期清理任务
       this.startCleanupTask();
+
+      // 如果启用 DHT，等待 DHT 就绪
+      if (this.config.enableDHT !== false && this.node.services.dht) {
+        console.log('[P2P] DHT enabled, waiting for routing table...');
+        // DHT 会自动开始发现
+      }
 
       console.log(`[P2P] Started with peerId: ${peerId.toString().slice(0, 16)}...`);
       console.log(`[P2P] Listening on:`, addrs);
@@ -661,5 +676,47 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    */
   getEncryptedPeerCount(): number {
     return this.e2eeCrypto.getRegisteredPeerCount();
+  }
+
+  /**
+   * 通过 DHT 查找节点 (全局发现)
+   */
+  async findPeerViaDHT(peerId: string): Promise<Result<string[]>> {
+    if (!this.node) {
+      return failureFromError('NETWORK_NOT_STARTED', 'P2P network not started');
+    }
+
+    const dht = (this.node.services as any).dht;
+    if (!dht) {
+      return failureFromError('DHT_NOT_AVAILABLE', 'DHT service not enabled');
+    }
+
+    try {
+      const peerIdObj = peerIdFromString(peerId);
+      const peerInfo = await dht.findPeer(peerIdObj);
+      
+      if (peerInfo && peerInfo.multiaddrs.length > 0) {
+        return success(peerInfo.multiaddrs.map((ma: any) => ma.toString()));
+      }
+      
+      return failureFromError('PEER_NOT_FOUND', `Peer ${peerId} not found in DHT`);
+    } catch (error) {
+      return failureFromError('DHT_LOOKUP_FAILED', 'DHT lookup failed', error as Error);
+    }
+  }
+
+  /**
+   * 获取 DHT 路由表大小
+   */
+  getDHTPeerCount(): number {
+    const dht = (this.node?.services as any)?.dht;
+    return dht?.routingTable?.size || 0;
+  }
+
+  /**
+   * 检查 DHT 是否启用
+   */
+  isDHTEnabled(): boolean {
+    return !!(this.node?.services as any)?.dht;
   }
 }

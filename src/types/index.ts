@@ -70,8 +70,10 @@ export interface P2PNetworkConfig {
   bootstrapPeers?: string[];
   /** 是否启用 MDNS 本地发现 */
   enableMDNS?: boolean;
-  /** 是否启用 DHT */
+  /** 是否启用 DHT (默认 true) */
   enableDHT?: boolean;
+  /** DHT 服务器模式 (默认 false，即客户端模式) */
+  dhtServerMode?: boolean;
 }
 
 export interface F2AOptions {

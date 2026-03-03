@@ -125,3 +125,13 @@ F2A_CONTROL_PORT=9002 node dist/daemon/index.js
 - 详细文档：`docs/`
 - 协议规范：`skill/references/protocol.md`
 - 完整 README：`README.md`
+
+## 日志查看
+
+```bash
+# 使用 PM2 查看日志
+pm2 logs f2a
+
+# 或查看日志文件
+tail -f ~/.f2a/f2a.log
+```

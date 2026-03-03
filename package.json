@@ -4,12 +4,32 @@
   "description": "Friend-to-Agent P2P networking protocol for OpenClaw Agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "f2a": "./dist/cli/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
     "clean": "rm -rf dist",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "prepare": "npm run build"
   },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "p2p",
+    "libp2p",
+    "agent",
+    "openclaw",
+    "networking"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LuciusCao/F2A.git"
+  },
+  "license": "MIT",
   "dependencies": {
     "@libp2p/crypto": "^4.0.0",
     "@libp2p/interface": "^1.0.0",

@@ -32,6 +32,7 @@ import {
   failureFromError,
   createError
 } from '../types';
+import { E2EECrypto } from './e2ee-crypto';
 
 // F2A 协议标识
 const F2A_PROTOCOL = '/f2a/1.0.0';
@@ -61,10 +62,12 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     resolved: boolean; // 标记是否已解决，防止超时后重复 resolve
   }> = new Map();
   private cleanupInterval?: NodeJS.Timeout;
+  private e2eeCrypto: E2EECrypto;
 
   constructor(agentInfo: AgentInfo, config: P2PNetworkConfig = {}) {
     super();
     this.agentInfo = agentInfo;
+    this.e2eeCrypto = new E2EECrypto();
     this.config = {
       listenPort: 0, // 随机端口
       enableMDNS: true,
@@ -110,6 +113,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       // 更新 agentInfo
       this.agentInfo.peerId = peerId.toString();
       this.agentInfo.multiaddrs = addrs;
+
+      // 初始化 E2EE 加密
+      await this.e2eeCrypto.initialize();
+      this.agentInfo.encryptionPublicKey = this.e2eeCrypto.getPublicKey() || undefined;
+      console.log(`[P2P] E2EE encryption enabled, public key: ${this.agentInfo.encryptionPublicKey?.slice(0, 16)}...`);
 
       // 连接引导节点
       if (this.config.bootstrapPeers) {
@@ -462,9 +470,15 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         agentInfo,
         multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma)),
         connected: false,
-        reputation: 50, // 初始信誉分
+        reputation: 50,
         lastSeen: Date.now()
       });
+    }
+
+    // 注册对等方的加密公钥
+    if (agentInfo.encryptionPublicKey) {
+      this.e2eeCrypto.registerPeerPublicKey(peerId, agentInfo.encryptionPublicKey);
+      console.log(`[P2P] Registered encryption key for ${peerId.slice(0, 16)}...`);
     }
 
     // 发送发现响应
@@ -633,5 +647,19 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    */
   getPeerId(): string | null {
     return this.agentInfo.peerId;
+  }
+
+  /**
+   * 获取 E2EE 加密公钥
+   */
+  getEncryptionPublicKey(): string | null {
+    return this.e2eeCrypto.getPublicKey();
+  }
+
+  /**
+   * 获取已注册的加密对等方数量
+   */
+  getEncryptedPeerCount(): number {
+    return this.e2eeCrypto.getRegisteredPeerCount();
   }
 }

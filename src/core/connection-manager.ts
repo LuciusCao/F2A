@@ -1,104 +1,85 @@
 /**
- * F2A Connection Manager
- *
+ * ConnectionManager - 连接确认管理器
+ * 
  * 管理待确认连接请求，支持：
  * - 1小时有效期
  * - 同一 Agent 去重（保留最新）
- * - 查询待确认列表
  * - 通过序号或 ID 确认/拒绝
  */
 
-const crypto = require('crypto');
-const EventEmitter = require('events');
+import { EventEmitter } from 'eventemitter3';
+import { randomUUID } from 'crypto';
+import { Socket } from 'net';
+import {
+  PendingConnection,
+  PendingConnectionView,
+  ConnectionRequestEvent,
+  ConfirmationEvent,
+  RejectionEvent,
+  ExpirationEvent,
+  Result
+} from '../types';
 
 // 常量
 const PENDING_TIMEOUT = 60 * 60 * 1000; // 1小时
 const CLEANUP_INTERVAL = 60 * 1000; // 每分钟清理一次
 
-class ConnectionManager extends EventEmitter {
-  constructor(options = {}) {
+export interface ConnectionManagerOptions {
+  timeout?: number;
+  cleanupInterval?: number;
+}
+
+export class ConnectionManager extends EventEmitter<{
+  pending_added: (event: ConnectionRequestEvent) => void;
+  confirmed: (event: ConfirmationEvent) => void;
+  rejected: (event: RejectionEvent) => void;
+  expired: (event: ExpirationEvent) => void;
+}> {
+  private pendingConnections: Map<string, PendingConnection> = new Map();
+  private agentToConfirmation: Map<string, string> = new Map();
+  private maxIndex: number = 0;
+  private cleanupInterval?: NodeJS.Timeout;
+  private options: Required<ConnectionManagerOptions>;
+
+  constructor(options: ConnectionManagerOptions = {}) {
     super();
-
-    // 待确认连接: confirmationId -> { agentId, socket, publicKey, address, port, timestamp, expiresAt }
-    this.pendingConnections = new Map();
-
-    // Agent ID -> confirmationId 映射（用于去重）
-    this.agentToConfirmation = new Map();
-
-    // 序号计数器
-    this.maxIndex = 0;
-
-    // 启动清理定时器
-    this._startCleanup();
-  }
-
-  /**
-   * 启动定期清理任务
-   */
-  _startCleanup() {
-    this.cleanupInterval = setInterval(() => {
-      this._cleanup();
-    }, CLEANUP_INTERVAL);
-  }
-
-  /**
-   * 清理过期连接
-   */
-  _cleanup() {
-    const now = Date.now();
-    let expiredCount = 0;
-
-    for (const [confirmationId, pending] of this.pendingConnections) {
-      if (now > pending.expiresAt) {
-        // 关闭 socket
-        try {
-          pending.socket.end();
-        } catch (e) {}
-
-        // 清理映射
-        this.agentToConfirmation.delete(pending.agentId);
-        this.pendingConnections.delete(confirmationId);
-        expiredCount++;
-
-        this.emit('expired', { confirmationId, agentId: pending.agentId });
-      }
-    }
-
-    if (expiredCount > 0) {
-      console.log(`[ConnectionManager] 清理 ${expiredCount} 个过期连接`);
-    }
+    this.options = {
+      timeout: options.timeout ?? PENDING_TIMEOUT,
+      cleanupInterval: options.cleanupInterval ?? CLEANUP_INTERVAL
+    };
+    this.startCleanup();
   }
 
   /**
    * 添加待确认连接
-   * @param {string} agentId - Agent ID
-   * @param {net.Socket} socket - TCP socket
-   * @param {string} publicKey - Agent 公钥
-   * @param {string} address - 远程地址
-   * @param {number} port - 远程端口
-   * @returns {Object} { confirmationId, isDuplicate, existingId }
    */
-  addPending(agentId, socket, publicKey, address, port) {
+  addPending(
+    agentId: string,
+    socket: Socket,
+    publicKey: string,
+    address: string,
+    port: number
+  ): { confirmationId: string; isDuplicate: boolean } {
     // 检查是否已有同一 Agent 的待确认请求
     const existingId = this.agentToConfirmation.get(agentId);
+    let isDuplicate = false;
+
     if (existingId) {
       const existing = this.pendingConnections.get(existingId);
       if (existing) {
         // 关闭旧的 socket
-        try {
-          existing.socket.end();
-        } catch (e) {}
-
+        this.closeSocket(existing.socket);
         // 删除旧的记录
         this.pendingConnections.delete(existingId);
         console.log(`[ConnectionManager] 更新 ${agentId.slice(0, 16)}... 的连接请求（去重）`);
+        isDuplicate = true;
       }
     }
 
-    const confirmationId = crypto.randomUUID();
+    const confirmationId = randomUUID();
     const now = Date.now();
 
-    const pending = {
+    const pending: PendingConnection = {
       confirmationId,
       agentId,
       socket,
@@ -106,7 +87,7 @@ class ConnectionManager extends EventEmitter {
       address,
       port,
       timestamp: now,
-      expiresAt: now + PENDING_TIMEOUT,
+      expiresAt: now + this.options.timeout,
       index: ++this.maxIndex
     };
 
@@ -118,23 +99,18 @@ class ConnectionManager extends EventEmitter {
       agentId,
       address,
       port,
-      index: pending.index
+      isDuplicate
     });
 
-    return {
-      confirmationId,
-      isDuplicate: !!existingId,
-      existingId
-    };
+    return { confirmationId, isDuplicate };
   }
 
   /**
    * 获取待确认连接列表
-   * @returns {Array} 待确认连接列表
    */
-  getPendingList() {
+  getPendingList(): PendingConnectionView[] {
     const now = Date.now();
-    const list = [];
+    const list: PendingConnectionView[] = [];
 
     for (const pending of this.pendingConnections.values()) {
       const remainingMs = pending.expiresAt - now;
@@ -153,16 +129,13 @@ class ConnectionManager extends EventEmitter {
       });
     }
 
-    // 按序号排序
     return list.sort((a, b) => a.index - b.index);
   }
 
   /**
-   * 通过序号查找待确认连接
-   * @param {number} index - 序号
-   * @returns {Object|null}
+   * 通过序号查找
    */
-  getByIndex(index) {
+  getByIndex(index: number): PendingConnection | null {
     for (const pending of this.pendingConnections.values()) {
       if (pending.index === index) {
         return pending;
@@ -172,14 +145,12 @@ class ConnectionManager extends EventEmitter {
   }
 
   /**
-   * 通过 ID 查找待确认连接
-   * @param {string} confirmationId - 完整 ID 或短 ID（前8位）
-   * @returns {Object|null}
+   * 通过 ID 查找
    */
-  getById(confirmationId) {
+  getById(confirmationId: string): PendingConnection | null {
     // 完整匹配
     if (this.pendingConnections.has(confirmationId)) {
-      return this.pendingConnections.get(confirmationId);
+      return this.pendingConnections.get(confirmationId)!;
     }
 
     // 短 ID 匹配（前8位）
@@ -194,17 +165,11 @@ class ConnectionManager extends EventEmitter {
 
   /**
    * 确认连接
-   * @param {string|number} idOrIndex - 完整 ID、短 ID 或序号
-   * @returns {Object} { success, pending, error }
    */
-  confirm(idOrIndex) {
-    let pending = null;
-
-    if (typeof idOrIndex === 'number') {
-      pending = this.getByIndex(idOrIndex);
-    } else {
-      pending = this.getById(idOrIndex);
-    }
+  confirm(idOrIndex: string | number): Result<PendingConnection> {
+    const pending = typeof idOrIndex === 'number'
+      ? this.getByIndex(idOrIndex)
+      : this.getById(idOrIndex);
 
     if (!pending) {
       return { success: false, error: '连接请求不存在或已过期' };
@@ -221,32 +186,23 @@ class ConnectionManager extends EventEmitter {
       publicKey: pending.publicKey
     });
 
-    return { success: true, pending };
+    return { success: true, data: pending };
   }
 
   /**
    * 拒绝连接
-   * @param {string|number} idOrIndex - 完整 ID、短 ID 或序号
-   * @param {string} reason - 拒绝原因
-   * @returns {Object} { success, pending, error }
    */
-  reject(idOrIndex, reason = '用户拒绝') {
-    let pending = null;
-
-    if (typeof idOrIndex === 'number') {
-      pending = this.getByIndex(idOrIndex);
-    } else {
-      pending = this.getById(idOrIndex);
-    }
+  reject(idOrIndex: string | number, reason: string = '用户拒绝'): Result<PendingConnection> {
+    const pending = typeof idOrIndex === 'number'
+      ? this.getByIndex(idOrIndex)
+      : this.getById(idOrIndex);
 
     if (!pending) {
       return { success: false, error: '连接请求不存在或已过期' };
     }
 
     // 关闭 socket
-    try {
-      pending.socket.end();
-    } catch (e) {}
+    this.closeSocket(pending.socket);
 
     // 清理记录
     this.pendingConnections.delete(pending.confirmationId);
@@ -258,41 +214,83 @@ class ConnectionManager extends EventEmitter {
       reason
     });
 
-    return { success: true, pending };
+    return { success: true, data: pending };
   }
 
   /**
    * 获取待确认数量
    */
-  getPendingCount() {
+  getPendingCount(): number {
     return this.pendingConnections.size;
   }
 
   /**
    * 检查 Agent 是否有待确认请求
    */
-  hasPendingForAgent(agentId) {
+  hasPendingForAgent(agentId: string): boolean {
     return this.agentToConfirmation.has(agentId);
   }
 
   /**
    * 停止管理器
    */
-  stop() {
+  stop(): void {
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
     }
 
     // 关闭所有待确认连接
     for (const pending of this.pendingConnections.values()) {
-      try {
-        pending.socket.end();
-      } catch (e) {}
+      this.closeSocket(pending.socket);
     }
 
     this.pendingConnections.clear();
     this.agentToConfirmation.clear();
   }
-}
 
-module.exports = { ConnectionManager };
+  /**
+   * 启动定期清理
+   */
+  private startCleanup(): void {
+    this.cleanupInterval = setInterval(() => {
+      this.cleanup();
+    }, this.options.cleanupInterval);
+  }
+
+  /**
+   * 清理过期连接
+   */
+  private cleanup(): void {
+    const now = Date.now();
+    let expiredCount = 0;
+
+    for (const [confirmationId, pending] of this.pendingConnections) {
+      if (now > pending.expiresAt) {
+        this.closeSocket(pending.socket);
+        this.agentToConfirmation.delete(pending.agentId);
+        this.pendingConnections.delete(confirmationId);
+        expiredCount++;
+
+        this.emit('expired', {
+          confirmationId,
+          agentId: pending.agentId
+        });
+      }
+    }
+
+    if (expiredCount > 0) {
+      console.log(`[ConnectionManager] 清理 ${expiredCount} 个过期连接`);
+    }
+  }
+
+  /**
+   * 安全关闭 socket
+   */
+  private closeSocket(socket: Socket): void {
+    try {
+      socket.end();
+    } catch {
+      // 忽略错误
+    }
+  }
+}

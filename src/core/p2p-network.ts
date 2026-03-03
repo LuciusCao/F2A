@@ -6,7 +6,7 @@
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { generateKeyPair } from '@libp2p/crypto/keys';
-import { peerIdFromPrivateKey } from '@libp2p/peer-id';
+import { peerIdFromKeys } from '@libp2p/peer-id';
 import { multiaddr } from '@multiformats/multiaddr';
 import { EventEmitter } from 'eventemitter3';
 import { randomUUID } from 'crypto';
@@ -65,7 +65,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     try {
       // 生成或加载密钥对
       const privateKey = await generateKeyPair('Ed25519');
-      const peerId = peerIdFromPrivateKey(privateKey);
+      const peerId = await peerIdFromKeys(privateKey.public.marshal(), privateKey.marshal());
 
       // 构建监听地址
       const listenAddresses = this.config.listenAddresses || [
@@ -361,7 +361,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         // 读取数据
         const chunks: Uint8Array[] = [];
         for await (const chunk of stream.source) {
-          chunks.push(chunk);
+          // Uint8ArrayList 需要转换为 Uint8Array
+          const data = chunk instanceof Uint8Array ? chunk : (chunk as any).subarray();
+          chunks.push(data);
         }
         
         const data = Buffer.concat(chunks);

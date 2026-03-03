@@ -6,6 +6,7 @@
 export { F2A } from './core/f2a';
 export { P2PNetwork } from './core/p2p-network';
 export { TokenManager, defaultTokenManager } from './core/token-manager';
+export { E2EECrypto, defaultE2EECrypto } from './core/e2ee-crypto';
 export * from './types';
 
 // 版本号

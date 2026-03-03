@@ -53,6 +53,8 @@ export interface AgentInfo {
   lastSeen: number;
   /** 网络地址 */
   multiaddrs: string[];
+  /** 端到端加密公钥 (base64) */
+  encryptionPublicKey?: string;
 }
 
 // ============================================================================

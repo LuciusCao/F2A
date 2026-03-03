@@ -239,14 +239,10 @@ export interface F2AEvents {
 export type F2AEventEmitter = EventEmitter<F2AEvents>;
 
 // ============================================================================
-// 结果类型
+// 结果类型 (从 result.ts 重新导出)
 // ============================================================================
 
-export type Result<T> = 
-  | { success: true; data: T }
-  | { success: false; error: string };
-
-export type AsyncResult<T> = Promise<Result<T>>;
+// Result 和 AsyncResult 从 ./result 导出
 
 // ============================================================================
 // Webhook 配置
@@ -319,3 +315,9 @@ export interface CapabilityHandler {
 export interface RegisteredCapability extends AgentCapability {
   handler: CapabilityHandler;
 }
+
+// ============================================================================
+// 统一 Result 类型 (从 result.ts 重新导出)
+// ============================================================================
+
+export * from './result';

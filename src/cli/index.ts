@@ -4,9 +4,40 @@
  */
 
 import { request, RequestOptions } from 'http';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 
 const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
-const CONTROL_TOKEN = process.env.F2A_CONTROL_TOKEN || 'f2a-default-token';
+
+/**
+ * 获取控制 Token
+ * 优先从环境变量读取，其次从默认文件位置读取
+ */
+function getControlToken(): string {
+  // 1. 优先使用环境变量
+  const envToken = process.env.F2A_CONTROL_TOKEN;
+  if (envToken) {
+    return envToken;
+  }
+
+  // 2. 从默认文件位置读取
+  const tokenPath = join(homedir(), '.f2a', 'control-token');
+  if (existsSync(tokenPath)) {
+    const fileToken = readFileSync(tokenPath, 'utf-8').trim();
+    if (fileToken) {
+      return fileToken;
+    }
+  }
+
+  // 3. 如果都没有，返回空字符串（会导致认证失败）
+  console.warn('⚠️  Warning: F2A_CONTROL_TOKEN not set and no token file found.');
+  console.warn('    Token file location:', tokenPath);
+  console.warn('    Please start the F2A daemon first, or set F2A_CONTROL_TOKEN.');
+  return '';
+}
+
+const CONTROL_TOKEN = getControlToken();
 
 interface Args {
   command: string;
@@ -69,6 +100,7 @@ Options:
 Environment Variables:
   F2A_CONTROL_PORT     控制服务器端口 (默认: 9001)
   F2A_CONTROL_TOKEN    控制服务器认证 Token
+                       (如果不设置，会读取 ~/.f2a/control-token)
 
 Examples:
   f2a status
@@ -109,7 +141,11 @@ async function sendCommand(action: string, params?: Record<string, unknown>): Pr
           if (response.success) {
             console.log(JSON.stringify(response, null, 2));
           } else {
-            console.error('Error:', response.error);
+            if (res.statusCode === 401) {
+              console.error('❌ Authentication failed. Please check your F2A_CONTROL_TOKEN.');
+            } else {
+              console.error('Error:', response.error);
+            }
           }
           resolve();
         } catch {

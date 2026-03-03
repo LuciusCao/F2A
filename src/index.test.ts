@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { F2A, P2PNetwork, OpenClawF2AAdapter, VERSION } from './index';
+import { F2A, P2PNetwork, VERSION, TokenManager } from './index';
 
 describe('Index exports', () => {
   it('should export F2A class', () => {
@@ -11,13 +11,13 @@ describe('Index exports', () => {
     expect(P2PNetwork).toBeDefined();
   });
 
-  it('should export OpenClawF2AAdapter class', () => {
-    expect(OpenClawF2AAdapter).toBeDefined();
+  it('should export TokenManager class', () => {
+    expect(TokenManager).toBeDefined();
   });
 
   it('should export VERSION', () => {
     expect(VERSION).toBeDefined();
     expect(typeof VERSION).toBe('string');
-    expect(VERSION).toBe('1.0.0');
+    expect(VERSION).toBe('1.0.1');
   });
 });

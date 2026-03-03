@@ -5,20 +5,23 @@
 
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
 import { F2A } from '../core/f2a';
+import { TokenManager } from '../core/token-manager';
 
 export interface ControlServerOptions {
   port: number;
-  token: string;
+  token?: string;
 }
 
 export class ControlServer {
   private server?: Server;
   private f2a: F2A;
   private port: number;
+  private tokenManager: TokenManager;
 
-  constructor(f2a: F2A, port: number) {
+  constructor(f2a: F2A, port: number, tokenManager?: TokenManager) {
     this.f2a = f2a;
     this.port = port;
+    this.tokenManager = tokenManager || new TokenManager();
   }
 
   /**
@@ -56,7 +59,7 @@ export class ControlServer {
     // 设置 CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-F2A-Token');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(200);
@@ -67,6 +70,19 @@ export class ControlServer {
     if (req.method !== 'POST') {
       res.writeHead(405);
       res.end(JSON.stringify({ success: false, error: 'Method not allowed' }));
+      return;
+    }
+
+    // 验证 Token
+    const token = req.headers['x-f2a-token'] as string | undefined;
+    if (!this.tokenManager.verifyToken(token)) {
+      console.warn(`[ControlServer] Unauthorized request from ${req.socket.remoteAddress}`);
+      res.writeHead(401);
+      res.end(JSON.stringify({ 
+        success: false, 
+        error: 'Unauthorized: Invalid or missing token',
+        code: 'UNAUTHORIZED'
+      }));
       return;
     }
 

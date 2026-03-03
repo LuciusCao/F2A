@@ -66,7 +66,7 @@ describe('F2A', () => {
       await f2a.start();
       const result = await f2a.start();
       expect(result.success).toBe(false);
-      expect(result.error).toBe('F2A already running');
+      expect(result.error?.message || result.error).toContain('already running');
     });
 
     it('should handle stop before start', async () => {
@@ -169,7 +169,7 @@ describe('F2A', () => {
 
       const result = await f2a.delegateTask(options);
       expect(result.success).toBe(false);
-      expect(result.error).toContain('No agent found');
+      expect(result.error?.message || result.error).toContain('No agent found');
     });
 
     it('should delegate task with parallel option', async () => {

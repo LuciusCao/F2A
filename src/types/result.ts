@@ -1,0 +1,61 @@
+/**
+ * 统一的错误类型和错误码
+ */
+
+export type ErrorCode = 
+  // 网络错误
+  | 'NETWORK_NOT_STARTED'
+  | 'NETWORK_ALREADY_RUNNING'
+  | 'PEER_NOT_FOUND'
+  | 'CONNECTION_FAILED'
+  | 'TIMEOUT'
+  // 任务错误
+  | 'TASK_NOT_FOUND'
+  | 'TASK_REJECTED'
+  | 'TASK_FAILED'
+  | 'CAPABILITY_NOT_SUPPORTED'
+  // 安全错误
+  | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
+  | 'RATE_LIMITED'
+  // 通用错误
+  | 'INVALID_PARAMS'
+  | 'INTERNAL_ERROR'
+  | 'UNKNOWN';
+
+export interface F2AError {
+  code: ErrorCode;
+  message: string;
+  details?: Record<string, unknown>;
+  cause?: Error;
+}
+
+export function createError(
+  code: ErrorCode,
+  message: string,
+  details?: Record<string, unknown>,
+  cause?: Error
+): F2AError {
+  return { code, message, details, cause };
+}
+
+/**
+ * 统一的 Result 类型
+ */
+export type Result<T> = 
+  | { success: true; data: T; error?: never }
+  | { success: false; error: F2AError; data?: never };
+
+export function success<T>(data: T): Result<T> {
+  return { success: true, data };
+}
+
+export function failure<T>(error: F2AError): Result<T> {
+  return { success: false, error };
+}
+
+export function failureFromError<T>(code: ErrorCode, message: string, cause?: Error): Result<T> {
+  return { success: false, error: createError(code, message, undefined, cause) };
+}
+
+export type AsyncResult<T> = Promise<Result<T>>;

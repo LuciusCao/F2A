@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ControlServer } from './control-server';
 
-// Mock http module
-const mockServers: any[] = [];
+// Track mock server instances
+let lastMockServer: any = null;
 
 vi.mock('http', () => ({
   createServer: vi.fn((handler) => {
-    const mockServer = {
+    lastMockServer = {
       listen: vi.fn((port, callback) => {
         if (callback) callback();
         return { port };
@@ -17,8 +17,7 @@ vi.mock('http', () => ({
       on: vi.fn(),
       _handler: handler
     };
-    mockServers.push(mockServer);
-    return mockServer;
+    return lastMockServer;
   })
 }));
 
@@ -28,7 +27,7 @@ describe('ControlServer', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockServers.length = 0;
+    lastMockServer = null;
     
     mockF2A = {
       peerId: 'test-peer-id',
@@ -51,13 +50,14 @@ describe('ControlServer', () => {
   describe('start/stop', () => {
     it('should start server on specified port', async () => {
       await server.start();
-      const http = require('http');
-      expect(http.createServer).toHaveBeenCalled();
+      expect(lastMockServer).not.toBeNull();
+      expect(lastMockServer.listen).toHaveBeenCalledWith(9001, expect.any(Function));
     });
 
     it('should stop server gracefully', async () => {
       await server.start();
       server.stop();
+      expect(lastMockServer.close).toHaveBeenCalled();
     });
   });
 
@@ -83,9 +83,7 @@ describe('ControlServer', () => {
     it('should handle OPTIONS request for CORS', async () => {
       await server.start();
       
-      const mockServer = mockServers[0];
-      const handler = mockServer._handler;
-      
+      const handler = lastMockServer._handler;
       const req = createMockReq('OPTIONS');
       const res = createMockRes();
       
@@ -98,9 +96,7 @@ describe('ControlServer', () => {
     it('should reject non-POST methods', async () => {
       await server.start();
       
-      const mockServer = mockServers[0];
-      const handler = mockServer._handler;
-      
+      const handler = lastMockServer._handler;
       const req = createMockReq('GET');
       const res = createMockRes();
       
@@ -112,9 +108,7 @@ describe('ControlServer', () => {
     it('should handle status command', async () => {
       await server.start();
       
-      const mockServer = mockServers[0];
-      const handler = mockServer._handler;
-      
+      const handler = lastMockServer._handler;
       const req = createMockReq('POST', { action: 'status' });
       const res = createMockRes();
       
@@ -131,9 +125,7 @@ describe('ControlServer', () => {
     it('should handle peers command', async () => {
       await server.start();
       
-      const mockServer = mockServers[0];
-      const handler = mockServer._handler;
-      
+      const handler = lastMockServer._handler;
       const req = createMockReq('POST', { action: 'peers' });
       const res = createMockRes();
       
@@ -150,9 +142,7 @@ describe('ControlServer', () => {
     it('should handle discover command', async () => {
       await server.start();
       
-      const mockServer = mockServers[0];
-      const handler = mockServer._handler;
-      
+      const handler = lastMockServer._handler;
       const req = createMockReq('POST', { action: 'discover', capability: 'test' });
       const res = createMockRes();
       
@@ -168,9 +158,7 @@ describe('ControlServer', () => {
     it('should handle unknown commands', async () => {
       await server.start();
       
-      const mockServer = mockServers[0];
-      const handler = mockServer._handler;
-      
+      const handler = lastMockServer._handler;
       const req = createMockReq('POST', { action: 'unknown' });
       const res = createMockRes();
       
@@ -184,9 +172,7 @@ describe('ControlServer', () => {
     it('should handle invalid JSON', async () => {
       await server.start();
       
-      const mockServer = mockServers[0];
-      const handler = mockServer._handler;
-      
+      const handler = lastMockServer._handler;
       const req = {
         method: 'POST',
         on: vi.fn((event, callback) => {

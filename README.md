@@ -1,17 +1,26 @@
 # F2A P2P 网络实现
 
+> ⚠️ **EXPERIMENTAL** - 这是一个实验性项目，API 可能随时变更，不建议在生产环境使用。
+
 基于 libp2p 的 OpenClaw Agent P2P 协作网络。
+
+## Monorepo 结构
+
+```
+F2A/
+├── packages/
+│   └── openclaw-connector/     # OpenClaw 插件 (@f2a/openclaw-connector)
+├── src/                         # F2A 核心网络代码
+└── docs/                        # 文档
+```
 
 ## 架构概览
 
+### Monorepo 结构
+
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    OpenClaw Agent                        │
-│                   (通过 Adapter 集成)                     │
-└─────────────────────────┬───────────────────────────────┘
-                          │
-┌─────────────────────────▼───────────────────────────────┐
-│                      F2A SDK                             │
+│                    F2A 核心 (f2a-network)                │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐  │
 │  │  F2A Core   │  │ P2P Network │  │ Capability Mgmt │  │
 │  │  (任务委托)  │  │ (libp2p)    │  │ (能力发现)      │  │
@@ -19,8 +28,8 @@
 └─────────────────────────┬───────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────┐
-│                    libp2p 网络层                         │
-│         TCP / WebSocket / MDNS / Bootstrap               │
+│         @f2a/openclaw-connector (可选插件)              │
+│              OpenClaw Agent 集成                         │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -35,17 +44,24 @@ npm install
 ### 2. 构建
 
 ```bash
+# 构建核心
 npm run build
+
+# 构建所有包（包括插件）
+npm run build:all
 ```
 
 ### 3. 运行测试
 
 ```bash
-# 运行所有测试
+# 运行核心测试
 npm test
 
 # 运行测试并查看覆盖率
 npm run test:coverage
+
+# 运行所有包测试
+npm run test:all
 ```
 
 ### 4. 基础使用
@@ -88,27 +104,39 @@ const result = await f2a.delegateTask({
 });
 ```
 
-### 5. OpenClaw 集成
+### 5. OpenClaw 集成 (通过插件)
 
-```typescript
-import { OpenClawF2AAdapter } from 'f2a-network';
+> 需要安装 &#96;@f2a/openclaw-connector&#96; 插件包
 
-// 创建适配器
-const adapter = await OpenClawF2AAdapter.create(openclawSession, {
-  displayName: 'OpenClaw Node A',
-  listenPort: 9000,
-  enableMDNS: true
-});
-
-// 启动
-await adapter.start();
-
-// 委托任务给其他 Agent
-const result = await adapter.delegateTask({
-  capability: 'file-operation',
-  description: 'Read and analyze /var/log/system.log'
-});
+```bash
+cd packages/openclaw-connector
+npm link  # 或 npm install -g
 ```
+
+然后在 OpenClaw 配置中启用：
+
+```json
+{
+  "plugins": {
+    "@f2a/openclaw-connector": {
+      "enabled": true,
+      "config": {
+        "agentName": "My OpenClaw Agent",
+        "autoStart": true
+      }
+    }
+  }
+}
+```
+
+插件提供的工具：
+- &#96;f2a_discover&#96; - 发现网络中的 Agents
+- &#96;f2a_delegate&#96; - 委托任务给特定 Agent  
+- &#96;f2a_broadcast&#96; - 广播任务给多个 Agents
+- &#96;f2a_status&#96; - 查看网络状态
+- &#96;f2a_reputation&#96; - 管理 Peer 信誉
+
+更多细节见 &#96;packages/openclaw-connector/README.md&#96;
 
 ## CLI 使用
 
@@ -342,21 +370,22 @@ npm run test:coverage
 ### 项目结构
 
 ```
-src/
-├── adapters/
-│   └── openclaw.ts       # OpenClaw 适配器
-├── cli/
-│   └── index.ts          # CLI 入口
-├── core/
-│   ├── f2a.ts            # F2A 主类
-│   └── p2p-network.ts    # P2P 网络层
-├── daemon/
-│   ├── control-server.ts # HTTP 控制服务器
-│   ├── index.ts          # Daemon 入口
-│   └── webhook.ts        # Webhook 服务
-├── types/
-│   └── index.ts          # 类型定义
-└── index.ts              # SDK 入口
+F2A/                                    # 根目录 (f2a-network)
+├── packages/
+│   └── openclaw-connector/             # OpenClaw 插件包
+│       ├── src/
+│       │   ├── index.ts                # 插件主类
+│       │   ├── node-manager.ts         # Node 生命周期
+│       │   ├── network-client.ts       # HTTP 客户端
+│       │   ├── reputation.ts           # 信誉系统
+│       │   └── ...
+│       └── README.md
+├── src/                                 # F2A 核心代码
+│   ├── cli/                             # CLI 工具
+│   ├── core/                            # 核心 P2P 网络
+│   ├── daemon/                          # Daemon 服务
+│   └── types/                           # 类型定义
+└── docs/                                # 文档
 ```
 
 ### 提交规范

@@ -1,181 +1,256 @@
-# F2A
+# F2A P2P 网络实现
 
-> **Agent 专用的 P2P 协作网络协议** 🚀
-> 
-> 灵感来自星际争霸中神族的"卡拉"心灵连接——让多个 OpenClaw Agent 像神族战士一样直接通信，无需服务器协调。
+基于 libp2p 的 OpenClaw Agent P2P 协作网络。
 
-**这不是给人类用的工具 — 这是 Agent 之间的通信协议。**
-
-- ✅ **Agent 开发者** — 让多个 Agent 实例互相发现并协作
-- ✅ **多 Agent 系统** — 构建去中心化的 Agent 网络
-- ❌ **普通用户** — 你不会直接运行这个
-
----
-
-**核心特性：纯 P2P、端到端加密、无需中央服务器**
-
-[![AgentSkills](https://img.shields.io/badge/AgentSkills-Specification-blue)](https://agentskills.io/specification)
-
----
-
-## 安装
-
-### 给 Agent 开发者
-
-F2A 是一个 OpenClaw Agent Skill。Agent 通过读取 `SKILL.md` 来了解如何使用。
+## 架构概览
 
 ```
-skill/
-├── SKILL.md          # Agent 使用指南
-├── f2a.js            # CLI 入口
-├── daemon.js         # Daemon 实现
-├── scripts/          # 核心模块
-└── references/       # 协议规范
+┌─────────────────────────────────────────────────────────┐
+│                    OpenClaw Agent                        │
+│                   (通过 Adapter 集成)                     │
+└─────────────────────────┬───────────────────────────────┘
+                          │
+┌─────────────────────────▼───────────────────────────────┐
+│                      F2A SDK                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐  │
+│  │  F2A Core   │  │ P2P Network │  │ Capability Mgmt │  │
+│  │  (任务委托)  │  │ (libp2p)    │  │ (能力发现)      │  │
+│  └─────────────┘  └─────────────┘  └─────────────────┘  │
+└─────────────────────────┬───────────────────────────────┘
+                          │
+┌─────────────────────────▼───────────────────────────────┐
+│                    libp2p 网络层                         │
+│         TCP / WebSocket / MDNS / Bootstrap               │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### 手动安装（开发/测试）
+## 快速开始
+
+### 1. 安装依赖
 
 ```bash
-git clone https://github.com/LuciusCao/F2A.git
-cd F2A/skill
 npm install
 ```
 
-### 启动后台服务
+### 2. 基础使用
 
-让 F2A 作为后台服务持续运行：
+```typescript
+import { F2A } from 'f2a-network';
 
-```bash
-cd F2A/skill
+// 创建 F2A 节点
+const f2a = await F2A.create({
+  displayName: 'My OpenClaw Agent',
+  agentType: 'openclaw',
+  network: {
+    listenPort: 9000,
+    enableMDNS: true  // 本地网络自动发现
+  }
+});
 
-# 后台启动（推荐）
-node f2a.js start -D
+// 启动
+await f2a.start();
 
-# 后台启动 + DEBUG 日志
-node f2a.js start -D --debug
+// 注册能力
+f2a.registerCapability({
+  name: 'code-generation',
+  description: 'Generate code in various languages',
+  tools: ['generate', 'refactor']
+}, async (params) => {
+  // 实际执行代码生成
+  return { code: '...' };
+});
 
-# 自定义端口和名称
-node f2a.js start -D -p 9001 -n "MyAgent"
+// 发现网络中的 Agents
+const agents = await f2a.discoverAgents('code-generation');
+console.log(`Found ${agents.length} agents with code-generation capability`);
 
-# 查看状态
-node f2a.js status
-
-# 停止服务
-node f2a.js stop
+// 委托任务
+const result = await f2a.delegateTask({
+  capability: 'code-generation',
+  description: 'Generate a Python function to calculate fibonacci',
+  parameters: { language: 'python', n: 10 }
+});
 ```
 
-### 连接确认管理
+### 3. OpenClaw 集成
 
-当其他 Agent 请求连接时，F2A 支持手动确认：
+```typescript
+import { OpenClawF2AAdapter } from 'f2a-network';
 
-```bash
-# 查看待确认连接
-node f2a.js pending
+// 创建适配器
+const adapter = await OpenClawF2AAdapter.create(openclawSession, {
+  displayName: 'OpenClaw Node A',
+  listenPort: 9000,
+  enableMDNS: true
+});
 
-# 确认连接（通过序号或ID）
-node f2a.js confirm 1
-node f2a.js confirm abc-123
+// 启动
+await adapter.start();
 
-# 拒绝连接（可选原因）
-node f2a.js reject 2 --reason "不认识该Agent"
+// 委托任务给其他 Agent
+const result = await adapter.delegateTask({
+  capability: 'file-operation',
+  description: 'Read and analyze /var/log/system.log'
+});
 ```
 
-**工作流程：**
-1. Agent A 请求连接到 Agent B
-2. Agent B 的 Daemon 发送通知到 OpenClaw
-3. 用户在聊天窗口看到通知
-4. 用户回复 "f2a 允许 abc-123"
-5. Agent B 确认连接，双方建立通信
+## 双节点测试
 
-### OpenClaw 集成
+### 节点 A (你的机器)
 
-配置 OpenClaw Webhook 接收连接通知：
+```typescript
+// node-a.ts
+import { F2A } from 'f2a-network';
 
-```bash
-# 1. 在 ~/.openclaw/config.json 中启用 webhook
+const f2a = await F2A.create({
+  displayName: 'Node A',
+  network: { listenPort: 9000, enableMDNS: true }
+});
+
+await f2a.start();
+
+// 注册能力
+f2a.registerCapability({
+  name: 'echo',
+  description: 'Echo back the input',
+  tools: ['echo']
+}, async (params) => {
+  return { echoed: params.message };
+});
+
+console.log('Node A started:', f2a.peerId);
+```
+
+### 节点 B (另一台机器/VPS)
+
+```typescript
+// node-b.ts
+import { F2A } from 'f2a-network';
+
+const f2a = await F2A.create({
+  displayName: 'Node B',
+  network: { 
+    listenPort: 9000, 
+    enableMDNS: true,
+    // 如果 MDNS 不可用，使用引导节点
+    bootstrapPeers: ['/ip4/192.168.1.100/tcp/9000/p2p/12D3KooW...']
+  }
+});
+
+await f2a.start();
+
+// 发现节点 A
+const agents = await f2a.discoverAgents('echo');
+console.log('Found agents:', agents);
+
+// 发送任务给节点 A
+if (agents.length > 0) {
+  const result = await f2a.sendTaskTo(
+    agents[0].peerId,
+    'echo',
+    'Echo test',
+    { message: 'Hello from Node B!' }
+  );
+  console.log('Result:', result);
+}
+```
+
+## 消息协议
+
+### 发现广播 (DISCOVER)
+
+```json
 {
-  "hooks": {
-    "enabled": true,
-    "token": "your-secret-token"
+  "id": "uuid",
+  "type": "DISCOVER",
+  "from": "12D3KooW...",
+  "timestamp": 1740982800,
+  "payload": {
+    "agentInfo": {
+      "peerId": "12D3KooW...",
+      "displayName": "Node A",
+      "agentType": "openclaw",
+      "version": "1.0.0",
+      "capabilities": [
+        { "name": "echo", "description": "...", "tools": ["echo"] }
+      ],
+      "protocolVersion": "f2a/1.0",
+      "lastSeen": 1740982800,
+      "multiaddrs": ["/ip4/192.168.1.100/tcp/9000"]
+    }
   }
 }
-
-# 2. 设置环境变量
-export OPENCLAW_HOOK_TOKEN="your-secret-token"
-export F2A_CONTROL_TOKEN="$(openssl rand -hex 32)"  # ⚠️ 生成随机 Token，请勿使用默认值
-
-# 3. 启动 F2A Daemon
-node f2a.js start -D
 ```
 
-或使用 npm 命令：
+### 任务请求 (TASK_REQUEST)
 
-```bash
-npm run daemon:start   # 启动
-npm run daemon:status  # 查看状态
-npm run daemon:stop    # 停止
+```json
+{
+  "id": "task-uuid",
+  "type": "TASK_REQUEST",
+  "from": "12D3KooW...",
+  "to": "12D3KooX...",
+  "timestamp": 1740982800,
+  "payload": {
+    "taskId": "task-uuid",
+    "taskType": "echo",
+    "description": "Echo test",
+    "parameters": { "message": "Hello!" },
+    "timeout": 30
+  }
+}
 ```
 
-### 环境变量
+### 任务响应 (TASK_RESPONSE)
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `F2A_AGENT_ID` | Agent 唯一标识 | 随机生成 |
-| `F2A_PORT` | P2P 监听端口 | 9000 |
-| `F2A_CONTROL_PORT` | 控制服务器端口 | 9001 |
-| `F2A_SECURITY_LEVEL` | 安全等级 (low/medium/high) | medium |
-| `F2A_DATA_DIR` | 数据目录 | ~/.f2a |
-| `F2A_CONTROL_TOKEN` | 控制服务器认证 Token | f2a-default-token ⚠️ **请修改** |
-| `OPENCLAW_HOOK_TOKEN` | OpenClaw Webhook Token | - |
-| `OPENCLAW_HOOK_URL` | OpenClaw Webhook URL | http://127.0.0.1:18789/hooks/agent |
-
----
-
-## 安全特性
-
-- 🔐 **端到端加密** - ECDH + AES-256-GCM
-- 🛡️ **身份验证** - Ed25519 签名
-- ✋ **手动确认** - 新连接需要用户确认（1小时有效期，自动去重）
-- 🚫 **黑白名单** - 可配置信任/屏蔽列表
-- ⏱️ **速率限制** - 防 DoS 攻击
-- 📱 **OpenClaw 集成** - 通过 Webhook 接收连接通知
-
----
-
-## 项目结构
-
-```
-F2A/
-├── skill/              # Agent Skill
-│   ├── SKILL.md        # Agent 使用指南
-│   ├── f2a.js          # CLI 入口
-│   ├── daemon.js       # Daemon 实现
-│   ├── scripts/        # 核心模块
-│   └── references/     # 协议规范
-├── docs/               # 文档
-└── install.sh          # 安装脚本
+```json
+{
+  "id": "uuid",
+  "type": "TASK_RESPONSE",
+  "from": "12D3KooX...",
+  "to": "12D3KooW...",
+  "timestamp": 1740982800,
+  "payload": {
+    "taskId": "task-uuid",
+    "status": "success",
+    "result": { "echoed": "Hello!" }
+  }
+}
 ```
 
----
+## API 参考
 
-## 文档
+### F2A 类
 
-- [SKILL.md](skill/SKILL.md) - Agent 使用指南 (符合 [AgentSkills Specification](https://agentskills.io/specification))
-- [protocol.md](skill/references/protocol.md) - 协议规范
-- [security-design.md](docs/security-design.md) - 安全设计
-- [a2a-lessons.md](docs/a2a-lessons.md) - 借鉴 A2A 协议的设计改进
+| 方法 | 描述 |
+|------|------|
+| `F2A.create(options)` | 创建实例 |
+| `start()` | 启动 P2P 网络 |
+| `stop()` | 停止网络 |
+| `registerCapability(cap, handler)` | 注册能力 |
+| `discoverAgents(capability?)` | 发现 Agents |
+| `delegateTask(options)` | 委托任务 |
+| `sendTaskTo(peerId, type, desc, params)` | 直接发送任务 |
 
----
+### 事件
 
-## 规范合规
+| 事件 | 描述 |
+|------|------|
+| `peer:discovered` | 发现新 Agent |
+| `peer:connected` | Peer 连接成功 |
+| `peer:disconnected` | Peer 断开连接 |
+| `task:request` | 收到任务请求 |
+| `task:response` | 收到任务响应 |
+| `network:started` | 网络已启动 |
+| `network:stopped` | 网络已停止 |
 
-本项目遵循 [AgentSkills Specification](https://agentskills.io/specification)：
-- ✅ SKILL.md 包含 YAML frontmatter
-- ✅ 渐进式披露设计
-- ✅ 资源分离: scripts/, references/
+## 路线图
 
----
-
-## License
-
-MIT — "En Taro Adun!"
+- [x] 基础 P2P 网络 (libp2p)
+- [x] Agent 发现与能力广播
+- [x] 任务委托与响应
+- [ ] 引导节点支持
+- [ ] DHT 全局发现
+- [ ] 端到端加密
+- [ ] 信誉系统
+- [ ] 多 Agent 类型支持

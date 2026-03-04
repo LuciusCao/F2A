@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { randomBytes } from 'crypto';
 import { homedir } from 'os';
+import { Logger } from '../utils/logger';
 
 /**
  * Token 管理器
@@ -10,12 +11,14 @@ import { homedir } from 'os';
 export class TokenManager {
   private tokenPath: string;
   private token: string | null = null;
+  private logger: Logger;
 
   constructor(dataDir?: string) {
+    this.logger = new Logger({ component: 'TokenManager' });
     // 默认存储在用户主目录的 .f2a 文件夹
     const baseDir = dataDir || join(homedir(), '.f2a');
     this.tokenPath = join(baseDir, 'control-token');
-    
+
     // 确保目录存在
     const dir = join(baseDir);
     if (!existsSync(dir)) {
@@ -33,8 +36,8 @@ export class TokenManager {
     if (envToken) {
       // 检查是否为不安全默认值
       if (envToken === 'f2a-default-token') {
-        console.warn('⚠️ [TokenManager] F2A_CONTROL_TOKEN is using the insecure default value!');
-        console.warn('   Please set a secure token: export F2A_CONTROL_TOKEN=$(openssl rand -hex 32)');
+        this.logger.warn('F2A_CONTROL_TOKEN is using the insecure default value!');
+        this.logger.warn('Please set a secure token: export F2A_CONTROL_TOKEN=$(openssl rand -hex 32)');
       }
       this.token = envToken;
       return envToken;
@@ -53,10 +56,10 @@ export class TokenManager {
     const newToken = this.generateSecureToken();
     this.saveToken(newToken);
     this.token = newToken;
-    
-    console.log(`[TokenManager] Generated new control token and saved to ${this.tokenPath}`);
-    console.log('[TokenManager] To use a custom token, set F2A_CONTROL_TOKEN environment variable');
-    
+
+    this.logger.info('Generated new control token', { path: this.tokenPath });
+    this.logger.info('To use a custom token, set F2A_CONTROL_TOKEN environment variable');
+
     return newToken;
   }
 
@@ -83,7 +86,7 @@ export class TokenManager {
     try {
       writeFileSync(this.tokenPath, token, { mode: 0o600 }); // 仅所有者可读写
     } catch (error) {
-      console.error('[TokenManager] Failed to save token:', error);
+      this.logger.error('Failed to save token', { error });
     }
   }
 

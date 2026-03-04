@@ -34,6 +34,7 @@ import {
   createError
 } from '../types';
 import { E2EECrypto } from './e2ee-crypto';
+import { Logger } from '../utils/logger';
 
 // F2A 协议标识
 const F2A_PROTOCOL = '/f2a/1.0.0';
@@ -60,23 +61,25 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     resolve: (result: unknown) => void;
     reject: (error: string) => void;
     timeout: NodeJS.Timeout;
-    resolved: boolean; // 标记是否已解决，防止超时后重复 resolve
+    resolved: boolean;
   }> = new Map();
   private cleanupInterval?: NodeJS.Timeout;
   private discoveryInterval?: NodeJS.Timeout;
   private e2eeCrypto: E2EECrypto;
-  private enableE2EE: boolean = true; // E2EE 开关
+  private enableE2EE: boolean = true;
+  private logger: Logger;
 
   constructor(agentInfo: AgentInfo, config: P2PNetworkConfig = {}) {
     super();
     this.agentInfo = agentInfo;
     this.e2eeCrypto = new E2EECrypto();
     this.config = {
-      listenPort: 0, // 随机端口
+      listenPort: 0,
       enableMDNS: true,
       enableDHT: false,
       ...config
     };
+    this.logger = new Logger({ component: 'P2P' });
   }
 
   /**
@@ -128,7 +131,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       // 初始化 E2EE 加密
       await this.e2eeCrypto.initialize();
       this.agentInfo.encryptionPublicKey = this.e2eeCrypto.getPublicKey() || undefined;
-      console.log(`[P2P] E2EE encryption enabled, public key: ${this.agentInfo.encryptionPublicKey?.slice(0, 16)}...`);
+      this.logger.info('E2EE encryption enabled', {
+        publicKey: this.agentInfo.encryptionPublicKey?.slice(0, 16)
+      });
 
       // 连接引导节点
       if (this.config.bootstrapPeers) {
@@ -143,13 +148,12 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
       // 如果启用 DHT，等待 DHT 就绪
       if (this.config.enableDHT !== false && this.node.services.dht) {
-        console.log('[P2P] DHT enabled, waiting for routing table...');
-        // DHT 会自动开始发现
+        this.logger.info('DHT enabled, waiting for routing table');
       }
 
-      console.log(`[P2P] Started with peerId: ${peerId.toString().slice(0, 16)}...`);
-      console.log(`[P2P] Listening on:`, addrs);
-      console.log(`[P2P] Connection encryption: Noise protocol enabled`);
+      this.logger.info('Started', { peerId: peerId.toString().slice(0, 16) });
+      this.logger.info('Listening', { addresses: addrs });
+      this.logger.info('Connection encryption enabled', { protocol: 'Noise' });
 
       return success({ peerId: peerId.toString(), addresses: addrs });
     } catch (error) {
@@ -183,7 +187,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
       await this.node.stop();
       this.node = null;
-      console.log('[P2P] Stopped');
+      this.logger.info('Stopped');
     }
   }
 
@@ -345,7 +349,10 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     // 记录发送失败的情况
     const failures = results.filter(r => r.status === 'rejected');
     if (failures.length > 0) {
-      console.warn(`[P2P] Broadcast failed to ${failures.length}/${peers.length} peers`);
+      this.logger.warn('Broadcast failed to some peers', {
+        failed: failures.length,
+        total: peers.length
+      });
     }
   }
 
@@ -383,7 +390,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           }));
         } else {
           // 加密失败，回退到明文
-          console.warn(`[P2P] E2EE encryption failed for ${peerId.slice(0, 16)}..., falling back to plaintext`);
+          this.logger.warn('E2EE encryption failed, falling back to plaintext', {
+            peerId: peerId.slice(0, 16)
+          });
           data = Buffer.from(JSON.stringify(message));
         }
       } else {
@@ -411,8 +420,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     // 新连接
     this.node.addEventListener('peer:connect', (evt) => {
       const peerId = evt.detail.toString();
-      console.log(`[P2P] Peer connected: ${peerId.slice(0, 16)}...`);
-      
+      this.logger.info('Peer connected', { peerId: peerId.slice(0, 16) });
+
       this.emit('peer:connected', {
         peerId,
         direction: 'inbound'
@@ -429,8 +438,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     // 断开连接
     this.node.addEventListener('peer:disconnect', (evt) => {
       const peerId = evt.detail.toString();
-      console.log(`[P2P] Peer disconnected: ${peerId.slice(0, 16)}...`);
-      
+      this.logger.info('Peer disconnected', { peerId: peerId.slice(0, 16) });
+
       this.emit('peer:disconnected', { peerId });
 
       // 更新路由表
@@ -458,7 +467,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         // 处理消息
         await this.handleMessage(message, peerId);
       } catch (error) {
-        console.error('[P2P] Error handling message:', error);
+        this.logger.error('Error handling message', { error });
       }
     });
   }
@@ -467,7 +476,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    * 处理收到的消息
    */
   private async handleMessage(message: F2AMessage, peerId: string): Promise<void> {
-    console.log(`[P2P] Received ${message.type} from ${peerId.slice(0, 16)}...`);
+    this.logger.info('Received message', { type: message.type, peerId: peerId.slice(0, 16) });
 
     // 更新最后活跃时间
     const peerInfo = this.peerTable.get(peerId);
@@ -482,11 +491,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         try {
           message = JSON.parse(decrypted);
         } catch (error) {
-          console.error('[P2P] Failed to parse decrypted message:', error);
+          this.logger.error('Failed to parse decrypted message', { error });
           return;
         }
       } else {
-        console.error('[P2P] Failed to decrypt message from:', peerId.slice(0, 16));
+        this.logger.error('Failed to decrypt message', { peerId: peerId.slice(0, 16) });
         return;
       }
     }
@@ -543,7 +552,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     // 注册对等方的加密公钥
     if (agentInfo.encryptionPublicKey) {
       this.e2eeCrypto.registerPeerPublicKey(peerId, agentInfo.encryptionPublicKey);
-      console.log(`[P2P] Registered encryption key for ${peerId.slice(0, 16)}...`);
+      this.logger.info('Registered encryption key', { peerId: peerId.slice(0, 16) });
     }
 
     // 发送发现响应
@@ -557,7 +566,10 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     });
 
     if (!responseResult.success) {
-      console.warn(`[P2P] Failed to send discover response to ${peerId.slice(0, 16)}:`, responseResult.error);
+      this.logger.warn('Failed to send discover response', {
+        peerId: peerId.slice(0, 16),
+        error: responseResult.error
+      });
     }
 
     this.emit('peer:discovered', {
@@ -597,7 +609,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private handleTaskResponse(payload: TaskResponsePayload): void {
     const pending = this.pendingTasks.get(payload.taskId);
     if (!pending) {
-      console.warn(`[P2P] Received response for unknown task: ${payload.taskId}`);
+      this.logger.warn('Received response for unknown task', { taskId: payload.taskId });
       return;
     }
 
@@ -629,9 +641,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       try {
         const ma = multiaddr(addr);
         await this.node.dial(ma);
-        console.log(`[P2P] Connected to bootstrap: ${addr}`);
+        this.logger.info('Connected to bootstrap', { addr });
       } catch (error) {
-        console.warn(`[P2P] Failed to connect to bootstrap: ${addr}`);
+        this.logger.warn('Failed to connect to bootstrap', { addr });
       }
     }
   }
@@ -683,20 +695,20 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     }
 
     if (cleaned > 0) {
-      console.log(`[P2P] Cleaned up ${cleaned} stale peer(s), remaining: ${this.peerTable.size}`);
+      this.logger.info('Cleaned up stale peers', { cleaned, remaining: this.peerTable.size });
     }
 
     // 如果仍然超过最大容量，按最后活跃时间排序后删除最旧的
     if (this.peerTable.size > PEER_TABLE_MAX_SIZE) {
       const sorted = Array.from(this.peerTable.entries())
         .sort((a, b) => a[1].lastSeen - b[1].lastSeen);
-      
+
       const toRemove = sorted.slice(0, this.peerTable.size - PEER_TABLE_MAX_SIZE);
       for (const [peerId] of toRemove) {
         this.peerTable.delete(peerId);
       }
-      
-      console.log(`[P2P] Removed ${toRemove.length} oldest peers to maintain limit`);
+
+      this.logger.info('Removed oldest peers to maintain limit', { removed: toRemove.length });
     }
   }
 

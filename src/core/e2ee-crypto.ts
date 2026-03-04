@@ -5,6 +5,7 @@
 
 import { x25519 } from '@noble/curves/ed25519.js';
 import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'crypto';
+import { Logger } from '../utils/logger';
 
 // AES-256-GCM 参数
 const AES_KEY_SIZE = 32; // 256 bits
@@ -42,6 +43,11 @@ export class E2EECrypto {
   private keyPair: EncryptionKeyPair | null = null;
   private peerPublicKeys: Map<string, Uint8Array> = new Map();
   private sharedSecrets: Map<string, Uint8Array> = new Map();
+  private logger: Logger;
+
+  constructor() {
+    this.logger = new Logger({ component: 'E2EE' });
+  }
 
   /**
    * 初始化密钥对
@@ -50,7 +56,7 @@ export class E2EECrypto {
     // 生成 X25519 密钥对用于加密
     const privateKey = x25519.utils.randomSecretKey();
     const publicKey = x25519.getPublicKey(privateKey);
-    
+
     this.keyPair = { publicKey, privateKey };
   }
 
@@ -76,14 +82,14 @@ export class E2EECrypto {
     try {
       const publicKey = Buffer.from(publicKeyBase64, 'base64');
       this.peerPublicKeys.set(peerId, publicKey);
-      
+
       // 预计算共享密钥
       if (this.keyPair) {
         const sharedSecret = x25519.getSharedSecret(this.keyPair.privateKey, publicKey);
         this.sharedSecrets.set(peerId, sharedSecret);
       }
     } catch (error) {
-      console.error(`[E2EE] Failed to register public key for ${peerId}:`, error);
+      this.logger.error('Failed to register public key', { peerId, error });
     }
   }
 
@@ -99,38 +105,38 @@ export class E2EECrypto {
    */
   encrypt(peerId: string, plaintext: string, aad?: string): EncryptedMessage | null {
     if (!this.keyPair) {
-      console.error('[E2EE] Not initialized');
+      this.logger.error('Not initialized');
       return null;
     }
 
     const sharedSecret = this.sharedSecrets.get(peerId);
     if (!sharedSecret) {
-      console.error(`[E2EE] No shared secret for ${peerId}`);
+      this.logger.error('No shared secret for peer', { peerId });
       return null;
     }
 
     try {
       // 从共享密钥派生 AES 密钥 (简单起见，取前32字节)
       const aesKey = this.deriveAESKey(sharedSecret);
-      
+
       // 生成随机 IV
       const iv = randomBytes(AES_IV_SIZE);
-      
+
       // 创建加密器
       const cipher = createCipheriv('aes-256-gcm', aesKey, iv);
-      
+
       // 添加 AAD (如果有)
       if (aad) {
         cipher.setAAD(Buffer.from(aad, 'utf-8'));
       }
-      
+
       // 加密
       let ciphertext = cipher.update(plaintext, 'utf-8', 'base64');
       ciphertext += cipher.final('base64');
-      
+
       // 获取认证标签
       const authTag = cipher.getAuthTag();
-      
+
       return {
         senderPublicKey: this.getPublicKey()!,
         iv: iv.toString('base64'),
@@ -139,7 +145,7 @@ export class E2EECrypto {
         aad
       };
     } catch (error) {
-      console.error('[E2EE] Encryption failed:', error);
+      this.logger.error('Encryption failed', { error });
       return null;
     }
   }
@@ -149,7 +155,7 @@ export class E2EECrypto {
    */
   decrypt(encrypted: EncryptedMessage): string | null {
     if (!this.keyPair) {
-      console.error('[E2EE] Not initialized');
+      this.logger.error('Not initialized');
       return null;
     }
 
@@ -158,27 +164,27 @@ export class E2EECrypto {
       const senderPublicKey = Buffer.from(encrypted.senderPublicKey, 'base64');
       const sharedSecret = x25519.getSharedSecret(this.keyPair.privateKey, senderPublicKey);
       const aesKey = this.deriveAESKey(sharedSecret);
-      
+
       // 解码参数
       const iv = Buffer.from(encrypted.iv, 'base64');
       const authTag = Buffer.from(encrypted.authTag, 'base64');
-      
+
       // 创建解密器
       const decipher = createDecipheriv('aes-256-gcm', aesKey, iv);
       decipher.setAuthTag(authTag);
-      
+
       // 添加 AAD (如果有)
       if (encrypted.aad) {
         decipher.setAAD(Buffer.from(encrypted.aad, 'utf-8'));
       }
-      
+
       // 解密
       let plaintext = decipher.update(encrypted.ciphertext, 'base64', 'utf-8');
       plaintext += decipher.final('utf-8');
-      
+
       return plaintext;
     } catch (error) {
-      console.error('[E2EE] Decryption failed:', error);
+      this.logger.error('Decryption failed', { error });
       return null;
     }
   }

@@ -12,11 +12,15 @@ export type ErrorCode =
   // DHT 错误
   | 'DHT_NOT_AVAILABLE'
   | 'DHT_LOOKUP_FAILED'
+  // 加密错误
+  | 'ENCRYPTION_NOT_READY'
+  | 'ENCRYPTION_FAILED'
   // 任务错误
   | 'TASK_NOT_FOUND'
   | 'TASK_REJECTED'
   | 'TASK_FAILED'
   | 'CAPABILITY_NOT_SUPPORTED'
+  | 'INVALID_OPTIONS'
   // 安全错误
   | 'UNAUTHORIZED'
   | 'FORBIDDEN'

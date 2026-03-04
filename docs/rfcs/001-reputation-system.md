@@ -58,13 +58,48 @@
 | 60-80 | 贡献者 | ✅ | ✅ | ✅ | 90% |
 | 80-100 | 核心成员 | ✅ | ✅ | ✅ | 70% |
 
-#### 1.3 评审委员会 (Review Committee)
+#### 1.3 最小网络模型
 
-- 由网络中信誉分 ≥ 50 的节点组成
-- 每个任务需要 n 个评审（网络规模决定）
-- 网络规模 < 10：n = 1
-- 网络规模 10-50：n = 3
-- 网络规模 > 50：n = 5-7
+**核心原则：安全优先，最少需要 3 个节点才能构成可用网络。**
+
+```
+┌─────────┐      任务       ┌─────────┐
+│ Node A  │ ───────────────▶│ Node B  │
+│ 请求者   │                 │ 执行者   │
+└─────────┘                 └─────────┘
+      │                           │
+      │         ┌─────────┐       │
+      └────────▶│ Node C  │◀──────┘
+                │ 评审者   │
+                └─────────┘
+```
+
+**网络启动条件：**
+- 最小节点数：3 个
+- 角色分配：请求者 + 执行者 + 评审者
+- 评审人数：固定 1 个（第三个节点）
+
+**角色轮换机制：**
+
+```
+任务 1: A 请求 → B 执行 → C 评审
+任务 2: B 请求 → C 执行 → A 评审
+任务 3: C 请求 → A 执行 → B 评审
+```
+
+各方轮流担任不同角色，均衡积累信誉。
+
+#### 1.4 评审委员会 (Review Committee)
+
+| 网络规模 | 评审人数 | 机制 |
+|---------|---------|------|
+| 3-10 节点 | 1 | 固定 1 人评审 |
+| 10-50 节点 | 3 | 去掉最高最低，取平均 |
+| 50+ 节点 | 5-7 | 完整评审机制 + 偏离检测 |
+
+- 评审资格：信誉分 ≥ 50 的节点
+- 不能评审自己参与的任务（请求者/执行者）
+- 评审结果需签名确认
 
 ### 2. 评审维度
 
@@ -519,6 +554,47 @@ function updateReputationEWMA(
 }
 ```
 
+### 6. 信誉衰减机制
+
+**目的：** 防止节点获取高信誉后长期不活跃
+
+```typescript
+// 长期不活跃的节点信誉缓慢衰减
+function decayReputation(lastActive: number, currentScore: number): number {
+  const daysInactive = (Date.now() - lastActive) / (24 * 60 * 60 * 1000);
+  
+  // 7 天内不衰减
+  if (daysInactive < 7) return currentScore;
+  
+  // 超过 7 天，每天衰减 1%
+  const decayRate = 0.01;
+  const decayFactor = Math.pow(1 - decayRate, daysInactive - 7);
+  
+  // 最低不低于 40（保留参与者资格）
+  return Math.max(40, currentScore * decayFactor);
+}
+```
+
+### 7. 动态评审人数
+
+**目的：** 根据任务价值动态调整评审资源
+
+```typescript
+function getReviewerCount(taskValue: number, networkSize: number): number {
+  // 基础评审人数（根据网络规模）
+  const baseCount = networkSize < 10 ? 1 : networkSize < 50 ? 3 : 5;
+  
+  // 高价值任务增加评审人数
+  if (taskValue > 80) return Math.min(7, baseCount + 2);
+  if (taskValue > 50) return Math.min(5, baseCount + 1);
+  
+  // 负价值（可疑）任务增加评审
+  if (taskValue < -50) return Math.min(7, baseCount + 2);
+  
+  return baseCount;
+}
+```
+
 ---
 
 ## 流程图
@@ -633,3 +709,4 @@ Requester 发布任务
 |------|------|---------|
 | 2026-03-04 | 0.1 | 初始草案 |
 | 2026-03-04 | 0.2 | 添加安全机制：链式签名、邀请制、挑战机制 |
+| 2026-03-04 | 0.3 | 添加最小网络模型（3节点）、信誉衰减、动态评审人数 |

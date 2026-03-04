@@ -57,6 +57,9 @@ export class ControlServer {
       this.server.close();
       this.server = undefined;
     }
+    // 清理速率限制器资源
+    this.rateLimiter.stop();
+    this.logger.info('Stopped');
   }
 
   /**

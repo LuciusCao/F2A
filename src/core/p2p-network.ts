@@ -380,22 +380,29 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
       // 准备消息数据（根据是否启用 E2EE 加密）
       let data: Buffer;
-      if (encrypt && this.enableE2EE && this.e2eeCrypto.canEncryptTo(peerId)) {
+      if (encrypt && this.enableE2EE) {
+        // 检查是否有共享密钥
+        if (!this.e2eeCrypto.canEncryptTo(peerId)) {
+          return failureFromError(
+            'ENCRYPTION_NOT_READY',
+            'No shared secret with peer. Wait for key exchange to complete.'
+          );
+        }
+
         // 加密消息内容
         const encrypted = this.e2eeCrypto.encrypt(peerId, JSON.stringify(message));
-        if (encrypted) {
-          data = Buffer.from(JSON.stringify({
-            ...message,
-            encrypted: true,
-            payload: encrypted
-          }));
-        } else {
-          // 加密失败，回退到明文
-          this.logger.warn('E2EE encryption failed, falling back to plaintext', {
-            peerId: peerId.slice(0, 16)
-          });
-          data = Buffer.from(JSON.stringify(message));
+        if (!encrypted) {
+          return failureFromError(
+            'ENCRYPTION_FAILED',
+            'Failed to encrypt message. Cannot proceed in secure mode.'
+          );
         }
+
+        data = Buffer.from(JSON.stringify({
+          ...message,
+          encrypted: true,
+          payload: encrypted
+        }));
       } else {
         data = Buffer.from(JSON.stringify(message));
       }

@@ -29,6 +29,8 @@ export interface LoggerOptions {
   enableConsole?: boolean;
   enableFile?: boolean;
   filePath?: string;
+  /** 是否使用 JSON 格式输出（生产环境推荐） */
+  jsonMode?: boolean;
 }
 
 /**
@@ -38,11 +40,14 @@ export class Logger {
   private level: LogLevel;
   private component: string;
   private enableConsole: boolean;
+  private jsonMode: boolean;
 
   constructor(options: LoggerOptions = {}) {
     this.level = options.level || 'INFO';
     this.component = options.component || 'F2A';
     this.enableConsole = options.enableConsole !== false;
+    // 自动检测：生产环境默认使用 JSON 格式
+    this.jsonMode = options.jsonMode ?? (process.env.NODE_ENV === 'production');
   }
 
   /**
@@ -71,14 +76,20 @@ export class Logger {
   private output(entry: LogEntry): void {
     if (!this.enableConsole) return;
 
-    const { level, msg, timestamp, component, ...meta } = entry;
-    const prefix = `[${timestamp.split('T')[1].split('.')[0]}] [${component}] [${level}]`;
-
-    if (Object.keys(meta).length > 0) {
-      // 结构化输出（开发环境可读格式）
-      console.log(`${prefix} ${msg}`, meta);
+    if (this.jsonMode) {
+      // 生产环境：JSON 一行，便于日志系统收集
+      console.log(JSON.stringify(entry));
     } else {
-      console.log(`${prefix} ${msg}`);
+      // 开发环境：人类可读
+      const { level, msg, timestamp, component, ...meta } = entry;
+      const prefix = `[${timestamp.split('T')[1].split('.')[0]}] [${component}] [${level}]`;
+
+      if (Object.keys(meta).length > 0) {
+        // 结构化输出（开发环境可读格式）
+        console.log(`${prefix} ${msg}`, meta);
+      } else {
+        console.log(`${prefix} ${msg}`);
+      }
     }
   }
 
@@ -135,7 +146,8 @@ export class Logger {
     return new Logger({
       level: this.level,
       component: `${this.component}:${component}`,
-      enableConsole: this.enableConsole
+      enableConsole: this.enableConsole,
+      jsonMode: this.jsonMode
     });
   }
 }

@@ -26,6 +26,7 @@ export class RateLimiter {
   private config: Required<RateLimitConfig>;
   private store: Map<string, RateLimitEntry> = new Map();
   private logger: Logger;
+  private cleanupTimer?: NodeJS.Timeout;
 
   constructor(config: RateLimitConfig) {
     this.config = {
@@ -33,6 +34,20 @@ export class RateLimiter {
       ...config
     };
     this.logger = new Logger({ component: 'RateLimiter' });
+    // 自动启动清理定时器
+    this.cleanupTimer = setInterval(() => this.cleanup(), config.windowMs);
+  }
+
+  /**
+   * 停止速率限制器，清理资源
+   */
+  stop(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = undefined;
+    }
+    this.store.clear();
+    this.logger.info('Rate limiter stopped');
   }
 
   /**
@@ -125,10 +140,7 @@ export class RateLimiter {
 export function createRateLimitMiddleware(config: RateLimitConfig) {
   const limiter = new RateLimiter(config);
 
-  // 定期清理
-  setInterval(() => limiter.cleanup(), config.windowMs);
-
-  return (req: any, res: any, next: () => void) => {
+  const middleware = (req: any, res: any, next: () => void) => {
     const key = req.socket?.remoteAddress || 'unknown';
 
     if (!limiter.allowRequest(key)) {
@@ -143,4 +155,11 @@ export function createRateLimitMiddleware(config: RateLimitConfig) {
 
     next();
   };
+
+  // 提供 stop 方法清理资源
+  middleware.stop = () => {
+    limiter.stop();
+  };
+
+  return middleware;
 }

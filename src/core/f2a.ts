@@ -6,6 +6,7 @@
 import { EventEmitter } from 'eventemitter3';
 import { P2PNetwork } from './p2p-network';
 import { Logger } from '../utils/logger';
+import { validateAgentCapability, validateTaskDelegateOptions } from '../utils/validation';
 import {
   F2AOptions,
   F2AEvents,
@@ -172,6 +173,15 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     capability: AgentCapability,
     handler: (params: Record<string, unknown>) => Promise<unknown>
   ): void {
+    // 验证能力定义
+    const validation = validateAgentCapability(capability);
+    if (!validation.success) {
+      this.logger.error('Invalid capability definition', {
+        errors: validation.error.errors
+      });
+      throw new Error(`Invalid capability: ${validation.error.errors.map(e => e.message).join(', ')}`);
+    }
+
     this.registeredCapabilities.set(capability.name, {
       ...capability,
       handler
@@ -215,6 +225,18 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
    * 委托任务给网络
    */
   async delegateTask(options: TaskDelegateOptions): Promise<Result<TaskDelegateResult>> {
+    // 验证任务委托选项
+    const validation = validateTaskDelegateOptions(options);
+    if (!validation.success) {
+      this.logger.error('Invalid task delegate options', {
+        errors: validation.error.errors
+      });
+      return failureFromError(
+        'INVALID_OPTIONS',
+        `Invalid options: ${validation.error.errors.map(e => e.message).join(', ')}`
+      );
+    }
+
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     this.logger.info('Delegating task', {

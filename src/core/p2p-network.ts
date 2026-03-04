@@ -35,6 +35,7 @@ import {
 } from '../types';
 import { E2EECrypto } from './e2ee-crypto';
 import { Logger } from '../utils/logger';
+import { validateF2AMessage, validateTaskRequestPayload, validateTaskResponsePayload } from '../utils/validation';
 
 // F2A 协议标识
 const F2A_PROTOCOL = '/f2a/1.0.0';
@@ -476,6 +477,16 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    * 处理收到的消息
    */
   private async handleMessage(message: F2AMessage, peerId: string): Promise<void> {
+    // 验证消息格式
+    const validation = validateF2AMessage(message);
+    if (!validation.success) {
+      this.logger.warn('Invalid message format', {
+        errors: validation.error.errors,
+        peerId: peerId.slice(0, 16)
+      });
+      return;
+    }
+
     this.logger.info('Received message', { type: message.type, peerId: peerId.slice(0, 16) });
 
     // 更新最后活跃时间
@@ -514,6 +525,13 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       }
 
       case 'TASK_RESPONSE': {
+        const payloadValidation = validateTaskResponsePayload(message.payload);
+        if (!payloadValidation.success) {
+          this.logger.warn('Invalid task response payload', {
+            errors: payloadValidation.error.errors
+          });
+          break;
+        }
         const payload = message.payload as TaskResponsePayload;
         this.handleTaskResponse(payload);
         break;

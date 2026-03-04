@@ -13,6 +13,7 @@ const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
 /**
  * 获取控制 Token
  * 优先从环境变量读取，其次从默认文件位置读取
+ * @returns 控制 Token，如果未找到返回空字符串
  */
 function getControlToken(): string {
   // 1. 优先使用环境变量
@@ -46,6 +47,10 @@ interface Args {
   reason?: string;
 }
 
+/**
+ * 解析命令行参数
+ * @returns 解析后的参数对象
+ */
 function parseArgs(): Args {
   const args = process.argv.slice(2);
   
@@ -78,6 +83,10 @@ function parseArgs(): Args {
   return { command, idOrIndex, capability, reason };
 }
 
+/**
+ * 显示帮助信息
+ * @returns void
+ */
 function showHelp(): void {
   console.log(`
 F2A CLI - Friend-to-Agent P2P Networking
@@ -114,7 +123,11 @@ Examples:
 }
 
 /**
- * 发送控制命令
+ * 发送控制命令到 F2A Daemon
+ * @param action - 命令动作
+ * @param params - 命令参数（可选）
+ * @returns Promise，命令执行完成后 resolve
+ * @throws 当网络请求失败时 reject
  */
 async function sendCommand(action: string, params?: Record<string, unknown>): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -167,7 +180,9 @@ async function sendCommand(action: string, params?: Record<string, unknown>): Pr
 }
 
 /**
- * 主函数
+ * 主函数 - CLI 入口
+ * @returns Promise，程序退出时 resolve
+ * @throws 当命令执行失败时 reject
  */
 async function main(): Promise<void> {
   const args = parseArgs();

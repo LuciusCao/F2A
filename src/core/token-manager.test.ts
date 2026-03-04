@@ -70,21 +70,13 @@ describe('TokenManager', () => {
       expect(token2).toBe(token1);
     });
 
-    it('should warn about insecure default token', () => {
-      // Logger 内部使用 console，所以仍然可以 spyOn console
-      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
+    it('should reject insecure default token', () => {
       process.env.F2A_CONTROL_TOKEN = 'f2a-default-token';
-      tokenManager.getToken();
 
-      // Logger 使用 console.log 输出，检查是否包含 insecure 警告
-      const calls = consoleSpy.mock.calls;
-      const hasInsecureWarning = calls.some(call =>
-        call.some(arg => typeof arg === 'string' && arg.includes('insecure'))
-      );
-      expect(hasInsecureWarning).toBe(true);
+      // 应该抛出错误
+      expect(() => tokenManager.getToken()).toThrow('Insecure token detected');
 
-      consoleSpy.mockRestore();
+      delete process.env.F2A_CONTROL_TOKEN;
     });
   });
 

@@ -321,7 +321,8 @@ export interface RegisteredCapability extends AgentCapability {
 }
 
 // ============================================================================
-// 统一 Result 类型 (从 result.ts 重新导出)
+// 统一 Result 类型
+// 从 result.ts 重新导出，用于统一的错误处理模式
 // ============================================================================
 
 export * from './result';

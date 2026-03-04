@@ -188,6 +188,49 @@ pm2 status f2a
 | `F2A_CONTROL_PORT` | 9001 | HTTP 控制端口 |
 | `F2A_CONTROL_TOKEN` | `f2a-default-token` | 控制服务器认证 Token |
 
+## DHT 配置
+
+F2A 使用 Kademlia DHT 实现全局节点发现。
+
+### DHT 模式
+
+| 模式 | 说明 | 适用场景 |
+|------|------|----------|
+| **客户端模式** (默认) | 参与 DHT 路由，但不存储数据 | 普通节点，资源受限设备 |
+| **服务器模式** | 作为 DHT 服务器，存储路由表 | 长期在线的稳定节点，引导节点 |
+
+### 配置示例
+
+```typescript
+const f2a = await F2A.create({
+  displayName: 'My Agent',
+  network: {
+    enableDHT: true,           // 启用 DHT (默认 true)
+    dhtServerMode: false,      // 客户端模式 (默认)
+    bootstrapPeers: [          // 可选：引导节点加速首次连接
+      '/ip4/1.2.3.4/tcp/9000/p2p/12D3KooW...'
+    ]
+  }
+});
+```
+
+### DHT API
+
+```typescript
+// 通过 DHT 查找节点
+const result = await f2a.findPeerViaDHT('target-peer-id');
+
+// 检查 DHT 状态
+f2a.isDHTEnabled();      // true/false
+f2a.getDHTPeerCount();   // 路由表中的节点数
+```
+
+### 注意事项
+
+- DHT 首次启动需要一段时间来填充路由表
+- 配置 `bootstrapPeers` 可以加速初始连接
+- 服务器模式需要更多带宽和存储资源
+
 ## 安全注意事项
 
 ⚠️ **默认 `F2A_CONTROL_TOKEN` 不安全！** 生产环境请务必设置：

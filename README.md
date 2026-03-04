@@ -186,7 +186,10 @@ pm2 status f2a
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `F2A_CONTROL_PORT` | 9001 | HTTP 控制端口 |
-| `F2A_CONTROL_TOKEN` | `f2a-default-token` | 控制服务器认证 Token |
+| `F2A_CONTROL_TOKEN` | 自动生成 | 控制服务器认证 Token（禁止用默认值）|
+| `F2A_SIGNATURE_KEY` | - | 请求签名密钥（可选，启用消息签名验证）|
+| `F2A_SIGNATURE_TOLERANCE` | 300000 | 签名时间戳容忍度（毫秒，默认5分钟）|
+| `NODE_ENV` | - | 设置为 `production` 启用 JSON 格式日志 |
 
 ## DHT 配置
 
@@ -233,11 +236,39 @@ f2a.getDHTPeerCount();   // 路由表中的节点数
 
 ## 安全注意事项
 
-⚠️ **默认 `F2A_CONTROL_TOKEN` 不安全！** 生产环境请务必设置：
+### 1. 控制 Token（必须）
+
+⚠️ **生产环境必须设置自定义 Token：**
 
 ```bash
 export F2A_CONTROL_TOKEN=$(openssl rand -hex 32)
 ```
+
+使用默认 token 会导致启动失败。
+
+### 2. E2EE 端到端加密（自动启用）
+
+- 任务消息自动使用 X25519 + AES-256-GCM 加密
+- 加密失败时拒绝发送，不回退到明文
+- 密钥通过发现广播自动交换
+
+### 3. 请求签名验证（可选）
+
+启用消息来源真实性验证：
+
+```bash
+export F2A_SIGNATURE_KEY=$(openssl rand -hex 32)
+```
+
+### 4. 速率限制（自动启用）
+
+- HTTP 控制接口：每分钟 60 请求
+- 返回 429 状态码当超出限制
+
+### 5. 输入验证
+
+- 所有外部输入使用 Zod 进行运行时验证
+- 无效输入返回详细错误信息
 
 ## 双节点测试
 
@@ -363,6 +394,40 @@ if (agents.length > 0) {
 }
 ```
 
+## 中间件使用
+
+F2A 支持中间件机制，可在消息处理流程中插入自定义逻辑：
+
+```typescript
+import { 
+  createMessageSizeLimitMiddleware,
+  createMessageTypeFilterMiddleware 
+} from 'f2a-network';
+
+// 限制消息大小（1MB）
+f2a.useMiddleware(createMessageSizeLimitMiddleware(1024 * 1024));
+
+// 过滤消息类型
+f2a.useMiddleware(
+  createMessageTypeFilterMiddleware(['TASK_REQUEST', 'TASK_RESPONSE'])
+);
+
+// 自定义中间件
+f2a.useMiddleware({
+  name: 'MyMiddleware',
+  priority: 50,
+  process(context) {
+    console.log('Processing:', context.message.type);
+    return { action: 'continue', context };
+  }
+});
+```
+
+中间件操作类型：
+- `continue` - 继续处理
+- `drop` - 丢弃消息（安全检查失败）
+- `modify` - 修改消息后继续
+
 ## API 参考
 
 ### F2A 类
@@ -376,6 +441,20 @@ if (agents.length > 0) {
 | `discoverAgents(capability?)` | 发现 Agents |
 | `delegateTask(options)` | 委托任务 |
 | `sendTaskTo(peerId, type, desc, params)` | 直接发送任务 |
+| `useMiddleware(middleware)` | 注册中间件 |
+| `removeMiddleware(name)` | 移除中间件 |
+| `listMiddlewares()` | 列出中间件 |
+
+### P2PNetwork 类
+
+| 方法 | 描述 |
+|------|------|
+| `signMessage(payload)` | 签名消息（需配置 F2A_SIGNATURE_KEY）|
+| `verifyMessageSignature(message)` | 验证消息签名 |
+| `isSignatureEnabled()` | 检查签名是否启用 |
+| `findPeerViaDHT(peerId)` | 通过 DHT 查找节点 |
+| `getDHTPeerCount()` | 获取 DHT 路由表大小 |
+| `isDHTEnabled()` | 检查 DHT 是否启用 |
 
 ### 事件
 
@@ -388,6 +467,7 @@ if (agents.length > 0) {
 | `task:response` | 收到任务响应 |
 | `network:started` | 网络已启动 |
 | `network:stopped` | 网络已停止 |
+| `message:received` | 收到消息（中间件处理前）|
 
 ## 测试覆盖率
 
@@ -446,9 +526,13 @@ F2A/                                    # 根目录 (f2a-network)
 - [x] 任务委托与响应
 - [x] OpenClaw 适配器
 - [x] CLI 工具
-- [x] 基础测试覆盖
-- [ ] 引导节点支持
-- [ ] DHT 全局发现
-- [ ] 端到端加密
-- [ ] 信誉系统
+- [x] E2EE 端到端加密
+- [x] DHT 全局发现
+- [x] 中间件系统
+- [x] 输入验证与速率限制
+- [x] 结构化日志系统
+- [x] 请求签名验证
+- [x] 信誉系统 Phase 1
+- [ ] 信誉系统 Phase 2 (评审机制)
+- [ ] 信誉系统 Phase 3 (安全机制)
 - [ ] 多 Agent 类型支持

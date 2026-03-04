@@ -261,6 +261,248 @@ function validateReviewer(reviewerId: string, taskId: string): boolean {
 }
 ```
 
+#### 4.3 链式签名（防本地篡改）
+
+**问题：** 节点可能篡改本地存储的信誉分
+
+**解决方案：** 每次信誉更新都有评审委员会签名，形成不可篡改的链
+
+```typescript
+interface SignedReputationEvent {
+  peerId: string;
+  delta: number;
+  prevHash: string;       // 前一个事件的 hash，形成链
+  timestamp: number;
+  
+  // 评审委员会的多签
+  signatures: {
+    reviewerId: string;
+    signature: string;    // Ed25519 签名
+  }[];
+}
+
+// 验证信誉历史完整性
+function verifyReputationHistory(events: SignedReputationEvent[]): boolean {
+  let prevHash = 'genesis';
+  
+  for (const event of events) {
+    // 1. 验证 prevHash 链接正确
+    if (event.prevHash !== prevHash) return false;
+    
+    // 2. 验证签名数量足够
+    if (event.signatures.length < MIN_REVIEWERS) return false;
+    
+    // 3. 验证每个签名
+    for (const sig of event.signatures) {
+      if (!verifyEd25519Signature(sig.reviewerId, event, sig.signature)) {
+        return false;
+      }
+    }
+    
+    prevHash = sha256(JSON.stringify(event));
+  }
+  
+  return true;
+}
+
+// 信誉更新流程
+async function recordReputationChange(
+  peerId: string,
+  delta: number,
+  reviews: TaskReview[]
+): Promise<SignedReputationEvent> {
+  const lastEvent = getLastEvent(peerId);
+  
+  const event: SignedReputationEvent = {
+    peerId,
+    delta,
+    prevHash: lastEvent ? hash(lastEvent) : 'genesis',
+    timestamp: Date.now(),
+    signatures: [],
+  };
+  
+  // 收集评审委员会签名
+  for (const review of reviews) {
+    const signature = await signEd25519(review.reviewerId, event);
+    event.signatures.push({
+      reviewerId: review.reviewerId,
+      signature,
+    });
+  }
+  
+  return event;
+}
+```
+
+#### 4.4 邀请制背书（防 Sybil 攻击）
+
+**问题：** 攻击者创建大量虚假节点操纵评审
+
+**解决方案：** 新节点需要高信誉节点邀请，初始信誉与邀请者绑定
+
+```typescript
+interface NodeCreation {
+  newNodeId: string;
+  inviterId: string;
+  invitationSignature: string;  // 邀请者签名
+  timestamp: number;
+}
+
+// 邀请规则
+const INVITATION_RULES = {
+  // 邀请资格：信誉 ≥ 60 才能邀请
+  minInviterReputation: 60,
+  
+  // 邀请配额：每个节点最多邀请 5 个节点
+  maxInvitations: 5,
+  
+  // 初始信誉 = 邀请者信誉 × 0.5
+  initialScoreMultiplier: 0.5,
+  
+  // 连带责任：被邀请者作恶，邀请者也受罚
+  jointLiability: true,
+};
+
+// 创建新节点
+async function createNode(
+  inviterId: string,
+  newIdentity: Ed25519KeyPair
+): Promise<NodeCreation> {
+  const inviterScore = getReputation(inviterId);
+  
+  // 验证邀请资格
+  if (inviterScore < INVITATION_RULES.minInviterReputation) {
+    throw new Error('信誉不足，无法邀请新节点');
+  }
+  
+  // 验证邀请配额
+  const invitationCount = getInvitationCount(inviterId);
+  if (invitationCount >= INVITATION_RULES.maxInvitations) {
+    throw new Error('邀请配额已用完');
+  }
+  
+  // 计算初始信誉
+  const initialScore = Math.max(30, inviterScore * INVITATION_RULES.initialScoreMultiplier);
+  
+  // 创建邀请记录
+  const creation: NodeCreation = {
+    newNodeId: derivePeerId(newIdentity),
+    inviterId,
+    invitationSignature: await signEd25519(inviterId, { newNodeId, timestamp: Date.now() }),
+    timestamp: Date.now(),
+  };
+  
+  // 设置初始信誉
+  setReputation(creation.newNodeId, initialScore);
+  recordInvitation(inviterId, creation.newNodeId);
+  
+  return creation;
+}
+
+// 连带责任惩罚
+function penalizeMaliciousNode(nodeId: string, penalty: number): void {
+  // 1. 惩罚作恶节点
+  deductReputation(nodeId, penalty);
+  
+  // 2. 连带惩罚邀请者
+  if (INVITATION_RULES.jointLiability) {
+    const inviterId = getInviter(nodeId);
+    if (inviterId) {
+      const jointPenalty = penalty * 0.3;  // 邀请者承担 30%
+      deductReputation(inviterId, jointPenalty);
+    }
+  }
+}
+```
+
+#### 4.5 挑战机制（防合谋攻击）
+
+**问题：** 恶意节点串通互相给高分评审
+
+**解决方案：** 任何节点可以挑战虚假信誉声明，挑战成功有奖励
+
+```typescript
+interface ReputationChallenge {
+  challengerId: string;
+  targetId: string;
+  claimedScore: number;
+  reason: 'invalid_history' | 'collusion' | 'fake_signatures';
+  evidence: string;
+  stake: number;  // 挑战者押金
+}
+
+// 挑战流程
+async function challengeReputation(
+  challenge: ReputationChallenge
+): Promise<{ success: boolean; reward: number }> {
+  const targetHistory = getReputationHistory(challenge.targetId);
+  
+  // 1. 验证签名链
+  if (!verifyReputationHistory(targetHistory)) {
+    // 挑战成功
+    slashReputation(challenge.targetId, 50);
+    reward(challenge.challengerId, challenge.stake * 2);
+    return { success: true, reward: challenge.stake * 2 };
+  }
+  
+  // 2. 验证计算正确性
+  const calculatedScore = calculateScoreFromHistory(targetHistory);
+  if (Math.abs(calculatedScore - challenge.claimedScore) > 10) {
+    // 分数虚报
+    slashReputation(challenge.targetId, 20);
+    reward(challenge.challengerId, challenge.stake * 1.5);
+    return { success: true, reward: challenge.stake * 1.5 };
+  }
+  
+  // 3. 检测异常评审模式（合谋检测）
+  const collusionScore = detectCollusion(challenge.targetId);
+  if (collusionScore > 0.8) {
+    // 合谋概率高
+    slashReputation(challenge.targetId, 30);
+    reward(challenge.challengerId, challenge.stake * 1.5);
+    return { success: true, reward: challenge.stake * 1.5 };
+  }
+  
+  // 挑战失败，扣除押金
+  slashReputation(challenge.challengerId, challenge.stake * 0.5);
+  return { success: false, reward: 0 };
+}
+
+// 合谋检测算法
+function detectCollusion(nodeId: string): number {
+  const reviews = getReviewsGivenBy(nodeId);
+  const reviewsReceived = getReviewsReceivedBy(nodeId);
+  
+  // 检测指标：
+  // 1. 是否总是给特定几个节点高分
+  // 2. 是否总是从特定几个节点收到高分
+  // 3. 评审分数是否总是偏离平均值
+  
+  const highScoreTargets = reviews.filter(r => r.dimensions.value > 80);
+  const uniqueTargets = new Set(highScoreTargets.map(r => r.revieweeId));
+  
+  // 如果 80% 的高分都给了 20% 的节点，可疑度高
+  if (highScoreTargets.length > 5) {
+    const concentrationRatio = uniqueTargets.size / highScoreTargets.length;
+    if (concentrationRatio < 0.3) {
+      return 0.9;  // 高度可疑
+    }
+  }
+  
+  return 0;  // 未检测到合谋
+}
+```
+
+#### 4.6 安全机制汇总
+
+| 攻击类型 | 防御机制 | 效果 |
+|---------|---------|------|
+| 本地篡改 | 链式签名 | 无法伪造历史 |
+| Sybil 攻击 | 邀请制 + 连带责任 | 创建节点成本高 |
+| 合谋攻击 | 挑战机制 + 模式检测 | 可被举报惩罚 |
+| 网络传输篡改 | Ed25519 签名 | 无法伪造消息 |
+| 评审操纵 | 多签 + 去掉最高最低 | 需要控制多数节点 |
+
 ### 5. EWMA 分数更新
 
 使用指数加权移动平均更新信誉分：
@@ -363,7 +605,13 @@ Requester 发布任务
 - [ ] 实现多维度评分
 - [ ] 实现危险任务检测
 
-### Phase 3: 自治经济 (v0.6.0)
+### Phase 3: 安全机制 (v0.5.5)
+
+- [ ] 实现链式签名存储
+- [ ] 实现邀请制背书
+- [ ] 实现挑战机制
+
+### Phase 4: 自治经济 (v0.6.0)
 
 - [ ] 实现信誉消耗机制
 - [ ] 实现评审激励
@@ -384,3 +632,4 @@ Requester 发布任务
 | 日期 | 版本 | 变更内容 |
 |------|------|---------|
 | 2026-03-04 | 0.1 | 初始草案 |
+| 2026-03-04 | 0.2 | 添加安全机制：链式签名、邀请制、挑战机制 |

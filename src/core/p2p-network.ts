@@ -36,6 +36,7 @@ import {
 import { E2EECrypto } from './e2ee-crypto';
 import { Logger } from '../utils/logger';
 import { validateF2AMessage, validateTaskRequestPayload, validateTaskResponsePayload } from '../utils/validation';
+import { MiddlewareManager, Middleware } from '../utils/middleware';
 
 // F2A 协议标识
 const F2A_PROTOCOL = '/f2a/1.0.0';
@@ -69,11 +70,13 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private e2eeCrypto: E2EECrypto;
   private enableE2EE: boolean = true;
   private logger: Logger;
+  private middlewareManager: MiddlewareManager;
 
   constructor(agentInfo: AgentInfo, config: P2PNetworkConfig = {}) {
     super();
     this.agentInfo = agentInfo;
     this.e2eeCrypto = new E2EECrypto();
+    this.middlewareManager = new MiddlewareManager();
     this.config = {
       listenPort: 0,
       enableMDNS: true,
@@ -518,6 +521,25 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       }
     }
 
+    // 执行中间件链
+    const middlewareResult = await this.middlewareManager.execute({
+      message,
+      peerId,
+      agentInfo: peerInfo?.agentInfo,
+      metadata: new Map()
+    });
+
+    if (middlewareResult.action === 'drop') {
+      this.logger.info('Message dropped by middleware', {
+        reason: middlewareResult.reason,
+        peerId: peerId.slice(0, 16)
+      });
+      return;
+    }
+
+    // 使用可能被中间件修改后的消息
+    message = middlewareResult.context.message;
+
     switch (message.type) {
       case 'DISCOVER': {
         const payload = message.payload as DiscoverPayload;
@@ -819,5 +841,30 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    */
   isDHTEnabled(): boolean {
     return !!(this.node?.services as any)?.dht;
+  }
+
+  /**
+   * 注册中间件
+   * @param middleware 中间件实例
+   */
+  useMiddleware(middleware: Middleware): void {
+    this.middlewareManager.use(middleware);
+  }
+
+  /**
+   * 移除中间件
+   * @param name 中间件名称
+   * @returns 是否成功移除
+   */
+  removeMiddleware(name: string): boolean {
+    return this.middlewareManager.remove(name);
+  }
+
+  /**
+   * 获取已注册的中间件列表
+   * @returns 中间件名称列表
+   */
+  listMiddlewares(): string[] {
+    return this.middlewareManager.list();
   }
 }

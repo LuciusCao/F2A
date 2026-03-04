@@ -109,6 +109,8 @@ describe('ReputationSystem', () => {
 
     it('should return false for disallowed peer when enabled', () => {
       // Create a system with enabled reputation check
+      // enabled: true - 启用信誉检查，低于 minScoreForService 的节点将被拒绝
+      // minScoreForService: 35 - 服务最低信誉门槛（默认50分，失败一次扣20分，所以30分会低于35）
       const strictConfig = { ...mockConfig, enabled: true, minScoreForService: 35 };
       const strictSystem = new ReputationSystem(strictConfig, './test-data');
       strictSystem.recordFailure('peer-1', 'task-1'); // score goes from 50 to 30

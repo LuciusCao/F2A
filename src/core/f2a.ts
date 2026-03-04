@@ -373,7 +373,7 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
 
     // 查找对应的能力处理器
     const capability = this.registeredCapabilities.get(request.taskType);
-    
+
     if (!capability) {
       // 拒绝任务
       await this.p2pNetwork.sendTaskResponse(
@@ -386,11 +386,31 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       return;
     }
 
-    // 触发事件，让上层（OpenClaw）处理
+    // 触发事件，让上层（OpenClaw）可以拦截或监控
     this.emit('task:request', request);
 
-    // 注意：实际的任务执行由 OpenClaw 完成，然后通过 sendTaskResponse 返回结果
-    // 这里只是触发事件，不直接执行
+    // 如果有注册 handler，自动执行任务并发送响应
+    if (capability.handler) {
+      try {
+        const result = await capability.handler(request.parameters || {});
+        await this.p2pNetwork.sendTaskResponse(
+          fromPeerId,
+          request.taskId,
+          'success',
+          result
+        );
+      } catch (error) {
+        console.error(`[F2A] Task execution failed:`, error);
+        await this.p2pNetwork.sendTaskResponse(
+          fromPeerId,
+          request.taskId,
+          'error',
+          undefined,
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    }
+    // 如果没有 handler，依赖上层通过 respondToTask 手动响应
   }
 
   /**

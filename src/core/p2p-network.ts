@@ -56,14 +56,16 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private config: P2PNetworkConfig;
   private peerTable: Map<string, PeerInfo> = new Map();
   private agentInfo: AgentInfo;
-  private pendingTasks: Map<string, { 
-    resolve: (result: unknown) => void; 
-    reject: (error: string) => void; 
+  private pendingTasks: Map<string, {
+    resolve: (result: unknown) => void;
+    reject: (error: string) => void;
     timeout: NodeJS.Timeout;
     resolved: boolean; // 标记是否已解决，防止超时后重复 resolve
   }> = new Map();
   private cleanupInterval?: NodeJS.Timeout;
+  private discoveryInterval?: NodeJS.Timeout;
   private e2eeCrypto: E2EECrypto;
+  private enableE2EE: boolean = true; // E2EE 开关
 
   constructor(agentInfo: AgentInfo, config: P2PNetworkConfig = {}) {
     super();
@@ -165,6 +167,12 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       this.cleanupInterval = undefined;
     }
 
+    // 停止发现广播定时器
+    if (this.discoveryInterval) {
+      clearInterval(this.discoveryInterval);
+      this.discoveryInterval = undefined;
+    }
+
     if (this.node) {
       // 清理待处理任务
       for (const [taskId, { timeout, resolve }] of this.pendingTasks) {
@@ -228,7 +236,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     timeout: number = 30000
   ): Promise<Result<unknown>> {
     const taskId = randomUUID();
-    
+
     const message: F2AMessage = {
       id: taskId,
       type: 'TASK_REQUEST',
@@ -244,8 +252,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       } as TaskRequestPayload
     };
 
-    // 发送消息
-    const sendResult = await this.sendMessage(peerId, message);
+    // 发送消息（启用 E2EE 加密）
+    const sendResult = await this.sendMessage(peerId, message, true);
     if (!sendResult.success) {
       return sendResult;
     }
@@ -303,7 +311,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       } as TaskResponsePayload
     };
 
-    return this.sendMessage(peerId, message);
+    // 任务响应也启用 E2EE 加密
+    return this.sendMessage(peerId, message, true);
   }
 
   /**
@@ -328,19 +337,25 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     if (!this.node) return;
 
     // 向所有已连接的对等节点发送
-    for (const peer of this.node.getPeers()) {
-      try {
-        await this.sendMessage(peer.toString(), message);
-      } catch {
-        // 忽略发送失败
-      }
+    const peers = this.node.getPeers();
+    const results = await Promise.allSettled(
+      peers.map(peer => this.sendMessage(peer.toString(), message))
+    );
+
+    // 记录发送失败的情况
+    const failures = results.filter(r => r.status === 'rejected');
+    if (failures.length > 0) {
+      console.warn(`[P2P] Broadcast failed to ${failures.length}/${peers.length} peers`);
     }
   }
 
   /**
    * 向特定 Peer 发送消息
+   * @param peerId 目标 Peer ID
+   * @param message 消息内容
+   * @param encrypt 是否启用 E2EE 加密（默认 false，发现类消息不需要加密）
    */
-  private async sendMessage(peerId: string, message: F2AMessage): Promise<Result<void>> {
+  private async sendMessage(peerId: string, message: F2AMessage, encrypt: boolean = false): Promise<Result<void>> {
     if (!this.node) {
       return failureFromError('NETWORK_NOT_STARTED', 'P2P network not started');
     }
@@ -354,10 +369,29 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
       // 拨号连接（如果未连接）
       const peer = await this.node.dial(peerInfo.multiaddrs[0]);
-      
+
+      // 准备消息数据（根据是否启用 E2EE 加密）
+      let data: Buffer;
+      if (encrypt && this.enableE2EE && this.e2eeCrypto.canEncryptTo(peerId)) {
+        // 加密消息内容
+        const encrypted = this.e2eeCrypto.encrypt(peerId, JSON.stringify(message));
+        if (encrypted) {
+          data = Buffer.from(JSON.stringify({
+            ...message,
+            encrypted: true,
+            payload: encrypted
+          }));
+        } else {
+          // 加密失败，回退到明文
+          console.warn(`[P2P] E2EE encryption failed for ${peerId.slice(0, 16)}..., falling back to plaintext`);
+          data = Buffer.from(JSON.stringify(message));
+        }
+      } else {
+        data = Buffer.from(JSON.stringify(message));
+      }
+
       // 使用协议流发送消息
       const stream = await peer.newStream(F2A_PROTOCOL);
-      const data = Buffer.from(JSON.stringify(message));
       await stream.sink([data]);
       await stream.close();
 
@@ -441,10 +475,26 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       peerInfo.lastSeen = Date.now();
     }
 
+    // 处理加密消息
+    if ((message as any).encrypted && (message as any).payload) {
+      const decrypted = this.e2eeCrypto.decrypt((message as any).payload);
+      if (decrypted) {
+        try {
+          message = JSON.parse(decrypted);
+        } catch (error) {
+          console.error('[P2P] Failed to parse decrypted message:', error);
+          return;
+        }
+      } else {
+        console.error('[P2P] Failed to decrypt message from:', peerId.slice(0, 16));
+        return;
+      }
+    }
+
     switch (message.type) {
       case 'DISCOVER': {
         const payload = message.payload as DiscoverPayload;
-        this.handleDiscover(payload.agentInfo, peerId);
+        await this.handleDiscover(payload.agentInfo, peerId);
         break;
       }
 
@@ -468,7 +518,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   /**
    * 处理发现消息
    */
-  private handleDiscover(agentInfo: AgentInfo, peerId: string): void {
+  private async handleDiscover(agentInfo: AgentInfo, peerId: string): Promise<void> {
     // 检查是否需要清理以腾出空间
     if (this.peerTable.size >= PEER_TABLE_MAX_SIZE && !this.peerTable.has(peerId)) {
       this.cleanupStalePeers(true); // 强制清理
@@ -497,7 +547,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     }
 
     // 发送发现响应
-    this.sendMessage(peerId, {
+    const responseResult = await this.sendMessage(peerId, {
       id: randomUUID(),
       type: 'DISCOVER_RESP',
       from: this.agentInfo.peerId,
@@ -505,6 +555,10 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       timestamp: Date.now(),
       payload: { agentInfo: this.agentInfo } as DiscoverPayload
     });
+
+    if (!responseResult.success) {
+      console.warn(`[P2P] Failed to send discover response to ${peerId.slice(0, 16)}:`, responseResult.error);
+    }
 
     this.emit('peer:discovered', {
       peerId,
@@ -542,16 +596,26 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    */
   private handleTaskResponse(payload: TaskResponsePayload): void {
     const pending = this.pendingTasks.get(payload.taskId);
-    if (pending && !pending.resolved) {
-      pending.resolved = true;
-      clearTimeout(pending.timeout);
-      this.pendingTasks.delete(payload.taskId);
-      
-      if (payload.status === 'success') {
-        pending.resolve(payload.result);
-      } else {
-        pending.reject(payload.error || 'Task failed');
-      }
+    if (!pending) {
+      console.warn(`[P2P] Received response for unknown task: ${payload.taskId}`);
+      return;
+    }
+
+    // 使用原子操作避免竞态条件
+    if (pending.resolved) {
+      return;
+    }
+    pending.resolved = true;
+
+    // 清理资源
+    clearTimeout(pending.timeout);
+    this.pendingTasks.delete(payload.taskId);
+
+    // 处理结果
+    if (payload.status === 'success') {
+      pending.resolve(payload.result);
+    } else {
+      pending.reject(payload.error || 'Task failed');
     }
   }
 
@@ -580,7 +644,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     this.broadcastDiscovery();
 
     // 每 30 秒广播一次
-    setInterval(() => {
+    this.discoveryInterval = setInterval(() => {
       this.broadcastDiscovery();
     }, 30000);
   }

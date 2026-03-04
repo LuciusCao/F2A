@@ -46,6 +46,16 @@ export interface ReputationConfig {
   alpha: number;  // EWMA 平滑系数
   minScore: number;
   maxScore: number;
+  maxHistory: number;  // 历史记录上限
+}
+
+// ============================================================================
+// 持久化接口
+// ============================================================================
+
+export interface ReputationStorage {
+  save(entries: Map<string, ReputationEntry>): Promise<void>;
+  load(): Promise<Map<string, ReputationEntry>>;
 }
 
 // ============================================================================
@@ -129,6 +139,7 @@ const DEFAULT_CONFIG: ReputationConfig = {
   alpha: 0.3,
   minScore: 0,
   maxScore: 100,
+  maxHistory: 100,
 };
 
 // ============================================================================

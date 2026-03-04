@@ -6,6 +6,8 @@
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
 import { F2A } from '../core/f2a';
 import { TokenManager } from '../core/token-manager';
+import { Logger } from '../utils/logger';
+import { RateLimiter } from '../utils/rate-limiter';
 
 export interface ControlServerOptions {
   port: number;
@@ -17,11 +19,16 @@ export class ControlServer {
   private f2a: F2A;
   private port: number;
   private tokenManager: TokenManager;
+  private logger: Logger;
+  private rateLimiter: RateLimiter;
 
   constructor(f2a: F2A, port: number, tokenManager?: TokenManager) {
     this.f2a = f2a;
     this.port = port;
     this.tokenManager = tokenManager || new TokenManager();
+    this.logger = new Logger({ component: 'ControlServer' });
+    // 速率限制: 每分钟最多 60 个请求
+    this.rateLimiter = new RateLimiter({ maxRequests: 60, windowMs: 60000 });
   }
 
   /**
@@ -36,7 +43,7 @@ export class ControlServer {
       this.server.on('error', reject);
 
       this.server.listen(this.port, () => {
-        console.log(`[ControlServer] Listening on port ${this.port}`);
+        this.logger.info('Listening', { port: this.port });
         resolve();
       });
     });
@@ -50,6 +57,9 @@ export class ControlServer {
       this.server.close();
       this.server = undefined;
     }
+    // 清理速率限制器资源
+    this.rateLimiter.stop();
+    this.logger.info('Stopped');
   }
 
   /**
@@ -73,13 +83,26 @@ export class ControlServer {
       return;
     }
 
+    // 速率限制检查
+    const clientIp = req.socket.remoteAddress || 'unknown';
+    if (!this.rateLimiter.allowRequest(clientIp)) {
+      this.logger.warn('Rate limit exceeded', { clientIp });
+      res.writeHead(429);
+      res.end(JSON.stringify({
+        success: false,
+        error: 'Too many requests',
+        code: 'RATE_LIMIT_EXCEEDED'
+      }));
+      return;
+    }
+
     // 验证 Token
     const token = req.headers['x-f2a-token'] as string | undefined;
     if (!this.tokenManager.verifyToken(token)) {
-      console.warn(`[ControlServer] Unauthorized request from ${req.socket.remoteAddress}`);
+      this.logger.warn('Unauthorized request', { clientIp });
       res.writeHead(401);
-      res.end(JSON.stringify({ 
-        success: false, 
+      res.end(JSON.stringify({
+        success: false,
         error: 'Unauthorized: Invalid or missing token',
         code: 'UNAUTHORIZED'
       }));

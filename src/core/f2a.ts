@@ -5,6 +5,8 @@
 
 import { EventEmitter } from 'eventemitter3';
 import { P2PNetwork } from './p2p-network';
+import { Logger } from '../utils/logger';
+import { validateAgentCapability, validateTaskDelegateOptions } from '../utils/validation';
 import {
   F2AOptions,
   F2AEvents,
@@ -33,18 +35,18 @@ export interface F2AInstance {
   readonly agentInfo: AgentInfo;
   start(): Promise<Result<void>>;
   stop(): Promise<void>;
-  
+
   // 能力管理
   registerCapability(capability: AgentCapability, handler: (params: Record<string, unknown>) => Promise<unknown>): void;
   getCapabilities(): AgentCapability[];
-  
+
   // 发现
   discoverAgents(capability?: string): Promise<AgentInfo[]>;
   getConnectedPeers(): AgentInfo[];
-  
+
   // 任务委托
   delegateTask(options: TaskDelegateOptions): Promise<Result<TaskDelegateResult>>;
-  
+
   // 直接通信
   sendTaskTo(peerId: string, taskType: string, description: string, parameters?: Record<string, unknown>): Promise<Result<unknown>>;
 }
@@ -55,6 +57,7 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   private options: Required<F2AOptions>;
   private running: boolean = false;
   private registeredCapabilities: Map<string, RegisteredCapability> = new Map();
+  private logger: Logger;
 
   private constructor(
     agentInfo: AgentInfo,
@@ -65,6 +68,7 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     this.agentInfo = agentInfo;
     this.p2pNetwork = p2pNetwork;
     this.options = options;
+    this.logger = new Logger({ level: options.logLevel, component: 'F2A' });
 
     this.bindEvents();
   }
@@ -122,7 +126,7 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       return failureFromError('NETWORK_ALREADY_RUNNING', 'F2A already running');
     }
 
-    console.log(`[F2A] Starting ${this.agentInfo.displayName}...`);
+    this.logger.info('Starting agent', { displayName: this.agentInfo.displayName });
 
     // 启动 P2P 网络
     const result = await this.p2pNetwork.start();
@@ -135,13 +139,13 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     this.agentInfo.multiaddrs = result.data.addresses;
 
     this.running = true;
-    
+
     this.emit('network:started', {
       peerId: result.data.peerId,
       listenAddresses: result.data.addresses
     });
 
-    console.log(`[F2A] Started with peerId: ${result.data.peerId.slice(0, 16)}...`);
+    this.logger.info('Started', { peerId: result.data.peerId.slice(0, 16) });
 
     return { success: true, data: undefined };
   }
@@ -152,14 +156,14 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   async stop(): Promise<void> {
     if (!this.running) return;
 
-    console.log('[F2A] Stopping...');
+    this.logger.info('Stopping');
 
     await this.p2pNetwork.stop();
 
     this.running = false;
     this.emit('network:stopped');
 
-    console.log('[F2A] Stopped');
+    this.logger.info('Stopped');
   }
 
   /**
@@ -169,6 +173,15 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     capability: AgentCapability,
     handler: (params: Record<string, unknown>) => Promise<unknown>
   ): void {
+    // 验证能力定义
+    const validation = validateAgentCapability(capability);
+    if (!validation.success) {
+      this.logger.error('Invalid capability definition', {
+        errors: validation.error.errors
+      });
+      throw new Error(`Invalid capability: ${validation.error.errors.map(e => e.message).join(', ')}`);
+    }
+
     this.registeredCapabilities.set(capability.name, {
       ...capability,
       handler
@@ -177,7 +190,7 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     // 更新 agentInfo
     this.updateAgentCapabilities();
 
-    console.log(`[F2A] Registered capability: ${capability.name}`);
+    this.logger.info('Registered capability', { name: capability.name });
   }
 
   /**
@@ -212,21 +225,41 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
    * 委托任务给网络
    */
   async delegateTask(options: TaskDelegateOptions): Promise<Result<TaskDelegateResult>> {
+    // 验证任务委托选项
+    const validation = validateTaskDelegateOptions(options);
+    if (!validation.success) {
+      this.logger.error('Invalid task delegate options', {
+        errors: validation.error.errors
+      });
+      return failureFromError(
+        'INVALID_OPTIONS',
+        `Invalid options: ${validation.error.errors.map(e => e.message).join(', ')}`
+      );
+    }
+
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    
-    console.log(`[F2A] Delegating task: ${options.description.slice(0, 50)}...`);
+
+    this.logger.info('Delegating task', {
+      taskId,
+      capability: options.capability,
+      description: options.description.slice(0, 50)
+    });
 
     // 1. 发现有能力执行任务的 Agents
     const agents = await this.discoverAgents(options.capability);
-    
+
     if (agents.length === 0) {
+      this.logger.warn('No agents found with capability', { capability: options.capability });
       return failureFromError(
         'CAPABILITY_NOT_SUPPORTED',
         `No agent found with capability: ${options.capability}`
       );
     }
 
-    console.log(`[F2A] Found ${agents.length} agents with capability: ${options.capability}`);
+    this.logger.info('Found agents with capability', {
+      count: agents.length,
+      capability: options.capability
+    });
 
     // 2. 发送任务请求
     const timeout = options.timeout || 30000;
@@ -235,7 +268,7 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     if (options.parallel) {
       // 并行发送给多个 Agents
       const minResponses = options.minResponses || 1;
-      
+
       const promises = agents.map(async (agent) => {
         const startTime = Date.now();
         const result = await this.p2pNetwork.sendTaskRequest(
@@ -258,7 +291,7 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
 
       // 等待至少 minResponses 个响应
       const settled = await Promise.allSettled(promises);
-      
+
       for (const outcome of settled) {
         if (outcome.status === 'fulfilled') {
           results.push(outcome.value);
@@ -369,12 +402,20 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     request: TaskRequestEvent,
     fromPeerId: string
   ): Promise<void> {
-    console.log(`[F2A] Received task request from ${fromPeerId.slice(0, 16)}...: ${request.taskType}`);
+    this.logger.info('Received task request', {
+      fromPeerId: fromPeerId.slice(0, 16),
+      taskType: request.taskType,
+      taskId: request.taskId
+    });
 
     // 查找对应的能力处理器
     const capability = this.registeredCapabilities.get(request.taskType);
-    
+
     if (!capability) {
+      this.logger.warn('Capability not supported, rejecting task', {
+        taskType: request.taskType,
+        fromPeerId: fromPeerId.slice(0, 16)
+      });
       // 拒绝任务
       await this.p2pNetwork.sendTaskResponse(
         fromPeerId,
@@ -386,11 +427,38 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       return;
     }
 
-    // 触发事件，让上层（OpenClaw）处理
+    // 触发事件，让上层（OpenClaw）可以拦截或监控
     this.emit('task:request', request);
 
-    // 注意：实际的任务执行由 OpenClaw 完成，然后通过 sendTaskResponse 返回结果
-    // 这里只是触发事件，不直接执行
+    // 如果有注册 handler，自动执行任务并发送响应
+    if (capability.handler) {
+      try {
+        const result = await capability.handler(request.parameters || {});
+        await this.p2pNetwork.sendTaskResponse(
+          fromPeerId,
+          request.taskId,
+          'success',
+          result
+        );
+        this.logger.info('Task executed successfully', {
+          taskId: request.taskId,
+          fromPeerId: fromPeerId.slice(0, 16)
+        });
+      } catch (error) {
+        this.logger.error('Task execution failed', {
+          taskId: request.taskId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        await this.p2pNetwork.sendTaskResponse(
+          fromPeerId,
+          request.taskId,
+          'error',
+          undefined,
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    }
+    // 如果没有 handler，依赖上层通过 respondToTask 手动响应
   }
 
   /**

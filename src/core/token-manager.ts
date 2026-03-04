@@ -36,8 +36,12 @@ export class TokenManager {
     if (envToken) {
       // 检查是否为不安全默认值
       if (envToken === 'f2a-default-token') {
-        this.logger.warn('F2A_CONTROL_TOKEN is using the insecure default value!');
-        this.logger.warn('Please set a secure token: export F2A_CONTROL_TOKEN=$(openssl rand -hex 32)');
+        this.logger.error('F2A_CONTROL_TOKEN is using the insecure default value!');
+        this.logger.error('Please set a secure token: export F2A_CONTROL_TOKEN=$(openssl rand -hex 32)');
+        throw new Error(
+          'Insecure token detected. F2A_CONTROL_TOKEN cannot use the default value "f2a-default-token". ' +
+          'Please set a secure token: export F2A_CONTROL_TOKEN=$(openssl rand -hex 32)'
+        );
       }
       this.token = envToken;
       return envToken;

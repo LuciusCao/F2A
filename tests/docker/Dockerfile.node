@@ -5,11 +5,11 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# 安装依赖
+# 安装依赖（忽略 prepare 脚本，因为生产环境不需要构建）
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci --only=production --ignore-scripts
 
-# 复制构建产物
+# 复制构建产物（需要先在 CI 中构建）
 COPY dist/ ./dist/
 
 # 环境变量

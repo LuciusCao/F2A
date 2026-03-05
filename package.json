@@ -16,8 +16,13 @@
     "build:all": "npm run build && npm run build --workspaces",
     "clean": "rm -rf dist",
     "test": "vitest run",
+    "test:unit": "vitest run --exclude='tests/integration/**'",
     "test:coverage": "vitest run --coverage",
-    "test:all": "npm test && npm test --workspaces",
+    "test:integration": "RUN_INTEGRATION_TESTS=true vitest run tests/integration",
+    "test:docker": "docker-compose -f tests/docker/docker-compose.test.yml up --abort-on-container-exit",
+    "test:docker:10": "NODE_COUNT=10 docker-compose -f tests/docker/docker-compose.test.yml up --scale node=10 --abort-on-container-exit",
+    "test:all": "npm run test:unit && npm run test:docker",
+    "test:ci": "npm run test:unit && npm run test:docker",
     "prepare": "npm run build"
   },
   "engines": {

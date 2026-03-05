@@ -1,0 +1,19 @@
+# F2A Test Runner Docker Image
+# 用于运行集成测试
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+# 安装所有依赖（包括 devDependencies）
+COPY package*.json ./
+RUN npm ci
+
+# 复制源代码和测试
+COPY . .
+
+# 构建项目
+RUN npm run build
+
+# 运行集成测试
+CMD ["npm", "run", "test:integration"]

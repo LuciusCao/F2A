@@ -1,0 +1,77 @@
+# F2A Integration Test Environment
+# 使用方式：
+#   npm run test:docker           # 默认 3 个节点
+#   npm run test:docker:10        # 10 个节点
+
+version: '3.8'
+
+services:
+  # 引导节点（稳定，其他节点连接它）
+  bootstrap:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile.node
+    networks:
+      f2a-test-net:
+        aliases:
+          - bootstrap.f2a.local
+    environment:
+      - F2A_CONTROL_PORT=9001
+      - F2A_CONTROL_TOKEN=${TEST_TOKEN:-test-token-integration}
+      - NODE_ENV=production
+    ports:
+      - "19001:9001"  # 用于调试
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9001/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # 动态生成的节点（使用 scale 参数调整数量）
+  node:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile.node
+    networks:
+      - f2a-test-net
+    environment:
+      - F2A_CONTROL_PORT=9001
+      - F2A_CONTROL_TOKEN=${TEST_TOKEN:-test-token-integration}
+      - NODE_ENV=production
+      - BOOTSTRAP_PEERS=/dns4/bootstrap.f2a.local/tcp/9000
+    depends_on:
+      bootstrap:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9001/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    deploy:
+      replicas: 3  # 默认 3 个节点
+
+  # 测试运行器
+  test-runner:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile.runner
+    networks:
+      - f2a-test-net
+    environment:
+      - RUN_INTEGRATION_TESTS=true
+      - TEST_BOOTSTRAP_ADDR=/dns4/bootstrap.f2a.local/tcp/9000
+      - TEST_NODE_COUNT=${NODE_COUNT:-3}
+      - TEST_TOKEN=${TEST_TOKEN:-test-token-integration}
+    depends_on:
+      bootstrap:
+        condition: service_healthy
+      node:
+        condition: service_healthy
+    volumes:
+      - ../../coverage:/app/coverage  # 导出覆盖率报告
+
+networks:
+  f2a-test-net:
+    driver: bridge

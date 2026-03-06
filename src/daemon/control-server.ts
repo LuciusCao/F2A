@@ -118,7 +118,7 @@ export class ControlServer {
       return;
     }
 
-    // GET /peers - 获取已连接的 Peers (需要认证)
+    // GET /peers - 获取已知的 Peers (需要认证)
     if (req.method === 'GET' && req.url === '/peers') {
       const clientIp = req.socket.remoteAddress || 'unknown';
       if (!this.rateLimiter.allowRequest(clientIp)) {
@@ -134,7 +134,8 @@ export class ControlServer {
         res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
         return;
       }
-      const peers = this.f2a.getConnectedPeers();
+      // 返回所有已知的节点（包括已断开但已发现的）
+      const peers = this.f2a.getAllPeers();
       res.writeHead(200);
       res.end(JSON.stringify(peers));
       return;

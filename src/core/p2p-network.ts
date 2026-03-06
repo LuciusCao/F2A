@@ -150,6 +150,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       // 启动定期清理任务
       this.startCleanupTask();
 
+      // 延迟 2 秒后广播发现消息，等待连接稳定
+      setTimeout(() => {
+        this.broadcastDiscovery();
+      }, 2000);
+
       // 如果启用 DHT，等待 DHT 就绪
       if (this.config.enableDHT !== false && this.node.services.dht) {
         this.logger.info('DHT enabled, waiting for routing table');
@@ -441,17 +446,31 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         direction: 'inbound'
       });
 
+      // 获取 peer 的 multiaddrs
+      let multiaddrs: any[] = [];
+      try {
+        const peerInfo = this.node.getPeers().find(p => p.toString() === peerId);
+        if (peerInfo) {
+          multiaddrs = [multiaddr(peerInfo.toString())];
+        }
+      } catch {
+        // 无法获取 multiaddrs，使用空数组
+      }
+
       // 更新或添加到路由表
       const existing = this.peerTable.get(peerId);
       if (existing) {
         existing.connected = true;
         existing.connectedAt = Date.now();
+        if (multiaddrs.length > 0) {
+          existing.multiaddrs = multiaddrs;
+        }
       } else {
-        // 新连接的节点，先添加到路由表（等待 DISCOVER 消息获取 agentInfo）
+        // 新连接的节点，添加到路由表
         this.peerTable.set(peerId, {
           peerId,
           agentInfo: undefined,
-          multiaddrs: [],
+          multiaddrs,
           connected: true,
           reputation: 50,
           lastSeen: Date.now(),

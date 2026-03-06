@@ -446,13 +446,14 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         direction: 'inbound'
       });
 
-      // 获取 peer 的 multiaddrs
+      // 从连接获取远程 multiaddr
       let multiaddrs: any[] = [];
       try {
         if (this.node) {
-          const peerInfo = this.node.getPeers().find(p => p.toString() === peerId);
-          if (peerInfo) {
-            multiaddrs = [multiaddr(peerInfo.toString())];
+          const connections = this.node.getConnections();
+          const conn = connections.find(c => c.remotePeer.toString() === peerId);
+          if (conn && conn.remoteAddr) {
+            multiaddrs = [conn.remoteAddr];
           }
         }
       } catch {

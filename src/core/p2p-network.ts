@@ -380,14 +380,22 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     }
 
     try {
-      // 获取 PeerInfo
-      const peerInfo = this.peerTable.get(peerId);
-      if (!peerInfo || peerInfo.multiaddrs.length === 0) {
-        return failureFromError('PEER_NOT_FOUND', `Peer ${peerId} not found`);
+      // 检查是否已连接
+      const connections = this.node.getConnections();
+      const existingConn = connections.find(c => c.remotePeer.toString() === peerId);
+      
+      let peer;
+      if (existingConn) {
+        // 已连接，直接使用现有连接
+        peer = existingConn;
+      } else {
+        // 未连接，需要 dial
+        const peerInfo = this.peerTable.get(peerId);
+        if (!peerInfo || peerInfo.multiaddrs.length === 0) {
+          return failureFromError('PEER_NOT_FOUND', `Peer ${peerId} not found`);
+        }
+        peer = await this.node.dial(peerInfo.multiaddrs[0]);
       }
-
-      // 拨号连接（如果未连接）
-      const peer = await this.node.dial(peerInfo.multiaddrs[0]);
 
       // 准备消息数据（根据是否启用 E2EE 加密）
       let data: Buffer;

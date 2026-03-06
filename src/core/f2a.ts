@@ -237,9 +237,24 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
    * 获取所有已知的 Peers（包括已断开但已发现的）
    */
   getAllPeers(): AgentInfo[] {
+    // 返回所有已知节点，包括还没有交换 agentInfo 的
+    // 如果 agentInfo 不存在，创建一个基本的 AgentInfo
     return this.p2pNetwork.getAllPeers()
-      .filter(p => p.agentInfo)
-      .map(p => p.agentInfo!);
+      .map(p => {
+        if (p.agentInfo) {
+          return p.agentInfo;
+        }
+        // 创建基本的 AgentInfo
+        return {
+          peerId: p.peerId,
+          capabilities: [],
+          multiaddrs: p.multiaddrs.map(m => m.toString()),
+          lastSeen: p.lastSeen,
+          agentType: 'custom' as const,
+          version: '0.0.0',
+          protocolVersion: '1.0.0'
+        };
+      });
   }
 
   /**

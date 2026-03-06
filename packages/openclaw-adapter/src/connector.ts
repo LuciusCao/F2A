@@ -28,8 +28,8 @@ import { CapabilityDetector } from './capability-detector.js';
 import { TaskQueue, QueuedTask } from './task-queue.js';
 import { AnnouncementQueue } from './announcement-queue.js';
 
-export class F2AOpenClawConnector implements OpenClawPlugin {
-  name = 'f2a-openclaw-connector';
+export class F2AOpenClawAdapter implements OpenClawPlugin {
+  name = 'f2a-openclaw-adapter';
   version = '0.2.0';
 
   private nodeManager!: F2ANodeManager;
@@ -1287,4 +1287,4 @@ ${claims.map((c, i) => {
 }
 
 // 默认导出
-export default F2AOpenClawConnector;
+export default F2AOpenClawAdapter;

@@ -1,31 +1,31 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { F2AOpenClawConnector } from './connector';
+import { F2AOpenClawAdapter } from './connector';
 
-describe('F2AOpenClawConnector', () => {
-  let connector: F2AOpenClawConnector;
+describe('F2AOpenClawAdapter', () => {
+  let adapter: F2AOpenClawAdapter;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    connector = new F2AOpenClawConnector();
+    adapter = new F2AOpenClawAdapter();
   });
 
   describe('basic properties', () => {
     it('should have correct name and version', () => {
-      expect(connector.name).toBe('f2a-openclaw-connector');
-      expect(connector.version).toBe('0.2.0');
+      expect(adapter.name).toBe('f2a-openclaw-adapter');
+      expect(adapter.version).toBe('0.2.0');
     });
   });
 
   describe('getTools', () => {
     it('should return array of tools before initialization', () => {
       // getTools can be called before initialize to check available tools
-      const tools = connector.getTools();
+      const tools = adapter.getTools();
       expect(Array.isArray(tools)).toBe(true);
       expect(tools.length).toBeGreaterThanOrEqual(5);
     });
 
     it('should include f2a_discover tool with correct parameters', () => {
-      const tools = connector.getTools();
+      const tools = adapter.getTools();
       const discoverTool = tools.find(t => t.name === 'f2a_discover');
       expect(discoverTool).toBeDefined();
       expect(discoverTool?.description).toContain('发现');
@@ -36,7 +36,7 @@ describe('F2AOpenClawConnector', () => {
     });
 
     it('should include f2a_delegate tool with correct parameters', () => {
-      const tools = connector.getTools();
+      const tools = adapter.getTools();
       const delegateTool = tools.find(t => t.name === 'f2a_delegate');
       expect(delegateTool).toBeDefined();
       expect(delegateTool?.description).toContain('委托');
@@ -46,7 +46,7 @@ describe('F2AOpenClawConnector', () => {
     });
 
     it('should include f2a_broadcast tool with correct parameters', () => {
-      const tools = connector.getTools();
+      const tools = adapter.getTools();
       const broadcastTool = tools.find(t => t.name === 'f2a_broadcast');
       expect(broadcastTool).toBeDefined();
       expect(broadcastTool?.description).toContain('广播');
@@ -55,14 +55,14 @@ describe('F2AOpenClawConnector', () => {
     });
 
     it('should include f2a_status tool', () => {
-      const tools = connector.getTools();
+      const tools = adapter.getTools();
       const statusTool = tools.find(t => t.name === 'f2a_status');
       expect(statusTool).toBeDefined();
       expect(statusTool?.description).toContain('状态');
     });
 
     it('should include f2a_reputation tool with action enum', () => {
-      const tools = connector.getTools();
+      const tools = adapter.getTools();
       const repTool = tools.find(t => t.name === 'f2a_reputation');
       expect(repTool).toBeDefined();
       expect(repTool?.parameters).toHaveProperty('action');
@@ -73,7 +73,7 @@ describe('F2AOpenClawConnector', () => {
     });
 
     it('should have handler functions for all tools', () => {
-      const tools = connector.getTools();
+      const tools = adapter.getTools();
       for (const tool of tools) {
         expect(typeof tool.handler).toBe('function');
       }

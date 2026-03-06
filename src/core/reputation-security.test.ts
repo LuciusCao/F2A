@@ -8,8 +8,8 @@ import {
   InvitationManager,
   ChallengeManager,
   SignedReputationEvent,
-} from './reputation-security';
-import { ReputationManager } from './reputation';
+} from './reputation-security.js';
+import { ReputationManager } from './reputation.js';
 
 describe('ChainSignatureManager', () => {
   let chainManager: ChainSignatureManager;

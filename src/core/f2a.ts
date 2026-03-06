@@ -4,9 +4,9 @@
  */
 
 import { EventEmitter } from 'eventemitter3';
-import { P2PNetwork } from './p2p-network';
-import { Logger } from '../utils/logger';
-import { validateAgentCapability, validateTaskDelegateOptions } from '../utils/validation';
+import { P2PNetwork } from './p2p-network.js';
+import { Logger } from '../utils/logger.js';
+import { validateAgentCapability, validateTaskDelegateOptions } from '../utils/validation.js';
 import {
   F2AOptions,
   F2AEvents,
@@ -24,7 +24,7 @@ import {
   NetworkStartedEvent,
   success,
   failureFromError
-} from '../types';
+} from '../types/index.js';
 
 // 版本号
 const F2A_VERSION = '1.0.0';

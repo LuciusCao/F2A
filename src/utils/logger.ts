@@ -3,7 +3,7 @@
  * 基于 Pino 的日志实现，支持结构化输出和级别控制
  */
 
-import { LogLevel } from '../types';
+import { LogLevel } from '../types/index.js';
 
 // 日志级别权重
 const LOG_LEVELS: Record<LogLevel, number> = {

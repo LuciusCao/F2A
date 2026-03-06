@@ -26,7 +26,7 @@ import {
   type MiddlewareContext,
   // 版本号
   VERSION,
-} from './index';
+} from './index.js';
 
 // ============================================================================
 // 业务场景 1: SDK 导出完整性验证

@@ -3,9 +3,9 @@
  * 后台服务主入口 - P2P 版本
  */
 
-import { F2A } from '../core/f2a';
-import { ControlServer } from './control-server';
-import { F2AOptions, WebhookConfig } from '../types';
+import { F2A } from '../core/f2a.js';
+import { ControlServer } from './control-server.js';
+import { F2AOptions, WebhookConfig } from '../types/index.js';
 
 export interface DaemonOptions extends F2AOptions {
   webhook?: WebhookConfig;

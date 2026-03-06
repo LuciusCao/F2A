@@ -3,9 +3,9 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { AutonomousEconomy, TaskRequest, TaskExecutionResult } from './autonomous-economy';
-import { ReputationManager } from './reputation';
-import { ReviewCommittee } from './review-committee';
+import { AutonomousEconomy, TaskRequest, TaskExecutionResult } from './autonomous-economy.js';
+import { ReputationManager } from './reputation.js';
+import { ReviewCommittee } from './review-committee.js';
 
 describe('AutonomousEconomy', () => {
   let economy: AutonomousEconomy;

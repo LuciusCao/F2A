@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ReputationManager, REPUTATION_TIERS, ReputationLevel } from './reputation';
+import { ReputationManager, REPUTATION_TIERS, ReputationLevel } from './reputation.js';
 
 describe('ReputationManager', () => {
   let manager: ReputationManager;

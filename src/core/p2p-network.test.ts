@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { P2PNetwork } from './p2p-network';
-import { AgentInfo } from '../types';
+import { P2PNetwork } from './p2p-network.js';
+import { AgentInfo } from '../types/index.js';
 
 describe('P2PNetwork', () => {
   let network: P2PNetwork;

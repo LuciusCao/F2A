@@ -4,10 +4,10 @@
  */
 
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
-import { F2A } from '../core/f2a';
-import { TokenManager } from '../core/token-manager';
-import { Logger } from '../utils/logger';
-import { RateLimiter } from '../utils/rate-limiter';
+import { F2A } from '../core/f2a.js';
+import { TokenManager } from '../core/token-manager.js';
+import { Logger } from '../utils/logger.js';
+import { RateLimiter } from '../utils/rate-limiter.js';
 
 export interface ControlServerOptions {
   port: number;

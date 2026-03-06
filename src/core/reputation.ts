@@ -3,7 +3,7 @@
  * Phase 1: 基础信誉管理
  */
 
-import { Logger } from '../utils/logger';
+import { Logger } from '../utils/logger.js';
 
 // ============================================================================
 // 类型定义

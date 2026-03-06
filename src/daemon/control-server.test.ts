@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ControlServer } from './control-server';
-import { TokenManager } from '../core/token-manager';
+import { ControlServer } from './control-server.js';
+import { TokenManager } from '../core/token-manager.js';
 
 // Track mock server instances
 let lastMockServer: any = null;

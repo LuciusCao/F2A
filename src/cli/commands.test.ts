@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { listPending, confirm, reject } from './commands';
+import { listPending, confirm, reject } from './commands.js';
 import { request, RequestOptions } from 'http';
 
 // Mock http module

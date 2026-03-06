@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { F2ADaemon } from './index';
+import { F2ADaemon } from './index.js';
 
 // Mock dependencies
 vi.mock('../core/f2a', () => ({

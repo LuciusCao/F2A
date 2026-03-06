@@ -32,12 +32,12 @@ import {
   success,
   failureFromError,
   createError
-} from '../types';
-import { E2EECrypto } from './e2ee-crypto';
-import { Logger } from '../utils/logger';
-import { validateF2AMessage, validateTaskRequestPayload, validateTaskResponsePayload } from '../utils/validation';
-import { MiddlewareManager, Middleware } from '../utils/middleware';
-import { RequestSigner, loadSignatureConfig, SignedMessage } from '../utils/signature';
+} from '../types/index.js';
+import { E2EECrypto } from './e2ee-crypto.js';
+import { Logger } from '../utils/logger.js';
+import { validateF2AMessage, validateTaskRequestPayload, validateTaskResponsePayload } from '../utils/validation.js';
+import { MiddlewareManager, Middleware } from '../utils/middleware.js';
+import { RequestSigner, loadSignatureConfig, SignedMessage } from '../utils/signature.js';
 
 // F2A 协议标识
 const F2A_PROTOCOL = '/f2a/1.0.0';

@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ReviewCommittee, TaskReview, ReviewDimensions } from './review-committee';
-import { ReputationManager } from './reputation';
+import { ReviewCommittee, TaskReview, ReviewDimensions } from './review-committee.js';
+import { ReputationManager } from './reputation.js';
 
 describe('ReviewCommittee', () => {
   let committee: ReviewCommittee;

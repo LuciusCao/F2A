@@ -3,7 +3,7 @@
  * 基于 Token Bucket 算法实现
  */
 
-import { Logger } from './logger';
+import { Logger } from './logger.js';
 
 export interface RateLimitConfig {
   /** 最大请求数 */

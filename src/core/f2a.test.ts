@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { F2A } from './f2a';
-import { AgentCapability, TaskDelegateOptions } from '../types';
+import { F2A } from './f2a.js';
+import { AgentCapability, TaskDelegateOptions } from '../types/index.js';
 
 // Mock P2PNetwork
 vi.mock('./p2p-network', () => ({

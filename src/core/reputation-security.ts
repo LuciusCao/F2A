@@ -4,8 +4,8 @@
  */
 
 import { createHash, createSign, createVerify } from 'crypto';
-import { Logger } from '../utils/logger';
-import { ReputationEntry, ReputationManager } from './reputation';
+import { Logger } from '../utils/logger.js';
+import { ReputationEntry, ReputationManager } from './reputation.js';
 
 // ============================================================================
 // 类型定义

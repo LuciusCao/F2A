@@ -351,7 +351,10 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     );
 
     // 记录发送失败的情况
-    const failures = results.filter(r => r.status === 'rejected');
+    const failures = results.filter(r =>
+      r.status === 'rejected' ||
+      (r.status === 'fulfilled' && !r.value.success)
+    );
     if (failures.length > 0) {
       this.logger.warn('Broadcast failed to some peers', {
         failed: failures.length,
@@ -543,13 +546,25 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     switch (message.type) {
       case 'DISCOVER': {
         const payload = message.payload as DiscoverPayload;
-        await this.handleDiscover(payload.agentInfo, peerId);
+        await this.handleDiscover(payload.agentInfo, peerId, true);
+        break;
+      }
+
+      case 'DISCOVER_RESP': {
+        const payload = message.payload as DiscoverPayload;
+        await this.handleDiscover(payload.agentInfo, peerId, false);
         break;
       }
 
       case 'CAPABILITY_QUERY': {
         const payload = message.payload as CapabilityQueryPayload;
         await this.handleCapabilityQuery(payload, peerId);
+        break;
+      }
+
+      case 'CAPABILITY_RESPONSE': {
+        const payload = message.payload as CapabilityResponsePayload;
+        this.upsertPeerFromAgentInfo(payload.agentInfo, peerId);
         break;
       }
 
@@ -574,17 +589,49 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   /**
    * 处理发现消息
    */
-  private async handleDiscover(agentInfo: AgentInfo, peerId: string): Promise<void> {
+  private async handleDiscover(agentInfo: AgentInfo, peerId: string, shouldRespond: boolean): Promise<void> {
+    this.upsertPeerFromAgentInfo(agentInfo, peerId);
+
+    // 仅对 DISCOVER 请求响应，避免发现响应循环
+    if (shouldRespond) {
+      const responseResult = await this.sendMessage(peerId, {
+        id: randomUUID(),
+        type: 'DISCOVER_RESP',
+        from: this.agentInfo.peerId,
+        to: peerId,
+        timestamp: Date.now(),
+        payload: { agentInfo: this.agentInfo } as DiscoverPayload
+      });
+
+      if (!responseResult.success) {
+        this.logger.warn('Failed to send discover response', {
+          peerId: peerId.slice(0, 16),
+          error: responseResult.error
+        });
+      }
+    }
+
+    this.emit('peer:discovered', {
+      peerId,
+      agentInfo,
+      multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma))
+    });
+  }
+
+  /**
+   * 将发现到的 Agent 信息更新到 Peer 表
+   */
+  private upsertPeerFromAgentInfo(agentInfo: AgentInfo, peerId: string): void {
     // 检查是否需要清理以腾出空间
     if (this.peerTable.size >= PEER_TABLE_MAX_SIZE && !this.peerTable.has(peerId)) {
       this.cleanupStalePeers(true); // 强制清理
     }
 
-    // 更新路由表
     const existing = this.peerTable.get(peerId);
     if (existing) {
       existing.agentInfo = agentInfo;
       existing.lastSeen = Date.now();
+      existing.multiaddrs = agentInfo.multiaddrs.map(ma => multiaddr(ma));
     } else {
       this.peerTable.set(peerId, {
         peerId,
@@ -601,29 +648,6 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       this.e2eeCrypto.registerPeerPublicKey(peerId, agentInfo.encryptionPublicKey);
       this.logger.info('Registered encryption key', { peerId: peerId.slice(0, 16) });
     }
-
-    // 发送发现响应
-    const responseResult = await this.sendMessage(peerId, {
-      id: randomUUID(),
-      type: 'DISCOVER_RESP',
-      from: this.agentInfo.peerId,
-      to: peerId,
-      timestamp: Date.now(),
-      payload: { agentInfo: this.agentInfo } as DiscoverPayload
-    });
-
-    if (!responseResult.success) {
-      this.logger.warn('Failed to send discover response', {
-        peerId: peerId.slice(0, 16),
-        error: responseResult.error
-      });
-    }
-
-    this.emit('peer:discovered', {
-      peerId,
-      agentInfo,
-      multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma))
-    });
   }
 
   /**

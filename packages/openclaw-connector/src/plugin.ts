@@ -27,6 +27,15 @@ export default async function register(api: any) {
     api.logger?.info?.('[F2A Plugin] 初始化完成');
   } catch (error: any) {
     api.logger?.error?.('[F2A Plugin] 初始化失败:', error.message);
+    
+    // 清理已分配的资源，避免孤儿进程和端口占用
+    try {
+      api.logger?.info?.('[F2A Plugin] 正在清理资源...');
+      await plugin.shutdown?.();
+    } catch (shutdownError: any) {
+      api.logger?.warn?.('[F2A Plugin] 清理资源时出错:', shutdownError.message);
+    }
+    
     // 抛出错误让 OpenClaw 知道插件加载失败
     throw new Error(`F2A Plugin 初始化失败: ${error.message}`);
   }

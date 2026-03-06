@@ -27,6 +27,11 @@
         "description": "Port for F2A control API",
         "default": 9001
       },
+      "controlToken": {
+        "type": "string",
+        "description": "Auth token for F2A control API (auto-generated if not provided)",
+        "sensitive": true
+      },
       "p2pPort": {
         "type": "number",
         "description": "Port for P2P network",
@@ -72,6 +77,7 @@
     "autoStart": { "label": "Auto Start F2A Node" },
     "webhookPort": { "label": "Webhook Port" },
     "controlPort": { "label": "Control Port" },
+    "controlToken": { "label": "Control Token", "sensitive": true },
     "p2pPort": { "label": "P2P Port" },
     "enableMDNS": { "label": "Enable mDNS Discovery" },
     "agentName": { "label": "Agent Display Name" },

@@ -14,6 +14,12 @@ vi.mock('./p2p-network', () => ({
     getConnectedPeers: vi.fn().mockReturnValue([]),
     sendTaskRequest: vi.fn(),
     sendTaskResponse: vi.fn().mockResolvedValue({ success: true }),
+    useMiddleware: vi.fn(),
+    removeMiddleware: vi.fn().mockReturnValue(true),
+    listMiddlewares: vi.fn().mockReturnValue(['test-middleware']),
+    findPeerViaDHT: vi.fn().mockResolvedValue({ success: false, error: { code: 'DHT_NOT_AVAILABLE', message: 'DHT not enabled' } }),
+    getDHTPeerCount: vi.fn().mockReturnValue(0),
+    isDHTEnabled: vi.fn().mockReturnValue(false),
     on: vi.fn(),
     getPeerId: vi.fn().mockReturnValue('test-peer-id')
   }))
@@ -220,6 +226,28 @@ describe('F2A', () => {
         'Error message'
       );
       expect(result.success).toBe(true);
+    });
+  });
+
+  describe('middleware and DHT facade', () => {
+    it('should proxy middleware methods to p2p network', () => {
+      const middleware = {
+        name: 'test-middleware',
+        priority: 10,
+        process: vi.fn().mockResolvedValue({ action: 'continue' })
+      };
+
+      f2a.useMiddleware(middleware as any);
+      expect(f2a.listMiddlewares()).toEqual(['test-middleware']);
+      expect(f2a.removeMiddleware('test-middleware')).toBe(true);
+    });
+
+    it('should proxy dht methods to p2p network', async () => {
+      const lookup = await f2a.findPeerViaDHT('peer-id');
+      expect(lookup.success).toBe(false);
+      expect(lookup.error?.code).toBe('DHT_NOT_AVAILABLE');
+      expect(f2a.getDHTPeerCount()).toBe(0);
+      expect(f2a.isDHTEnabled()).toBe(false);
     });
   });
 

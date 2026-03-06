@@ -6,6 +6,7 @@
 import { EventEmitter } from 'eventemitter3';
 import { P2PNetwork } from './p2p-network.js';
 import { Logger } from '../utils/logger.js';
+import { Middleware } from '../utils/middleware.js';
 import { validateAgentCapability, validateTaskDelegateOptions } from '../utils/validation.js';
 import {
   F2AOptions,
@@ -49,6 +50,16 @@ export interface F2AInstance {
 
   // 直接通信
   sendTaskTo(peerId: string, taskType: string, description: string, parameters?: Record<string, unknown>): Promise<Result<unknown>>;
+
+  // 中间件
+  useMiddleware(middleware: Middleware): void;
+  removeMiddleware(name: string): boolean;
+  listMiddlewares(): string[];
+
+  // DHT
+  findPeerViaDHT(peerId: string): Promise<Result<string[]>>;
+  getDHTPeerCount(): number;
+  isDHTEnabled(): boolean;
 }
 
 export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
@@ -357,6 +368,48 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       parameters,
       30000
     );
+  }
+
+  /**
+   * 注册中间件
+   */
+  useMiddleware(middleware: Middleware): void {
+    this.p2pNetwork.useMiddleware(middleware);
+  }
+
+  /**
+   * 移除中间件
+   */
+  removeMiddleware(name: string): boolean {
+    return this.p2pNetwork.removeMiddleware(name);
+  }
+
+  /**
+   * 获取已注册中间件列表
+   */
+  listMiddlewares(): string[] {
+    return this.p2pNetwork.listMiddlewares();
+  }
+
+  /**
+   * 通过 DHT 查找节点
+   */
+  async findPeerViaDHT(peerId: string): Promise<Result<string[]>> {
+    return this.p2pNetwork.findPeerViaDHT(peerId);
+  }
+
+  /**
+   * 获取 DHT 路由表大小
+   */
+  getDHTPeerCount(): number {
+    return this.p2pNetwork.getDHTPeerCount();
+  }
+
+  /**
+   * 检查 DHT 是否启用
+   */
+  isDHTEnabled(): boolean {
+    return this.p2pNetwork.isDHTEnabled();
   }
 
   /**

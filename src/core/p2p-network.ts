@@ -449,9 +449,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       // 获取 peer 的 multiaddrs
       let multiaddrs: any[] = [];
       try {
-        const peerInfo = this.node.getPeers().find(p => p.toString() === peerId);
-        if (peerInfo) {
-          multiaddrs = [multiaddr(peerInfo.toString())];
+        if (this.node) {
+          const peerInfo = this.node.getPeers().find(p => p.toString() === peerId);
+          if (peerInfo) {
+            multiaddrs = [multiaddr(peerInfo.toString())];
+          }
         }
       } catch {
         // 无法获取 multiaddrs，使用空数组

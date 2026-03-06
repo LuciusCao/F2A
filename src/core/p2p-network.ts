@@ -94,17 +94,17 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     try {
       // 生成或加载密钥对
       const privateKey = await generateKeyPair('Ed25519');
-      const peerId = await peerIdFromKeys(privateKey.public.marshal(), privateKey.marshal());
 
       // 构建监听地址
       const listenAddresses = this.config.listenAddresses || [
         `/ip4/0.0.0.0/tcp/${this.config.listenPort}`
       ];
 
-      // 创建 libp2p 节点 - 启用 noise 加密和 DHT
+      // 创建 libp2p 节点 - 启用 noise 加密
       const services: Record<string, any> = {};
       
-      if (this.config.enableDHT !== false) {
+      // 只有显式启用 DHT 时才添加
+      if (this.config.enableDHT === true) {
         services.dht = kadDHT({
           clientMode: !this.config.dhtServerMode, // 默认客户端模式
         });
@@ -128,6 +128,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
       // 获取实际监听地址
       const addrs = this.node.getMultiaddrs().map(ma => ma.toString());
+      
+      // 从节点获取 peer ID
+      const peerId = this.node.peerId;
       
       // 更新 agentInfo
       this.agentInfo.peerId = peerId.toString();

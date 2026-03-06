@@ -40,7 +40,11 @@ export class F2ADaemon {
     const result = await this.f2a.start();
     
     if (!result.success) {
-      throw new Error(`Failed to start F2A: ${result.error}`);
+      const errorData = (result as { error: unknown }).error;
+      const errorMsg = typeof errorData === 'string' 
+        ? errorData 
+        : JSON.stringify(errorData);
+      throw new Error(`Failed to start F2A: ${errorMsg}`);
     }
 
     // 启动控制服务器

@@ -4,7 +4,7 @@
  */
 
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
-import { Logger } from './logger';
+import { Logger } from './logger.js';
 
 export interface SignatureConfig {
   /** 签名密钥 */

@@ -4,10 +4,10 @@
  */
 
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
-import { F2A } from '../core/f2a';
-import { TokenManager } from '../core/token-manager';
-import { Logger } from '../utils/logger';
-import { RateLimiter } from '../utils/rate-limiter';
+import { F2A } from '../core/f2a.js';
+import { TokenManager } from '../core/token-manager.js';
+import { Logger } from '../utils/logger.js';
+import { RateLimiter } from '../utils/rate-limiter.js';
 
 export interface ControlServerOptions {
   port: number;
@@ -63,12 +63,21 @@ export class ControlServer {
   }
 
   /**
+   * 从 Authorization header 提取 Bearer token
+   */
+  private extractBearerToken(authHeader: string | undefined): string | undefined {
+    if (!authHeader) return undefined;
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    return match ? match[1] : undefined;
+  }
+
+  /**
    * 处理请求
    */
   private handleRequest(req: IncomingMessage, res: ServerResponse): void {
     // 设置 CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-F2A-Token');
 
     if (req.method === 'OPTIONS') {
@@ -77,13 +86,66 @@ export class ControlServer {
       return;
     }
 
+    // 健康检查端点 (不需要认证)
+    if (req.method === 'GET' && req.url === '/health') {
+      res.writeHead(200);
+      res.end(JSON.stringify({ status: 'ok', peerId: this.f2a.peerId }));
+      return;
+    }
+
+    // GET /status - 获取状态 (需要认证)
+    if (req.method === 'GET' && req.url === '/status') {
+      const clientIp = req.socket.remoteAddress || 'unknown';
+      if (!this.rateLimiter.allowRequest(clientIp)) {
+        res.writeHead(429);
+        res.end(JSON.stringify({ success: false, error: 'Too many requests' }));
+        return;
+      }
+      // 支持 X-F2A-Token 或 Authorization: Bearer xxx
+      const token = req.headers['x-f2a-token'] as string | undefined 
+        || this.extractBearerToken(req.headers.authorization);
+      if (!this.tokenManager.verifyToken(token)) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
+        return;
+      }
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        success: true,
+        peerId: this.f2a.peerId,
+        multiaddrs: this.f2a.agentInfo.multiaddrs || []
+      }));
+      return;
+    }
+
+    // GET /peers - 获取已知的 Peers (需要认证)
+    if (req.method === 'GET' && req.url === '/peers') {
+      const clientIp = req.socket.remoteAddress || 'unknown';
+      if (!this.rateLimiter.allowRequest(clientIp)) {
+        res.writeHead(429);
+        res.end(JSON.stringify({ success: false, error: 'Too many requests' }));
+        return;
+      }
+      // 支持 X-F2A-Token 或 Authorization: Bearer xxx
+      const token = req.headers['x-f2a-token'] as string | undefined 
+        || this.extractBearerToken(req.headers.authorization);
+      if (!this.tokenManager.verifyToken(token)) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
+        return;
+      }
+      // 返回所有已知的节点（包括已断开但已发现的）
+      const peers = this.f2a.getAllPeers();
+      res.writeHead(200);
+      res.end(JSON.stringify(peers));
+      return;
+    }
+
     if (req.method !== 'POST') {
       res.writeHead(405);
       res.end(JSON.stringify({ success: false, error: 'Method not allowed' }));
       return;
     }
-
-    // 速率限制检查
     const clientIp = req.socket.remoteAddress || 'unknown';
     if (!this.rateLimiter.allowRequest(clientIp)) {
       this.logger.warn('Rate limit exceeded', { clientIp });

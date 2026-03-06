@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { P2PNetwork } from './p2p-network';
-import { AgentInfo } from '../types';
+import { P2PNetwork } from './p2p-network.js';
+import { AgentInfo } from '../types/index.js';
 
 describe('P2PNetwork', () => {
   let network: P2PNetwork;
@@ -112,6 +112,88 @@ describe('P2PNetwork', () => {
       const error = await errorPromise;
       expect(error).toBeInstanceOf(Error);
       expect(error.message).toBe('Test error');
+    });
+  });
+
+  describe('message handling', () => {
+    it('should process DISCOVER_RESP and upsert peer', async () => {
+      const agentInfo: AgentInfo = {
+        ...mockAgentInfo,
+        peerId: 'peer-remote',
+        multiaddrs: ['/ip4/127.0.0.1/tcp/9002']
+      };
+
+      await (network as any).handleMessage(
+        {
+          id: '00000000-0000-4000-8000-000000000001',
+          type: 'DISCOVER_RESP',
+          from: 'peer-remote',
+          timestamp: Date.now(),
+          payload: { agentInfo }
+        },
+        'peer-remote'
+      );
+
+      const peers = network.getAllPeers();
+      expect(peers).toHaveLength(1);
+      expect(peers[0].agentInfo?.peerId).toBe('peer-remote');
+      expect(peers[0].multiaddrs[0].toString()).toContain('/tcp/9002');
+    });
+
+    it('should process CAPABILITY_RESPONSE and upsert peer', async () => {
+      const agentInfo: AgentInfo = {
+        ...mockAgentInfo,
+        peerId: 'peer-cap',
+        capabilities: [{ name: 'code-gen', description: 'Code Gen', tools: ['generate'] }],
+        multiaddrs: ['/ip4/127.0.0.1/tcp/9003']
+      };
+
+      await (network as any).handleMessage(
+        {
+          id: '00000000-0000-4000-8000-000000000002',
+          type: 'CAPABILITY_RESPONSE',
+          from: 'peer-cap',
+          timestamp: Date.now(),
+          payload: { agentInfo }
+        },
+        'peer-cap'
+      );
+
+      const peers = network.getAllPeers();
+      expect(peers).toHaveLength(1);
+      expect(peers[0].agentInfo?.capabilities[0].name).toBe('code-gen');
+    });
+  });
+
+  describe('broadcast', () => {
+    it('should count fulfilled failures in broadcast warning', async () => {
+      const warnSpy = vi.spyOn((network as any).logger, 'warn');
+
+      (network as any).node = {
+        getPeers: vi.fn().mockReturnValue([
+          { toString: () => 'peer-a' },
+          { toString: () => 'peer-b' }
+        ]),
+        stop: vi.fn().mockResolvedValue(undefined)
+      };
+
+      const sendSpy = vi.spyOn(network as any, 'sendMessage')
+        .mockResolvedValueOnce({ success: true, data: undefined })
+        .mockResolvedValueOnce({ success: false, error: { code: 'PEER_NOT_FOUND', message: 'Peer not found' } });
+
+      await (network as any).broadcast({
+        id: 'msg-broadcast',
+        type: 'DISCOVER',
+        from: 'self',
+        timestamp: Date.now(),
+        payload: { agentInfo: mockAgentInfo }
+      });
+
+      expect(sendSpy).toHaveBeenCalledTimes(2);
+      expect(warnSpy).toHaveBeenCalledWith('Broadcast failed to some peers', {
+        failed: 1,
+        total: 2
+      });
     });
   });
 });

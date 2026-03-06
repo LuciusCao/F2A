@@ -4,9 +4,10 @@
  */
 
 import { EventEmitter } from 'eventemitter3';
-import { P2PNetwork } from './p2p-network';
-import { Logger } from '../utils/logger';
-import { validateAgentCapability, validateTaskDelegateOptions } from '../utils/validation';
+import { P2PNetwork } from './p2p-network.js';
+import { Logger } from '../utils/logger.js';
+import { Middleware } from '../utils/middleware.js';
+import { validateAgentCapability, validateTaskDelegateOptions } from '../utils/validation.js';
 import {
   F2AOptions,
   F2AEvents,
@@ -24,7 +25,7 @@ import {
   NetworkStartedEvent,
   success,
   failureFromError
-} from '../types';
+} from '../types/index.js';
 
 // 版本号
 const F2A_VERSION = '1.0.0';
@@ -43,12 +44,23 @@ export interface F2AInstance {
   // 发现
   discoverAgents(capability?: string): Promise<AgentInfo[]>;
   getConnectedPeers(): AgentInfo[];
+  getAllPeers(): AgentInfo[];
 
   // 任务委托
   delegateTask(options: TaskDelegateOptions): Promise<Result<TaskDelegateResult>>;
 
   // 直接通信
   sendTaskTo(peerId: string, taskType: string, description: string, parameters?: Record<string, unknown>): Promise<Result<unknown>>;
+
+  // 中间件
+  useMiddleware(middleware: Middleware): void;
+  removeMiddleware(name: string): boolean;
+  listMiddlewares(): string[];
+
+  // DHT
+  findPeerViaDHT(peerId: string): Promise<Result<string[]>>;
+  getDHTPeerCount(): number;
+  isDHTEnabled(): boolean;
 }
 
 export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
@@ -222,6 +234,30 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   }
 
   /**
+   * 获取所有已知的 Peers（包括已断开但已发现的）
+   */
+  getAllPeers(): AgentInfo[] {
+    // 返回所有已知节点，包括还没有交换 agentInfo 的
+    // 如果 agentInfo 不存在，创建一个基本的 AgentInfo
+    return this.p2pNetwork.getAllPeers()
+      .map(p => {
+        if (p.agentInfo) {
+          return p.agentInfo;
+        }
+        // 创建基本的 AgentInfo
+        return {
+          peerId: p.peerId,
+          capabilities: [],
+          multiaddrs: p.multiaddrs.map(m => m.toString()),
+          lastSeen: p.lastSeen,
+          agentType: 'custom' as const,
+          version: '0.0.0',
+          protocolVersion: '1.0.0'
+        };
+      });
+  }
+
+  /**
    * 委托任务给网络
    */
   async delegateTask(options: TaskDelegateOptions): Promise<Result<TaskDelegateResult>> {
@@ -357,6 +393,48 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       parameters,
       30000
     );
+  }
+
+  /**
+   * 注册中间件
+   */
+  useMiddleware(middleware: Middleware): void {
+    this.p2pNetwork.useMiddleware(middleware);
+  }
+
+  /**
+   * 移除中间件
+   */
+  removeMiddleware(name: string): boolean {
+    return this.p2pNetwork.removeMiddleware(name);
+  }
+
+  /**
+   * 获取已注册中间件列表
+   */
+  listMiddlewares(): string[] {
+    return this.p2pNetwork.listMiddlewares();
+  }
+
+  /**
+   * 通过 DHT 查找节点
+   */
+  async findPeerViaDHT(peerId: string): Promise<Result<string[]>> {
+    return this.p2pNetwork.findPeerViaDHT(peerId);
+  }
+
+  /**
+   * 获取 DHT 路由表大小
+   */
+  getDHTPeerCount(): number {
+    return this.p2pNetwork.getDHTPeerCount();
+  }
+
+  /**
+   * 检查 DHT 是否启用
+   */
+  isDHTEnabled(): boolean {
+    return this.p2pNetwork.isDHTEnabled();
   }
 
   /**

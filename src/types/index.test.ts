@@ -7,7 +7,7 @@ import {
   Result,
   TaskDelegateOptions,
   WebhookConfig
-} from './index';
+} from './index.js';
 
 describe('Types', () => {
   it('should allow creating AgentCapability', () => {

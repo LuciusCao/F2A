@@ -7,8 +7,7 @@ import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { noise } from '@chainsafe/libp2p-noise';
 import { kadDHT } from '@libp2p/kad-dht';
-import { generateKeyPair } from '@libp2p/crypto/keys';
-import { peerIdFromKeys, peerIdFromString } from '@libp2p/peer-id';
+import { peerIdFromString } from '@libp2p/peer-id';
 import { multiaddr } from '@multiformats/multiaddr';
 import { EventEmitter } from 'eventemitter3';
 import { randomUUID } from 'crypto';
@@ -32,12 +31,12 @@ import {
   success,
   failureFromError,
   createError
-} from '../types';
-import { E2EECrypto } from './e2ee-crypto';
-import { Logger } from '../utils/logger';
-import { validateF2AMessage, validateTaskRequestPayload, validateTaskResponsePayload } from '../utils/validation';
-import { MiddlewareManager, Middleware } from '../utils/middleware';
-import { RequestSigner, loadSignatureConfig, SignedMessage } from '../utils/signature';
+} from '../types/index.js';
+import { E2EECrypto } from './e2ee-crypto.js';
+import { Logger } from '../utils/logger.js';
+import { validateF2AMessage, validateTaskRequestPayload, validateTaskResponsePayload } from '../utils/validation.js';
+import { MiddlewareManager, Middleware } from '../utils/middleware.js';
+import { RequestSigner, loadSignatureConfig, SignedMessage } from '../utils/signature.js';
 
 // F2A 协议标识
 const F2A_PROTOCOL = '/f2a/1.0.0';
@@ -92,26 +91,23 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    */
   async start(): Promise<Result<{ peerId: string; addresses: string[] }>> {
     try {
-      // 生成或加载密钥对
-      const privateKey = await generateKeyPair('Ed25519');
-      const peerId = await peerIdFromKeys(privateKey.public.marshal(), privateKey.marshal());
-
       // 构建监听地址
       const listenAddresses = this.config.listenAddresses || [
         `/ip4/0.0.0.0/tcp/${this.config.listenPort}`
       ];
 
-      // 创建 libp2p 节点 - 启用 noise 加密和 DHT
+      // 创建 libp2p 节点 - 启用 noise 加密
       const services: Record<string, any> = {};
       
-      if (this.config.enableDHT !== false) {
+      // 只有显式启用 DHT 时才添加
+      if (this.config.enableDHT === true) {
         services.dht = kadDHT({
           clientMode: !this.config.dhtServerMode, // 默认客户端模式
         });
       }
 
+      // 注意：不传 privateKey，让 libp2p 自动生成 PeerId
       this.node = await createLibp2p({
-        privateKey,
         addresses: {
           listen: listenAddresses
         },
@@ -128,6 +124,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
       // 获取实际监听地址
       const addrs = this.node.getMultiaddrs().map(ma => ma.toString());
+      
+      // 从节点获取 peer ID
+      const peerId = this.node.peerId;
       
       // 更新 agentInfo
       this.agentInfo.peerId = peerId.toString();
@@ -150,6 +149,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
       // 启动定期清理任务
       this.startCleanupTask();
+
+      // 延迟 2 秒后广播发现消息，等待连接稳定
+      setTimeout(() => {
+        this.broadcastDiscovery();
+      }, 2000);
 
       // 如果启用 DHT，等待 DHT 就绪
       if (this.config.enableDHT !== false && this.node.services.dht) {
@@ -352,7 +356,10 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     );
 
     // 记录发送失败的情况
-    const failures = results.filter(r => r.status === 'rejected');
+    const failures = results.filter(r =>
+      r.status === 'rejected' ||
+      (r.status === 'fulfilled' && !r.value.success)
+    );
     if (failures.length > 0) {
       this.logger.warn('Broadcast failed to some peers', {
         failed: failures.length,
@@ -373,14 +380,22 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     }
 
     try {
-      // 获取 PeerInfo
-      const peerInfo = this.peerTable.get(peerId);
-      if (!peerInfo || peerInfo.multiaddrs.length === 0) {
-        return failureFromError('PEER_NOT_FOUND', `Peer ${peerId} not found`);
+      // 检查是否已连接
+      const connections = this.node.getConnections();
+      const existingConn = connections.find(c => c.remotePeer.toString() === peerId);
+      
+      let peer;
+      if (existingConn) {
+        // 已连接，直接使用现有连接
+        peer = existingConn;
+      } else {
+        // 未连接，需要 dial
+        const peerInfo = this.peerTable.get(peerId);
+        if (!peerInfo || peerInfo.multiaddrs.length === 0) {
+          return failureFromError('PEER_NOT_FOUND', `Peer ${peerId} not found`);
+        }
+        peer = await this.node.dial(peerInfo.multiaddrs[0]);
       }
-
-      // 拨号连接（如果未连接）
-      const peer = await this.node.dial(peerInfo.multiaddrs[0]);
 
       // 准备消息数据（根据是否启用 E2EE 加密）
       let data: Buffer;
@@ -439,11 +454,39 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         direction: 'inbound'
       });
 
-      // 更新路由表
+      // 从连接获取远程 multiaddr
+      let multiaddrs: any[] = [];
+      try {
+        if (this.node) {
+          const connections = this.node.getConnections();
+          const conn = connections.find(c => c.remotePeer.toString() === peerId);
+          if (conn && conn.remoteAddr) {
+            multiaddrs = [conn.remoteAddr];
+          }
+        }
+      } catch {
+        // 无法获取 multiaddrs，使用空数组
+      }
+
+      // 更新或添加到路由表
       const existing = this.peerTable.get(peerId);
       if (existing) {
         existing.connected = true;
         existing.connectedAt = Date.now();
+        if (multiaddrs.length > 0) {
+          existing.multiaddrs = multiaddrs;
+        }
+      } else {
+        // 新连接的节点，添加到路由表
+        this.peerTable.set(peerId, {
+          peerId,
+          agentInfo: undefined,
+          multiaddrs,
+          connected: true,
+          reputation: 50,
+          lastSeen: Date.now(),
+          connectedAt: Date.now()
+        });
       }
     });
 
@@ -544,13 +587,25 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     switch (message.type) {
       case 'DISCOVER': {
         const payload = message.payload as DiscoverPayload;
-        await this.handleDiscover(payload.agentInfo, peerId);
+        await this.handleDiscover(payload.agentInfo, peerId, true);
+        break;
+      }
+
+      case 'DISCOVER_RESP': {
+        const payload = message.payload as DiscoverPayload;
+        await this.handleDiscover(payload.agentInfo, peerId, false);
         break;
       }
 
       case 'CAPABILITY_QUERY': {
         const payload = message.payload as CapabilityQueryPayload;
         await this.handleCapabilityQuery(payload, peerId);
+        break;
+      }
+
+      case 'CAPABILITY_RESPONSE': {
+        const payload = message.payload as CapabilityResponsePayload;
+        this.upsertPeerFromAgentInfo(payload.agentInfo, peerId);
         break;
       }
 
@@ -575,17 +630,49 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   /**
    * 处理发现消息
    */
-  private async handleDiscover(agentInfo: AgentInfo, peerId: string): Promise<void> {
+  private async handleDiscover(agentInfo: AgentInfo, peerId: string, shouldRespond: boolean): Promise<void> {
+    this.upsertPeerFromAgentInfo(agentInfo, peerId);
+
+    // 仅对 DISCOVER 请求响应，避免发现响应循环
+    if (shouldRespond) {
+      const responseResult = await this.sendMessage(peerId, {
+        id: randomUUID(),
+        type: 'DISCOVER_RESP',
+        from: this.agentInfo.peerId,
+        to: peerId,
+        timestamp: Date.now(),
+        payload: { agentInfo: this.agentInfo } as DiscoverPayload
+      });
+
+      if (!responseResult.success) {
+        this.logger.warn('Failed to send discover response', {
+          peerId: peerId.slice(0, 16),
+          error: responseResult.error
+        });
+      }
+    }
+
+    this.emit('peer:discovered', {
+      peerId,
+      agentInfo,
+      multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma))
+    });
+  }
+
+  /**
+   * 将发现到的 Agent 信息更新到 Peer 表
+   */
+  private upsertPeerFromAgentInfo(agentInfo: AgentInfo, peerId: string): void {
     // 检查是否需要清理以腾出空间
     if (this.peerTable.size >= PEER_TABLE_MAX_SIZE && !this.peerTable.has(peerId)) {
       this.cleanupStalePeers(true); // 强制清理
     }
 
-    // 更新路由表
     const existing = this.peerTable.get(peerId);
     if (existing) {
       existing.agentInfo = agentInfo;
       existing.lastSeen = Date.now();
+      existing.multiaddrs = agentInfo.multiaddrs.map(ma => multiaddr(ma));
     } else {
       this.peerTable.set(peerId, {
         peerId,
@@ -602,29 +689,6 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       this.e2eeCrypto.registerPeerPublicKey(peerId, agentInfo.encryptionPublicKey);
       this.logger.info('Registered encryption key', { peerId: peerId.slice(0, 16) });
     }
-
-    // 发送发现响应
-    const responseResult = await this.sendMessage(peerId, {
-      id: randomUUID(),
-      type: 'DISCOVER_RESP',
-      from: this.agentInfo.peerId,
-      to: peerId,
-      timestamp: Date.now(),
-      payload: { agentInfo: this.agentInfo } as DiscoverPayload
-    });
-
-    if (!responseResult.success) {
-      this.logger.warn('Failed to send discover response', {
-        peerId: peerId.slice(0, 16),
-        error: responseResult.error
-      });
-    }
-
-    this.emit('peer:discovered', {
-      peerId,
-      agentInfo,
-      multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma))
-    });
   }
 
   /**

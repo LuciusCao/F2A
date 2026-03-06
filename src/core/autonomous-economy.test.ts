@@ -3,9 +3,9 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { AutonomousEconomy, TaskRequest, TaskExecutionResult } from './autonomous-economy';
-import { ReputationManager } from './reputation';
-import { ReviewCommittee } from './review-committee';
+import { AutonomousEconomy, TaskRequest, TaskExecutionResult } from './autonomous-economy.js';
+import { ReputationManager } from './reputation.js';
+import { ReviewCommittee } from './review-committee.js';
 
 describe('AutonomousEconomy', () => {
   let economy: AutonomousEconomy;
@@ -225,6 +225,67 @@ describe('AutonomousEconomy', () => {
       expect(stats.pendingTasks).toBe(1);
       expect(stats.queueLength).toBe(1);
       expect(stats.totalCostDeducted).toBeGreaterThan(0);
+    });
+  });
+
+  describe('过期任务清理', () => {
+    it('应该清理过期的待处理任务', async () => {
+      const task: TaskRequest = {
+        taskId: 'task-expired',
+        requesterId: 'requester-1',
+        capability: 'test',
+        description: 'Expired task',
+      };
+
+      economy.submitTask(task);
+      expect(economy.getQueueLength()).toBe(1);
+
+      // 等待足够长的时间确保任务过期
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const expired = economy.cleanupExpiredTasks(50); // 50ms
+      
+      expect(expired).toContain('task-expired');
+      expect(economy.getQueueLength()).toBe(0);
+    });
+
+    it('不应该清理未过期的任务', async () => {
+      const task: TaskRequest = {
+        taskId: 'task-fresh',
+        requesterId: 'requester-1',
+        capability: 'test',
+        description: 'Fresh task',
+      };
+
+      economy.submitTask(task);
+
+      // 使用很长的过期时间（24小时）
+      const expired = economy.cleanupExpiredTasks(24 * 60 * 60 * 1000);
+      
+      expect(expired.length).toBe(0);
+      expect(economy.getQueueLength()).toBe(1);
+    });
+  });
+
+  describe('getPendingTask', () => {
+    it('应该返回指定任务的信息', () => {
+      const task: TaskRequest = {
+        taskId: 'task-pending',
+        requesterId: 'requester-1',
+        capability: 'test',
+        description: 'Pending task',
+      };
+
+      economy.submitTask(task);
+      const pending = economy.getPendingTask('task-pending');
+
+      expect(pending).not.toBeNull();
+      expect(pending!.task.taskId).toBe('task-pending');
+      expect(pending!.task.requesterId).toBe('requester-1');
+    });
+
+    it('应该返回 null 对于不存在的任务', () => {
+      const pending = economy.getPendingTask('non-existent');
+      expect(pending).toBeNull();
     });
   });
 });

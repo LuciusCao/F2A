@@ -4,13 +4,13 @@
  */
 
 // 核心 P2P 网络
-export { F2A } from './core/f2a';
-export { P2PNetwork } from './core/p2p-network';
-export { TokenManager, defaultTokenManager } from './core/token-manager';
-export { E2EECrypto, defaultE2EECrypto } from './core/e2ee-crypto';
+export { F2A } from './core/f2a.js';
+export { P2PNetwork } from './core/p2p-network.js';
+export { TokenManager, defaultTokenManager } from './core/token-manager.js';
+export { E2EECrypto, defaultE2EECrypto } from './core/e2ee-crypto.js';
 
 // 信誉系统 (Phase 1-4)
-export { ReputationManager, REPUTATION_TIERS } from './core/reputation';
+export { ReputationManager, REPUTATION_TIERS } from './core/reputation.js';
 export type { 
   ReputationEntry, 
   ReputationEvent, 
@@ -18,9 +18,9 @@ export type {
   ReputationTier,
   ReputationConfig,
   ReputationStorage
-} from './core/reputation';
+} from './core/reputation.js';
 
-export { ReviewCommittee } from './core/review-committee';
+export { ReviewCommittee } from './core/review-committee.js';
 export type {
   TaskReview,
   ReviewResult,
@@ -28,9 +28,9 @@ export type {
   RiskFlag,
   ReviewCommitteeConfig,
   PendingReview
-} from './core/review-committee';
+} from './core/review-committee.js';
 
-export { AutonomousEconomy } from './core/autonomous-economy';
+export { AutonomousEconomy } from './core/autonomous-economy.js';
 export type {
   TaskRequest,
   TaskCost,
@@ -38,14 +38,14 @@ export type {
   EconomyConfig,
   PriorityQueueItem,
   TaskExecutionResult
-} from './core/autonomous-economy';
+} from './core/autonomous-economy.js';
 
 // 信誉安全机制 (Phase 3)
 export { 
   ChainSignatureManager, 
   InvitationManager, 
   ChallengeManager 
-} from './core/reputation-security';
+} from './core/reputation-security.js';
 export type {
   SignedReputationEvent,
   ReviewerSignature,
@@ -53,20 +53,20 @@ export type {
   InvitationConfig,
   ChallengeRecord,
   ChallengeResult
-} from './core/reputation-security';
+} from './core/reputation-security.js';
 
 // 工具模块
-export { Logger } from './utils/logger';
-export { RateLimiter } from './utils/rate-limiter';
-export { RequestSigner } from './utils/signature';
+export { Logger } from './utils/logger.js';
+export { RateLimiter } from './utils/rate-limiter.js';
+export { RequestSigner } from './utils/signature.js';
 export { 
   createMessageSizeLimitMiddleware,
   createMessageTypeFilterMiddleware 
-} from './utils/middleware';
-export type { Middleware, MiddlewareContext, MiddlewareResult } from './utils/middleware';
+} from './utils/middleware.js';
+export type { Middleware, MiddlewareContext, MiddlewareResult } from './utils/middleware.js';
 
 // 类型定义
-export * from './types';
+export * from './types/index.js';
 
 // 版本号
 export const VERSION = '1.0.1';

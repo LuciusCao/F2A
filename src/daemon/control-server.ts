@@ -68,12 +68,19 @@ export class ControlServer {
   private handleRequest(req: IncomingMessage, res: ServerResponse): void {
     // 设置 CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-F2A-Token');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(200);
       res.end();
+      return;
+    }
+
+    // 健康检查端点 (不需要认证)
+    if (req.method === 'GET' && req.url === '/health') {
+      res.writeHead(200);
+      res.end(JSON.stringify({ status: 'ok', peerId: this.f2a.peerId }));
       return;
     }
 

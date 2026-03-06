@@ -7,8 +7,7 @@ import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { noise } from '@chainsafe/libp2p-noise';
 import { kadDHT } from '@libp2p/kad-dht';
-import { generateKeyPair } from '@libp2p/crypto/keys';
-import { peerIdFromKeys, peerIdFromString } from '@libp2p/peer-id';
+import { peerIdFromString } from '@libp2p/peer-id';
 import { multiaddr } from '@multiformats/multiaddr';
 import { EventEmitter } from 'eventemitter3';
 import { randomUUID } from 'crypto';
@@ -92,9 +91,6 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    */
   async start(): Promise<Result<{ peerId: string; addresses: string[] }>> {
     try {
-      // 生成或加载密钥对
-      const privateKey = await generateKeyPair('Ed25519');
-
       // 构建监听地址
       const listenAddresses = this.config.listenAddresses || [
         `/ip4/0.0.0.0/tcp/${this.config.listenPort}`
@@ -110,8 +106,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         });
       }
 
+      // 注意：不传 privateKey，让 libp2p 自动生成 PeerId
       this.node = await createLibp2p({
-        privateKey,
         addresses: {
           listen: listenAddresses
         },

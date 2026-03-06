@@ -441,11 +441,22 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         direction: 'inbound'
       });
 
-      // 更新路由表
+      // 更新或添加到路由表
       const existing = this.peerTable.get(peerId);
       if (existing) {
         existing.connected = true;
         existing.connectedAt = Date.now();
+      } else {
+        // 新连接的节点，先添加到路由表（等待 DISCOVER 消息获取 agentInfo）
+        this.peerTable.set(peerId, {
+          peerId,
+          agentInfo: undefined,
+          multiaddrs: [],
+          connected: true,
+          reputation: 50,
+          lastSeen: Date.now(),
+          connectedAt: Date.now()
+        });
       }
     });
 

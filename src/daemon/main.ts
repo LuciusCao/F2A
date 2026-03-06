@@ -24,6 +24,9 @@ process.on('SIGTERM', async () => {
 
 // 启动
 daemon.start().catch((error) => {
-  console.error('[Daemon] Failed to start:', error);
+  console.error('[Daemon] Failed to start:', error instanceof Error ? error.message : String(error));
+  if (error instanceof Error && error.stack) {
+    console.error('[Daemon] Stack trace:', error.stack);
+  }
   process.exit(1);
 });

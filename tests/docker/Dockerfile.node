@@ -20,4 +20,4 @@ HEALTHCHECK --interval=5s --timeout=3s --retries=10 \
   CMD wget -q --spider http://localhost:9001/health || exit 1
 
 # 启动命令
-CMD ["node", "dist/daemon/index.js"]
+CMD ["node", "dist/daemon/main.js"]

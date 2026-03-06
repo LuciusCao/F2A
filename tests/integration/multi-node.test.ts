@@ -4,12 +4,13 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
+import { getBootstrapHttp } from './test-config';
 
 const shouldRun = process.env.RUN_INTEGRATION_TESTS === 'true';
 
 describe.skipIf(!shouldRun)('多节点压力测试', () => {
   // 使用 HTTP URL 格式，而不是 libp2p 多地址
-  const bootstrapAddr = process.env.TEST_BOOTSTRAP_HTTP || 'http://bootstrap.f2a.local:9001';
+  const bootstrapAddr = getBootstrapHttp();
   const nodeCount = parseInt(process.env.TEST_NODE_COUNT || '3');
   const testToken = process.env.TEST_TOKEN || 'test-token-integration';
 

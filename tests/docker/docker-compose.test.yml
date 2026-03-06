@@ -61,6 +61,7 @@ services:
       - f2a-test-net
     environment:
       - RUN_INTEGRATION_TESTS=true
+      - TEST_BOOTSTRAP_HTTP=http://bootstrap:9001
       - TEST_BOOTSTRAP_ADDR=/dns4/bootstrap.f2a.local/tcp/9000
       - TEST_NODE_COUNT=${NODE_COUNT:-3}
       - TEST_TOKEN=${TEST_TOKEN:-test-token-integration}

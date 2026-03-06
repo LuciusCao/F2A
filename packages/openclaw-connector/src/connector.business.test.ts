@@ -1,26 +1,21 @@
 /**
  * F2A OpenClaw Connector - 业务逻辑测试
- * 测试核心功能，不使用无意义的 mock
+ * 测试核心功能，使用真实业务逻辑而非无意义的 mock
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync } from 'fs';
+import { mkdirSync, rmSync, existsSync } from 'fs';
 import { F2AOpenClawConnector } from './connector.js';
 import { ReputationSystem } from './reputation.js';
 import { CapabilityDetector } from './capability-detector.js';
+import { TaskQueue } from './task-queue.js';
 import type { F2APluginConfig, AgentCapability, AgentInfo, TaskRequest } from './types.js';
 
 describe('F2AOpenClawConnector 业务逻辑', () => {
   describe('配置合并', () => {
     it('应该使用默认配置当未提供可选配置时', () => {
       const connector = new F2AOpenClawConnector();
-      const minimalConfig = {
-        openclaw: {
-          execute: async () => ({}),
-          listTools: async () => [],
-          listSkills: async () => []
-        }
-      };
+      const minimalConfig = {};
       
       // 验证默认配置值
       const mergedConfig = (connector as any).mergeConfig(minimalConfig);
@@ -29,6 +24,7 @@ describe('F2AOpenClawConnector 业务逻辑', () => {
       expect(mergedConfig.webhookPort).toBe(9002);
       expect(mergedConfig.agentName).toBe('OpenClaw Agent');
       expect(mergedConfig.dataDir).toBe('./f2a-data');
+      expect(mergedConfig.maxQueuedTasks).toBe(100);
       expect(mergedConfig.reputation.enabled).toBe(true);
       expect(mergedConfig.reputation.initialScore).toBe(50);
       expect(mergedConfig.security.requireConfirmation).toBe(false);
@@ -37,14 +33,10 @@ describe('F2AOpenClawConnector 业务逻辑', () => {
     it('应该覆盖默认配置当提供自定义值时', () => {
       const connector = new F2AOpenClawConnector();
       const customConfig = {
-        openclaw: {
-          execute: async () => ({}),
-          listTools: async () => [],
-          listSkills: async () => []
-        },
         autoStart: false,
         webhookPort: 9999,
         agentName: 'Custom Agent',
+        maxQueuedTasks: 50,
         reputation: {
           enabled: false,
           initialScore: 100
@@ -56,8 +48,21 @@ describe('F2AOpenClawConnector 业务逻辑', () => {
       expect(mergedConfig.autoStart).toBe(false);
       expect(mergedConfig.webhookPort).toBe(9999);
       expect(mergedConfig.agentName).toBe('Custom Agent');
+      expect(mergedConfig.maxQueuedTasks).toBe(50);
       expect(mergedConfig.reputation.enabled).toBe(false);
       expect(mergedConfig.reputation.initialScore).toBe(100);
+    });
+
+    it('应该正确处理 bootstrapPeers 配置', () => {
+      const connector = new F2AOpenClawConnector();
+      const configWithPeers = {
+        bootstrapPeers: ['/ip4/1.2.3.4/tcp/9000/p2p/peer-1', '/ip4/5.6.7.8/tcp/9000/p2p/peer-2']
+      };
+      
+      const mergedConfig = (connector as any).mergeConfig(configWithPeers);
+      
+      expect(mergedConfig.bootstrapPeers).toHaveLength(2);
+      expect(mergedConfig.bootstrapPeers[0]).toBe('/ip4/1.2.3.4/tcp/9000/p2p/peer-1');
     });
   });
 
@@ -119,6 +124,20 @@ describe('F2AOpenClawConnector 业务逻辑', () => {
       const result = await (connector as any).resolveAgent('NonExistent');
       expect(result).toBeNull();
     });
+
+    it('应该通过 displayName 模糊匹配解析 Agent', async () => {
+      const connector = new F2AOpenClawConnector();
+      const mockAgents: AgentInfo[] = [
+        { peerId: 'peer-1', displayName: 'My Special Agent', agentType: 'test', version: '1.0', capabilities: [], multiaddrs: [], lastSeen: Date.now() }
+      ];
+      
+      (connector as any).networkClient = {
+        discoverAgents: async () => ({ success: true, data: mockAgents })
+      };
+      
+      const result = await (connector as any).resolveAgent('special');
+      expect(result?.peerId).toBe('peer-1');
+    });
   });
 
   describe('广播结果格式化', () => {
@@ -147,6 +166,18 @@ describe('F2AOpenClawConnector 业务逻辑', () => {
       expect(formatted).toContain('❌ Agent A');
       expect(formatted).toContain('失败: Timeout');
     });
+
+    it('应该处理没有延迟信息的结果', () => {
+      const connector = new F2AOpenClawConnector();
+      const results = [
+        { agent: 'Agent A', success: true }
+      ];
+      
+      const formatted = (connector as any).formatBroadcastResults(results);
+      
+      expect(formatted).toContain('✅ Agent A');
+      expect(formatted).not.toContain('undefined');
+    });
   });
 
   describe('Token 生成', () => {
@@ -168,7 +199,7 @@ describe('F2AOpenClawConnector 业务逻辑', () => {
 });
 
 describe('ReputationSystem 业务逻辑', () => {
-  const testDir = '/tmp/f2a-test-reputation';
+  const testDir = '/tmp/f2a-test-reputation-' + Date.now();
   
   beforeEach(() => {
     // 创建测试目录
@@ -211,6 +242,19 @@ describe('ReputationSystem 业务逻辑', () => {
       expect(rep.avgResponseTime).toBe(100);
     });
 
+    it('多次成功任务应该累计', () => {
+      const config = { enabled: true, initialScore: 50, minScoreForService: 20, decayRate: 0.01 };
+      const reputation = new ReputationSystem(config, testDir);
+      
+      reputation.recordSuccess('peer-1', 'task-1', 100);
+      reputation.recordSuccess('peer-1', 'task-2', 200);
+      const rep = reputation.getReputation('peer-1');
+      
+      expect(rep.successfulTasks).toBe(2);
+      // 平均响应时间使用加权移动平均: 100 * 0.7 + 200 * 0.3 = 130
+      expect(rep.avgResponseTime).toBe(130);
+    });
+
     it('失败任务应该降低信誉分', () => {
       const config = { enabled: true, initialScore: 50, minScoreForService: 20, decayRate: 0.01 };
       const reputation = new ReputationSystem(config, testDir);
@@ -242,6 +286,18 @@ describe('ReputationSystem 业务逻辑', () => {
       
       expect(reputation.isAllowed('good-peer')).toBe(true);
     });
+
+    it('禁用信誉系统时应该允许所有 peer', () => {
+      const config = { enabled: false, initialScore: 50, minScoreForService: 20, decayRate: 0.01 };
+      const reputation = new ReputationSystem(config, testDir);
+      
+      // 即使多次失败也应该允许
+      for (let i = 0; i < 20; i++) {
+        reputation.recordFailure('any-peer', `task-${i}`, 'Error');
+      }
+      
+      expect(reputation.isAllowed('any-peer')).toBe(true);
+    });
   });
 
   describe('历史记录', () => {
@@ -268,59 +324,260 @@ describe('ReputationSystem 业务逻辑', () => {
       expect(rep.history[0].type).toBe('task_failure');
       expect(rep.history[0].reason).toBe('Timeout');
     });
+
+    it('应该限制历史记录数量', () => {
+      const config = { enabled: true, initialScore: 50, minScoreForService: 20, decayRate: 0.01 };
+      const reputation = new ReputationSystem(config, testDir);
+      
+      // 添加超过 100 条记录
+      for (let i = 0; i < 110; i++) {
+        reputation.recordSuccess('peer-1', `task-${i}`, 100);
+      }
+      
+      const rep = reputation.getReputation('peer-1');
+      expect(rep.history.length).toBeLessThanOrEqual(100);
+    });
+  });
+
+  describe('高信誉节点', () => {
+    it('应该返回信誉高于阈值的节点', () => {
+      const config = { enabled: true, initialScore: 50, minScoreForService: 20, decayRate: 0.01 };
+      const reputation = new ReputationSystem(config, testDir);
+      
+      // peer-1: 高信誉
+      reputation.recordSuccess('peer-1', 'task-1', 100);
+      reputation.recordSuccess('peer-1', 'task-2', 100);
+      
+      // peer-2: 低信誉
+      reputation.recordFailure('peer-2', 'task-1', 'Error');
+      
+      const highRepNodes = reputation.getHighReputationNodes(55);
+      const peerIds = highRepNodes.map(n => n.peerId);
+      
+      expect(peerIds).toContain('peer-1');
+      expect(peerIds).not.toContain('peer-2');
+    });
   });
 });
 
 describe('CapabilityDetector 业务逻辑', () => {
-  describe('能力检测', () => {
-    it('应该从 OpenClaw 会话中检测工具能力', async () => {
+  describe('getDefaultCapabilities', () => {
+    it('应该返回默认能力列表', () => {
       const detector = new CapabilityDetector();
-      const mockSession = {
-        listTools: async () => ['read', 'write', 'exec'],
-        listSkills: async () => []
-      };
-      
-      const capabilities = await detector.detectCapabilities(mockSession as any);
+      const capabilities = detector.getDefaultCapabilities();
       
       expect(capabilities.length).toBeGreaterThan(0);
       expect(capabilities.some(c => c.name === 'file-operation')).toBe(true);
+      expect(capabilities.some(c => c.name === 'command-execution')).toBe(true);
+      expect(capabilities.some(c => c.name === 'web-browsing')).toBe(true);
+      expect(capabilities.some(c => c.name === 'code-generation')).toBe(true);
+      expect(capabilities.some(c => c.name === 'task-delegation')).toBe(true);
     });
 
-    it('当 listTools 不可用时应该使用默认工具列表', async () => {
+    it('每个能力应该有完整的定义', () => {
       const detector = new CapabilityDetector();
-      const mockSession = {};
+      const capabilities = detector.getDefaultCapabilities();
       
-      const capabilities = await detector.detectCapabilities(mockSession as any);
-      
-      // 应该返回默认工具映射的能力，而不是空数组
-      expect(capabilities.length).toBeGreaterThan(0);
-      expect(capabilities.some(c => c.name === 'file-operation')).toBe(true);
+      for (const cap of capabilities) {
+        expect(cap.name).toBeDefined();
+        expect(cap.description).toBeDefined();
+        expect(cap.parameters).toBeDefined();
+        expect(Object.keys(cap.parameters).length).toBeGreaterThan(0);
+      }
     });
   });
 
-  describe('默认能力合并', () => {
-    it('应该保留现有能力并添加缺失的默认能力', () => {
+  describe('mergeCustomCapabilities', () => {
+    it('应该添加自定义能力', () => {
       const detector = new CapabilityDetector();
-      const existingCapabilities: AgentCapability[] = [
-        { name: 'custom-capability', description: 'Custom' }
-      ];
+      const defaults = detector.getDefaultCapabilities();
+      const custom = ['custom-ml', 'custom-analysis'];
       
-      const merged = detector.mergeDefaultCapabilities(existingCapabilities);
+      const merged = detector.mergeCustomCapabilities(defaults, custom);
       
-      expect(merged.some(c => c.name === 'custom-capability')).toBe(true);
-      expect(merged.some(c => c.name === 'code-generation')).toBe(true);
+      expect(merged.length).toBe(defaults.length + 2);
+      expect(merged.some(c => c.name === 'custom-ml')).toBe(true);
     });
 
-    it('不应该重复添加已存在的能力', () => {
+    it('不应该重复已存在的能力', () => {
       const detector = new CapabilityDetector();
-      const existingCapabilities: AgentCapability[] = [
-        { name: 'code-generation', description: 'Already have this' }
-      ];
+      const defaults = detector.getDefaultCapabilities();
+      const custom = ['code-generation']; // 已存在
       
-      const merged = detector.mergeDefaultCapabilities(existingCapabilities);
+      const merged = detector.mergeCustomCapabilities(defaults, custom);
       
-      const codeGenCapabilities = merged.filter(c => c.name === 'code-generation');
-      expect(codeGenCapabilities.length).toBe(1);
+      const count = merged.filter(c => c.name === 'code-generation').length;
+      expect(count).toBe(1);
+    });
+  });
+});
+
+describe('TaskQueue 业务逻辑', () => {
+  let taskQueue: TaskQueue;
+
+  beforeEach(() => {
+    taskQueue = new TaskQueue({ maxSize: 10, maxAgeMs: 60000 });
+  });
+
+  describe('任务管理', () => {
+    it('应该添加任务到队列', () => {
+      const task: TaskRequest = {
+        taskId: 'task-1',
+        taskType: 'test',
+        description: 'Test task',
+        from: 'peer-1',
+        timestamp: Date.now(),
+        timeout: 60000
+      };
+      
+      const queued = taskQueue.add(task);
+      
+      expect(queued.taskId).toBe('task-1');
+      expect(queued.status).toBe('pending');
+      expect(queued.createdAt).toBeDefined();
+    });
+
+    it('应该获取待处理任务', () => {
+      const task1 = { taskId: 'task-1', taskType: 'test', description: 'Task 1', from: 'peer-1', timestamp: Date.now(), timeout: 60000 };
+      const task2 = { taskId: 'task-2', taskType: 'test', description: 'Task 2', from: 'peer-2', timestamp: Date.now(), timeout: 60000 };
+      
+      taskQueue.add(task1 as TaskRequest);
+      taskQueue.add(task2 as TaskRequest);
+      
+      const pending = taskQueue.getPending();
+      
+      expect(pending.length).toBe(2);
+      expect(pending[0].taskId).toBe('task-1'); // FIFO 顺序
+    });
+
+    it('应该限制返回的待处理任务数量', () => {
+      for (let i = 0; i < 5; i++) {
+        taskQueue.add({
+          taskId: `task-${i}`,
+          taskType: 'test',
+          description: `Task ${i}`,
+          from: 'peer-1',
+          timestamp: Date.now(),
+          timeout: 60000
+        } as TaskRequest);
+      }
+      
+      const pending = taskQueue.getPending(3);
+      expect(pending.length).toBe(3);
+    });
+
+    it('应该标记任务为处理中', () => {
+      const task = {
+        taskId: 'task-1',
+        taskType: 'test',
+        description: 'Test',
+        from: 'peer-1',
+        timestamp: Date.now(),
+        timeout: 60000
+      } as TaskRequest;
+      
+      taskQueue.add(task);
+      const processing = taskQueue.markProcessing('task-1');
+      
+      expect(processing?.status).toBe('processing');
+      expect(processing?.updatedAt).toBeDefined();
+    });
+
+    it('应该完成任务并记录结果', () => {
+      const task = {
+        taskId: 'task-1',
+        taskType: 'test',
+        description: 'Test',
+        from: 'peer-1',
+        timestamp: Date.now(),
+        timeout: 60000
+      } as TaskRequest;
+      
+      taskQueue.add(task);
+      const completed = taskQueue.complete('task-1', {
+        taskId: 'task-1',
+        status: 'success',
+        result: 'Done',
+        latency: 1000
+      });
+      
+      expect(completed?.status).toBe('completed');
+      expect(completed?.result).toBe('Done');
+      expect(completed?.latency).toBe(1000);
+    });
+
+    it('应该标记失败任务', () => {
+      const task = {
+        taskId: 'task-1',
+        taskType: 'test',
+        description: 'Test',
+        from: 'peer-1',
+        timestamp: Date.now(),
+        timeout: 60000
+      } as TaskRequest;
+      
+      taskQueue.add(task);
+      const failed = taskQueue.complete('task-1', {
+        taskId: 'task-1',
+        status: 'error',
+        error: 'Something went wrong',
+        latency: 500
+      });
+      
+      expect(failed?.status).toBe('failed');
+      expect(failed?.error).toBe('Something went wrong');
+    });
+  });
+
+  describe('队列统计', () => {
+    it('应该返回正确的统计信息', () => {
+      // 添加不同状态的任务
+      taskQueue.add({ taskId: 'p1', taskType: 'test', description: 'P1', from: 'peer-1', timestamp: Date.now(), timeout: 60000 } as TaskRequest);
+      taskQueue.add({ taskId: 'p2', taskType: 'test', description: 'P2', from: 'peer-1', timestamp: Date.now(), timeout: 60000 } as TaskRequest);
+      
+      taskQueue.add({ taskId: 'proc1', taskType: 'test', description: 'Proc1', from: 'peer-1', timestamp: Date.now(), timeout: 60000 } as TaskRequest);
+      taskQueue.markProcessing('proc1');
+      
+      taskQueue.add({ taskId: 'comp1', taskType: 'test', description: 'Comp1', from: 'peer-1', timestamp: Date.now(), timeout: 60000 } as TaskRequest);
+      taskQueue.complete('comp1', { taskId: 'comp1', status: 'success', latency: 100 });
+      
+      taskQueue.add({ taskId: 'fail1', taskType: 'test', description: 'Fail1', from: 'peer-1', timestamp: Date.now(), timeout: 60000 } as TaskRequest);
+      taskQueue.complete('fail1', { taskId: 'fail1', status: 'error', error: 'Failed', latency: 100 });
+      
+      const stats = taskQueue.getStats();
+      
+      expect(stats.pending).toBe(2);
+      expect(stats.processing).toBe(1);
+      expect(stats.completed).toBe(1);
+      expect(stats.failed).toBe(1);
+      expect(stats.total).toBe(5); // 所有任务都计入 total
+    });
+  });
+
+  describe('队列限制', () => {
+    it('应该限制队列大小', () => {
+      const smallQueue = new TaskQueue({ maxSize: 3 });
+      
+      smallQueue.add({ taskId: 't1', taskType: 'test', description: 'T1', from: 'peer-1', timestamp: Date.now(), timeout: 60000 } as TaskRequest);
+      smallQueue.add({ taskId: 't2', taskType: 'test', description: 'T2', from: 'peer-1', timestamp: Date.now(), timeout: 60000 } as TaskRequest);
+      smallQueue.add({ taskId: 't3', taskType: 'test', description: 'T3', from: 'peer-1', timestamp: Date.now(), timeout: 60000 } as TaskRequest);
+      
+      expect(() => {
+        smallQueue.add({ taskId: 't4', taskType: 'test', description: 'T4', from: 'peer-1', timestamp: Date.now(), timeout: 60000 } as TaskRequest);
+      }).toThrow('Task queue is full');
+    });
+
+    it('应该清理过期任务', () => {
+      const queue = new TaskQueue({ maxAgeMs: 100 }); // 100ms 过期
+      
+      queue.add({ taskId: 'old', taskType: 'test', description: 'Old', from: 'peer-1', timestamp: Date.now(), timeout: 60000 } as TaskRequest);
+      
+      // 等待过期
+      setTimeout(() => {
+        queue.cleanup();
+        const stats = queue.getStats();
+        expect(stats.total).toBe(0);
+      }, 150);
     });
   });
 });

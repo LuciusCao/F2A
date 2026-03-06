@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { CapabilityDetector } from './capability-detector';
 
 describe('CapabilityDetector', () => {
@@ -8,76 +8,92 @@ describe('CapabilityDetector', () => {
     detector = new CapabilityDetector();
   });
 
-  describe('detectCapabilities', () => {
-    it('should detect capabilities from tools', async () => {
-      const mockSession = {
-        listTools: vi.fn().mockResolvedValue(['read', 'write', 'browser']),
-        listSkills: vi.fn().mockResolvedValue([]),
-      };
-
-      const capabilities = await detector.detectCapabilities(mockSession);
+  describe('getDefaultCapabilities', () => {
+    it('should return default capabilities list', () => {
+      const capabilities = detector.getDefaultCapabilities();
       
       expect(capabilities.length).toBeGreaterThan(0);
+      // 检查是否包含核心能力
       expect(capabilities.some(c => c.name === 'file-operation')).toBe(true);
+      expect(capabilities.some(c => c.name === 'command-execution')).toBe(true);
       expect(capabilities.some(c => c.name === 'web-browsing')).toBe(true);
+      expect(capabilities.some(c => c.name === 'code-generation')).toBe(true);
+      expect(capabilities.some(c => c.name === 'task-delegation')).toBe(true);
     });
 
-    it('should detect capabilities from skills', async () => {
-      const mockSession = {
-        listTools: vi.fn().mockResolvedValue([]),
-        listSkills: vi.fn().mockResolvedValue(['code-review', 'github']),
-      };
-
-      const capabilities = await detector.detectCapabilities(mockSession);
+    it('should return capabilities with proper structure', () => {
+      const capabilities = detector.getDefaultCapabilities();
       
-      expect(capabilities.length).toBeGreaterThan(0);
-      expect(capabilities.some(c => c.name === 'code-review')).toBe(true);
-      expect(capabilities.some(c => c.name === 'github')).toBe(true);
+      for (const cap of capabilities) {
+        expect(cap.name).toBeDefined();
+        expect(cap.description).toBeDefined();
+        expect(cap.parameters).toBeDefined();
+        expect(typeof cap.name).toBe('string');
+        expect(typeof cap.description).toBe('string');
+        expect(typeof cap.parameters).toBe('object');
+      }
     });
 
-    it('should use default tools when detection fails', async () => {
-      const mockSession = {
-        listTools: vi.fn().mockRejectedValue(new Error('Not available')),
-        listSkills: vi.fn().mockRejectedValue(new Error('Not available')),
-      };
-
-      const capabilities = await detector.detectCapabilities(mockSession);
+    it('should include tools array for relevant capabilities', () => {
+      const capabilities = detector.getDefaultCapabilities();
       
-      expect(capabilities.length).toBeGreaterThan(0);
-    });
-
-    it('should deduplicate capabilities', async () => {
-      const mockSession = {
-        listTools: vi.fn().mockResolvedValue(['read', 'write']),
-        listSkills: vi.fn().mockResolvedValue(['file-operation']),
-      };
-
-      const capabilities = await detector.detectCapabilities(mockSession);
-      
-      const names = capabilities.map(c => c.name);
-      const uniqueNames = [...new Set(names)];
-      expect(names.length).toBe(uniqueNames.length);
+      const fileOp = capabilities.find(c => c.name === 'file-operation');
+      expect(fileOp?.tools).toContain('read');
+      expect(fileOp?.tools).toContain('write');
     });
   });
 
-  describe('mergeDefaultCapabilities', () => {
-    it('should add default capabilities', () => {
-      const existing: any[] = [];
-      const merged = detector.mergeDefaultCapabilities(existing);
+  describe('mergeCustomCapabilities', () => {
+    it('should add custom capabilities to defaults', () => {
+      const defaults = detector.getDefaultCapabilities();
+      const custom = ['custom-ml', 'custom-data-analysis'];
       
-      expect(merged.length).toBeGreaterThan(0);
-      expect(merged.some(c => c.name === 'code-generation')).toBe(true);
-      expect(merged.some(c => c.name === 'task-delegation')).toBe(true);
+      const merged = detector.mergeCustomCapabilities(defaults, custom);
+      
+      expect(merged.length).toBe(defaults.length + 2);
+      expect(merged.some(c => c.name === 'custom-ml')).toBe(true);
+      expect(merged.some(c => c.name === 'custom-data-analysis')).toBe(true);
     });
 
     it('should not duplicate existing capabilities', () => {
-      const existing = [
-        { name: 'code-generation', description: 'Test', tools: [] },
-      ];
-      const merged = detector.mergeDefaultCapabilities(existing);
+      const defaults = detector.getDefaultCapabilities();
+      const custom = ['code-generation']; // 已存在的能力
+      
+      const merged = detector.mergeCustomCapabilities(defaults, custom);
       
       const count = merged.filter(c => c.name === 'code-generation').length;
       expect(count).toBe(1);
+    });
+
+    it('should create proper structure for custom capabilities', () => {
+      const defaults = detector.getDefaultCapabilities();
+      const custom = ['my-custom-capability'];
+      
+      const merged = detector.mergeCustomCapabilities(defaults, custom);
+      const customCap = merged.find(c => c.name === 'my-custom-capability');
+      
+      expect(customCap).toBeDefined();
+      expect(customCap?.description).toContain('my-custom-capability');
+      expect(customCap?.parameters).toBeDefined();
+    });
+
+    it('should handle empty custom list', () => {
+      const defaults = detector.getDefaultCapabilities();
+      const merged = detector.mergeCustomCapabilities(defaults, []);
+      
+      expect(merged.length).toBe(defaults.length);
+    });
+
+    it('should preserve default capabilities order', () => {
+      const defaults = detector.getDefaultCapabilities();
+      const custom = ['zzz-custom'];
+      
+      const merged = detector.mergeCustomCapabilities(defaults, custom);
+      
+      // 默认能力应该在前，自定义在后
+      const defaultNames = defaults.map(c => c.name);
+      const mergedDefaultNames = merged.slice(0, defaults.length).map(c => c.name);
+      expect(mergedDefaultNames).toEqual(defaultNames);
     });
   });
 });

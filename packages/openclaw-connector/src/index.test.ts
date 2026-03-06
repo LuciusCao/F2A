@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { F2AOpenClawConnector, OpenClawSession } from './connector';
+import { F2AOpenClawConnector } from './connector';
 
 describe('F2AOpenClawConnector', () => {
   let connector: F2AOpenClawConnector;
@@ -11,8 +11,8 @@ describe('F2AOpenClawConnector', () => {
 
   describe('basic properties', () => {
     it('should have correct name and version', () => {
-      expect(connector.name).toBe('@f2a/openclaw-connector');
-      expect(connector.version).toBe('0.1.0');
+      expect(connector.name).toBe('f2a-openclaw-connector');
+      expect(connector.version).toBe('0.2.0');
     });
   });
 

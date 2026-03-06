@@ -10,7 +10,6 @@ import { F2AOptions, WebhookConfig } from '../types/index.js';
 export interface DaemonOptions extends F2AOptions {
   webhook?: WebhookConfig;
   controlPort?: number;
-  bootstrapPeers?: Array<{ toString(): string }>;  // Multiaddr 数组
 }
 
 export class F2ADaemon {

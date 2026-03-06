@@ -4,16 +4,21 @@
  */
 
 import { F2ADaemon } from './index.js';
-import { multiaddr } from '@multiformats/multiaddr';
 
 // 解析引导节点地址
 const bootstrapPeers = process.env.BOOTSTRAP_PEERS 
-  ? process.env.BOOTSTRAP_PEERS.split(',').map(addr => multiaddr(addr))
+  ? process.env.BOOTSTRAP_PEERS.split(',')
   : undefined;
+
+// P2P 端口（默认 0 = 随机分配）
+const p2pPort = parseInt(process.env.F2A_P2P_PORT || '0');
 
 const daemon = new F2ADaemon({
   controlPort: parseInt(process.env.F2A_CONTROL_PORT || '9001'),
-  bootstrapPeers,
+  network: {
+    listenPort: p2pPort,
+    bootstrapPeers,
+  },
 });
 
 // 处理信号

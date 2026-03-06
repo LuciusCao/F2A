@@ -15,6 +15,7 @@ services:
           - bootstrap.f2a.local
     environment:
       - F2A_CONTROL_PORT=9001
+      - F2A_P2P_PORT=9000
       - F2A_CONTROL_TOKEN=${TEST_TOKEN:-test-token-integration}
       - NODE_ENV=production
     healthcheck:

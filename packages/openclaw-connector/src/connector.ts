@@ -1,10 +1,11 @@
 /**
  * F2A OpenClaw Connector Plugin
- * 主插件类
+ * 主插件类 - 任务队列架构
  */
 
 import type { 
   OpenClawPlugin, 
+  OpenClawPluginApi,
   Tool, 
   SessionContext, 
   ToolResult,
@@ -24,36 +25,32 @@ import { F2ANetworkClient } from './network-client.js';
 import { WebhookServer, WebhookHandler } from './webhook-server.js';
 import { ReputationSystem } from './reputation.js';
 import { CapabilityDetector } from './capability-detector.js';
-
-export interface OpenClawSession {
-  execute: (task: string, options?: Record<string, unknown>) => Promise<unknown>;
-  listTools?: () => Promise<string[]>;
-  listSkills?: () => Promise<string[]>;
-}
+import { TaskQueue, QueuedTask } from './task-queue.js';
 
 export class F2AOpenClawConnector implements OpenClawPlugin {
-  name = '@f2a/openclaw-connector';
-  version = '0.1.0';
+  name = 'f2a-openclaw-connector';
+  version = '0.2.0';
 
   private nodeManager!: F2ANodeManager;
   private networkClient!: F2ANetworkClient;
   private webhookServer!: WebhookServer;
   private reputationSystem!: ReputationSystem;
   private capabilityDetector!: CapabilityDetector;
+  private taskQueue!: TaskQueue;
   
-  private openclaw!: OpenClawSession;
   private config!: F2APluginConfig;
   private nodeConfig!: F2ANodeConfig;
   private capabilities: AgentCapability[] = [];
-  private pendingTasks: Map<string, TaskRequest> = new Map();
+  private api?: OpenClawPluginApi;
 
   /**
    * 初始化插件
    */
-  async initialize(config: Record<string, unknown> & { openclaw: OpenClawSession }): Promise<void> {
+  async initialize(config: Record<string, unknown> & { _api?: OpenClawPluginApi }): Promise<void> {
     console.log('[F2A Plugin] 初始化...');
 
-    this.openclaw = config.openclaw;
+    // 保存 API 引用（用于触发心跳等）
+    this.api = config._api;
     
     // 合并配置
     this.config = this.mergeConfig(config);
@@ -65,6 +62,12 @@ export class F2AOpenClawConnector implements OpenClawPlugin {
       enableMDNS: this.config.enableMDNS ?? true,
       bootstrapPeers: this.config.bootstrapPeers || []
     };
+
+    // 初始化任务队列
+    this.taskQueue = new TaskQueue({
+      maxSize: this.config.maxQueuedTasks || 100,
+      maxAgeMs: 24 * 60 * 60 * 1000 // 24小时
+    });
 
     // 初始化组件
     this.nodeManager = new F2ANodeManager(this.nodeConfig);
@@ -88,9 +91,14 @@ export class F2AOpenClawConnector implements OpenClawPlugin {
       }
     }
 
-    // 检测 OpenClaw 能力
-    this.capabilities = await this.capabilityDetector.detectCapabilities(this.openclaw);
-    this.capabilities = this.capabilityDetector.mergeDefaultCapabilities(this.capabilities);
+    // 检测能力（基于配置，不依赖 OpenClaw 会话）
+    this.capabilities = this.capabilityDetector.getDefaultCapabilities();
+    if (this.config.capabilities?.length) {
+      this.capabilities = this.capabilityDetector.mergeCustomCapabilities(
+        this.capabilities,
+        this.config.capabilities
+      );
+    }
 
     // 启动 Webhook 服务器
     this.webhookServer = new WebhookServer(
@@ -202,6 +210,54 @@ export class F2AOpenClawConnector implements OpenClawPlugin {
           }
         },
         handler: this.handleReputation.bind(this)
+      },
+      // 新增：任务队列相关工具
+      {
+        name: 'f2a_poll_tasks',
+        description: '查询本节点收到的远程任务队列（待 OpenClaw 执行）',
+        parameters: {
+          limit: {
+            type: 'number',
+            description: '最大返回任务数',
+            required: false
+          },
+          status: {
+            type: 'string',
+            description: '任务状态过滤: pending, processing, completed, failed',
+            required: false,
+            enum: ['pending', 'processing', 'completed', 'failed']
+          }
+        },
+        handler: this.handlePollTasks.bind(this)
+      },
+      {
+        name: 'f2a_submit_result',
+        description: '提交远程任务的执行结果，发送给原节点',
+        parameters: {
+          task_id: {
+            type: 'string',
+            description: '任务ID',
+            required: true
+          },
+          result: {
+            type: 'string',
+            description: '任务执行结果',
+            required: true
+          },
+          status: {
+            type: 'string',
+            description: '执行状态: success 或 error',
+            required: true,
+            enum: ['success', 'error']
+          }
+        },
+        handler: this.handleSubmitResult.bind(this)
+      },
+      {
+        name: 'f2a_task_stats',
+        description: '查看任务队列统计信息',
+        parameters: {},
+        handler: this.handleTaskStats.bind(this)
       }
     ];
   }
@@ -245,11 +301,6 @@ export class F2AOpenClawConnector implements OpenClawPlugin {
           };
         }
 
-        if (this.config.security?.requireConfirmation) {
-          // TODO: 发送确认请求给用户
-          // 暂时自动接受
-        }
-
         // 检查白名单/黑名单
         const whitelist = this.config.security?.whitelist || [];
         const blacklist = this.config.security?.blacklist || [];
@@ -269,75 +320,46 @@ export class F2AOpenClawConnector implements OpenClawPlugin {
           };
         }
 
-        // 接受任务
-        this.pendingTasks.set(payload.taskId, payload);
+        // 检查队列是否已满
+        const stats = this.taskQueue.getStats();
+        if (stats.pending >= (this.config.maxQueuedTasks || 100)) {
+          return {
+            accepted: false,
+            taskId: payload.taskId,
+            reason: 'Task queue is full'
+          };
+        }
 
-        // 异步执行
-        this.executeTask(payload);
-
-        return {
-          accepted: true,
-          taskId: payload.taskId
-        };
+        // 添加任务到队列
+        try {
+          this.taskQueue.add(payload);
+          
+          // 触发 OpenClaw 心跳，让它知道有新任务
+          this.api?.runtime?.system?.requestHeartbeatNow?.();
+          
+          return {
+            accepted: true,
+            taskId: payload.taskId
+          };
+        } catch (error) {
+          return {
+            accepted: false,
+            taskId: payload.taskId,
+            reason: error instanceof Error ? error.message : 'Failed to queue task'
+          };
+        }
       },
 
       onStatus: async () => {
+        const stats = this.taskQueue.getStats();
         return {
           status: 'available',
-          load: this.pendingTasks.size
+          load: stats.pending + stats.processing,
+          queued: stats.pending,
+          processing: stats.processing
         };
       }
     };
-  }
-
-  /**
-   * 执行任务
-   */
-  private async executeTask(request: TaskRequest): Promise<void> {
-    const startTime = Date.now();
-    
-    try {
-      console.log(`[F2A Plugin] 执行任务: ${request.taskType}`);
-
-      // 构建任务描述
-      const taskDescription = `[F2A Remote Task from ${request.from.slice(0, 16)}...] ${request.description}`;
-
-      // 调用 OpenClaw 执行
-      const result = await this.openclaw.execute(taskDescription, {
-        taskType: request.taskType,
-        parameters: request.parameters,
-        remote: true,
-        from: request.from
-      });
-
-      const latency = Date.now() - startTime;
-
-      // 记录成功
-      this.reputationSystem.recordSuccess(request.from, request.taskId, latency);
-
-      // 发送响应
-      await this.networkClient.sendTaskResponse(request.from, {
-        taskId: request.taskId,
-        status: 'success',
-        result,
-        latency
-      });
-
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      
-      // 记录失败
-      this.reputationSystem.recordFailure(request.from, request.taskId, errorMsg);
-
-      // 发送错误响应
-      await this.networkClient.sendTaskResponse(request.from, {
-        taskId: request.taskId,
-        status: 'error',
-        error: errorMsg
-      });
-    } finally {
-      this.pendingTasks.delete(request.taskId);
-    }
   }
 
   /**
@@ -515,12 +537,14 @@ ${agents.map((a, i) => {
     }
 
     const peers = peersResult.success ? (peersResult.data || []) : [];
+    const taskStats = this.taskQueue.getStats();
 
     const content = `
 🟢 F2A 状态: ${nodeStatus.data?.running ? '运行中' : '已停止'}
 📡 本机 PeerID: ${nodeStatus.data?.peerId || 'N/A'}
 ⏱️ 运行时间: ${nodeStatus.data?.uptime ? Math.floor(nodeStatus.data.uptime / 60) + ' 分钟' : 'N/A'}
 🔗 已连接 Peers: ${peers.length}
+📋 任务队列: ${taskStats.pending} 待处理, ${taskStats.processing} 处理中, ${taskStats.completed} 已完成
 
 ${peers.map(p => {
   const rep = this.reputationSystem.getReputation(p.peerId);
@@ -528,7 +552,7 @@ ${peers.map(p => {
 }).join('\n')}
     `.trim();
 
-    return { content, data: { status: nodeStatus.data, peers } };
+    return { content, data: { status: nodeStatus.data, peers, taskStats } };
   }
 
   private async handleReputation(
@@ -589,6 +613,129 @@ ${peers.map(p => {
     }
   }
 
+  // ========== 新增：任务队列相关 Handlers ==========
+
+  private async handlePollTasks(
+    params: { limit?: number; status?: 'pending' | 'processing' | 'completed' | 'failed' },
+    context: SessionContext
+  ): Promise<ToolResult> {
+    let tasks: QueuedTask[];
+    
+    if (params.status) {
+      tasks = this.taskQueue.getAll().filter(t => t.status === params.status);
+    } else {
+      // 默认返回待处理任务
+      tasks = this.taskQueue.getPending(params.limit || 10);
+    }
+
+    if (tasks.length === 0) {
+      return { content: '📭 没有符合条件的任务' };
+    }
+
+    const content = `
+📋 任务列表 (${tasks.length} 个):
+
+${tasks.map(t => {
+  const statusIcon = {
+    pending: '⏳',
+    processing: '🔄',
+    completed: '✅',
+    failed: '❌'
+  }[t.status];
+  
+  return `${statusIcon} [${t.taskId.slice(0, 8)}...] ${t.description.slice(0, 50)}${t.description.length > 50 ? '...' : ''}
+   来自: ${t.from.slice(0, 16)}...
+   类型: ${t.taskType} | 状态: ${t.status} | 创建: ${new Date(t.createdAt).toLocaleTimeString()}`;
+}).join('\n\n')}
+
+💡 使用方式:
+   - 查看详情: 使用 task_id 查询
+   - 提交结果: f2a_submit_result 工具
+    `.trim();
+
+    return {
+      content,
+      data: { 
+        count: tasks.length,
+        tasks: tasks.map(t => ({
+          taskId: t.taskId,
+          from: t.from,
+          description: t.description,
+          taskType: t.taskType,
+          parameters: t.parameters,
+          status: t.status,
+          createdAt: t.createdAt,
+          timeout: t.timeout
+        }))
+      }
+    };
+  }
+
+  private async handleSubmitResult(
+    params: { task_id: string; result: string; status: 'success' | 'error' },
+    context: SessionContext
+  ): Promise<ToolResult> {
+    // 查找任务
+    const task = this.taskQueue.get(params.task_id);
+    if (!task) {
+      return { content: `❌ 找不到任务: ${params.task_id}` };
+    }
+
+    // 更新任务状态
+    const response: TaskResponse = {
+      taskId: params.task_id,
+      status: params.status,
+      result: params.status === 'success' ? params.result : undefined,
+      error: params.status === 'error' ? params.result : undefined,
+      latency: Date.now() - task.createdAt
+    };
+
+    this.taskQueue.complete(params.task_id, response);
+
+    // 发送响应给原节点
+    const sendResult = await this.networkClient.sendTaskResponse(task.from, response);
+
+    if (!sendResult.success) {
+      return { 
+        content: `⚠️ 结果已记录，但发送给原节点失败: ${sendResult.error}`,
+        data: { taskId: params.task_id, sent: false }
+      };
+    }
+
+    // 更新信誉
+    if (params.status === 'success') {
+      this.reputationSystem.recordSuccess(task.from, params.task_id, response.latency!);
+    } else {
+      this.reputationSystem.recordFailure(task.from, params.task_id, params.result);
+    }
+
+    return {
+      content: `✅ 任务结果已提交并发送给原节点\n   任务ID: ${params.task_id.slice(0, 16)}...\n   状态: ${params.status}\n   响应时间: ${response.latency}ms`,
+      data: { taskId: params.task_id, sent: true, latency: response.latency }
+    };
+  }
+
+  private async handleTaskStats(
+    params: {},
+    context: SessionContext
+  ): Promise<ToolResult> {
+    const stats = this.taskQueue.getStats();
+    
+    const content = `
+📊 任务队列统计:
+
+⏳ 待处理: ${stats.pending}
+🔄 处理中: ${stats.processing}
+✅ 已完成: ${stats.completed}
+❌ 失败: ${stats.failed}
+📦 总计: ${stats.total}
+
+💡 使用 f2a_poll_tasks 查看详细任务列表
+    `.trim();
+
+    return { content, data: stats };
+  }
+
   // ========== Helpers ==========
 
   private async resolveAgent(agentRef: string): Promise<AgentInfo | null> {
@@ -627,7 +774,7 @@ ${peers.map(p => {
     }).join('\n\n');
   }
 
-  private mergeConfig(config: Record<string, unknown> & { openclaw?: any }): F2APluginConfig {
+  private mergeConfig(config: Record<string, unknown> & { _api?: unknown }): F2APluginConfig {
     return {
       autoStart: (config.autoStart as boolean) ?? true,
       webhookPort: (config.webhookPort as number) || 9002,
@@ -640,17 +787,18 @@ ${peers.map(p => {
       enableMDNS: config.enableMDNS as boolean | undefined,
       bootstrapPeers: config.bootstrapPeers as string[] | undefined,
       dataDir: (config.dataDir as string) || './f2a-data',
+      maxQueuedTasks: (config.maxQueuedTasks as number) || 100,
       reputation: {
-        enabled: ((config.reputation as any)?.enabled as boolean) ?? true,
-        initialScore: ((config.reputation as any)?.initialScore as number) || 50,
-        minScoreForService: ((config.reputation as any)?.minScoreForService as number) || 20,
-        decayRate: ((config.reputation as any)?.decayRate as number) || 0.01
+        enabled: ((config.reputation as Record<string, unknown>)?.enabled as boolean) ?? true,
+        initialScore: ((config.reputation as Record<string, unknown>)?.initialScore as number) || 50,
+        minScoreForService: ((config.reputation as Record<string, unknown>)?.minScoreForService as number) || 20,
+        decayRate: ((config.reputation as Record<string, unknown>)?.decayRate as number) || 0.01
       },
       security: {
-        requireConfirmation: ((config.security as any)?.requireConfirmation as boolean) ?? false,
-        whitelist: ((config.security as any)?.whitelist as string[]) || [],
-        blacklist: ((config.security as any)?.blacklist as string[]) || [],
-        maxTasksPerMinute: ((config.security as any)?.maxTasksPerMinute as number) || 10
+        requireConfirmation: ((config.security as Record<string, unknown>)?.requireConfirmation as boolean) ?? false,
+        whitelist: ((config.security as Record<string, unknown>)?.whitelist as string[]) || [],
+        blacklist: ((config.security as Record<string, unknown>)?.blacklist as string[]) || [],
+        maxTasksPerMinute: ((config.security as Record<string, unknown>)?.maxTasksPerMinute as number) || 10
       }
     };
   }
@@ -678,6 +826,11 @@ ${peers.map(p => {
     // 停止 F2A Node
     if (this.nodeManager) {
       await this.nodeManager.stop();
+    }
+    
+    // 清理任务队列
+    if (this.taskQueue) {
+      this.taskQueue.clear();
     }
     
     console.log('[F2A Plugin] 已关闭');

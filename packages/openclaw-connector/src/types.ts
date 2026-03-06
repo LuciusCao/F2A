@@ -8,7 +8,53 @@ export interface OpenClawPlugin {
   version: string;
   initialize(config: Record<string, unknown>): Promise<void>;
   getTools(): Tool[];
+  shutdown?(): Promise<void>;
   onEvent?(event: string, payload: unknown): Promise<void>;
+}
+
+// OpenClaw Plugin API (外部插件可用接口)
+export interface OpenClawPluginApi {
+  id: string;
+  name: string;
+  version?: string;
+  description?: string;
+  source: string;
+  config: Record<string, unknown>;
+  pluginConfig?: Record<string, unknown>;
+  runtime: {
+    version: string;
+    config: {
+      loadConfig: (path?: string) => Promise<Record<string, unknown>>;
+      writeConfigFile: (path: string, config: unknown) => Promise<void>;
+    };
+    system: {
+      enqueueSystemEvent: (event: string, payload?: unknown) => void;
+      requestHeartbeatNow: () => void;
+      runCommandWithTimeout: (command: string, timeoutMs: number) => Promise<{ stdout: string; stderr: string }>;
+    };
+    media: {
+      loadWebMedia: (url: string) => Promise<Buffer>;
+      detectMime: (data: Buffer) => string;
+    };
+    tts: {
+      textToSpeechTelephony: (options: { text: string; cfg: unknown }) => Promise<{ audio: Buffer; sampleRate: number }>;
+    };
+    stt: {
+      transcribeAudioFile: (options: { filePath: string; cfg: unknown; mime?: string }) => Promise<{ text?: string }>;
+    };
+    logging: {
+      shouldLogVerbose: () => boolean;
+      getChildLogger: (bindings?: Record<string, unknown>) => unknown;
+    };
+  };
+  logger: {
+    debug?: (message: string) => void;
+    info: (message: string) => void;
+    warn: (message: string) => void;
+    error: (message: string) => void;
+  };
+  registerTool?: (tool: unknown, opts?: { optional?: boolean }) => void;
+  registerService?: (service: { id: string; start: () => void | Promise<void>; stop?: () => void | Promise<void> }) => void;
 }
 
 export interface Tool {
@@ -58,6 +104,7 @@ export interface F2APluginConfig {
   enableMDNS?: boolean;
   bootstrapPeers?: string[];
   dataDir?: string;
+  maxQueuedTasks?: number;
   reputation?: ReputationConfig;
   security?: SecurityConfig;
 }

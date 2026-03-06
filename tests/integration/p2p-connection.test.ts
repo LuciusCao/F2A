@@ -9,7 +9,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 const shouldRun = process.env.RUN_INTEGRATION_TESTS === 'true';
 
 describe.skipIf(!shouldRun)('P2P 连接集成测试', () => {
-  const bootstrapAddr = process.env.TEST_BOOTSTRAP_ADDR || 'http://bootstrap.f2a.local:9001';
+  // 使用 HTTP URL 格式，而不是 libp2p 多地址
+  const bootstrapAddr = process.env.TEST_BOOTSTRAP_HTTP || 'http://bootstrap.f2a.local:9001';
   const nodeCount = parseInt(process.env.TEST_NODE_COUNT || '3');
   const testToken = process.env.TEST_TOKEN || 'test-token-integration';
 

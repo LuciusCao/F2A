@@ -15,10 +15,19 @@ export default async function register(api: any) {
   // 从 OpenClaw 配置中获取插件配置
   const config = api.config?.plugins?.entries?.['f2a-openclaw-connector']?.config || {};
   
+  // 使用 api.runtime 或 api.execute 作为 OpenClaw 执行会话
+  // OpenClaw 插件 API 提供 runtime 用于执行操作
+  const openclawSession = api.runtime || api.execute || {
+    execute: async (task: string, options?: any) => {
+      api.logger?.warn?.('[F2A Plugin] 未找到 OpenClaw 执行会话，任务无法执行:', task);
+      throw new Error('OpenClaw execution session not available');
+    }
+  };
+  
   // 添加 openclaw 会话引用到配置
   const fullConfig = {
     ...config,
-    openclaw: api.openclaw || api.session
+    openclaw: openclawSession
   };
   
   // 初始化插件 - 等待完成后再注册工具
@@ -41,16 +50,35 @@ export default async function register(api: any) {
   }
   
   // 初始化完成后注册所有工具
+  // 注意：OpenClaw 的 registerTool 需要 execute 方法
   const tools = plugin.getTools();
   for (const tool of tools) {
     api.registerTool?.({
       name: tool.name,
       description: tool.description,
       parameters: tool.parameters,
-      handler: async (params: any, context: any) => {
-        // 确保插件已完全初始化
+      // OpenClaw 使用 execute 而不是 handler
+      async execute(_id: string, params: any) {
         try {
-          return await tool.handler(params, context);
+          // 构造一个模拟的 SessionContext
+          const mockContext = {
+            sessionId: _id,
+            workspace: api.config?.agents?.defaults?.workspace || '.',
+            toJSON: () => ({})
+          };
+          
+          const result = await tool.handler(params, mockContext);
+          
+          // 将 ToolResult 转换为 OpenClaw 期望的格式
+          if (typeof result === 'string') {
+            return { content: [{ type: 'text', text: result }] };
+          }
+          
+          if (result?.content) {
+            return { content: [{ type: 'text', text: result.content }] };
+          }
+          
+          return { content: [{ type: 'text', text: JSON.stringify(result) }] };
         } catch (error: any) {
           api.logger?.error?.(`[F2A Plugin] 工具 ${tool.name} 执行失败:`, error.message);
           throw error;

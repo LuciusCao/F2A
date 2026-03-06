@@ -26,6 +26,7 @@ import { WebhookServer, WebhookHandler } from './webhook-server.js';
 import { ReputationSystem } from './reputation.js';
 import { CapabilityDetector } from './capability-detector.js';
 import { TaskQueue, QueuedTask } from './task-queue.js';
+import { AnnouncementQueue } from './announcement-queue.js';
 
 export class F2AOpenClawConnector implements OpenClawPlugin {
   name = 'f2a-openclaw-connector';
@@ -37,6 +38,7 @@ export class F2AOpenClawConnector implements OpenClawPlugin {
   private reputationSystem!: ReputationSystem;
   private capabilityDetector!: CapabilityDetector;
   private taskQueue!: TaskQueue;
+  private announcementQueue!: AnnouncementQueue;
   
   private config!: F2APluginConfig;
   private nodeConfig!: F2ANodeConfig;
@@ -67,6 +69,12 @@ export class F2AOpenClawConnector implements OpenClawPlugin {
     this.taskQueue = new TaskQueue({
       maxSize: this.config.maxQueuedTasks || 100,
       maxAgeMs: 24 * 60 * 60 * 1000 // 24小时
+    });
+
+    // 初始化广播队列
+    this.announcementQueue = new AnnouncementQueue({
+      maxSize: 50,
+      maxAgeMs: 30 * 60 * 1000 // 30分钟
     });
 
     // 初始化组件
@@ -258,6 +266,125 @@ export class F2AOpenClawConnector implements OpenClawPlugin {
         description: '查看任务队列统计信息',
         parameters: {},
         handler: this.handleTaskStats.bind(this)
+      },
+      // 认领模式工具
+      {
+        name: 'f2a_announce',
+        description: '广播任务到 F2A 网络，等待其他 Agent 认领（认领模式）',
+        parameters: {
+          task_type: {
+            type: 'string',
+            description: '任务类型',
+            required: true
+          },
+          description: {
+            type: 'string',
+            description: '任务描述',
+            required: true
+          },
+          required_capabilities: {
+            type: 'array',
+            description: '所需能力列表',
+            required: false
+          },
+          estimated_complexity: {
+            type: 'number',
+            description: '预估复杂度 (1-10)',
+            required: false
+          },
+          reward: {
+            type: 'number',
+            description: '任务奖励',
+            required: false
+          },
+          timeout: {
+            type: 'number',
+            description: '超时时间（毫秒）',
+            required: false
+          }
+        },
+        handler: this.handleAnnounce.bind(this)
+      },
+      {
+        name: 'f2a_list_announcements',
+        description: '查看当前开放的任务广播（可认领）',
+        parameters: {
+          capability: {
+            type: 'string',
+            description: '按能力过滤',
+            required: false
+          },
+          limit: {
+            type: 'number',
+            description: '最大返回数量',
+            required: false
+          }
+        },
+        handler: this.handleListAnnouncements.bind(this)
+      },
+      {
+        name: 'f2a_claim',
+        description: '认领一个开放的任务广播',
+        parameters: {
+          announcement_id: {
+            type: 'string',
+            description: '广播ID',
+            required: true
+          },
+          estimated_time: {
+            type: 'number',
+            description: '预计完成时间（毫秒）',
+            required: false
+          },
+          confidence: {
+            type: 'number',
+            description: '信心指数 (0-1)',
+            required: false
+          }
+        },
+        handler: this.handleClaim.bind(this)
+      },
+      {
+        name: 'f2a_manage_claims',
+        description: '管理我的任务广播的认领（接受/拒绝）',
+        parameters: {
+          announcement_id: {
+            type: 'string',
+            description: '广播ID',
+            required: true
+          },
+          action: {
+            type: 'string',
+            description: '操作: list, accept, reject',
+            required: true,
+            enum: ['list', 'accept', 'reject']
+          },
+          claim_id: {
+            type: 'string',
+            description: '认领ID（accept/reject 时需要）',
+            required: false
+          }
+        },
+        handler: this.handleManageClaims.bind(this)
+      },
+      {
+        name: 'f2a_my_claims',
+        description: '查看我提交的任务认领状态',
+        parameters: {
+          status: {
+            type: 'string',
+            description: '状态过滤: pending, accepted, rejected, all',
+            required: false,
+            enum: ['pending', 'accepted', 'rejected', 'all']
+          }
+        },
+        handler: this.handleMyClaims.bind(this)
+      },
+      {
+        name: 'f2a_announcement_stats',
+        description: '查看任务广播统计',
+        parameters: {},
+        handler: this.handleAnnouncementStats.bind(this)
       }
     ];
   }
@@ -731,6 +858,328 @@ ${tasks.map(t => {
 📦 总计: ${stats.total}
 
 💡 使用 f2a_poll_tasks 查看详细任务列表
+    `.trim();
+
+    return { content, data: stats };
+  }
+
+  // ========== 认领模式 Handlers ==========
+
+  private async handleAnnounce(
+    params: {
+      task_type: string;
+      description: string;
+      required_capabilities?: string[];
+      estimated_complexity?: number;
+      reward?: number;
+      timeout?: number;
+    },
+    context: SessionContext
+  ): Promise<ToolResult> {
+    try {
+      const announcement = this.announcementQueue.create({
+        taskType: params.task_type,
+        description: params.description,
+        requiredCapabilities: params.required_capabilities,
+        estimatedComplexity: params.estimated_complexity,
+        reward: params.reward,
+        timeout: params.timeout || 300000,
+        from: 'local', // 实际应该从网络获取本机ID
+      });
+
+      // 触发心跳让其他Agent知道有新广播
+      this.api?.runtime?.system?.requestHeartbeatNow?.();
+
+      const content = `
+📢 任务广播已创建
+
+ID: ${announcement.announcementId}
+类型: ${announcement.taskType}
+描述: ${announcement.description.slice(0, 100)}${announcement.description.length > 100 ? '...' : ''}
+${announcement.requiredCapabilities ? `所需能力: ${announcement.requiredCapabilities.join(', ')}` : ''}
+${announcement.estimatedComplexity ? `复杂度: ${announcement.estimatedComplexity}/10` : ''}
+${announcement.reward ? `奖励: ${announcement.reward}` : ''}
+超时: ${Math.round(announcement.timeout / 1000)}秒
+
+💡 使用 f2a_manage_claims 查看认领情况
+      `.trim();
+
+      return {
+        content,
+        data: {
+          announcementId: announcement.announcementId,
+          status: announcement.status
+        }
+      };
+    } catch (error: any) {
+      return {
+        content: `❌ 创建广播失败: ${error.message}`,
+        data: { error: error.message }
+      };
+    }
+  }
+
+  private async handleListAnnouncements(
+    params: {
+      capability?: string;
+      limit?: number;
+    },
+    context: SessionContext
+  ): Promise<ToolResult> {
+    let announcements = this.announcementQueue.getOpen();
+
+    // 按能力过滤
+    if (params.capability) {
+      announcements = announcements.filter(a =>
+        a.requiredCapabilities?.includes(params.capability!)
+      );
+    }
+
+    // 限制数量
+    const limit = params.limit || 10;
+    announcements = announcements.slice(0, limit);
+
+    if (announcements.length === 0) {
+      return { content: '📭 当前没有开放的任务广播' };
+    }
+
+    const content = `
+📢 开放的任务广播 (${announcements.length} 个):
+
+${announcements.map((a, i) => {
+  const claimCount = a.claims?.length || 0;
+  return `${i + 1}. [${a.announcementId.slice(0, 8)}...] ${a.description.slice(0, 50)}${a.description.length > 50 ? '...' : ''}
+   类型: ${a.taskType} | 认领: ${claimCount} | 复杂度: ${a.estimatedComplexity || '?'}/10
+   ${a.reward ? `奖励: ${a.reward} | ` : ''}超时: ${Math.round(a.timeout / 1000)}s`;
+}).join('\n\n')}
+
+💡 使用 f2a_claim 认领任务
+    `.trim();
+
+    return {
+      content,
+      data: {
+        count: announcements.length,
+        announcements: announcements.map(a => ({
+          announcementId: a.announcementId,
+          taskType: a.taskType,
+          description: a.description.slice(0, 100),
+          requiredCapabilities: a.requiredCapabilities,
+          estimatedComplexity: a.estimatedComplexity,
+          reward: a.reward,
+          claimCount: a.claims?.length || 0
+        }))
+      }
+    };
+  }
+
+  private async handleClaim(
+    params: {
+      announcement_id: string;
+      estimated_time?: number;
+      confidence?: number;
+    },
+    context: SessionContext
+  ): Promise<ToolResult> {
+    const announcement = this.announcementQueue.get(params.announcement_id);
+    
+    if (!announcement) {
+      return { content: `❌ 找不到广播: ${params.announcement_id}` };
+    }
+
+    if (announcement.status !== 'open') {
+      return { content: `❌ 该广播已${announcement.status === 'claimed' ? '被认领' : '过期'}` };
+    }
+
+    // 检查是否已有认领
+    const existingClaim = announcement.claims?.find(c => c.claimant === 'local');
+    if (existingClaim) {
+      return { content: `⚠️ 你已经认领过这个广播了 (认领ID: ${existingClaim.claimId.slice(0, 8)}...)` };
+    }
+
+    const claim = this.announcementQueue.submitClaim(params.announcement_id, {
+      claimant: 'local', // 实际应该从网络获取本机ID
+      claimantName: this.config.agentName,
+      estimatedTime: params.estimated_time,
+      confidence: params.confidence
+    });
+
+    if (!claim) {
+      return { content: '❌ 认领失败' };
+    }
+
+    // 触发心跳
+    this.api?.runtime?.system?.requestHeartbeatNow?.();
+
+    return {
+      content: `
+✅ 认领已提交
+
+广播ID: ${params.announcement_id.slice(0, 16)}...
+认领ID: ${claim.claimId.slice(0, 16)}...
+${params.estimated_time ? `预计时间: ${Math.round(params.estimated_time / 1000)}秒` : ''}
+${params.confidence ? `信心指数: ${Math.round(params.confidence * 100)}%` : ''}
+
+⏳ 等待广播发布者接受...
+💡 使用 f2a_my_claims 查看认领状态
+      `.trim(),
+      data: {
+        claimId: claim.claimId,
+        status: claim.status
+      }
+    };
+  }
+
+  private async handleManageClaims(
+    params: {
+      announcement_id: string;
+      action: 'list' | 'accept' | 'reject';
+      claim_id?: string;
+    },
+    context: SessionContext
+  ): Promise<ToolResult> {
+    const announcement = this.announcementQueue.get(params.announcement_id);
+    
+    if (!announcement) {
+      return { content: `❌ 找不到广播: ${params.announcement_id}` };
+    }
+
+    // 检查是否是本机的广播
+    if (announcement.from !== 'local') {
+      return { content: '❌ 只能管理自己发布的广播' };
+    }
+
+    switch (params.action) {
+      case 'list': {
+        const claims = announcement.claims || [];
+        if (claims.length === 0) {
+          return { content: '📭 暂无认领' };
+        }
+
+        const content = `
+📋 认领列表 (${claims.length} 个):
+
+${claims.map((c, i) => {
+  const statusIcon = { pending: '⏳', accepted: '✅', rejected: '❌' }[c.status];
+  return `${i + 1}. ${statusIcon} [${c.claimId.slice(0, 8)}...] ${c.claimantName || c.claimant.slice(0, 16)}...
+   ${c.estimatedTime ? `预计: ${Math.round(c.estimatedTime / 1000)}s | ` : ''}${c.confidence ? `信心: ${Math.round(c.confidence * 100)}%` : ''}`;
+}).join('\n\n')}
+
+💡 使用 accept/reject 操作认领
+        `.trim();
+
+        return { content, data: { claims } };
+      }
+
+      case 'accept': {
+        if (!params.claim_id) {
+          return { content: '❌ 请提供 claim_id' };
+        }
+
+        const claim = this.announcementQueue.acceptClaim(params.announcement_id, params.claim_id);
+        if (!claim) {
+          return { content: '❌ 接受认领失败' };
+        }
+
+        return {
+          content: `
+✅ 已接受认领
+
+认领ID: ${params.claim_id.slice(0, 16)}...
+认领者: ${claim.claimantName || claim.claimant.slice(0, 16)}...
+
+现在可以正式委托任务给对方了。
+          `.trim(),
+          data: { claim }
+        };
+      }
+
+      case 'reject': {
+        if (!params.claim_id) {
+          return { content: '❌ 请提供 claim_id' };
+        }
+
+        const claim = this.announcementQueue.rejectClaim(params.announcement_id, params.claim_id);
+        if (!claim) {
+          return { content: '❌ 拒绝认领失败' };
+        }
+
+        return {
+          content: `
+🚫 已拒绝认领
+
+认领ID: ${params.claim_id.slice(0, 16)}...
+认领者: ${claim.claimantName || claim.claimant.slice(0, 16)}...
+          `.trim()
+        };
+      }
+
+      default:
+        return { content: `❌ 未知操作: ${params.action}` };
+    }
+  }
+
+  private async handleMyClaims(
+    params: {
+      status?: 'pending' | 'accepted' | 'rejected' | 'all';
+    },
+    context: SessionContext
+  ): Promise<ToolResult> {
+    const status = params.status || 'all';
+    let claims = this.announcementQueue.getMyClaims('local');
+
+    // 状态过滤
+    if (status !== 'all') {
+      claims = claims.filter(c => c.status === status);
+    }
+
+    if (claims.length === 0) {
+      return { content: `📭 没有${status === 'all' ? '' : status}的认领` };
+    }
+
+    const content = `
+📋 我的认领 (${claims.length} 个):
+
+${claims.map((c, i) => {
+  const announcement = this.announcementQueue.get(c.announcementId);
+  const statusIcon = { pending: '⏳', accepted: '✅', rejected: '❌' }[c.status];
+  return `${i + 1}. ${statusIcon} [${c.claimId.slice(0, 8)}...]
+   广播: ${announcement?.description.slice(0, 40)}...
+   状态: ${c.status}${c.status === 'accepted' ? ' (可以开始执行)' : ''}`;
+}).join('\n\n')}
+    `.trim();
+
+    return {
+      content,
+      data: {
+        count: claims.length,
+        claims: claims.map(c => ({
+          claimId: c.claimId,
+          announcementId: c.announcementId,
+          status: c.status,
+          estimatedTime: c.estimatedTime,
+          confidence: c.confidence
+        }))
+      }
+    };
+  }
+
+  private async handleAnnouncementStats(
+    params: {},
+    context: SessionContext
+  ): Promise<ToolResult> {
+    const stats = this.announcementQueue.getStats();
+    
+    const content = `
+📊 任务广播统计:
+
+📢 开放中: ${stats.open}
+✅ 已认领: ${stats.claimed}
+📋 已委托: ${stats.delegated}
+⏰ 已过期: ${stats.expired}
+📦 总计: ${stats.total}
+
+💡 使用 f2a_list_announcements 查看开放广播
     `.trim();
 
     return { content, data: stats };

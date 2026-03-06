@@ -223,3 +223,38 @@ export interface ReputationEvent {
   timestamp: number;
   reason?: string;
 }
+
+// Claim Types - 认领模式
+export interface TaskAnnouncement {
+  announcementId: string;
+  taskType: string;
+  description: string;
+  requiredCapabilities?: string[];
+  estimatedComplexity?: number;
+  reward?: number;
+  timeout: number;
+  from: string;
+  timestamp: number;
+  status: 'open' | 'claimed' | 'delegated' | 'expired';
+  claims?: TaskClaim[];
+}
+
+export interface TaskClaim {
+  claimId: string;
+  announcementId: string;
+  claimant: string;
+  claimantName?: string;
+  estimatedTime?: number;
+  confidence?: number;
+  timestamp: number;
+  status: 'pending' | 'accepted' | 'rejected';
+}
+
+export interface ClaimWebhookPayload {
+  announcementId: string;
+  claimId: string;
+  claimant: string;
+  claimantName?: string;
+  estimatedTime?: number;
+  confidence?: number;
+}

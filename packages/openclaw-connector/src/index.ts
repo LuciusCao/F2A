@@ -10,6 +10,7 @@ export { WebhookServer, WebhookHandler } from './webhook-server.js';
 export { ReputationSystem } from './reputation.js';
 export { CapabilityDetector } from './capability-detector.js';
 export { TaskQueue, QueuedTask, TaskQueueStats } from './task-queue.js';
+export { AnnouncementQueue, AnnouncementQueueStats } from './announcement-queue.js';
 export * from './types.js';
 
 // 默认导出

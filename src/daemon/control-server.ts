@@ -84,13 +84,54 @@ export class ControlServer {
       return;
     }
 
+    // GET /status - 获取状态 (需要认证)
+    if (req.method === 'GET' && req.url === '/status') {
+      const clientIp = req.socket.remoteAddress || 'unknown';
+      if (!this.rateLimiter.allowRequest(clientIp)) {
+        res.writeHead(429);
+        res.end(JSON.stringify({ success: false, error: 'Too many requests' }));
+        return;
+      }
+      const token = req.headers['x-f2a-token'] as string | undefined;
+      if (!this.tokenManager.verifyToken(token)) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
+        return;
+      }
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        success: true,
+        peerId: this.f2a.peerId,
+        multiaddrs: this.f2a.agentInfo.multiaddrs || []
+      }));
+      return;
+    }
+
+    // GET /peers - 获取已连接的 Peers (需要认证)
+    if (req.method === 'GET' && req.url === '/peers') {
+      const clientIp = req.socket.remoteAddress || 'unknown';
+      if (!this.rateLimiter.allowRequest(clientIp)) {
+        res.writeHead(429);
+        res.end(JSON.stringify({ success: false, error: 'Too many requests' }));
+        return;
+      }
+      const token = req.headers['x-f2a-token'] as string | undefined;
+      if (!this.tokenManager.verifyToken(token)) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
+        return;
+      }
+      const peers = this.f2a.getConnectedPeers();
+      res.writeHead(200);
+      res.end(JSON.stringify(peers));
+      return;
+    }
+
     if (req.method !== 'POST') {
       res.writeHead(405);
       res.end(JSON.stringify({ success: false, error: 'Method not allowed' }));
       return;
     }
-
-    // 速率限制检查
     const clientIp = req.socket.remoteAddress || 'unknown';
     if (!this.rateLimiter.allowRequest(clientIp)) {
       this.logger.warn('Rate limit exceeded', { clientIp });

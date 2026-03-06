@@ -4,9 +4,16 @@
  */
 
 import { F2ADaemon } from './index.js';
+import { multiaddr } from '@multiformats/multiaddr';
+
+// 解析引导节点地址
+const bootstrapPeers = process.env.BOOTSTRAP_PEERS 
+  ? process.env.BOOTSTRAP_PEERS.split(',').map(addr => multiaddr(addr))
+  : undefined;
 
 const daemon = new F2ADaemon({
   controlPort: parseInt(process.env.F2A_CONTROL_PORT || '9001'),
+  bootstrapPeers,
 });
 
 // 处理信号

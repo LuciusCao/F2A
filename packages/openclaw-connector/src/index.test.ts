@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { F2AOpenClawConnector, OpenClawSession } from './index';
+import { F2AOpenClawConnector, OpenClawSession } from './connector';
 
 describe('F2AOpenClawConnector', () => {
   let connector: F2AOpenClawConnector;

@@ -15,7 +15,7 @@ export interface Tool {
   name: string;
   description: string;
   parameters: Record<string, ParameterSchema>;
-  handler: (params: Record<string, unknown>, context: SessionContext) => Promise<ToolResult>;
+  handler: (params: any, context: SessionContext) => Promise<ToolResult>;
 }
 
 export interface ParameterSchema {
@@ -51,8 +51,15 @@ export interface F2APluginConfig {
   webhookPort: number;
   agentName: string;
   capabilities: string[];
-  reputation: ReputationConfig;
-  security: SecurityConfig;
+  f2aPath?: string;
+  controlPort?: number;
+  controlToken?: string;
+  p2pPort?: number;
+  enableMDNS?: boolean;
+  bootstrapPeers?: string[];
+  dataDir?: string;
+  reputation?: ReputationConfig;
+  security?: SecurityConfig;
 }
 
 export interface ReputationConfig {

@@ -1,9 +1,17 @@
 {
-  "name": "@f2a/openclaw-connector",
+  "name": "f2a-openclaw-connector",
   "version": "0.1.0",
   "description": "OpenClaw plugin for F2A P2P network integration",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "openclaw": {
+    "extensions": ["./dist/plugin.js"]
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",

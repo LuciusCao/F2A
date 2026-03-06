@@ -70,7 +70,12 @@ export class F2AOpenClawConnector implements OpenClawPlugin {
     this.nodeManager = new F2ANodeManager(this.nodeConfig);
     this.networkClient = new F2ANetworkClient(this.nodeConfig);
     this.reputationSystem = new ReputationSystem(
-      this.config.reputation,
+      this.config.reputation || {
+        enabled: true,
+        initialScore: 50,
+        minScoreForService: 20,
+        decayRate: 0.01
+      },
       this.config.dataDir || './f2a-data'
     );
     this.capabilityDetector = new CapabilityDetector();
@@ -240,14 +245,15 @@ export class F2AOpenClawConnector implements OpenClawPlugin {
           };
         }
 
-        if (this.config.security.requireConfirmation) {
+        if (this.config.security?.requireConfirmation) {
           // TODO: 发送确认请求给用户
           // 暂时自动接受
         }
 
         // 检查白名单/黑名单
-        if (this.config.security.whitelist.length > 0 && 
-            !this.config.security.whitelist.includes(payload.from)) {
+        const whitelist = this.config.security?.whitelist || [];
+        const blacklist = this.config.security?.blacklist || [];
+        if (whitelist.length > 0 && !whitelist.includes(payload.from)) {
           return {
             accepted: false,
             taskId: payload.taskId,
@@ -255,7 +261,7 @@ export class F2AOpenClawConnector implements OpenClawPlugin {
           };
         }
 
-        if (this.config.security.blacklist.includes(payload.from)) {
+        if (blacklist.includes(payload.from)) {
           return {
             accepted: false,
             taskId: payload.taskId,
@@ -508,7 +514,7 @@ ${agents.map((a, i) => {
       return { content: `❌ 获取状态失败: ${nodeStatus.error}` };
     }
 
-    const peers = peersResult.success ? peersResult.data : [];
+    const peers = peersResult.success ? (peersResult.data || []) : [];
 
     const content = `
 🟢 F2A 状态: ${nodeStatus.data?.running ? '运行中' : '已停止'}
@@ -558,6 +564,9 @@ ${peers.map(p => {
         if (!params.peer_id) {
           return { content: '❌ 请提供 peer_id' };
         }
+        if (!this.config.security) {
+          this.config.security = { requireConfirmation: false, whitelist: [], blacklist: [], maxTasksPerMinute: 10 };
+        }
         this.config.security.blacklist.push(params.peer_id);
         return { content: `🚫 已屏蔽 ${params.peer_id.slice(0, 20)}...` };
       }
@@ -565,6 +574,9 @@ ${peers.map(p => {
       case 'unblock': {
         if (!params.peer_id) {
           return { content: '❌ 请提供 peer_id' };
+        }
+        if (!this.config.security) {
+          this.config.security = { requireConfirmation: false, whitelist: [], blacklist: [], maxTasksPerMinute: 10 };
         }
         this.config.security.blacklist = this.config.security.blacklist.filter(
           id => id !== params.peer_id
@@ -615,30 +627,30 @@ ${peers.map(p => {
     }).join('\n\n');
   }
 
-  private mergeConfig(config: Record<string, unknown>): F2APluginConfig {
+  private mergeConfig(config: Record<string, unknown> & { openclaw?: any }): F2APluginConfig {
     return {
       autoStart: (config.autoStart as boolean) ?? true,
       webhookPort: (config.webhookPort as number) || 9002,
       agentName: (config.agentName as string) || 'OpenClaw Agent',
       capabilities: (config.capabilities as string[]) || [],
-      f2aPath: config.f2aPath as string,
-      controlPort: config.controlPort as number,
-      controlToken: config.controlToken as string,
-      p2pPort: config.p2pPort as number,
-      enableMDNS: config.enableMDNS as boolean,
-      bootstrapPeers: config.bootstrapPeers as string[],
+      f2aPath: config.f2aPath as string | undefined,
+      controlPort: config.controlPort as number | undefined,
+      controlToken: config.controlToken as string | undefined,
+      p2pPort: config.p2pPort as number | undefined,
+      enableMDNS: config.enableMDNS as boolean | undefined,
+      bootstrapPeers: config.bootstrapPeers as string[] | undefined,
       dataDir: (config.dataDir as string) || './f2a-data',
       reputation: {
-        enabled: (config.reputation?.enabled as boolean) ?? true,
-        initialScore: (config.reputation?.initialScore as number) || 50,
-        minScoreForService: (config.reputation?.minScoreForService as number) || 20,
-        decayRate: (config.reputation?.decayRate as number) || 0.01
+        enabled: ((config.reputation as any)?.enabled as boolean) ?? true,
+        initialScore: ((config.reputation as any)?.initialScore as number) || 50,
+        minScoreForService: ((config.reputation as any)?.minScoreForService as number) || 20,
+        decayRate: ((config.reputation as any)?.decayRate as number) || 0.01
       },
       security: {
-        requireConfirmation: (config.security?.requireConfirmation as boolean) ?? false,
-        whitelist: (config.security?.whitelist as string[]) || [],
-        blacklist: (config.security?.blacklist as string[]) || [],
-        maxTasksPerMinute: (config.security?.maxTasksPerMinute as number) || 10
+        requireConfirmation: ((config.security as any)?.requireConfirmation as boolean) ?? false,
+        whitelist: ((config.security as any)?.whitelist as string[]) || [],
+        blacklist: ((config.security as any)?.blacklist as string[]) || [],
+        maxTasksPerMinute: ((config.security as any)?.maxTasksPerMinute as number) || 10
       }
     };
   }
@@ -650,6 +662,25 @@ ${peers.map(p => {
       token += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     return token;
+  }
+
+  /**
+   * 关闭插件，清理资源
+   */
+  async shutdown(): Promise<void> {
+    console.log('[F2A Plugin] 正在关闭...');
+    
+    // 停止 Webhook 服务器
+    if (this.webhookServer) {
+      await this.webhookServer.stop?.();
+    }
+    
+    // 停止 F2A Node
+    if (this.nodeManager) {
+      await this.nodeManager.stop();
+    }
+    
+    console.log('[F2A Plugin] 已关闭');
   }
 }
 

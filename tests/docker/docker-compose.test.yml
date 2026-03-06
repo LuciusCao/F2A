@@ -3,8 +3,6 @@
 #   npm run test:docker           # 默认 3 个节点
 #   npm run test:docker:10        # 10 个节点
 
-version: '3.8'
-
 services:
   # 引导节点（稳定，其他节点连接它）
   bootstrap:
@@ -19,8 +17,6 @@ services:
       - F2A_CONTROL_PORT=9001
       - F2A_CONTROL_TOKEN=${TEST_TOKEN:-test-token-integration}
       - NODE_ENV=production
-    ports:
-      - "19001:9001"  # 用于调试
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:9001/health"]
       interval: 5s
@@ -28,7 +24,7 @@ services:
       retries: 10
       start_period: 10s
 
-  # 动态生成的节点（使用 scale 参数调整数量）
+  # 动态生成的节点（使用 --scale 参数调整数量）
   node:
     build:
       context: ../..
@@ -49,8 +45,7 @@ services:
       timeout: 3s
       retries: 10
       start_period: 5s
-    deploy:
-      replicas: 3  # 默认 3 个节点
+    # 注意：使用 docker compose up --scale node=N 来控制节点数量
 
   # 测试运行器
   test-runner:
@@ -62,7 +57,6 @@ services:
     environment:
       - RUN_INTEGRATION_TESTS=true
       - TEST_BOOTSTRAP_HTTP=http://bootstrap:9001
-      - TEST_BOOTSTRAP_ADDR=/dns4/bootstrap.f2a.local/tcp/9000
       - TEST_NODE_COUNT=${NODE_COUNT:-3}
       - TEST_TOKEN=${TEST_TOKEN:-test-token-integration}
     depends_on:

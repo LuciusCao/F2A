@@ -44,6 +44,7 @@ export interface F2AInstance {
   // 发现
   discoverAgents(capability?: string): Promise<AgentInfo[]>;
   getConnectedPeers(): AgentInfo[];
+  getAllPeers(): AgentInfo[];
 
   // 任务委托
   delegateTask(options: TaskDelegateOptions): Promise<Result<TaskDelegateResult>>;
@@ -228,6 +229,15 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
    */
   getConnectedPeers(): AgentInfo[] {
     return this.p2pNetwork.getConnectedPeers()
+      .filter(p => p.agentInfo)
+      .map(p => p.agentInfo!);
+  }
+
+  /**
+   * 获取所有已知的 Peers（包括已断开但已发现的）
+   */
+  getAllPeers(): AgentInfo[] {
+    return this.p2pNetwork.getAllPeers()
       .filter(p => p.agentInfo)
       .map(p => p.agentInfo!);
   }

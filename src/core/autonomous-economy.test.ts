@@ -240,9 +240,9 @@ describe('AutonomousEconomy', () => {
       economy.submitTask(task);
       expect(economy.getQueueLength()).toBe(1);
 
-      // 使用很短的过期时间，等待 1ms 确保时间差
-      await new Promise(resolve => setTimeout(resolve, 2));
-      const expired = economy.cleanupExpiredTasks(1); // 1ms
+      // 等待足够长的时间确保任务过期
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const expired = economy.cleanupExpiredTasks(50); // 50ms
       
       expect(expired).toContain('task-expired');
       expect(economy.getQueueLength()).toBe(0);

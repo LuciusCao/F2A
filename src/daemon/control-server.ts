@@ -63,6 +63,15 @@ export class ControlServer {
   }
 
   /**
+   * 从 Authorization header 提取 Bearer token
+   */
+  private extractBearerToken(authHeader: string | undefined): string | undefined {
+    if (!authHeader) return undefined;
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    return match ? match[1] : undefined;
+  }
+
+  /**
    * 处理请求
    */
   private handleRequest(req: IncomingMessage, res: ServerResponse): void {
@@ -92,7 +101,9 @@ export class ControlServer {
         res.end(JSON.stringify({ success: false, error: 'Too many requests' }));
         return;
       }
-      const token = req.headers['x-f2a-token'] as string | undefined;
+      // 支持 X-F2A-Token 或 Authorization: Bearer xxx
+      const token = req.headers['x-f2a-token'] as string | undefined 
+        || this.extractBearerToken(req.headers.authorization);
       if (!this.tokenManager.verifyToken(token)) {
         res.writeHead(401);
         res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
@@ -115,7 +126,9 @@ export class ControlServer {
         res.end(JSON.stringify({ success: false, error: 'Too many requests' }));
         return;
       }
-      const token = req.headers['x-f2a-token'] as string | undefined;
+      // 支持 X-F2A-Token 或 Authorization: Bearer xxx
+      const token = req.headers['x-f2a-token'] as string | undefined 
+        || this.extractBearerToken(req.headers.authorization);
       if (!this.tokenManager.verifyToken(token)) {
         res.writeHead(401);
         res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));

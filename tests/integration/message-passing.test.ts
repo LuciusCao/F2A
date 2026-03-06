@@ -4,12 +4,13 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
+import { getBootstrapHttp } from './test-config';
 
 const shouldRun = process.env.RUN_INTEGRATION_TESTS === 'true';
 
 describe.skipIf(!shouldRun)('消息传递集成测试', () => {
   // 使用 HTTP URL 格式，而不是 libp2p 多地址
-  const bootstrapAddr = process.env.TEST_BOOTSTRAP_HTTP || 'http://bootstrap.f2a.local:9001';
+  const bootstrapAddr = getBootstrapHttp();
   const testToken = process.env.TEST_TOKEN || 'test-token-integration';
 
   beforeAll(async () => {

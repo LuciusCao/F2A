@@ -3,14 +3,15 @@
  * 测试节点之间的连接建立和发现
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import { getBootstrapHttp } from './test-config';
 
 // 只在集成测试环境运行
 const shouldRun = process.env.RUN_INTEGRATION_TESTS === 'true';
 
 describe.skipIf(!shouldRun)('P2P 连接集成测试', () => {
   // 使用 HTTP URL 格式，而不是 libp2p 多地址
-  const bootstrapAddr = process.env.TEST_BOOTSTRAP_HTTP || 'http://bootstrap.f2a.local:9001';
+  const bootstrapAddr = getBootstrapHttp();
   const nodeCount = parseInt(process.env.TEST_NODE_COUNT || '3');
   const testToken = process.env.TEST_TOKEN || 'test-token-integration';
 

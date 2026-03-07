@@ -100,6 +100,174 @@ OpenClaw: [调用 f2a_broadcast capability=code-generation task="检查代码bug
    完成
 ```
 
+## 工具列表
+
+### 任务队列工具
+
+#### f2a_poll_tasks - 查询任务队列
+
+查询待处理的任务队列，获取需要执行的任务列表。
+
+```
+用户: 查看我的任务队列
+
+OpenClaw: [调用 f2a_poll_tasks]
+
+📋 任务队列:
+- task-001: 代码审查 (待处理)
+- task-002: 文档生成 (待处理)
+```
+
+#### f2a_submit_result - 提交任务结果
+
+执行完任务后，提交执行结果。
+
+```
+用户: 提交任务结果，代码审查已完成
+
+OpenClaw: [调用 f2a_submit_result taskId="task-001" result="审查完成，发现3个问题"]
+
+✅ 任务结果已提交:
+- 任务ID: task-001
+- 状态: 成功
+- 结果: 审查完成，发现3个问题
+```
+
+#### f2a_task_stats - 查看队列统计
+
+查看任务队列的统计信息，包括待处理、执行中、已完成等状态。
+
+```
+用户: 查看任务队列统计
+
+OpenClaw: [调用 f2a_task_stats]
+
+📊 队列统计:
+- 待处理: 5
+- 执行中: 2
+- 已完成: 128
+- 失败: 3
+- 总计: 138
+```
+
+### 广播与认领工具
+
+#### f2a_announce - 广播任务
+
+创建任务广播，让其他 Agent 可以认领执行。适用于需要并行处理或寻找合适执行者的场景。
+
+```
+用户: 广播一个数据分析任务
+
+OpenClaw: [调用 f2a_announce taskType="data-analysis" description="分析销售数据，生成月度报告"]
+
+📢 任务已广播:
+- 广播ID: ann-abc123
+- 任务类型: data-analysis
+- 状态: 开放认领
+- 超时: 30分钟
+```
+
+#### f2a_list_announcements - 查看开放广播
+
+查看当前所有开放的、可以被认领的任务广播。
+
+```
+用户: 查看有哪些开放的任务
+
+OpenClaw: [调用 f2a_list_announcements]
+
+📋 开放广播列表:
+1. [ann-abc123] 数据分析任务
+   - 类型: data-analysis
+   - 发布者: MacBook-Pro
+   - 剩余时间: 25分钟
+   
+2. [ann-def456] 翻译任务
+   - 类型: translation
+   - 发布者: iPhone-14
+   - 剩余时间: 10分钟
+```
+
+#### f2a_claim - 认领任务
+
+认领一个开放的任务广播，表示愿意执行该任务。
+
+```
+用户: 认领数据分析任务
+
+OpenClaw: [调用 f2a_claim announcementId="ann-abc123"]
+
+✅ 认领成功:
+- 广播ID: ann-abc123
+- 认领ID: claim-xyz789
+- 状态: 等待确认
+- 预计时间: 10分钟
+```
+
+#### f2a_manage_claims - 管理认领
+
+管理你发布的任务广播收到的认领请求，可以接受或拒绝认领。
+
+```
+用户: 查看我的广播收到的认领请求
+
+OpenClaw: [调用 f2a_manage_claims action="list"]
+
+📋 认领请求列表:
+- claim-xyz789 (来自: MacBook-Pro)
+  广播: ann-abc123
+  状态: 待处理
+  预计时间: 10分钟
+
+用户: 接受 MacBook-Pro 的认领
+
+OpenClaw: [调用 f2a_manage_claims action="accept" claimId="claim-xyz789"]
+
+✅ 已接受认领:
+- 认领ID: claim-xyz789
+- 认领者: MacBook-Pro
+- 任务已正式委托
+```
+
+#### f2a_my_claims - 查看我的认领
+
+查看自己提交的所有认领请求及其状态。
+
+```
+用户: 查看我认领的任务
+
+OpenClaw: [调用 f2a_my_claims]
+
+📋 我的认领:
+1. [claim-xyz789] 数据分析任务
+   - 状态: 已接受
+   - 发布者: MacBook-Pro
+   - 时间: 2024-01-15 10:30
+
+2. [claim-mno456] 翻译任务
+   - 状态: 待处理
+   - 发布者: iPhone-14
+   - 时间: 2024-01-15 11:00
+```
+
+#### f2a_announcement_stats - 广播统计
+
+查看任务广播的统计信息，包括开放、已认领、已委托、已过期等状态数量。
+
+```
+用户: 查看广播统计
+
+OpenClaw: [调用 f2a_announcement_stats]
+
+📊 广播统计:
+- 开放中: 5
+- 已认领: 3
+- 已委托: 12
+- 已过期: 2
+- 总计: 22
+```
+
 ## 架构
 
 ```

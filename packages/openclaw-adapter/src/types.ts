@@ -271,23 +271,63 @@ export interface TaskClaim {
   status: 'pending' | 'accepted' | 'rejected';
 }
 
-// Webhook Push Configuration
+/**
+ * Webhook 推送配置
+ * 
+ * 用于配置 F2A 向 OpenClaw 推送事件通知的参数。
+ * 当任务状态变化、收到认领请求等事件发生时，会通过此配置推送通知。
+ * 
+ * @example
+ * ```typescript
+ * const config: WebhookPushConfig = {
+ *   url: 'https://openclaw.example.com/webhook/f2a',
+ *   token: 'secret-token-xxx',
+ *   timeout: 5000,
+ *   enabled: true
+ * };
+ * ```
+ */
 export interface WebhookPushConfig {
-  /** OpenClaw webhook URL */
+  /** OpenClaw webhook URL，用于接收推送通知 */
   url: string;
-  /** Webhook 认证 token */
+  /** Webhook 认证 token，用于验证推送请求的合法性 */
   token: string;
-  /** 推送超时（毫秒） */
+  /** 推送超时时间（毫秒），默认 30000ms */
   timeout?: number;
-  /** 是否启用 webhook 推送 */
+  /** 是否启用 webhook 推送，默认 false */
   enabled?: boolean;
 }
 
+/**
+ * 认领 Webhook 载荷
+ * 
+ * 当有 Agent 认领你发布的任务广播时，会通过 webhook 推送此载荷。
+ * 包含认领者的信息和认领详情，可用于自动或手动审核认领请求。
+ * 
+ * @example
+ * ```typescript
+ * // Webhook 接收到的认领通知
+ * const payload: ClaimWebhookPayload = {
+ *   announcementId: 'ann-abc123',
+ *   claimId: 'claim-xyz789',
+ *   claimant: 'f2a-peer-id-xxx',
+ *   claimantName: 'MacBook-Pro',
+ *   estimatedTime: 600000, // 预计 10 分钟完成
+ *   confidence: 0.85 // 85% 信心完成
+ * };
+ * ```
+ */
 export interface ClaimWebhookPayload {
+  /** 任务广播 ID，对应 TaskAnnouncement.announcementId */
   announcementId: string;
+  /** 认领 ID，唯一标识此次认领 */
   claimId: string;
+  /** 认领者的 F2A Peer ID */
   claimant: string;
+  /** 认领者的显示名称（可选） */
   claimantName?: string;
+  /** 预估完成时间（毫秒，可选） */
   estimatedTime?: number;
+  /** 完成任务的信心程度（0-1，可选） */
   confidence?: number;
 }

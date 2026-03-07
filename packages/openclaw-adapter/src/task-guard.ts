@@ -15,11 +15,45 @@ export interface TaskGuardRule {
   check: (task: TaskRequest | TaskAnnouncement, context: TaskGuardContext) => TaskGuardResult;
 }
 
+/**
+ * 任务安全检查上下文
+ * 
+ * 提供任务检查所需的上下文信息，包括请求者信誉、黑白名单状态、
+ * 近期请求频率等，用于安全规则判断任务是否应该被接受或拒绝。
+ * 
+ * @example
+ * ```typescript
+ * const context: TaskGuardContext = {
+ *   requesterReputation: {
+ *     peerId: 'f2a-peer-xxx',
+ *     score: 85,
+ *     successfulTasks: 42,
+ *     failedTasks: 2,
+ *     // ...其他字段
+ *   },
+ *   isWhitelisted: true,
+ *   isBlacklisted: false,
+ *   recentTaskCount: 3,
+ *   config: DEFAULT_TASK_GUARD_CONFIG
+ * };
+ * 
+ * // 使用上下文进行任务检查
+ * const report = taskGuard.check(task, context);
+ * if (!report.passed) {
+ *   console.warn('任务被安全规则拒绝:', report.blocks);
+ * }
+ * ```
+ */
 export interface TaskGuardContext {
+  /** 请求者的信誉信息（可选，新 peer 可能没有） */
   requesterReputation?: ReputationEntry;
+  /** 请求者是否在白名单中 */
   isWhitelisted: boolean;
+  /** 请求者是否在黑名单中 */
   isBlacklisted: boolean;
+  /** 近期（1分钟内）的任务请求数量 */
   recentTaskCount: number;
+  /** 任务守卫配置 */
   config: TaskGuardConfig;
 }
 

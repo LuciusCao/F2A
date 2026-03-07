@@ -12,11 +12,37 @@ import { randomUUID } from 'crypto';
 import { queueLogger as logger } from './logger.js';
 import { EventEmitter } from 'eventemitter3';
 
+/**
+ * 任务广播队列统计信息
+ * 
+ * 提供任务广播各状态的数量统计，用于监控队列健康状态和任务处理进度。
+ * 
+ * @example
+ * ```typescript
+ * const stats: AnnouncementQueueStats = {
+ *   open: 5,      // 5 个开放认领的任务
+ *   claimed: 3,   // 3 个已被认领
+ *   delegated: 12, // 12 个已委托执行
+ *   expired: 2,   // 2 个已过期
+ *   total: 22     // 总计 22 个广播
+ * };
+ * 
+ * // 监控队列健康状态
+ * if (stats.open > 10) {
+ *   console.warn('待认领任务过多，考虑通知更多 Agent');
+ * }
+ * ```
+ */
 export interface AnnouncementQueueStats {
+  /** 开放认领中的任务数量 */
   open: number;
+  /** 已被认领的任务数量 */
   claimed: number;
+  /** 已委托执行的任务数量 */
   delegated: number;
+  /** 已过期的任务数量 */
   expired: number;
+  /** 任务广播总数 */
   total: number;
 }
 

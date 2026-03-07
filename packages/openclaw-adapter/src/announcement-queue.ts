@@ -56,6 +56,9 @@ export class AnnouncementQueue {
    * 获取所有开放的广播
    */
   getOpen(): TaskAnnouncement[] {
+    // 在获取开放广播前先清理过期数据，避免返回过期数据
+    this.cleanup();
+    
     return Array.from(this.announcements.values())
       .filter(a => a.status === 'open')
       .sort((a, b) => a.timestamp - b.timestamp);

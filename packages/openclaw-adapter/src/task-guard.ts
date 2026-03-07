@@ -423,10 +423,11 @@ export class TaskGuard {
 
   private getRecentTaskCount(peerId: string): number {
     const now = Date.now();
-    const oneMinuteAgo = now - 60000;
+    const windowMs = this.config.maxTasksPerMinute ? 60000 : 60000;
+    const windowStart = now - windowMs;
     
     const timestamps = this.recentTasks.get(peerId) || [];
-    const recent = timestamps.filter(t => t > oneMinuteAgo);
+    const recent = timestamps.filter(t => t > windowStart);
     
     // 更新存储
     this.recentTasks.set(peerId, recent);
@@ -435,9 +436,32 @@ export class TaskGuard {
   }
 
   private recordTask(peerId: string): void {
+    // 先清理过期条目，防止内存泄漏
+    this.cleanupRecentTasks();
+    
     const timestamps = this.recentTasks.get(peerId) || [];
     timestamps.push(Date.now());
     this.recentTasks.set(peerId, timestamps);
+  }
+
+  /**
+   * 清理过期的 recentTasks 条目，防止内存泄漏
+   */
+  private cleanupRecentTasks(): void {
+    const now = Date.now();
+    const windowMs = 60000; // 1分钟窗口
+    
+    for (const [key, timestamps] of this.recentTasks.entries()) {
+      // 过滤掉过期的时间戳
+      const validTimestamps = timestamps.filter(t => now - t < windowMs);
+      if (validTimestamps.length === 0) {
+        // 没有有效时间戳，删除整个条目
+        this.recentTasks.delete(key);
+      } else if (validTimestamps.length !== timestamps.length) {
+        // 更新为有效的时间戳
+        this.recentTasks.set(key, validTimestamps);
+      }
+    }
   }
 }
 

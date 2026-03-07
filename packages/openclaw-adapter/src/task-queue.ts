@@ -62,30 +62,69 @@ export class TaskQueue {
     }
 
     const dbPath = path.join(persistDir, 'task-queue.db');
-    this.db = new Database(dbPath);
+    
+    try {
+      this.db = new Database(dbPath);
 
-    // 创建表
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS tasks (
-        id TEXT PRIMARY KEY,
-        task_type TEXT,
-        description TEXT,
-        parameters TEXT,
-        status TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER,
-        result TEXT,
-        error TEXT,
-        latency INTEGER,
-        webhook_pushed INTEGER DEFAULT 0
-      );
+      // 创建表
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS tasks (
+          id TEXT PRIMARY KEY,
+          task_type TEXT,
+          description TEXT,
+          parameters TEXT,
+          status TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER,
+          result TEXT,
+          error TEXT,
+          latency INTEGER,
+          webhook_pushed INTEGER DEFAULT 0
+        );
+        
+        CREATE INDEX IF NOT EXISTS idx_status ON tasks(status);
+        CREATE INDEX IF NOT EXISTS idx_created ON tasks(created_at);
+      `);
+
+      // 恢复未完成的任务到内存
+      this.restore();
+    } catch (e) {
+      // 数据库损坏或无法访问，删除并重新创建
+      console.warn(`[TaskQueue] 数据库初始化失败，将重建: ${e}`);
+      try {
+        if (this.db) {
+          this.db.close();
+        }
+      } catch {}
       
-      CREATE INDEX IF NOT EXISTS idx_status ON tasks(status);
-      CREATE INDEX IF NOT EXISTS idx_created ON tasks(created_at);
-    `);
-
-    // 恢复未完成的任务到内存
-    this.restore();
+      // 删除损坏的数据库文件
+      if (fs.existsSync(dbPath)) {
+        fs.unlinkSync(dbPath);
+      }
+      
+      // 重新创建
+      this.db = new Database(dbPath);
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS tasks (
+          id TEXT PRIMARY KEY,
+          task_type TEXT,
+          description TEXT,
+          parameters TEXT,
+          status TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER,
+          result TEXT,
+          error TEXT,
+          latency INTEGER,
+          webhook_pushed INTEGER DEFAULT 0
+        );
+        
+        CREATE INDEX IF NOT EXISTS idx_status ON tasks(status);
+        CREATE INDEX IF NOT EXISTS idx_created ON tasks(created_at);
+      `);
+      
+      console.log('[TaskQueue] 数据库已重建');
+    }
   }
 
   /**
@@ -94,30 +133,52 @@ export class TaskQueue {
   private restore(): void {
     if (!this.db) return;
 
-    const rows = this.db.prepare(`
-      SELECT * FROM tasks 
-      WHERE status IN ('pending', 'processing')
-      ORDER BY created_at ASC
-    `).all() as any[];
+    try {
+      const rows = this.db.prepare(`
+        SELECT * FROM tasks 
+        WHERE status IN ('pending', 'processing')
+        ORDER BY created_at ASC
+      `).all() as any[];
 
-    for (const row of rows) {
-      const task: QueuedTask = {
-        taskId: row.id,
-        taskType: row.task_type,
-        description: row.description,
-        parameters: row.parameters ? JSON.parse(row.parameters) : undefined,
-        status: row.status,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-        result: row.result ? JSON.parse(row.result) : undefined,
-        error: row.error,
-        latency: row.latency,
-        webhookPushed: row.webhook_pushed === 1
-      };
-      this.tasks.set(task.taskId, task);
+      for (const row of rows) {
+        try {
+          const task: QueuedTask = {
+            taskId: row.id,
+            taskType: row.task_type,
+            description: row.description,
+            parameters: this.safeJsonParse(row.parameters),
+            status: row.status,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            result: this.safeJsonParse(row.result),
+            error: row.error,
+            latency: row.latency,
+            webhookPushed: row.webhook_pushed === 1
+          };
+          this.tasks.set(task.taskId, task);
+        } catch (e) {
+          console.warn(`[TaskQueue] 跳过无效任务记录: ${row.id}`, e);
+        }
+      }
+
+      console.log(`[TaskQueue] Restored ${this.tasks.size} tasks from persistence`);
+    } catch (e) {
+      console.warn('[TaskQueue] 恢复任务失败，将使用空队列', e);
+      this.tasks.clear();
     }
+  }
 
-    console.log(`[TaskQueue] Restored ${rows.length} tasks from persistence`);
+  /**
+   * 安全解析 JSON，失败返回 undefined
+   */
+  private safeJsonParse(json: string | null | undefined): unknown {
+    if (!json) return undefined;
+    try {
+      return JSON.parse(json);
+    } catch {
+      console.warn(`[TaskQueue] JSON 解析失败，跳过: ${json.slice(0, 50)}...`);
+      return undefined;
+    }
   }
 
   /**

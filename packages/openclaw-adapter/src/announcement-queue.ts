@@ -1,10 +1,15 @@
 /**
  * F2A Announcement Queue
  * 管理任务广播和认领（Claim Pattern）
+ * 
+ * 设计说明：
+ * - 默认导出类而非单例，便于测试和依赖注入
+ * - createAnnouncementQueue() 工厂函数提供默认实例
  */
 
 import type { TaskAnnouncement, TaskClaim } from './types.js';
 import { randomUUID } from 'crypto';
+import { queueLogger as logger } from './logger.js';
 
 export interface AnnouncementQueueStats {
   open: number;
@@ -12,6 +17,11 @@ export interface AnnouncementQueueStats {
   delegated: number;
   expired: number;
   total: number;
+}
+
+export interface AnnouncementQueueOptions {
+  maxSize?: number;
+  maxAgeMs?: number;
 }
 
 export class AnnouncementQueue {
@@ -33,7 +43,7 @@ export class AnnouncementQueue {
 
     // 检查容量
     if (this.announcements.size >= this.maxSize) {
-      console.error('[announcement-queue] create: queue is full, size=%d, maxSize=%d', this.announcements.size, this.maxSize);
+      logger.error(' create: queue is full, size=%d, maxSize=%d', this.announcements.size, this.maxSize);
       throw new Error('Announcement queue is full');
     }
 
@@ -48,7 +58,7 @@ export class AnnouncementQueue {
     };
 
     this.announcements.set(id, created);
-    console.log('[announcement-queue] create: announcementId=%s, from=%s, taskType=%s', id, announcement.from, announcement.taskType);
+    logger.info(' create: announcementId=%s, from=%s, taskType=%s', id, announcement.from, announcement.taskType);
     return created;
   }
 
@@ -80,18 +90,18 @@ export class AnnouncementQueue {
   ): TaskClaim | null {
     const announcement = this.announcements.get(announcementId);
     if (!announcement) {
-      console.warn('[announcement-queue] submitClaim: announcement not found, id=%s, claimant=%s', announcementId, claim.claimant);
+      logger.warn(' submitClaim: announcement not found, id=%s, claimant=%s', announcementId, claim.claimant);
       return null;
     }
     if (announcement.status !== 'open') {
-      console.warn('[announcement-queue] submitClaim: announcement not open, id=%s, status=%s, claimant=%s', announcementId, announcement.status, claim.claimant);
+      logger.warn(' submitClaim: announcement not open, id=%s, status=%s, claimant=%s', announcementId, announcement.status, claim.claimant);
       return null;
     }
 
     // 检查该 claimant 是否已经提交过认领（防止重复认领）
     const existingClaim = announcement.claims?.find(c => c.claimant === claim.claimant);
     if (existingClaim) {
-      console.log('[announcement-queue] submitClaim: duplicate claim ignored, id=%s, claimant=%s, existingClaimId=%s', announcementId, claim.claimant, existingClaim.claimId);
+      logger.info(' submitClaim: duplicate claim ignored, id=%s, claimant=%s, existingClaimId=%s', announcementId, claim.claimant, existingClaim.claimId);
       // 返回已存在的认领，而不是创建新的
       return existingClaim;
     }
@@ -111,7 +121,7 @@ export class AnnouncementQueue {
     }
     announcement.claims.push(created);
 
-    console.log('[announcement-queue] submitClaim: claimId=%s, announcementId=%s, claimant=%s', claimId, announcementId, claim.claimant);
+    logger.info(' submitClaim: claimId=%s, announcementId=%s, claimant=%s', claimId, announcementId, claim.claimant);
     return created;
   }
 
@@ -121,13 +131,13 @@ export class AnnouncementQueue {
   acceptClaim(announcementId: string, claimId: string): TaskClaim | null {
     const announcement = this.announcements.get(announcementId);
     if (!announcement) {
-      console.warn('[announcement-queue] acceptClaim: announcement not found, id=%s, claimId=%s', announcementId, claimId);
+      logger.warn(' acceptClaim: announcement not found, id=%s, claimId=%s', announcementId, claimId);
       return null;
     }
 
     const claim = announcement.claims?.find(c => c.claimId === claimId);
     if (!claim) {
-      console.warn('[announcement-queue] acceptClaim: claim not found, announcementId=%s, claimId=%s', announcementId, claimId);
+      logger.warn(' acceptClaim: claim not found, announcementId=%s, claimId=%s', announcementId, claimId);
       return null;
     }
 
@@ -146,7 +156,7 @@ export class AnnouncementQueue {
     // 标记广播为已认领
     announcement.status = 'claimed';
 
-    console.log('[announcement-queue] acceptClaim: claimId=%s, announcementId=%s, claimant=%s, rejectedCount=%d', claimId, announcementId, claim.claimant, rejectedCount);
+    logger.info(' acceptClaim: claimId=%s, announcementId=%s, claimant=%s, rejectedCount=%d', claimId, announcementId, claim.claimant, rejectedCount);
     return claim;
   }
 
@@ -156,18 +166,18 @@ export class AnnouncementQueue {
   rejectClaim(announcementId: string, claimId: string): TaskClaim | null {
     const announcement = this.announcements.get(announcementId);
     if (!announcement) {
-      console.warn('[announcement-queue] rejectClaim: announcement not found, id=%s, claimId=%s', announcementId, claimId);
+      logger.warn(' rejectClaim: announcement not found, id=%s, claimId=%s', announcementId, claimId);
       return null;
     }
 
     const claim = announcement.claims?.find(c => c.claimId === claimId);
     if (!claim) {
-      console.warn('[announcement-queue] rejectClaim: claim not found, announcementId=%s, claimId=%s', announcementId, claimId);
+      logger.warn(' rejectClaim: claim not found, announcementId=%s, claimId=%s', announcementId, claimId);
       return null;
     }
 
     claim.status = 'rejected';
-    console.log('[announcement-queue] rejectClaim: claimId=%s, announcementId=%s, claimant=%s', claimId, announcementId, claim.claimant);
+    logger.info(' rejectClaim: claimId=%s, announcementId=%s, claimant=%s', claimId, announcementId, claim.claimant);
     return claim;
   }
 
@@ -243,7 +253,7 @@ export class AnnouncementQueue {
     }
     
     if (expiredCount > 0 || deletedCount > 0) {
-      console.log('[announcement-queue] cleanup: expired=%d, deleted=%d, remaining=%d', expiredCount, deletedCount, this.announcements.size);
+      logger.info(' cleanup: expired=%d, deleted=%d, remaining=%d', expiredCount, deletedCount, this.announcements.size);
     }
   }
 
@@ -255,5 +265,10 @@ export class AnnouncementQueue {
   }
 }
 
-// 导出单例
+// 工厂函数：创建新的 AnnouncementQueue 实例
+export function createAnnouncementQueue(options?: { maxSize?: number; maxAgeMs?: number }): AnnouncementQueue {
+  return new AnnouncementQueue(options);
+}
+
+// 默认实例（向后兼容，但建议使用依赖注入）
 export const announcementQueue = new AnnouncementQueue();

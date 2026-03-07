@@ -1,8 +1,22 @@
 /**
  * F2A OpenClaw Connector - Core Types
+ * 
+ * 统一类型定义入口文件
+ * - 基础类型定义在此文件
+ * - Result 类型从 src/types/result.ts 重新导出（统一错误处理模式）
  */
 
+// ============================================================================
+// 统一 Result 类型（从核心库 re-export）
+// ============================================================================
+
+// 重新导出核心 Result 类型，确保整个项目使用统一的错误处理模式
+export type { Result, F2AError, ErrorCode } from '../../../src/types/result.js';
+export { success, failure, failureFromError, createError } from '../../../src/types/result.js';
+
+// ============================================================================
 // OpenClaw Plugin SDK Types
+// ============================================================================
 export interface OpenClawPlugin {
   name: string;
   version: string;
@@ -203,12 +217,7 @@ export interface DelegateWebhookPayload extends TaskRequest {
   // TaskRequest 本身已包含所有字段
 }
 
-// Result Types
-export interface Result<T> {
-  success: boolean;
-  data?: T;
-  error?: string;
-}
+// Result 类型已从核心库 re-export，见文件顶部
 
 // Reputation Types
 export interface ReputationEntry {

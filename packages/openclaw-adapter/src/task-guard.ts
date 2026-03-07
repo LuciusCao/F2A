@@ -4,6 +4,7 @@
  */
 
 import type { TaskRequest, TaskAnnouncement, ReputationEntry } from './types.js';
+import { taskGuardLogger as logger } from './logger.js';
 
 export interface TaskGuardRule {
   id: string;
@@ -72,10 +73,132 @@ export const DEFAULT_TASK_GUARD_CONFIG: TaskGuardConfig = {
   minReputationForDangerous: 70
 };
 
+/**
+ * 路径规范化 - 移除 .. 和多余的斜杠
+ * 用于检测路径遍历绕过
+ */
+function normalizePath(path: string): string {
+  // 解码 URL 编码
+  let normalized = path;
+  try {
+    normalized = decodeURIComponent(normalized);
+  } catch { /* ignore */ }
+  
+  // 替换多个斜杠为单个
+  normalized = normalized.replace(/\/+/g, '/');
+  
+  // 解析 .. 和 .
+  const parts = normalized.split('/');
+  const result: string[] = [];
+  
+  for (const part of parts) {
+    if (part === '..') {
+      result.pop();
+    } else if (part !== '.' && part !== '') {
+      result.push(part);
+    }
+  }
+  
+  return '/' + result.join('/');
+}
+
+/**
+ * 检测变量替换绕过
+ */
+function detectVariableSubstitution(text: string): string[] {
+  const detected: string[] = [];
+  
+  // 环境变量模式: $VAR, ${VAR}, %VAR%
+  const envPatterns = [
+    /\$([A-Za-z_][A-Za-z0-9_]*)/g,           // $VAR
+    /\$\{([^}]+)\}/g,                         // ${VAR}
+    /%([A-Za-z_][A-Za-z0-9_]*)%/g,           // %VAR%
+  ];
+  
+  for (const pattern of envPatterns) {
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      detected.push(`变量替换: ${match[0]}`);
+    }
+  }
+  
+  return detected;
+}
+
+/**
+ * 检测编码绕过
+ */
+function detectEncodingBypass(text: string): string[] {
+  const detected: string[] = [];
+  
+  // 八进制编码: \177, \027
+  if (/\\[0-7]{1,3}/.test(text)) {
+    detected.push('八进制编码');
+  }
+  
+  // 十六进制编码: \x7f, \x1b
+  if (/\\x[0-9a-fA-F]{2}/.test(text)) {
+    detected.push('十六进制编码');
+  }
+  
+  // Unicode 编码: \u007f
+  if (/\\u[0-9a-fA-F]{4}/.test(text)) {
+    detected.push('Unicode编码');
+  }
+  
+  // URL 编码: %20, %2f
+  if (/%[0-9a-fA-F]{2}/.test(text)) {
+    detected.push('URL编码');
+  }
+  
+  return detected;
+}
+
+/**
+ * 检测命令注入绕过
+ */
+function detectCommandInjectionBypass(text: string): string[] {
+  const detected: string[] = [];
+  const lowerText = text.toLowerCase();
+  
+  // 反引号命令替换
+  if (/`[^`]+`/.test(text)) {
+    detected.push('反引号命令替换');
+  }
+  
+  // $() 命令替换
+  if (/\$\([^)]+\)/.test(text)) {
+    detected.push('$()命令替换');
+  }
+  
+  // 分号命令链接
+  if (/;\s*(rm|dd|mkfs|shutdown|reboot|halt|init)\b/i.test(text)) {
+    detected.push('分号命令链接');
+  }
+  
+  // 管道命令注入
+  if (/\|\s*(rm|dd|mkfs|shutdown|reboot|halt)\b/i.test(text)) {
+    detected.push('管道命令注入');
+  }
+  
+  // &&/|| 命令链接
+  if (/(&&|\|\|)\s*(rm|dd|mkfs|shutdown|reboot|halt)\b/i.test(text)) {
+    detected.push('逻辑运算符命令链接');
+  }
+  
+  return detected;
+}
+
 export class TaskGuard {
   private config: TaskGuardConfig;
   private rules: TaskGuardRule[];
   private recentTasks: Map<string, number[]> = new Map();
+  /** 清理阈值：当条目数超过此值时触发清理 */
+  private cleanupThreshold: number = 100;
+  /** 上次清理时间戳 */
+  private lastCleanupTime: number = 0;
+  /** 定时清理间隔（毫秒） */
+  private cleanupIntervalMs: number = 60000; // 1分钟
 
   constructor(config: Partial<TaskGuardConfig> = {}) {
     this.config = { ...DEFAULT_TASK_GUARD_CONFIG, ...config };
@@ -98,7 +221,7 @@ export class TaskGuard {
     };
 
     const taskId = 'taskId' in task ? task.taskId : task.announcementId;
-    console.log('[task-guard] check: taskId=%s, from=%s, rules=%d', taskId, task.from, this.rules.filter(r => r.enabled).length);
+    logger.debug('check: taskId=%s, from=%s, rules=%d', taskId, task.from, this.rules.filter(r => r.enabled).length);
 
     const results: TaskGuardResult[] = [];
 
@@ -113,13 +236,13 @@ export class TaskGuard {
         // 记录规则执行结果
         if (!result.passed) {
           if (result.severity === 'block') {
-            console.warn('[task-guard] rule-blocked: taskId=%s, ruleId=%s, message=%s', taskId, rule.id, result.message);
+            logger.warn('rule-blocked: taskId=%s, ruleId=%s, message=%s', taskId, rule.id, result.message);
           } else if (result.severity === 'warn') {
-            console.log('[task-guard] rule-warning: taskId=%s, ruleId=%s, message=%s', taskId, rule.id, result.message);
+            logger.info('rule-warning: taskId=%s, ruleId=%s, message=%s', taskId, rule.id, result.message);
           }
         }
       } catch (error) {
-        console.error('[task-guard] rule-error: ruleId=%s, taskId=%s, error=%s', rule.id, taskId, error);
+        logger.error('rule-error: ruleId=%s, taskId=%s, error=%s', rule.id, taskId, error);
         results.push({
           passed: false,
           severity: 'warn',
@@ -141,7 +264,7 @@ export class TaskGuard {
     );
 
     const passed = blocks.length === 0;
-    console.log('[task-guard] check-result: taskId=%s, passed=%s, blocks=%d, warnings=%d, requiresConfirmation=%s', 
+    logger.debug('check-result: taskId=%s, passed=%s, blocks=%d, warnings=%d, requiresConfirmation=%s', 
       taskId, passed, blocks.length, warnings.length, requiresConfirmation);
 
     return {
@@ -164,7 +287,7 @@ export class TaskGuard {
   ): boolean {
     const report = this.check(task, context);
     const taskId = 'taskId' in task ? task.taskId : task.announcementId;
-    console.log('[task-guard] quickCheck: taskId=%s, passed=%s', taskId, report.passed);
+    logger.debug('quickCheck: taskId=%s, passed=%s', taskId, report.passed);
     return report.passed;
   }
 
@@ -173,7 +296,7 @@ export class TaskGuard {
    */
   addRule(rule: TaskGuardRule): void {
     this.rules.push(rule);
-    console.log('[task-guard] addRule: ruleId=%s, name=%s, severity=%s, enabled=%s', rule.id, rule.name, rule.severity, rule.enabled);
+    logger.info('addRule: ruleId=%s, name=%s, severity=%s, enabled=%s', rule.id, rule.name, rule.severity, rule.enabled);
   }
 
   /**
@@ -183,9 +306,9 @@ export class TaskGuard {
     const rule = this.rules.find(r => r.id === ruleId);
     if (rule) {
       rule.enabled = enabled;
-      console.log('[task-guard] setRuleEnabled: ruleId=%s, enabled=%s', ruleId, enabled);
+      logger.info('setRuleEnabled: ruleId=%s, enabled=%s', ruleId, enabled);
     } else {
-      console.warn('[task-guard] setRuleEnabled: rule not found, ruleId=%s', ruleId);
+      logger.warn('setRuleEnabled: rule not found, ruleId=%s', ruleId);
     }
   }
 
@@ -451,12 +574,27 @@ export class TaskGuard {
   }
 
   private recordTask(peerId: string): void {
-    // 先清理过期条目，防止内存泄漏
-    this.cleanupRecentTasks();
-    
     const timestamps = this.recentTasks.get(peerId) || [];
     timestamps.push(Date.now());
     this.recentTasks.set(peerId, timestamps);
+    
+    // 优化：仅在超过阈值或定时触发时清理，而非每次都清理
+    this.maybeCleanup();
+  }
+
+  /**
+   * 条件触发清理：当条目数超过阈值或距上次清理超过间隔时执行
+   */
+  private maybeCleanup(): void {
+    const now = Date.now();
+    const shouldCleanup = 
+      this.recentTasks.size > this.cleanupThreshold ||
+      (now - this.lastCleanupTime) > this.cleanupIntervalMs;
+    
+    if (shouldCleanup) {
+      this.cleanupRecentTasks();
+      this.lastCleanupTime = now;
+    }
   }
 
   /**

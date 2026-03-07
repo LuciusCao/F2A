@@ -122,6 +122,7 @@ export type F2AMessageType =
   | 'TASK_REQUEST'  // 任务请求
   | 'TASK_RESPONSE' // 任务响应
   | 'TASK_DELEGATE' // 任务转委托
+  | 'DECRYPT_FAILED' // 解密失败通知
   | 'PING'          // 心跳
   | 'PONG';         // 心跳响应
 

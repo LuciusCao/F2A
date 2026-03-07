@@ -9,9 +9,9 @@ import type {
   PeerInfo, 
   TaskRequest, 
   TaskResponse,
-  DelegateOptions,
-  Result 
+  DelegateOptions
 } from './types.js';
+import { Result, failure, success, createError } from './types.js';
 
 /** 默认请求超时（毫秒） */
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -49,28 +49,28 @@ export class F2ANetworkClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        return { 
-          success: false, 
-          error: `HTTP ${response.status}: ${errorText}` 
-        };
+        return failure(createError(
+          'CONNECTION_FAILED',
+          `HTTP ${response.status}: ${errorText}`
+        ));
       }
 
       const data = await response.json() as T;
-      return { success: true, data };
+      return success(data);
 
     } catch (error) {
       // 处理超时错误
       if (error instanceof Error && error.name === 'AbortError') {
-        return { 
-          success: false, 
-          error: `Request timed out after ${this.timeoutMs}ms` 
-        };
+        return failure(createError(
+          'TIMEOUT',
+          `Request timed out after ${this.timeoutMs}ms`
+        ));
       }
       
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : String(error) 
-      };
+      return failure(createError(
+        'CONNECTION_FAILED',
+        error instanceof Error ? error.message : String(error)
+      ));
     } finally {
       clearTimeout(timeoutId);
     }

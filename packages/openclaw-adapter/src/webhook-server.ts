@@ -11,6 +11,10 @@ import type {
   AgentCapability,
   TaskResponse 
 } from './types.js';
+import { webhookLogger as logger } from './logger.js';
+
+/** 默认请求体大小限制 (1MB) */
+const DEFAULT_MAX_BODY_SIZE = 1024 * 1024;
 
 export interface WebhookHandler {
   onDiscover(payload: DiscoverWebhookPayload): Promise<{
@@ -34,10 +38,12 @@ export class WebhookServer {
   private port: number;
   private handler: WebhookHandler;
   private server?: ReturnType<typeof createServer>;
+  private maxBodySize: number;
 
-  constructor(port: number, handler: WebhookHandler) {
+  constructor(port: number, handler: WebhookHandler, options?: { maxBodySize?: number }) {
     this.port = port;
     this.handler = handler;
+    this.maxBodySize = options?.maxBodySize || DEFAULT_MAX_BODY_SIZE;
   }
 
   /**
@@ -48,7 +54,7 @@ export class WebhookServer {
       this.server = createServer(this.handleRequest.bind(this));
       
       this.server.listen(this.port, () => {
-        console.log(`[F2A Webhook] 服务器启动在端口 ${this.port}`);
+        logger.info('服务器启动在端口 %d', this.port);
         resolve();
       });
 
@@ -65,7 +71,7 @@ export class WebhookServer {
     if (this.server) {
       return new Promise((resolve) => {
         this.server?.close(() => {
-          console.log('[F2A Webhook] 服务器已停止');
+          logger.info('服务器已停止');
           resolve();
         });
       });
@@ -97,7 +103,7 @@ export class WebhookServer {
       const body = await this.parseBody(req);
       const event = body as WebhookEvent;
 
-      console.log(`[F2A Webhook] 收到事件: ${event.type}`);
+      logger.info('收到事件: %s', event.type);
 
       let result: unknown;
 
@@ -124,7 +130,7 @@ export class WebhookServer {
       res.end(JSON.stringify(result));
 
     } catch (error) {
-      console.error('[F2A Webhook] 处理错误:', error);
+      logger.error('处理错误: %s', error);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ 
         error: error instanceof Error ? error.message : 'Internal error' 
@@ -134,12 +140,23 @@ export class WebhookServer {
 
   /**
    * 解析请求体
+   * 带大小限制，防止 DoS 攻击
    */
   private parseBody(req: IncomingMessage): Promise<unknown> {
     return new Promise((resolve, reject) => {
       let body = '';
+      let size = 0;
       
       req.on('data', (chunk) => {
+        size += chunk.length;
+        
+        // 检查请求体大小
+        if (size > this.maxBodySize) {
+          req.destroy();
+          reject(new Error(`Request body too large: ${size} bytes (max: ${this.maxBodySize})`));
+          return;
+        }
+        
         body += chunk.toString();
       });
       

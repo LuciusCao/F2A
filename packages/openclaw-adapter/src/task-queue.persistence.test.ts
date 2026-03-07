@@ -61,7 +61,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
       newQueue.close();
     });
 
-    it('应该在关闭后保留 processing 任务', () => {
+    it('应该在关闭后保留 processing 任务（恢复为 pending）', () => {
       queue.add({ taskId: 'processing-task', taskType: 'test' });
       queue.markProcessing('processing-task');
       
@@ -73,11 +73,13 @@ describe('TaskQueue 崩溃恢复测试', () => {
         persistEnabled: true
       });
 
+      // 恢复后 processing 任务被重置为 pending，避免僵尸任务
       const stats = newQueue.getStats();
-      expect(stats.processing).toBe(1);
+      expect(stats.pending).toBe(1);
+      expect(stats.processing).toBe(0);
 
       const task = newQueue.get('processing-task');
-      expect(task?.status).toBe('processing');
+      expect(task?.status).toBe('pending');
 
       newQueue.close();
     });
@@ -144,9 +146,10 @@ describe('TaskQueue 崩溃恢复测试', () => {
         persistEnabled: true
       });
 
+      // 恢复后 processing 任务被重置为 pending，避免僵尸任务
       const stats = newQueue.getStats();
-      expect(stats.pending).toBe(1); // crash-task-2
-      expect(stats.processing).toBe(1); // crash-task-1
+      expect(stats.pending).toBe(2); // crash-task-1 和 crash-task-2
+      expect(stats.processing).toBe(0);
 
       newQueue.close();
     });
@@ -226,7 +229,8 @@ describe('TaskQueue 崩溃恢复测试', () => {
       expect(task?.taskType).toBe('full-test');
       expect(task?.description).toBe('Full state test');
       expect(task?.parameters).toEqual({ key: 'value', nested: { data: 123 } });
-      expect(task?.status).toBe('processing');
+      // 恢复后 processing 任务被重置为 pending，避免僵尸任务
+      expect(task?.status).toBe('pending');
 
       newQueue.close();
     });
@@ -329,9 +333,10 @@ describe('TaskQueue 崩溃恢复测试', () => {
         persistEnabled: true
       });
 
+      // 恢复后 processing 任务被重置为 pending，避免僵尸任务
       const stats = newQueue.getStats();
-      expect(stats.pending).toBe(90);
-      expect(stats.processing).toBe(10);
+      expect(stats.pending).toBe(100);
+      expect(stats.processing).toBe(0);
       expect(stats.total).toBe(100);
 
       newQueue.close();

@@ -127,6 +127,7 @@ export class AnnouncementQueue {
 
   /**
    * 接受认领
+   * 使用 double-check locking 模式防止竞态条件
    */
   acceptClaim(announcementId: string, claimId: string): TaskClaim | null {
     const announcement = this.announcements.get(announcementId);
@@ -135,9 +136,22 @@ export class AnnouncementQueue {
       return null;
     }
 
+    // Double-check locking: 第一次检查广播状态
+    if (announcement.status !== 'open') {
+      logger.warn(' acceptClaim: announcement not open, id=%s, status=%s, claimId=%s', announcementId, announcement.status, claimId);
+      return null;
+    }
+
     const claim = announcement.claims?.find(c => c.claimId === claimId);
     if (!claim) {
       logger.warn(' acceptClaim: claim not found, announcementId=%s, claimId=%s', announcementId, claimId);
+      return null;
+    }
+
+    // Double-check locking: 第二次检查广播状态（在找到认领后）
+    // 这确保在查找认领和修改状态之间没有其他操作改变了广播状态
+    if (announcement.status !== 'open') {
+      logger.warn(' acceptClaim: race condition detected, announcement status changed, id=%s, status=%s, claimId=%s', announcementId, announcement.status, claimId);
       return null;
     }
 

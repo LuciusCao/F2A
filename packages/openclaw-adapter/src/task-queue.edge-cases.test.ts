@@ -120,9 +120,10 @@ describe('TaskQueue 边界问题', () => {
         persistEnabled: true
       });
 
+      // 恢复后 processing 任务被重置为 pending，避免僵尸任务
       const stats = newQueue.getStats();
-      expect(stats.pending).toBe(1); // task-2
-      expect(stats.processing).toBe(1); // task-1
+      expect(stats.pending).toBe(2); // task-1 和 task-2
+      expect(stats.processing).toBe(0);
 
       newQueue.close();
     });

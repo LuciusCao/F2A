@@ -552,10 +552,35 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
     // 处理加密消息
     if ((message as any).encrypted && (message as any).payload) {
-      const decrypted = this.e2eeCrypto.decrypt((message as any).payload);
+      const encryptedPayload = (message as any).payload;
+      const decrypted = this.e2eeCrypto.decrypt(encryptedPayload);
       if (decrypted) {
         try {
           message = JSON.parse(decrypted);
+          
+          // 安全验证：验证解密后的消息发送方身份
+          // 检查加密消息中的 senderPublicKey 是否与 peerId 绑定
+          if (encryptedPayload.senderPublicKey) {
+            const senderPublicKey = encryptedPayload.senderPublicKey;
+            // 验证发送方公钥是否已注册且属于该 peerId
+            const registeredKey = this.e2eeCrypto.getPeerPublicKey(peerId);
+            if (registeredKey && registeredKey !== senderPublicKey) {
+              this.logger.error('Sender identity verification failed: public key mismatch', {
+                peerId: peerId.slice(0, 16),
+                claimedKey: senderPublicKey.slice(0, 16),
+                registeredKey: registeredKey.slice(0, 16)
+              });
+              return;
+            }
+            // 如果发送方声称的身份与消息来源不匹配，拒绝处理
+            if (message.from && message.from !== peerId) {
+              this.logger.error('Sender identity verification failed: from field mismatch', {
+                claimedFrom: message.from?.slice(0, 16),
+                actualPeerId: peerId.slice(0, 16)
+              });
+              return;
+            }
+          }
         } catch (error) {
           this.logger.error('Failed to parse decrypted message', { error });
           return;
@@ -676,6 +701,15 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    * 处理发现消息
    */
   private async handleDiscover(agentInfo: AgentInfo, peerId: string): Promise<void> {
+    // 安全验证：确保 agentInfo.peerId 与发送方一致，防止伪造
+    if (agentInfo.peerId !== peerId) {
+      this.logger.warn('Discovery message rejected: peerId mismatch', {
+        claimedPeerId: agentInfo.peerId?.slice(0, 16),
+        actualPeerId: peerId.slice(0, 16)
+      });
+      return;
+    }
+
     // 检查是否需要清理以腾出空间
     if (this.peerTable.size >= PEER_TABLE_MAX_SIZE && !this.peerTable.has(peerId)) {
       this.cleanupStalePeers(true); // 强制清理
@@ -761,15 +795,18 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       return;
     }
 
-    // 使用原子操作避免竞态条件
+    // 使用原子操作避免竞态条件：先删除 Map 条目，再检查 resolved 标志
+    // 这确保即使多个响应并发到达，也只有一个能成功获取到 pending 条目
+    this.pendingTasks.delete(payload.taskId);
+    
     if (pending.resolved) {
+      this.logger.warn('Task already resolved, ignoring duplicate response', { taskId: payload.taskId });
       return;
     }
     pending.resolved = true;
 
     // 清理资源
     clearTimeout(pending.timeout);
-    this.pendingTasks.delete(payload.taskId);
 
     // 处理结果
     if (payload.status === 'success') {

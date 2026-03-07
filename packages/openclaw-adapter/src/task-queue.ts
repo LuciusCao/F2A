@@ -142,6 +142,12 @@ export class TaskQueue {
     if (!this.db) return;
 
     try {
+      // 恢复时将 processing 状态的任务重置为 pending，避免僵尸任务
+      // 这些任务在崩溃前正在处理，但未完成，需要重新执行
+      this.db.exec(`
+        UPDATE tasks SET status = 'pending' WHERE status = 'processing'
+      `);
+
       const rows = this.db.prepare(`
         SELECT * FROM tasks 
         WHERE status IN ('pending', 'processing')
@@ -318,9 +324,13 @@ export class TaskQueue {
     task.updatedAt = Date.now();
 
     if (this.db) {
-      this.db!.prepare(`
-        UPDATE tasks SET status = 'processing', updated_at = ? WHERE id = ?
-      `).run(task.updatedAt, taskId);
+      // 使用事务确保内存和数据库状态一致
+      const updateTransaction = this.db!.transaction(() => {
+        this.db!.prepare(`
+          UPDATE tasks SET status = 'processing', updated_at = ? WHERE id = ?
+        `).run(task.updatedAt, taskId);
+      });
+      updateTransaction();
     }
 
     return task;
@@ -345,18 +355,22 @@ export class TaskQueue {
     task.updatedAt = Date.now();
 
     if (this.db) {
-      this.db!.prepare(`
-        UPDATE tasks 
-        SET status = ?, result = ?, error = ?, latency = ?, updated_at = ?
-        WHERE id = ?
-      `).run(
-        task.status,
-        task.result ? JSON.stringify(task.result) : null,
-        task.error || null,
-        task.latency || null,
-        task.updatedAt,
-        taskId
-      );
+      // 使用事务确保内存和数据库状态一致
+      const updateTransaction = this.db!.transaction(() => {
+        this.db!.prepare(`
+          UPDATE tasks 
+          SET status = ?, result = ?, error = ?, latency = ?, updated_at = ?
+          WHERE id = ?
+        `).run(
+          task.status,
+          task.result ? JSON.stringify(task.result) : null,
+          task.error || null,
+          task.latency || null,
+          task.updatedAt,
+          taskId
+        );
+      });
+      updateTransaction();
     }
 
     return task;

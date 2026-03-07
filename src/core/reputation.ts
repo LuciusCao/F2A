@@ -350,6 +350,30 @@ export class ReputationManager {
     return this.getTier(entry.score).permissions.publishDiscount;
   }
 
+  /**
+   * 设置节点的初始信誉分数
+   * 用于邀请机制设置被邀请者的初始分数
+   */
+  setInitialScore(peerId: string, score: number): void {
+    const entry = this.getReputation(peerId);
+    const clampedScore = Math.max(this.config.minScore, Math.min(this.config.maxScore, score));
+    entry.score = clampedScore;
+    entry.level = this.getTier(clampedScore).level;
+    entry.lastUpdated = Date.now();
+    entry.history.push({
+      type: 'initial',
+      delta: clampedScore - this.config.initialScore,
+      timestamp: Date.now(),
+      reason: 'Set by invitation system'
+    });
+
+    this.logger.info('Initial score set', {
+      peerId: peerId.slice(0, 16),
+      score: clampedScore,
+      level: entry.level
+    });
+  }
+
   // ============================================================================
   // 私有方法
   // ============================================================================

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { randomBytes, timingSafeEqual } from 'crypto';
 import { homedir } from 'os';
 import { Logger } from '../utils/logger';
@@ -96,7 +96,7 @@ export class TokenManager {
    * 记录 Token 使用审计日志
    */
   logTokenUsage(clientInfo: { ip?: string; action?: string; success: boolean }): void {
-    const auditPath = join(join(this.tokenPath, '..'), 'token-audit.log');
+    const auditPath = join(dirname(this.tokenPath), 'token-audit.log');
     const entry = {
       timestamp: new Date().toISOString(),
       ...clientInfo

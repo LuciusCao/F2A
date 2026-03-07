@@ -92,11 +92,13 @@ export interface F2ANodeConfig {
   bootstrapPeers: string[];
 }
 
+// F2A Plugin Configuration
 export interface F2APluginConfig {
-  autoStart: boolean;
-  webhookPort: number;
-  agentName: string;
-  capabilities: string[];
+  autoStart?: boolean;
+  webhookPort?: number;
+  webhookToken?: string;
+  agentName?: string;
+  capabilities?: string[];
   f2aPath?: string;
   controlPort?: number;
   controlToken?: string;
@@ -105,6 +107,10 @@ export interface F2APluginConfig {
   bootstrapPeers?: string[];
   dataDir?: string;
   maxQueuedTasks?: number;
+  /** 兜底轮询间隔（毫秒），默认 60 秒 */
+  pollInterval?: number;
+  /** Webhook 推送配置 */
+  webhookPush?: WebhookPushConfig;
   reputation?: ReputationConfig;
   security?: SecurityConfig;
 }
@@ -260,25 +266,6 @@ export interface WebhookPushConfig {
   timeout?: number;
   /** 是否启用 webhook 推送 */
   enabled?: boolean;
-}
-
-// F2A Plugin Configuration
-export interface F2APluginConfig {
-  f2aPath?: string;
-  controlPort?: number;
-  controlToken?: string;
-  p2pPort?: number;
-  enableMDNS?: boolean;
-  bootstrapPeers?: string[];
-  autoStart?: boolean;
-  webhookPort?: number;
-  webhookToken?: string;
-  maxQueuedTasks?: number;
-  dataDir?: string;
-  reputation?: ReputationConfig;
-  webhookPush?: WebhookPushConfig;
-  /** 兜底轮询间隔（毫秒），默认 60 秒 */
-  pollInterval?: number;
 }
 
 export interface ClaimWebhookPayload {

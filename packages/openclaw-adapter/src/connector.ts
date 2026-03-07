@@ -842,10 +842,20 @@ ${peers.map(p => {
     let tasks: QueuedTask[];
     
     if (params.status) {
+      // 按状态过滤时不改变任务状态（只是查看）
       tasks = this.taskQueue.getAll().filter(t => t.status === params.status);
     } else {
-      // 默认返回待处理任务
+      // 默认返回待处理任务，并标记为 processing（防止重复执行）
       tasks = this.taskQueue.getPending(params.limit || 10);
+      
+      // 将返回的任务标记为 processing，防止重复获取
+      for (const task of tasks) {
+        this.taskQueue.markProcessing(task.taskId);
+      }
+      
+      if (tasks.length > 0) {
+        console.log(`[F2A Plugin] 已将 ${tasks.length} 个任务标记为 processing`);
+      }
     }
 
     if (tasks.length === 0) {
@@ -1330,6 +1340,9 @@ ${claims.map((c, i) => {
       bootstrapPeers: config.bootstrapPeers as string[] | undefined,
       dataDir: (config.dataDir as string) || './f2a-data',
       maxQueuedTasks: (config.maxQueuedTasks as number) || 100,
+      pollInterval: config.pollInterval as number | undefined,
+      // 保留 webhookPush 配置（修复：之前丢失导致 webhook 推送被禁用）
+      webhookPush: config.webhookPush as { enabled?: boolean; url: string; token: string; timeout?: number } | undefined,
       reputation: {
         enabled: ((config.reputation as Record<string, unknown>)?.enabled as boolean) ?? true,
         initialScore: ((config.reputation as Record<string, unknown>)?.initialScore as number) || 50,
@@ -1360,6 +1373,12 @@ ${claims.map((c, i) => {
   async shutdown(): Promise<void> {
     console.log('[F2A Plugin] 正在关闭...');
     
+    // 停止轮询定时器
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = undefined;
+    }
+    
     // 停止 Webhook 服务器
     if (this.webhookServer) {
       await this.webhookServer.stop?.();
@@ -1370,9 +1389,11 @@ ${claims.map((c, i) => {
       await this.nodeManager.stop();
     }
     
-    // 清理任务队列
+    // 关闭任务队列连接（保留持久化数据，不删除任务）
+    // 这样重启后可以恢复未完成的任务
     if (this.taskQueue) {
-      this.taskQueue.clear();
+      this.taskQueue.close();
+      console.log('[F2A Plugin] 任务队列已关闭，持久化数据已保留');
     }
     
     console.log('[F2A Plugin] 已关闭');

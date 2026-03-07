@@ -300,11 +300,13 @@ export class TaskGuard {
         severity: 'warn',
         check: (task, context) => {
           if (!context.requesterReputation) {
+            // 无信誉记录时返回 warn，而非直接通过
+            // 新 peer 首次任务需要谨慎处理
             return {
               passed: true,
-              severity: 'info',
+              severity: 'warn',
               ruleId: 'reputation',
-              message: '无信誉记录，使用默认处理'
+              message: '无信誉记录，首次任务建议谨慎处理'
             };
           }
 
@@ -344,9 +346,17 @@ export class TaskGuard {
           const hasPath = /[\/~]\w+/.test(description);
           
           if (isFileOp && hasPath) {
-            // 检查是否是系统路径
-            const systemPaths = ['/etc/', '/sys/', '/proc/', '/dev/', 'c:\\windows'];
-            const hasSystemPath = systemPaths.some(p => description.includes(p));
+            // 检查是否是系统路径（包括 macOS 路径）
+            const systemPaths = [
+              // Linux/Unix 系统路径
+              '/etc/', '/sys/', '/proc/', '/dev/', '/root/', '/boot/',
+              // macOS 系统路径
+              '/System/', '/Library/', '/Applications/', '/usr/', '/bin/', '/sbin/',
+              // Windows 系统路径
+              'c:\\windows', 'c:\\program files', 'c:\\program files (x86)',
+              'c:\\users\\public', 'c:\\users\\default'
+            ];
+            const hasSystemPath = systemPaths.some(p => description.includes(p.toLowerCase()));
             
             if (hasSystemPath) {
               return {
@@ -380,15 +390,20 @@ export class TaskGuard {
           const isNetworkOp = /\b(fetch|download|curl|wget|http|api)\b/.test(description);
           
           if (isNetworkOp) {
-            const suspicious = ['exe', 'dll', 'sh', 'bash', 'python', 'script'];
-            const hasSuspicious = suspicious.some(s => description.includes(s));
+            // 更精确的可疑文件扩展名检测（移除 python/script 等宽泛词）
+            const suspiciousExtensions = ['exe', 'dll', 'app', 'deb', 'rpm', 'dmg', 'msi', 'bat', 'ps1'];
+            const hasSuspicious = suspiciousExtensions.some(ext => {
+              // 匹配 .ext 后跟空格、引号、斜杠、大于号，或字符串结尾
+              const pattern = new RegExp(`\\.${ext}([\\s"'\\/>]|$)`, 'i');
+              return pattern.test(description);
+            });
             
             if (hasSuspicious) {
               return {
                 passed: false,
                 severity: 'warn',
                 ruleId: 'network-operation',
-                message: '检测到可疑的网络下载操作',
+                message: '检测到可疑的网络下载操作（可执行文件）',
                 details: { suspicious: true }
               };
             }

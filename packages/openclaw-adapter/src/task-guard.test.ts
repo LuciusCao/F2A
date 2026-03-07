@@ -280,11 +280,12 @@ describe('TaskGuard', () => {
 
   describe('规则 7: 网络操作检查', () => {
     it('应该检测可疑的网络下载', () => {
+      // 更新测试用例：只检测真正的可执行文件扩展名
       const suspiciousOps = [
-        'download script.sh from http://example.com',
-        'fetch malware.exe via curl',
-        'wget http://example.com/tool.dll',
-        'download python script from api'
+        'download malware.exe from http://example.com',
+        'fetch tool.dll via curl',
+        'wget http://example.com/backdoor.app',
+        'download payload.deb from api'
       ];
 
       for (const desc of suspiciousOps) {
@@ -297,11 +298,20 @@ describe('TaskGuard', () => {
     });
 
     it('应该允许正常的网络操作', () => {
-      const task = createTask({ description: 'fetch data from http://api.example.com/data' });
-      const report = guard.check(task);
+      // 更新测试：python script 不再被标记为可疑
+      const normalOps = [
+        'fetch data from http://api.example.com/data',
+        'download python script from api',
+        'download script.sh from http://example.com'
+      ];
 
-      const networkResult = report.results.find(r => r.ruleId === 'network-operation');
-      expect(networkResult?.passed).toBe(true);
+      for (const desc of normalOps) {
+        const task = createTask({ description: desc });
+        const report = guard.check(task);
+
+        const networkResult = report.results.find(r => r.ruleId === 'network-operation');
+        expect(networkResult?.passed).toBe(true);
+      }
     });
   });
 

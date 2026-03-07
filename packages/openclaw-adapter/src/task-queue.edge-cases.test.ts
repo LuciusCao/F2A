@@ -140,53 +140,66 @@ describe('并发竞态条件', () => {
     queue.close();
   });
 
-  it('应该正确处理并发添加', async () => {
-    const promises = [];
-    
+  it('应该正确处理批量添加', () => {
+    // add() 是同步方法，不需要 Promise.resolve 包装
     for (let i = 0; i < 100; i++) {
-      promises.push(
-        Promise.resolve(queue.add({ taskId: `task-${i}`, taskType: 'test' }))
-      );
+      queue.add({ taskId: `task-${i}`, taskType: 'test' });
     }
-
-    await Promise.all(promises);
 
     expect(queue.getStats().total).toBe(100);
   });
 
-  it('应该正确处理并发 add 和 getPending', async () => {
-    const addPromises = [];
-    const getPromises = [];
-
+  it('应该正确处理批量 add 和 getPending', () => {
+    // 同步操作，不需要 Promise 包装
     for (let i = 0; i < 50; i++) {
-      addPromises.push(
-        Promise.resolve(queue.add({ taskId: `task-${i}`, taskType: 'test' }))
-      );
-      getPromises.push(
-        Promise.resolve(queue.getPending())
-      );
+      queue.add({ taskId: `task-${i}`, taskType: 'test' });
+      queue.getPending();
     }
-
-    await Promise.all([...addPromises, ...getPromises]);
 
     // 最终应该有 50 个任务
     expect(queue.getStats().total).toBe(50);
   });
 
-  it('应该正确处理并发 complete', async () => {
+  it('应该正确处理批量 complete', () => {
     for (let i = 0; i < 50; i++) {
       queue.add({ taskId: `task-${i}`, taskType: 'test' });
     }
 
-    const promises = [];
+    // complete() 是同步方法，不需要 Promise 包装
     for (let i = 0; i < 50; i++) {
-      promises.push(
-        Promise.resolve(queue.complete(`task-${i}`, { status: 'success' }))
-      );
+      queue.complete(`task-${i}`, { status: 'success' });
     }
 
-    await Promise.all(promises);
-
     expect(queue.getStats().completed).toBe(50);
+  });
+
+  it('应该正确处理 taskId 输入验证', () => {
+    // 空字符串应该抛出错误
+    expect(() => queue.add({ taskId: '', taskType: 'test' })).toThrow('taskId must be a non-empty string');
+    
+    // 只有空格的字符串应该抛出错误
+    expect(() => queue.add({ taskId: '   ', taskType: 'test' })).toThrow('taskId must be a non-empty string');
+    
+    // 正常的 taskId 应该成功
+    expect(() => queue.add({ taskId: 'valid-task', taskType: 'test' })).not.toThrow();
+  });
+
+  it('应该保留重新添加任务的 createdAt 时间戳', () => {
+    queue.add({ taskId: 'task-1', taskType: 'test', description: 'first' });
+    const originalTask = queue.get('task-1');
+    const originalCreatedAt = originalTask?.createdAt;
+
+    // 等待一小段时间
+    const start = Date.now();
+    while (Date.now() - start < 10) { /* spin */ }
+
+    // 重新添加相同 taskId 的任务
+    queue.add({ taskId: 'task-1', taskType: 'test', description: 'second' });
+    const updatedTask = queue.get('task-1');
+
+    // createdAt 应该保持不变
+    expect(updatedTask?.createdAt).toBe(originalCreatedAt);
+    // 但 description 应该更新
+    expect(updatedTask?.description).toBe('second');
   });
 });

@@ -4,6 +4,8 @@
  */
 
 import type { TaskAnnouncement, TaskClaim } from './types.js';
+import { randomUUID } from 'crypto';
+import { randomUUID } from 'crypto';
 
 export interface AnnouncementQueueStats {
   open: number;
@@ -35,7 +37,8 @@ export class AnnouncementQueue {
       throw new Error('Announcement queue is full');
     }
 
-    const id = `ann-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // 使用 crypto.randomUUID() 生成唯一 ID，避免碰撞
+    const id = `ann-${randomUUID()}`;
     const created: TaskAnnouncement = {
       ...announcement,
       announcementId: id,
@@ -75,7 +78,15 @@ export class AnnouncementQueue {
     if (!announcement) return null;
     if (announcement.status !== 'open') return null;
 
-    const claimId = `claim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // 检查该 claimant 是否已经提交过认领（防止重复认领）
+    const existingClaim = announcement.claims?.find(c => c.claimant === claim.claimant);
+    if (existingClaim) {
+      // 返回已存在的认领，而不是创建新的
+      return existingClaim;
+    }
+
+    // 使用 crypto.randomUUID() 生成唯一 ID
+    const claimId = `claim-${randomUUID()}`;
     const created: TaskClaim = {
       ...claim,
       claimId,

@@ -7,6 +7,7 @@ import type { TaskRequest, TaskResponse } from './types.js';
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import { randomUUID } from 'crypto';
 
 export interface QueuedTask extends TaskRequest {
   status: 'pending' | 'processing' | 'completed' | 'failed';
@@ -123,39 +124,70 @@ export class TaskQueue {
    * 添加新任务到队列
    */
   add(request: TaskRequest): QueuedTask {
+    // 输入验证：taskId 必须是非空字符串
+    if (!request.taskId || typeof request.taskId !== 'string' || request.taskId.trim() === '') {
+      throw new Error('taskId must be a non-empty string');
+    }
+
     // 清理旧任务
     this.cleanup();
 
-    // 检查队列是否已满
-    if (this.tasks.size >= this.maxSize) {
+    // 检查是否为重复添加（保留原 createdAt）
+    const existingTask = this.tasks.get(request.taskId);
+    const preservedCreatedAt = existingTask?.createdAt ?? Date.now();
+
+    // 使用事务确保原子性（解决竞态条件）
+    if (this.db) {
+      const insertTask = this.db!.transaction(() => {
+        // 在事务内检查队列大小（原子操作）
+        const count = this.db!.prepare('SELECT COUNT(*) as count FROM tasks').get() as { count: number };
+        if (count.count >= this.maxSize && !existingTask) {
+          throw new Error('Task queue is full');
+        }
+
+        const task: QueuedTask = {
+          ...request,
+          status: 'pending',
+          createdAt: preservedCreatedAt,
+          webhookPushed: false
+        };
+
+        this.db!.prepare(`
+          INSERT OR REPLACE INTO tasks 
+          (id, task_type, description, parameters, status, created_at, webhook_pushed)
+          VALUES (?, ?, ?, ?, ?, ?, 0)
+        `).run(
+          task.taskId,
+          task.taskType || null,
+          task.description || null,
+          task.parameters ? JSON.stringify(task.parameters) : null,
+          task.status,
+          task.createdAt
+        );
+
+        return task;
+      });
+
+      const task = insertTask();
+      // 同步内存状态
+      this.tasks.set(request.taskId, task);
+      return task;
+    }
+
+    // 无 DB 时，在内存中检查队列是否已满
+    // 注意：对于新任务才检查容量限制
+    if (!existingTask && this.tasks.size >= this.maxSize) {
       throw new Error('Task queue is full');
     }
 
     const task: QueuedTask = {
       ...request,
       status: 'pending',
-      createdAt: Date.now(),
+      createdAt: preservedCreatedAt,
       webhookPushed: false
     };
 
     this.tasks.set(request.taskId, task);
-
-    // 持久化
-    if (this.db) {
-      this.db!.prepare(`
-        INSERT OR REPLACE INTO tasks 
-        (id, task_type, description, parameters, status, created_at, webhook_pushed)
-        VALUES (?, ?, ?, ?, ?, ?, 0)
-      `).run(
-        task.taskId,
-        task.taskType || null,
-        task.description || null,
-        task.parameters ? JSON.stringify(task.parameters) : null,
-        task.status,
-        task.createdAt
-      );
-    }
-
     return task;
   }
 

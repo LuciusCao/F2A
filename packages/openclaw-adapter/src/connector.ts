@@ -11,6 +11,7 @@ import type {
   ToolResult,
   F2ANodeConfig,
   F2APluginConfig,
+  AgentInfo,
   AgentCapability,
   DiscoverWebhookPayload,
   DelegateWebhookPayload,

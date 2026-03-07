@@ -5,6 +5,8 @@
 
 import type { TaskRequest, TaskAnnouncement, ReputationEntry } from './types.js';
 import { taskGuardLogger as logger } from './logger.js';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface TaskGuardRule {
   id: string;
@@ -64,6 +66,10 @@ export interface TaskGuardConfig {
   blockedKeywords: string[];
   dangerousPatterns: RegExp[];
   minReputationForDangerous: number;
+  /** 持久化目录路径，用于存储 rate limiting 状态。不设置则不持久化 */
+  persistDir?: string;
+  /** 持久化保存间隔（毫秒），默认 30000 (30秒) */
+  persistIntervalMs?: number;
 }
 
 export interface TaskGuardResult {
@@ -104,7 +110,9 @@ export const DEFAULT_TASK_GUARD_CONFIG: TaskGuardConfig = {
     /drop\s+database/i,
     /shutdown\s+-h/i
   ],
-  minReputationForDangerous: 70
+  minReputationForDangerous: 70,
+  persistDir: undefined,
+  persistIntervalMs: 30000 // 30秒
 };
 
 /**
@@ -247,10 +255,151 @@ export class TaskGuard {
   private lastCleanupTime: number = 0;
   /** 定时清理间隔（毫秒） */
   private cleanupIntervalMs: number = 60000; // 1分钟
+  /** 持久化文件路径 */
+  private persistFilePath: string | null = null;
+  /** 持久化定时器 */
+  private persistTimer: NodeJS.Timeout | null = null;
+  /** 是否有未保存的更改 */
+  private hasUnsavedChanges: boolean = false;
 
   constructor(config: Partial<TaskGuardConfig> = {}) {
     this.config = { ...DEFAULT_TASK_GUARD_CONFIG, ...config };
     this.rules = this.createDefaultRules();
+    
+    // 初始化持久化
+    if (this.config.persistDir) {
+      this.initPersistence(this.config.persistDir, this.config.persistIntervalMs);
+    }
+  }
+
+  /**
+   * 初始化持久化
+   */
+  private initPersistence(persistDir: string, persistIntervalMs?: number): void {
+    try {
+      // 确保目录存在
+      if (!fs.existsSync(persistDir)) {
+        fs.mkdirSync(persistDir, { recursive: true });
+      }
+      
+      this.persistFilePath = path.join(persistDir, 'task-guard-state.json');
+      
+      // 加载已保存的状态
+      this.loadPersistedState();
+      
+      // 设置定期保存
+      const interval = persistIntervalMs ?? DEFAULT_TASK_GUARD_CONFIG.persistIntervalMs ?? 30000;
+      this.persistTimer = setInterval(() => {
+        this.saveStateIfNeeded();
+      }, interval);
+      
+      // 防止定时器阻止进程退出
+      if (this.persistTimer.unref) {
+        this.persistTimer.unref();
+      }
+      
+      logger.info('persistence-initialized: persistDir=%s, intervalMs=%d', persistDir, interval);
+    } catch (error) {
+      logger.error('persistence-init-failed: error=%s', error);
+      this.persistFilePath = null;
+    }
+  }
+
+  /**
+   * 加载已保存的状态
+   */
+  private loadPersistedState(): void {
+    if (!this.persistFilePath || !fs.existsSync(this.persistFilePath)) {
+      return;
+    }
+    
+    try {
+      const data = fs.readFileSync(this.persistFilePath, 'utf-8');
+      const state = JSON.parse(data) as { recentTasks: Record<string, number[]>; savedAt: number };
+      
+      if (state.recentTasks && typeof state.recentTasks === 'object') {
+        const now = Date.now();
+        const windowMs = 60000; // 1分钟窗口
+        
+        // 过滤掉过期的时间戳，只保留有效的
+        let loadedCount = 0;
+        for (const [peerId, timestamps] of Object.entries(state.recentTasks)) {
+          if (Array.isArray(timestamps)) {
+            const validTimestamps = timestamps.filter(t => 
+              typeof t === 'number' && now - t < windowMs
+            );
+            if (validTimestamps.length > 0) {
+              this.recentTasks.set(peerId, validTimestamps);
+              loadedCount += validTimestamps.length;
+            }
+          }
+        }
+        
+        logger.info('persistence-loaded: entries=%d, timestamps=%d, savedAt=%s', 
+          this.recentTasks.size, loadedCount, new Date(state.savedAt).toISOString());
+      }
+    } catch (error) {
+      logger.warn('persistence-load-failed: error=%s', error);
+    }
+  }
+
+  /**
+   * 保存状态到文件
+   */
+  private saveState(): void {
+    if (!this.persistFilePath) {
+      return;
+    }
+    
+    try {
+      const state = {
+        recentTasks: Object.fromEntries(this.recentTasks),
+        savedAt: Date.now()
+      };
+      
+      // 写入临时文件，然后原子性重命名
+      const tempPath = this.persistFilePath + '.tmp';
+      fs.writeFileSync(tempPath, JSON.stringify(state), 'utf-8');
+      fs.renameSync(tempPath, this.persistFilePath);
+      
+      this.hasUnsavedChanges = false;
+      logger.debug('persistence-saved: entries=%d', this.recentTasks.size);
+    } catch (error) {
+      logger.error('persistence-save-failed: error=%s', error);
+    }
+  }
+
+  /**
+   * 仅在有未保存更改时保存
+   */
+  private saveStateIfNeeded(): void {
+    if (this.hasUnsavedChanges) {
+      this.saveState();
+    }
+  }
+
+  /**
+   * 手动保存当前状态
+   */
+  forceSave(): void {
+    this.saveState();
+  }
+
+  /**
+   * 关闭持久化（停止定时器并保存最后状态）
+   */
+  shutdown(): void {
+    if (this.persistTimer) {
+      clearInterval(this.persistTimer);
+      this.persistTimer = null;
+    }
+    
+    // 保存最终状态
+    if (this.hasUnsavedChanges) {
+      this.saveState();
+    }
+    
+    logger.info('task-guard-shutdown: persisted=%s', !!this.persistFilePath);
   }
 
   /**
@@ -626,6 +775,9 @@ export class TaskGuard {
     timestamps.push(Date.now());
     this.recentTasks.set(peerId, timestamps);
     
+    // 标记有未保存的更改
+    this.hasUnsavedChanges = true;
+    
     // 优化：仅在超过阈值或定时触发时清理，而非每次都清理
     this.maybeCleanup();
   }
@@ -651,6 +803,7 @@ export class TaskGuard {
   private cleanupRecentTasks(): void {
     const now = Date.now();
     const windowMs = 60000; // 1分钟窗口
+    let hadChanges = false;
     
     for (const [key, timestamps] of this.recentTasks.entries()) {
       // 过滤掉过期的时间戳
@@ -658,10 +811,16 @@ export class TaskGuard {
       if (validTimestamps.length === 0) {
         // 没有有效时间戳，删除整个条目
         this.recentTasks.delete(key);
+        hadChanges = true;
       } else if (validTimestamps.length !== timestamps.length) {
         // 更新为有效的时间戳
         this.recentTasks.set(key, validTimestamps);
+        hadChanges = true;
       }
+    }
+    
+    if (hadChanges) {
+      this.hasUnsavedChanges = true;
     }
   }
 }

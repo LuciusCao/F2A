@@ -132,8 +132,6 @@ export class F2ANetworkClient {
       } catch (error) {
         // 处理超时错误
         if (error instanceof Error && error.name === 'AbortError') {
-          lastError = new Error(`Request timed out after ${this.timeoutMs}ms`);
-          
           if (attempt < this.maxRetries) {
             const delayMs = this.calculateDelay(attempt);
             logger.info(`Retrying request to ${path} after timeout (${delayMs}ms, attempt ${attempt + 1}/${this.maxRetries})`);
@@ -141,6 +139,11 @@ export class F2ANetworkClient {
             await this.delay(delayMs);
             continue;
           }
+          // 所有重试都因超时失败
+          return failure(createError(
+            'CONNECTION_FAILED',
+            `Request timed out after ${this.timeoutMs}ms`
+          ));
         }
         
         // 检查是否可重试

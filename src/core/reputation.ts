@@ -223,7 +223,10 @@ export class ReputationManager implements Disposable {
   }
 
   /**
-   * 获取节点信誉
+   * 获取节点信誉信息
+   * 如果节点不存在，会自动创建一个带有初始分数的条目
+   * @param peerId - 节点的唯一标识符
+   * @returns 节点的信誉条目，包含分数、等级和历史记录
    */
   getReputation(peerId: string): ReputationEntry {
     if (!this.entries.has(peerId)) {
@@ -233,7 +236,10 @@ export class ReputationManager implements Disposable {
   }
 
   /**
-   * 获取信誉等级
+   * 获取信誉等级信息
+   * 根据分数返回对应的信誉等级和权限配置
+   * @param score - 信誉分数 (0-100)
+   * @returns 对应的信誉等级配置
    */
   getTier(score: number): ReputationTier {
     for (const tier of REPUTATION_TIERS) {
@@ -245,7 +251,10 @@ export class ReputationManager implements Disposable {
   }
 
   /**
-   * 检查权限
+   * 检查节点是否具有指定权限
+   * @param peerId - 节点的唯一标识符
+   * @param permission - 要检查的权限类型：'publish'（发布）、'execute'（执行）、'review'（评审）
+   * @returns 如果节点具有该权限则返回 true，否则返回 false
    */
   hasPermission(peerId: string, permission: 'publish' | 'execute' | 'review'): boolean {
     const entry = this.getReputation(peerId);
@@ -322,6 +331,11 @@ export class ReputationManager implements Disposable {
 
   /**
    * 记录任务失败
+   * 会降低节点的信誉分数
+   * @param peerId - 节点的唯一标识符
+   * @param taskId - 失败任务的 ID
+   * @param reason - 可选的失败原因描述
+   * @param delta - 分数变化量，默认为 -20
    */
   recordFailure(peerId: string, taskId: string, reason?: string, delta: number = -20): void {
     const entry = this.getReputation(peerId);
@@ -354,6 +368,11 @@ export class ReputationManager implements Disposable {
 
   /**
    * 记录任务拒绝
+   * 当节点拒绝接受任务时调用，会轻微降低信誉分数
+   * @param peerId - 节点的唯一标识符
+   * @param taskId - 被拒绝任务的 ID
+   * @param reason - 可选的拒绝原因描述
+   * @param delta - 分数变化量，默认为 -5
    */
   recordRejection(peerId: string, taskId: string, reason?: string, delta: number = -5): void {
     const entry = this.getReputation(peerId);
@@ -384,6 +403,9 @@ export class ReputationManager implements Disposable {
 
   /**
    * 记录评审奖励
+   * 当节点完成评审任务时调用，会提高信誉分数
+   * @param peerId - 节点的唯一标识符
+   * @param delta - 分数变化量，默认为 3
    */
   recordReviewReward(peerId: string, delta: number = 3): void {
     const entry = this.getReputation(peerId);
@@ -412,6 +434,10 @@ export class ReputationManager implements Disposable {
 
   /**
    * 记录评审惩罚
+   * 当节点提供低质量评审或违规时调用，会降低信誉分数
+   * @param peerId - 节点的唯一标识符
+   * @param delta - 分数变化量，默认为 -5
+   * @param reason - 可选的惩罚原因描述
    */
   recordReviewPenalty(peerId: string, delta: number = -5, reason?: string): void {
     const entry = this.getReputation(peerId);
@@ -441,21 +467,29 @@ export class ReputationManager implements Disposable {
   }
 
   /**
-   * 获取所有信誉条目（按分数排序）
+   * 获取所有信誉条目
+   * 返回按分数从高到低排序的所有节点信誉信息
+   * @returns 排序后的信誉条目数组
    */
   getAllReputations(): ReputationEntry[] {
     return Array.from(this.entries.values()).sort((a, b) => b.score - a.score);
   }
 
   /**
-   * 获取高信誉节点（可用于评审）
+   * 获取高信誉节点
+   * 返回分数达到指定阈值的节点列表，可用于评审任务分配
+   * @param minScore - 最低信誉分数阈值，默认为 50
+   * @returns 符合条件的信誉条目数组，按分数排序
    */
   getHighReputationNodes(minScore: number = 50): ReputationEntry[] {
     return this.getAllReputations().filter(e => e.score >= minScore);
   }
 
   /**
-   * 计算发布优先级
+   * 获取节点的发布优先级
+   * 优先级越高，任务分配时越优先被考虑
+   * @param peerId - 节点的唯一标识符
+   * @returns 发布优先级 (0-5)
    */
   getPublishPriority(peerId: string): number {
     const entry = this.getReputation(peerId);
@@ -463,7 +497,10 @@ export class ReputationManager implements Disposable {
   }
 
   /**
-   * 计算发布折扣
+   * 获取节点的发布折扣
+   * 高信誉节点可享受更低的服务费用折扣
+   * @param peerId - 节点的唯一标识符
+   * @returns 发布折扣率 (0.7-1.0，数值越小折扣越大)
    */
   getPublishDiscount(peerId: string): number {
     const entry = this.getReputation(peerId);
@@ -472,7 +509,9 @@ export class ReputationManager implements Disposable {
 
   /**
    * 设置节点的初始信誉分数
-   * 用于邀请机制设置被邀请者的初始分数
+   * 用于邀请机制设置被邀请者的初始分数，可覆盖默认初始分数
+   * @param peerId - 节点的唯一标识符
+   * @param score - 要设置的分数 (0-100)，会自动限制在有效范围内
    */
   setInitialScore(peerId: string, score: number): void {
     const entry = this.getReputation(peerId);

@@ -65,10 +65,39 @@ export interface DiscoverOptions {
   waitForFirstResponse?: boolean;
 }
 
+/**
+ * 简单的异步锁实现，用于保护关键资源的并发访问
+ */
+class AsyncLock {
+  private locked = false;
+  private queue: Array<() => void> = [];
+
+  async acquire(): Promise<void> {
+    if (!this.locked) {
+      this.locked = true;
+      return;
+    }
+    return new Promise<void>(resolve => {
+      this.queue.push(resolve);
+    });
+  }
+
+  release(): void {
+    const next = this.queue.shift();
+    if (next) {
+      next();
+    } else {
+      this.locked = false;
+    }
+  }
+}
+
 export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private node: Libp2p | null = null;
   private config: P2PNetworkConfig;
   private peerTable: Map<string, PeerInfo> = new Map();
+  /** 用于保护 peerTable 并发访问的锁 */
+  private peerTableLock = new AsyncLock();
   private agentInfo: AgentInfo;
   private pendingTasks: Map<string, {
     resolve: (result: unknown) => void;
@@ -476,7 +505,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     if (!this.node) return;
 
     // 新连接
-    this.node.addEventListener('peer:connect', (evt) => {
+    this.node.addEventListener('peer:connect', async (evt) => {
       const peerId = evt.detail.toString();
       this.logger.info('Peer connected', { peerId: peerId.slice(0, 16) });
 
@@ -485,39 +514,42 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         direction: 'inbound'
       });
 
-      // 更新路由表 - 确保 peer 存在
-      const existing = this.peerTable.get(peerId);
-      if (existing) {
-        existing.connected = true;
-        existing.connectedAt = Date.now();
-        existing.lastSeen = Date.now();
-      } else {
-        // Peer 不在路由表中，创建新条目
-        this.logger.info('Creating new peer entry on connect', { peerId: peerId.slice(0, 16) });
-        this.peerTable.set(peerId, {
+      // 使用原子操作更新路由表
+      const now = Date.now();
+      await this.upsertPeer(
+        peerId,
+        () => ({
           peerId,
           multiaddrs: [],
           connected: true,
           reputation: 50,
-          connectedAt: Date.now(),
-          lastSeen: Date.now()
-        });
-      }
+          connectedAt: now,
+          lastSeen: now
+        }),
+        (peer) => ({
+          ...peer,
+          connected: true,
+          connectedAt: now,
+          lastSeen: now
+        })
+      );
     });
 
     // 断开连接
-    this.node.addEventListener('peer:disconnect', (evt) => {
+    this.node.addEventListener('peer:disconnect', async (evt) => {
       const peerId = evt.detail.toString();
       this.logger.info('Peer disconnected', { peerId: peerId.slice(0, 16) });
 
       this.emit('peer:disconnected', { peerId });
 
-      // 更新路由表 - 确保 peer 存在
-      const existing = this.peerTable.get(peerId);
-      if (existing) {
-        existing.connected = false;
-        existing.lastSeen = Date.now();
-      } else {
+      // 使用原子操作更新路由表
+      const updated = await this.updatePeer(peerId, (peer) => ({
+        ...peer,
+        connected: false,
+        lastSeen: Date.now()
+      }));
+
+      if (!updated) {
         // Peer 不在路由表中，记录警告但不创建条目（已断开）
         this.logger.warn('Peer disconnected but not in routing table', { peerId: peerId.slice(0, 16) });
       }
@@ -729,22 +761,6 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   }
 
   /**
-   * 检查并确保 peerTable 有足够空间
-   * 如果接近容量上限，主动触发清理
-   * @returns 是否有足够空间
-   */
-  private ensureCapacity(): boolean {
-    const highWatermark = Math.floor(PEER_TABLE_MAX_SIZE * PEER_TABLE_HIGH_WATERMARK);
-    
-    if (this.peerTable.size >= highWatermark) {
-      // 接近容量上限，触发激进清理
-      this.cleanupStalePeers(true);
-    }
-    
-    return this.peerTable.size < PEER_TABLE_MAX_SIZE;
-  }
-
-  /**
    * 处理发现消息
    */
   private async handleDiscover(agentInfo: AgentInfo, peerId: string): Promise<void> {
@@ -757,34 +773,50 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       return;
     }
 
-    // 检查是否需要清理以腾出空间
-    if (!this.peerTable.has(peerId)) {
-      // 新 peer，需要检查容量
-      if (!this.ensureCapacity()) {
-        // 清理后仍无空间，拒绝新 peer
-        this.logger.warn('Peer table full, rejecting new peer', {
-          peerId: peerId.slice(0, 16),
-          currentSize: this.peerTable.size,
-          maxSize: PEER_TABLE_MAX_SIZE
-        });
-        return;
+    // 使用锁保护容量检查和创建操作的原子性
+    await this.peerTableLock.acquire();
+    try {
+      // 检查是否需要清理以腾出空间
+      if (!this.peerTable.has(peerId)) {
+        // 新 peer，需要检查容量
+        const highWatermark = Math.floor(PEER_TABLE_MAX_SIZE * PEER_TABLE_HIGH_WATERMARK);
+        if (this.peerTable.size >= highWatermark) {
+          // 接近容量上限，触发激进清理
+          this.cleanupStalePeersLocked(true);
+        }
+        
+        if (this.peerTable.size >= PEER_TABLE_MAX_SIZE) {
+          // 清理后仍无空间，拒绝新 peer
+          this.logger.warn('Peer table full, rejecting new peer', {
+            peerId: peerId.slice(0, 16),
+            currentSize: this.peerTable.size,
+            maxSize: PEER_TABLE_MAX_SIZE
+          });
+          return;
+        }
       }
-    }
 
-    // 更新路由表
-    const existing = this.peerTable.get(peerId);
-    if (existing) {
-      existing.agentInfo = agentInfo;
-      existing.lastSeen = Date.now();
-    } else {
-      this.peerTable.set(peerId, {
-        peerId,
-        agentInfo,
-        multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma)),
-        connected: false,
-        reputation: 50,
-        lastSeen: Date.now()
-      });
+      // 更新路由表
+      const now = Date.now();
+      const existing = this.peerTable.get(peerId);
+      if (existing) {
+        this.peerTable.set(peerId, {
+          ...existing,
+          agentInfo,
+          lastSeen: now
+        });
+      } else {
+        this.peerTable.set(peerId, {
+          peerId,
+          agentInfo,
+          multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma)),
+          connected: false,
+          reputation: 50,
+          lastSeen: now
+        });
+      }
+    } finally {
+      this.peerTableLock.release();
     }
 
     // 注册对等方的加密公钥
@@ -916,10 +948,23 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   }
 
   /**
-   * 清理过期的 Peer 记录
+   * 清理过期的 Peer 记录（带锁保护）
    * @param aggressive 是否使用激进清理策略（清理更多条目）
    */
-  private cleanupStalePeers(aggressive = false): void {
+  private async cleanupStalePeers(aggressive = false): Promise<void> {
+    await this.peerTableLock.acquire();
+    try {
+      this.cleanupStalePeersLocked(aggressive);
+    } finally {
+      this.peerTableLock.release();
+    }
+  }
+
+  /**
+   * 清理过期的 Peer 记录（内部方法，调用前必须持有锁）
+   * @param aggressive 是否使用激进清理策略（清理更多条目）
+   */
+  private cleanupStalePeersLocked(aggressive = false): void {
     const now = Date.now();
     const threshold = aggressive ? 0 : PEER_STALE_THRESHOLD;
     let cleaned = 0;
@@ -987,6 +1032,82 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       }
 
       this.logger.info('Removed oldest peers to maintain limit', { removed: toRemove.length });
+    }
+  }
+
+  /**
+   * 原子操作：获取 peer 信息
+   */
+  private getPeer(peerId: string): PeerInfo | undefined {
+    return this.peerTable.get(peerId);
+  }
+
+  /**
+   * 原子操作：设置 peer 信息
+   */
+  private setPeer(peerId: string, info: PeerInfo): void {
+    this.peerTable.set(peerId, info);
+  }
+
+  /**
+   * 原子操作：更新 peer 信息（线程安全）
+   * @param peerId Peer ID
+   * @param updater 更新函数，接收当前值，返回新值
+   * @returns 更新后的 peer 信息，如果 peer 不存在则返回 undefined
+   */
+  private async updatePeer(
+    peerId: string,
+    updater: (peer: PeerInfo) => PeerInfo
+  ): Promise<PeerInfo | undefined> {
+    await this.peerTableLock.acquire();
+    try {
+      const peer = this.peerTable.get(peerId);
+      if (!peer) return undefined;
+      const updated = updater(peer);
+      this.peerTable.set(peerId, updated);
+      return updated;
+    } finally {
+      this.peerTableLock.release();
+    }
+  }
+
+  /**
+   * 原子操作：安全地更新或创建 peer
+   * @param peerId Peer ID
+   * @param creator 创建新 peer 的函数（如果不存在）
+   * @param updater 更新函数（如果存在）
+   */
+  private async upsertPeer(
+    peerId: string,
+    creator: () => PeerInfo,
+    updater: (peer: PeerInfo) => PeerInfo
+  ): Promise<PeerInfo> {
+    await this.peerTableLock.acquire();
+    try {
+      const existing = this.peerTable.get(peerId);
+      if (existing) {
+        const updated = updater(existing);
+        this.peerTable.set(peerId, updated);
+        return updated;
+      } else {
+        const created = creator();
+        this.peerTable.set(peerId, created);
+        return created;
+      }
+    } finally {
+      this.peerTableLock.release();
+    }
+  }
+
+  /**
+   * 原子操作：删除 peer
+   */
+  private async deletePeer(peerId: string): Promise<boolean> {
+    await this.peerTableLock.acquire();
+    try {
+      return this.peerTable.delete(peerId);
+    } finally {
+      this.peerTableLock.release();
     }
   }
 

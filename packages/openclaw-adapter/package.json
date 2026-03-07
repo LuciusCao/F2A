@@ -25,7 +25,8 @@
     "f2a-network": "file:../..",
     "ws": "^8.16.0",
     "node-fetch": "^3.3.2",
-    "zod": "^3.22.4"
+    "zod": "^3.22.4",
+    "better-sqlite3": "^11.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

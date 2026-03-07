@@ -12,7 +12,7 @@ describe('F2AOpenClawAdapter', () => {
   describe('basic properties', () => {
     it('should have correct name and version', () => {
       expect(adapter.name).toBe('f2a-openclaw-adapter');
-      expect(adapter.version).toBe('0.2.0');
+      expect(adapter.version).toBe('0.3.0');
     });
   });
 

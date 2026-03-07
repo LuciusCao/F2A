@@ -27,10 +27,11 @@ import { ReputationSystem } from './reputation.js';
 import { CapabilityDetector } from './capability-detector.js';
 import { TaskQueue, QueuedTask } from './task-queue.js';
 import { AnnouncementQueue } from './announcement-queue.js';
+import { WebhookPusher, WebhookPushConfig } from './webhook-pusher.js';
 
 export class F2AOpenClawAdapter implements OpenClawPlugin {
   name = 'f2a-openclaw-adapter';
-  version = '0.2.0';
+  version = '0.3.0';
 
   private nodeManager!: F2ANodeManager;
   private networkClient!: F2ANetworkClient;
@@ -39,11 +40,13 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   private capabilityDetector!: CapabilityDetector;
   private taskQueue!: TaskQueue;
   private announcementQueue!: AnnouncementQueue;
+  private webhookPusher?: WebhookPusher;
   
   private config!: F2APluginConfig;
   private nodeConfig!: F2ANodeConfig;
   private capabilities: AgentCapability[] = [];
   private api?: OpenClawPluginApi;
+  private pollTimer?: NodeJS.Timeout;
 
   /**
    * 初始化插件
@@ -65,11 +68,20 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       bootstrapPeers: this.config.bootstrapPeers || []
     };
 
-    // 初始化任务队列
+    // 初始化任务队列（带持久化）
+    const dataDir = this.config.dataDir || './f2a-data';
     this.taskQueue = new TaskQueue({
       maxSize: this.config.maxQueuedTasks || 100,
-      maxAgeMs: 24 * 60 * 60 * 1000 // 24小时
+      maxAgeMs: 24 * 60 * 60 * 1000, // 24小时
+      persistDir: dataDir,
+      persistEnabled: true
     });
+
+    // 初始化 Webhook 推送器
+    if (this.config.webhookPush?.enabled !== false && this.config.webhookPush?.url) {
+      this.webhookPusher = new WebhookPusher(this.config.webhookPush);
+      console.log('[F2A Plugin] Webhook 推送已启用');
+    }
 
     // 初始化广播队列
     this.announcementQueue = new AnnouncementQueue({
@@ -122,6 +134,42 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     console.log(`[F2A Plugin] Agent 名称: ${this.config.agentName}`);
     console.log(`[F2A Plugin] 能力数: ${this.capabilities.length}`);
     console.log(`[F2A Plugin] Webhook: ${this.webhookServer.getUrl()}`);
+
+    // 启动兜底轮询（降低到 60 秒）
+    this.startFallbackPolling();
+  }
+
+  /**
+   * 启动兜底轮询
+   * 当 webhook 推送失败时，轮询确保任务不会丢失
+   */
+  private startFallbackPolling(): void {
+    const interval = this.config.pollInterval || 60000; // 默认 60 秒
+    
+    this.pollTimer = setInterval(async () => {
+      if (!this.webhookPusher) {
+        // 没有配置 webhook，不轮询（保持原有轮询模式）
+        return;
+      }
+
+      try {
+        // 获取未推送的任务
+        const pending = this.taskQueue.getWebhookPending();
+        
+        if (pending.length > 0) {
+          console.log(`[F2A Plugin] 兜底轮询: ${pending.length} 个待推送任务`);
+          
+          for (const task of pending) {
+            const result = await this.webhookPusher.pushTask(task);
+            if (result.success) {
+              this.taskQueue.markWebhookPushed(task.taskId);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[F2A Plugin] 兜底轮询失败:', error);
+      }
+    }, interval);
   }
 
   /**
@@ -459,7 +507,18 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
 
         // 添加任务到队列
         try {
-          this.taskQueue.add(payload);
+          const task = this.taskQueue.add(payload);
+          
+          // 优先使用 webhook 推送
+          if (this.webhookPusher) {
+            const result = await this.webhookPusher.pushTask(task);
+            if (result.success) {
+              this.taskQueue.markWebhookPushed(task.taskId);
+              console.log(`[F2A Plugin] 任务 ${task.taskId} 已通过 webhook 推送 (${result.latency}ms)`);
+            } else {
+              console.log(`[F2A Plugin] Webhook 推送失败: ${result.error}，任务将在轮询时处理`);
+            }
+          }
           
           // 触发 OpenClaw 心跳，让它知道有新任务
           this.api?.runtime?.system?.requestHeartbeatNow?.();

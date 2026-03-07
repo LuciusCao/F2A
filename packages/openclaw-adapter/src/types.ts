@@ -250,6 +250,37 @@ export interface TaskClaim {
   status: 'pending' | 'accepted' | 'rejected';
 }
 
+// Webhook Push Configuration
+export interface WebhookPushConfig {
+  /** OpenClaw webhook URL */
+  url: string;
+  /** Webhook 认证 token */
+  token: string;
+  /** 推送超时（毫秒） */
+  timeout?: number;
+  /** 是否启用 webhook 推送 */
+  enabled?: boolean;
+}
+
+// F2A Plugin Configuration
+export interface F2APluginConfig {
+  f2aPath?: string;
+  controlPort?: number;
+  controlToken?: string;
+  p2pPort?: number;
+  enableMDNS?: boolean;
+  bootstrapPeers?: string[];
+  autoStart?: boolean;
+  webhookPort?: number;
+  webhookToken?: string;
+  maxQueuedTasks?: number;
+  dataDir?: string;
+  reputation?: ReputationConfig;
+  webhookPush?: WebhookPushConfig;
+  /** 兜底轮询间隔（毫秒），默认 60 秒 */
+  pollInterval?: number;
+}
+
 export interface ClaimWebhookPayload {
   announcementId: string;
   claimId: string;

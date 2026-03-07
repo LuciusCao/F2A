@@ -763,6 +763,10 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       logger.info('信誉系统数据已保存');
     }
     
+    // P1 修复：关闭 TaskGuard，停止持久化定时器并保存最终状态
+    taskGuard.shutdown();
+    logger.info('TaskGuard 已关闭');
+    
     // 停止 F2A Node
     if (this.nodeManager) {
       await this.nodeManager.stop();

@@ -244,14 +244,22 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     const timeoutMs = options?.timeoutMs ?? 2000;
     const waitForFirst = options?.waitForFirstResponse ?? false;
 
+    // 使用锁保护创建快照，防止并发修改
     const agents: AgentInfo[] = [];
+    const seenPeerIds = new Set<string>();
     
-    for (const peer of this.peerTable.values()) {
-      if (peer.agentInfo) {
-        if (!capability || this.hasCapability(peer.agentInfo, capability)) {
-          agents.push(peer.agentInfo);
+    await this.peerTableLock.acquire();
+    try {
+      for (const peer of this.peerTable.values()) {
+        if (peer.agentInfo) {
+          if (!capability || this.hasCapability(peer.agentInfo, capability)) {
+            agents.push(peer.agentInfo);
+            seenPeerIds.add(peer.agentInfo.peerId);
+          }
         }
       }
+    } finally {
+      this.peerTableLock.release();
     }
 
     // 如果已经有足够的 agents 且不需要等待响应，直接返回
@@ -270,8 +278,6 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
     // 使用 Promise.race 等待首个响应或超时
     if (waitForFirst) {
-      const initialCount = agents.length;
-      
       await new Promise<void>(resolve => {
         const timeout = setTimeout(() => {
           this.off('peer:discovered', onPeerDiscovered);
@@ -280,9 +286,10 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
         const onPeerDiscovered = (event: PeerDiscoveredEvent) => {
           if (!capability || this.hasCapability(event.agentInfo, capability)) {
-            // 检查是否是新发现的 agent
-            if (!agents.find(a => a.peerId === event.agentInfo.peerId)) {
+            // 使用 Set 原子检查，防止重复添加
+            if (!seenPeerIds.has(event.agentInfo.peerId)) {
               agents.push(event.agentInfo);
+              seenPeerIds.add(event.agentInfo.peerId);
             }
           }
           clearTimeout(timeout);
@@ -297,13 +304,19 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       await new Promise(resolve => setTimeout(resolve, timeoutMs));
     }
 
-    // 再次收集
-    for (const peer of this.peerTable.values()) {
-      if (peer.agentInfo && !agents.find(a => a.peerId === peer.agentInfo!.peerId)) {
-        if (!capability || this.hasCapability(peer.agentInfo, capability)) {
-          agents.push(peer.agentInfo);
+    // 再次收集 - 使用锁保护创建快照
+    await this.peerTableLock.acquire();
+    try {
+      for (const peer of this.peerTable.values()) {
+        if (peer.agentInfo && !seenPeerIds.has(peer.agentInfo.peerId)) {
+          if (!capability || this.hasCapability(peer.agentInfo, capability)) {
+            agents.push(peer.agentInfo);
+            seenPeerIds.add(peer.agentInfo.peerId);
+          }
         }
       }
+    } finally {
+      this.peerTableLock.release();
     }
 
     return agents;

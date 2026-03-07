@@ -175,6 +175,14 @@ export class ReputationSystem {
   }
 
   /**
+   * 获取高信誉节点
+   */
+  getHighReputationNodes(minScore: number): ReputationEntry[] {
+    return Array.from(this.entries.values())
+      .filter(entry => entry.score >= minScore);
+  }
+
+  /**
    * 创建默认条目
    */
   private createDefaultEntry(peerId: string): ReputationEntry {

@@ -45,7 +45,7 @@ export class F2ANetworkClient {
         };
       }
 
-      const data = await response.json();
+      const data = await response.json() as T;
       return { success: true, data };
 
     } catch (error) {

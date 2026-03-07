@@ -159,7 +159,7 @@ export class F2ANodeManager {
         return { success: false, error: 'Node 未响应' };
       }
 
-      const data = await response.json();
+      const data = await response.json() as { running: boolean; peerId?: string; connectedPeers?: number; uptime?: number };
       return { success: true, data };
 
     } catch (error) {

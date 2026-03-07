@@ -11,24 +11,22 @@ import type {
   ToolResult,
   F2ANodeConfig,
   F2APluginConfig,
-  AgentInfo,
   AgentCapability,
-  DelegateOptions,
   DiscoverWebhookPayload,
   DelegateWebhookPayload,
-  TaskRequest,
-  TaskResponse,
-  Result
 } from './types.js';
 import { F2ANodeManager } from './node-manager.js';
 import { F2ANetworkClient } from './network-client.js';
 import { WebhookServer, WebhookHandler } from './webhook-server.js';
 import { ReputationSystem } from './reputation.js';
 import { CapabilityDetector } from './capability-detector.js';
-import { TaskQueue, QueuedTask } from './task-queue.js';
+import { TaskQueue } from './task-queue.js';
 import { AnnouncementQueue } from './announcement-queue.js';
-import { WebhookPusher, WebhookPushConfig } from './webhook-pusher.js';
+import { WebhookPusher } from './webhook-pusher.js';
 import { taskGuard, TaskGuardContext } from './task-guard.js';
+import { ToolHandlers } from './tool-handlers.js';
+import { ClaimHandlers } from './claim-handlers.js';
+import { pluginLogger as logger } from './logger.js';
 
 export class F2AOpenClawAdapter implements OpenClawPlugin {
   name = 'f2a-openclaw-adapter';
@@ -43,17 +41,41 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   private announcementQueue!: AnnouncementQueue;
   private webhookPusher?: WebhookPusher;
   
+  // 处理器实例（延迟初始化）
+  private _toolHandlers?: ToolHandlers;
+  private _claimHandlers?: ClaimHandlers;
+  
   private config!: F2APluginConfig;
   private nodeConfig!: F2ANodeConfig;
   private capabilities: AgentCapability[] = [];
   private api?: OpenClawPluginApi;
   private pollTimer?: NodeJS.Timeout;
+  
+  /**
+   * 获取工具处理器（延迟初始化，支持未初始化时调用getTools）
+   */
+  private get toolHandlers(): ToolHandlers {
+    if (!this._toolHandlers) {
+      this._toolHandlers = new ToolHandlers(this);
+    }
+    return this._toolHandlers;
+  }
+  
+  /**
+   * 获取认领处理器（延迟初始化）
+   */
+  private get claimHandlers(): ClaimHandlers {
+    if (!this._claimHandlers) {
+      this._claimHandlers = new ClaimHandlers(this);
+    }
+    return this._claimHandlers;
+  }
 
   /**
    * 初始化插件
    */
   async initialize(config: Record<string, unknown> & { _api?: OpenClawPluginApi }): Promise<void> {
-    console.log('[F2A Plugin] 初始化...');
+    logger.info('初始化...');
 
     // 保存 API 引用（用于触发心跳等）
     this.api = config._api;
@@ -81,7 +103,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     // 初始化 Webhook 推送器
     if (this.config.webhookPush?.enabled !== false && this.config.webhookPush?.url) {
       this.webhookPusher = new WebhookPusher(this.config.webhookPush);
-      console.log('[F2A Plugin] Webhook 推送已启用');
+      logger.info('Webhook 推送已启用');
     }
 
     // 初始化广播队列
@@ -103,6 +125,8 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       this.config.dataDir || './f2a-data'
     );
     this.capabilityDetector = new CapabilityDetector();
+
+    // 处理器使用 getter 延迟初始化，无需在此显式创建
 
     // 启动 F2A Node
     if (this.config.autoStart) {
@@ -131,10 +155,10 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     // 注册到 F2A Node
     await this.registerToNode();
 
-    console.log('[F2A Plugin] 初始化完成');
-    console.log(`[F2A Plugin] Agent 名称: ${this.config.agentName}`);
-    console.log(`[F2A Plugin] 能力数: ${this.capabilities.length}`);
-    console.log(`[F2A Plugin] Webhook: ${this.webhookServer.getUrl()}`);
+    logger.info('初始化完成');
+    logger.info(`Agent 名称: ${this.config.agentName}`);
+    logger.info(`能力数: ${this.capabilities.length}`);
+    logger.info(`Webhook: ${this.webhookServer.getUrl()}`);
 
     // 启动兜底轮询（降低到 60 秒）
     this.startFallbackPolling();
@@ -161,7 +185,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         const pending = this.taskQueue.getWebhookPending();
         
         if (pending.length > 0) {
-          console.log(`[F2A Plugin] 兜底轮询: ${pending.length} 个待推送任务`);
+          logger.info(`兜底轮询: ${pending.length} 个待推送任务`);
           
           for (const task of pending) {
             const result = await this.webhookPusher.pushTask(task);
@@ -171,7 +195,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           }
         }
       } catch (error) {
-        console.error('[F2A Plugin] 兜底轮询失败:', error);
+        logger.error('兜底轮询失败:', error);
       }
     }, interval);
   }
@@ -198,7 +222,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         const processingTime = now - (task.updatedAt || task.createdAt);
         
         if (processingTime > maxAllowedTime) {
-          console.warn(`[F2A Plugin] 检测到僵尸任务 ${task.taskId.slice(0, 8)}... (processing ${Math.round(processingTime / 1000)}s)，重置为 pending`);
+          logger.warn(`检测到僵尸任务 ${task.taskId.slice(0, 8)}... (processing ${Math.round(processingTime / 1000)}s)，重置为 pending`);
           // 将任务重置为 pending 状态
           this.taskQueue.resetProcessingTask(task.taskId);
         }
@@ -226,7 +250,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             required: false
           }
         },
-        handler: this.handleDiscover.bind(this)
+        handler: this.toolHandlers.handleDiscover.bind(this.toolHandlers)
       },
       {
         name: 'f2a_delegate',
@@ -253,7 +277,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             required: false
           }
         },
-        handler: this.handleDelegate.bind(this)
+        handler: this.toolHandlers.handleDelegate.bind(this.toolHandlers)
       },
       {
         name: 'f2a_broadcast',
@@ -275,13 +299,13 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             required: false
           }
         },
-        handler: this.handleBroadcast.bind(this)
+        handler: this.toolHandlers.handleBroadcast.bind(this.toolHandlers)
       },
       {
         name: 'f2a_status',
         description: '查看 F2A 网络状态和已连接 Peers',
         parameters: {},
-        handler: this.handleStatus.bind(this)
+        handler: this.toolHandlers.handleStatus.bind(this.toolHandlers)
       },
       {
         name: 'f2a_reputation',
@@ -299,7 +323,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             required: false
           }
         },
-        handler: this.handleReputation.bind(this)
+        handler: this.toolHandlers.handleReputation.bind(this.toolHandlers)
       },
       // 新增：任务队列相关工具
       {
@@ -318,7 +342,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             enum: ['pending', 'processing', 'completed', 'failed']
           }
         },
-        handler: this.handlePollTasks.bind(this)
+        handler: this.toolHandlers.handlePollTasks.bind(this.toolHandlers)
       },
       {
         name: 'f2a_submit_result',
@@ -341,13 +365,13 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             enum: ['success', 'error']
           }
         },
-        handler: this.handleSubmitResult.bind(this)
+        handler: this.toolHandlers.handleSubmitResult.bind(this.toolHandlers)
       },
       {
         name: 'f2a_task_stats',
         description: '查看任务队列统计信息',
         parameters: {},
-        handler: this.handleTaskStats.bind(this)
+        handler: this.toolHandlers.handleTaskStats.bind(this.toolHandlers)
       },
       // 认领模式工具
       {
@@ -385,7 +409,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             required: false
           }
         },
-        handler: this.handleAnnounce.bind(this)
+        handler: this.claimHandlers.handleAnnounce.bind(this.claimHandlers)
       },
       {
         name: 'f2a_list_announcements',
@@ -402,7 +426,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             required: false
           }
         },
-        handler: this.handleListAnnouncements.bind(this)
+        handler: this.claimHandlers.handleListAnnouncements.bind(this.claimHandlers)
       },
       {
         name: 'f2a_claim',
@@ -424,7 +448,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             required: false
           }
         },
-        handler: this.handleClaim.bind(this)
+        handler: this.claimHandlers.handleClaim.bind(this.claimHandlers)
       },
       {
         name: 'f2a_manage_claims',
@@ -447,7 +471,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             required: false
           }
         },
-        handler: this.handleManageClaims.bind(this)
+        handler: this.claimHandlers.handleManageClaims.bind(this.claimHandlers)
       },
       {
         name: 'f2a_my_claims',
@@ -460,13 +484,13 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             enum: ['pending', 'accepted', 'rejected', 'all']
           }
         },
-        handler: this.handleMyClaims.bind(this)
+        handler: this.claimHandlers.handleMyClaims.bind(this.claimHandlers)
       },
       {
         name: 'f2a_announcement_stats',
         description: '查看任务广播统计',
         parameters: {},
-        handler: this.handleAnnouncementStats.bind(this)
+        handler: this.claimHandlers.handleAnnouncementStats.bind(this.claimHandlers)
       }
     ];
   }
@@ -546,7 +570,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         if (!taskGuardReport.passed) {
           // 任务被阻止
           const blockReasons = taskGuardReport.blocks.map(b => b.message).join('; ');
-          console.warn(`[F2A Plugin] TaskGuard 阻止任务 ${payload.taskId}: ${blockReasons}`);
+          logger.warn(`TaskGuard 阻止任务 ${payload.taskId}: ${blockReasons}`);
           return {
             accepted: false,
             taskId: payload.taskId,
@@ -557,7 +581,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         if (taskGuardReport.requiresConfirmation) {
           // 任务需要确认（警告但不阻止）
           const warnReasons = taskGuardReport.warnings.map(w => w.message).join('; ');
-          console.warn(`[F2A Plugin] TaskGuard 警告 ${payload.taskId}: ${warnReasons}`);
+          logger.warn(`TaskGuard 警告 ${payload.taskId}: ${warnReasons}`);
           // 未来可以扩展为请求用户确认
           // 目前记录警告但继续处理任务
         }
@@ -581,9 +605,9 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             const result = await this.webhookPusher.pushTask(task);
             if (result.success) {
               this.taskQueue.markWebhookPushed(task.taskId);
-              console.log(`[F2A Plugin] 任务 ${task.taskId} 已通过 webhook 推送 (${result.latency}ms)`);
+              logger.info(`任务 ${task.taskId} 已通过 webhook 推送 (${result.latency}ms)`);
             } else {
-              console.log(`[F2A Plugin] Webhook 推送失败: ${result.error}，任务将在轮询时处理`);
+              logger.info(`Webhook 推送失败: ${result.error}，任务将在轮询时处理`);
             }
           }
           
@@ -627,739 +651,12 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     });
   }
 
-  // ========== Tool Handlers ==========
-
-  private async handleDiscover(
-    params: { capability?: string; min_reputation?: number },
-    context: SessionContext
-  ): Promise<ToolResult> {
-    const result = await this.networkClient.discoverAgents(params.capability);
-    
-    if (!result.success) {
-      return { content: `发现失败: ${result.error}` };
-    }
-
-    let agents = result.data || [];
-
-    // 过滤信誉
-    if (params.min_reputation !== undefined) {
-      agents = agents.filter(a => {
-        const rep = this.reputationSystem.getReputation(a.peerId);
-        return rep.score >= params.min_reputation!;
-      });
-    }
-
-    if (agents.length === 0) {
-      return { content: '🔍 未发现符合条件的 Agents' };
-    }
-
-    const content = `
-🔍 发现 ${agents.length} 个 Agents:
-
-${agents.map((a, i) => {
-  const rep = this.reputationSystem.getReputation(a.peerId);
-  return `${i + 1}. ${a.displayName} (信誉: ${rep.score})
-   ID: ${a.peerId.slice(0, 20)}...
-   能力: ${a.capabilities?.map(c => c.name).join(', ') || '无'}`;
-}).join('\n\n')}
-
-💡 使用方式:
-   - 委托任务: 让 ${agents[0]?.displayName} 帮我写代码
-   - 指定ID: 委托给 #1 分析数据
-    `.trim();
-
-    return { 
-      content,
-      data: { agents, count: agents.length }
-    };
-  }
-
-  private async handleDelegate(
-    params: { agent: string; task: string; context?: string; timeout?: number },
-    context: SessionContext
-  ): Promise<ToolResult> {
-    // 解析 Agent 引用
-    const targetAgent = await this.resolveAgent(params.agent);
-    
-    if (!targetAgent) {
-      return { content: `❌ 找不到 Agent: ${params.agent}` };
-    }
-
-    // 检查信誉
-    if (!this.reputationSystem.isAllowed(targetAgent.peerId)) {
-      return { 
-        content: `⚠️ ${targetAgent.displayName} 信誉过低 (${this.reputationSystem.getReputation(targetAgent.peerId).score})，建议谨慎委托`
-      };
-    }
-
-    console.log(`[F2A Plugin] 委托任务给 ${targetAgent.displayName}...`);
-
-    const result = await this.networkClient.delegateTask({
-      peerId: targetAgent.peerId,
-      taskType: 'openclaw-task',
-      description: params.task,
-      parameters: {
-        context: params.context,
-        sessionContext: context.toJSON()
-      },
-      timeout: params.timeout || 60000
-    });
-
-    if (!result.success) {
-      // 记录失败
-      this.reputationSystem.recordFailure(targetAgent.peerId, 'unknown', result.error);
-      return { content: `❌ 委托失败: ${result.error}` };
-    }
-
-    return {
-      content: `✅ ${targetAgent.displayName} 已完成任务:\n\n${JSON.stringify(result.data, null, 2)}`,
-      data: result.data
-    };
-  }
-
-  private async handleBroadcast(
-    params: { capability: string; task: string; min_responses?: number },
-    context: SessionContext
-  ): Promise<ToolResult> {
-    const discoverResult = await this.networkClient.discoverAgents(params.capability);
-    
-    if (!discoverResult.success || !discoverResult.data?.length) {
-      return { content: `❌ 未发现具备 "${params.capability}" 能力的 Agents` };
-    }
-
-    const agents = discoverResult.data;
-    console.log(`[F2A Plugin] 广播任务给 ${agents.length} 个 Agents...`);
-
-    // 并行委托
-    const promises = agents.map(async (agent) => {
-      const start = Date.now();
-      const result = await this.networkClient.delegateTask({
-        peerId: agent.peerId,
-        taskType: 'openclaw-task',
-        description: params.task,
-        parameters: { sessionContext: context.toJSON() },
-        timeout: 60000
-      });
-      const latency = Date.now() - start;
-
-      return {
-        agent: agent.displayName,
-        peerId: agent.peerId,
-        success: result.success,
-        result: result.data,
-        error: result.error,
-        latency
-      };
-    });
-
-    const results = await Promise.allSettled(promises);
-    const settled = results.map((r, i) => 
-      r.status === 'fulfilled' ? r.value : { 
-        agent: agents[i].displayName, 
-        success: false, 
-        error: String(r.reason) 
-      }
-    );
-
-    const successful = settled.filter(r => r.success);
-    const minResponses = params.min_responses || 1;
-
-    if (successful.length < minResponses) {
-      return {
-        content: `⚠️ 仅 ${successful.length} 个成功响应（需要 ${minResponses}）\n\n${this.formatBroadcastResults(settled)}`
-      };
-    }
-
-    return {
-      content: `✅ 收到 ${successful.length}/${settled.length} 个成功响应:\n\n${this.formatBroadcastResults(settled)}`,
-      data: { results: settled }
-    };
-  }
-
-  private async handleStatus(
-    params: {},
-    context: SessionContext
-  ): Promise<ToolResult> {
-    const [nodeStatus, peersResult] = await Promise.all([
-      this.nodeManager.getStatus(),
-      this.networkClient.getConnectedPeers()
-    ]);
-
-    if (!nodeStatus.success) {
-      return { content: `❌ 获取状态失败: ${nodeStatus.error}` };
-    }
-
-    const peers = peersResult.success ? (peersResult.data || []) : [];
-    const taskStats = this.taskQueue.getStats();
-
-    const content = `
-🟢 F2A 状态: ${nodeStatus.data?.running ? '运行中' : '已停止'}
-📡 本机 PeerID: ${nodeStatus.data?.peerId || 'N/A'}
-⏱️ 运行时间: ${nodeStatus.data?.uptime ? Math.floor(nodeStatus.data.uptime / 60) + ' 分钟' : 'N/A'}
-🔗 已连接 Peers: ${peers.length}
-📋 任务队列: ${taskStats.pending} 待处理, ${taskStats.processing} 处理中, ${taskStats.completed} 已完成
-
-${peers.map(p => {
-  const rep = this.reputationSystem.getReputation(p.peerId);
-  return `  • ${p.agentInfo?.displayName || 'Unknown'} (信誉: ${rep.score})\n    ID: ${p.peerId.slice(0, 20)}...`;
-}).join('\n')}
-    `.trim();
-
-    return { content, data: { status: nodeStatus.data, peers, taskStats } };
-  }
-
-  private async handleReputation(
-    params: { action: string; peer_id?: string },
-    context: SessionContext
-  ): Promise<ToolResult> {
-    switch (params.action) {
-      case 'list': {
-        const reps = this.reputationSystem.getAllReputations();
-        return {
-          content: `📊 信誉记录 (${reps.length} 条):\n\n${reps.map(r => 
-          `  ${r.peerId.slice(0, 20)}...: ${r.score} (成功: ${r.successfulTasks}, 失败: ${r.failedTasks})`
-        ).join('\n')}`
-        };
-      }
-
-      case 'view': {
-        if (!params.peer_id) {
-          return { content: '❌ 请提供 peer_id' };
-        }
-        const rep = this.reputationSystem.getReputation(params.peer_id);
-        return {
-          content: `📊 Peer ${params.peer_id.slice(0, 20)}...:\n` +
-            `  信誉分: ${rep.score}\n` +
-            `  成功任务: ${rep.successfulTasks}\n` +
-            `  失败任务: ${rep.failedTasks}\n` +
-            `  平均响应: ${rep.avgResponseTime.toFixed(0)}ms\n` +
-            `  最后交互: ${new Date(rep.lastInteraction).toLocaleString()}`
-        };
-      }
-
-      case 'block': {
-        if (!params.peer_id) {
-          return { content: '❌ 请提供 peer_id' };
-        }
-        if (!this.config.security) {
-          this.config.security = { requireConfirmation: false, whitelist: [], blacklist: [], maxTasksPerMinute: 10 };
-        }
-        this.config.security.blacklist.push(params.peer_id);
-        return { content: `🚫 已屏蔽 ${params.peer_id.slice(0, 20)}...` };
-      }
-
-      case 'unblock': {
-        if (!params.peer_id) {
-          return { content: '❌ 请提供 peer_id' };
-        }
-        if (!this.config.security) {
-          this.config.security = { requireConfirmation: false, whitelist: [], blacklist: [], maxTasksPerMinute: 10 };
-        }
-        this.config.security.blacklist = this.config.security.blacklist.filter(
-          id => id !== params.peer_id
-        );
-        return { content: `✅ 已解除屏蔽 ${params.peer_id.slice(0, 20)}...` };
-      }
-
-      default:
-        return { content: `❌ 未知操作: ${params.action}` };
-    }
-  }
-
-  // ========== 新增：任务队列相关 Handlers ==========
-
-  private async handlePollTasks(
-    params: { limit?: number; status?: 'pending' | 'processing' | 'completed' | 'failed' },
-    context: SessionContext
-  ): Promise<ToolResult> {
-    let tasks: QueuedTask[];
-    
-    if (params.status) {
-      // 按状态过滤时不改变任务状态（只是查看）
-      tasks = this.taskQueue.getAll().filter(t => t.status === params.status);
-    } else {
-      // 默认返回待处理任务，并标记为 processing（防止重复执行）
-      tasks = this.taskQueue.getPending(params.limit || 10);
-      
-      // 将返回的任务标记为 processing，防止重复获取
-      for (const task of tasks) {
-        this.taskQueue.markProcessing(task.taskId);
-      }
-      
-      if (tasks.length > 0) {
-        console.log(`[F2A Plugin] 已将 ${tasks.length} 个任务标记为 processing`);
-      }
-    }
-
-    if (tasks.length === 0) {
-      return { content: '📭 没有符合条件的任务' };
-    }
-
-    const content = `
-📋 任务列表 (${tasks.length} 个):
-
-${tasks.map(t => {
-  const statusIcon = {
-    pending: '⏳',
-    processing: '🔄',
-    completed: '✅',
-    failed: '❌'
-  }[t.status];
-  
-  return `${statusIcon} [${t.taskId.slice(0, 8)}...] ${t.description.slice(0, 50)}${t.description.length > 50 ? '...' : ''}
-   来自: ${t.from.slice(0, 16)}...
-   类型: ${t.taskType} | 状态: ${t.status} | 创建: ${new Date(t.createdAt).toLocaleTimeString()}`;
-}).join('\n\n')}
-
-💡 使用方式:
-   - 查看详情: 使用 task_id 查询
-   - 提交结果: f2a_submit_result 工具
-    `.trim();
-
-    return {
-      content,
-      data: { 
-        count: tasks.length,
-        tasks: tasks.map(t => ({
-          taskId: t.taskId,
-          from: t.from,
-          description: t.description,
-          taskType: t.taskType,
-          parameters: t.parameters,
-          status: t.status,
-          createdAt: t.createdAt,
-          timeout: t.timeout
-        }))
-      }
-    };
-  }
-
-  private async handleSubmitResult(
-    params: { task_id: string; result: string; status: 'success' | 'error' },
-    context: SessionContext
-  ): Promise<ToolResult> {
-    // 查找任务
-    const task = this.taskQueue.get(params.task_id);
-    if (!task) {
-      return { content: `❌ 找不到任务: ${params.task_id}` };
-    }
-
-    // 更新任务状态
-    const response: TaskResponse = {
-      taskId: params.task_id,
-      status: params.status,
-      result: params.status === 'success' ? params.result : undefined,
-      error: params.status === 'error' ? params.result : undefined,
-      latency: Date.now() - task.createdAt
-    };
-
-    this.taskQueue.complete(params.task_id, response);
-
-    // 发送响应给原节点
-    const sendResult = await this.networkClient.sendTaskResponse(task.from, response);
-
-    if (!sendResult.success) {
-      return { 
-        content: `⚠️ 结果已记录，但发送给原节点失败: ${sendResult.error}`,
-        data: { taskId: params.task_id, sent: false }
-      };
-    }
-
-    // 更新信誉
-    if (params.status === 'success') {
-      this.reputationSystem.recordSuccess(task.from, params.task_id, response.latency!);
-    } else {
-      this.reputationSystem.recordFailure(task.from, params.task_id, params.result);
-    }
-
-    return {
-      content: `✅ 任务结果已提交并发送给原节点\n   任务ID: ${params.task_id.slice(0, 16)}...\n   状态: ${params.status}\n   响应时间: ${response.latency}ms`,
-      data: { taskId: params.task_id, sent: true, latency: response.latency }
-    };
-  }
-
-  private async handleTaskStats(
-    params: {},
-    context: SessionContext
-  ): Promise<ToolResult> {
-    const stats = this.taskQueue.getStats();
-    
-    const content = `
-📊 任务队列统计:
-
-⏳ 待处理: ${stats.pending}
-🔄 处理中: ${stats.processing}
-✅ 已完成: ${stats.completed}
-❌ 失败: ${stats.failed}
-📦 总计: ${stats.total}
-
-💡 使用 f2a_poll_tasks 查看详细任务列表
-    `.trim();
-
-    return { content, data: stats };
-  }
-
-  // ========== 认领模式 Handlers ==========
-
-  private async handleAnnounce(
-    params: {
-      task_type: string;
-      description: string;
-      required_capabilities?: string[];
-      estimated_complexity?: number;
-      reward?: number;
-      timeout?: number;
-    },
-    context: SessionContext
-  ): Promise<ToolResult> {
-    try {
-      const announcement = this.announcementQueue.create({
-        taskType: params.task_type,
-        description: params.description,
-        requiredCapabilities: params.required_capabilities,
-        estimatedComplexity: params.estimated_complexity,
-        reward: params.reward,
-        timeout: params.timeout || 300000,
-        from: 'local', // 实际应该从网络获取本机ID
-      });
-
-      // 触发心跳让其他Agent知道有新广播
-      this.api?.runtime?.system?.requestHeartbeatNow?.();
-
-      const content = `
-📢 任务广播已创建
-
-ID: ${announcement.announcementId}
-类型: ${announcement.taskType}
-描述: ${announcement.description.slice(0, 100)}${announcement.description.length > 100 ? '...' : ''}
-${announcement.requiredCapabilities ? `所需能力: ${announcement.requiredCapabilities.join(', ')}` : ''}
-${announcement.estimatedComplexity ? `复杂度: ${announcement.estimatedComplexity}/10` : ''}
-${announcement.reward ? `奖励: ${announcement.reward}` : ''}
-超时: ${Math.round(announcement.timeout / 1000)}秒
-
-💡 使用 f2a_manage_claims 查看认领情况
-      `.trim();
-
-      return {
-        content,
-        data: {
-          announcementId: announcement.announcementId,
-          status: announcement.status
-        }
-      };
-    } catch (error: any) {
-      return {
-        content: `❌ 创建广播失败: ${error.message}`,
-        data: { error: error.message }
-      };
-    }
-  }
-
-  private async handleListAnnouncements(
-    params: {
-      capability?: string;
-      limit?: number;
-    },
-    context: SessionContext
-  ): Promise<ToolResult> {
-    let announcements = this.announcementQueue.getOpen();
-
-    // 按能力过滤
-    if (params.capability) {
-      announcements = announcements.filter(a =>
-        a.requiredCapabilities?.includes(params.capability!)
-      );
-    }
-
-    // 限制数量
-    const limit = params.limit || 10;
-    announcements = announcements.slice(0, limit);
-
-    if (announcements.length === 0) {
-      return { content: '📭 当前没有开放的任务广播' };
-    }
-
-    const content = `
-📢 开放的任务广播 (${announcements.length} 个):
-
-${announcements.map((a, i) => {
-  const claimCount = a.claims?.length || 0;
-  return `${i + 1}. [${a.announcementId.slice(0, 8)}...] ${a.description.slice(0, 50)}${a.description.length > 50 ? '...' : ''}
-   类型: ${a.taskType} | 认领: ${claimCount} | 复杂度: ${a.estimatedComplexity || '?'}/10
-   ${a.reward ? `奖励: ${a.reward} | ` : ''}超时: ${Math.round(a.timeout / 1000)}s`;
-}).join('\n\n')}
-
-💡 使用 f2a_claim 认领任务
-    `.trim();
-
-    return {
-      content,
-      data: {
-        count: announcements.length,
-        announcements: announcements.map(a => ({
-          announcementId: a.announcementId,
-          taskType: a.taskType,
-          description: a.description.slice(0, 100),
-          requiredCapabilities: a.requiredCapabilities,
-          estimatedComplexity: a.estimatedComplexity,
-          reward: a.reward,
-          claimCount: a.claims?.length || 0
-        }))
-      }
-    };
-  }
-
-  private async handleClaim(
-    params: {
-      announcement_id: string;
-      estimated_time?: number;
-      confidence?: number;
-    },
-    context: SessionContext
-  ): Promise<ToolResult> {
-    const announcement = this.announcementQueue.get(params.announcement_id);
-    
-    if (!announcement) {
-      return { content: `❌ 找不到广播: ${params.announcement_id}` };
-    }
-
-    if (announcement.status !== 'open') {
-      return { content: `❌ 该广播已${announcement.status === 'claimed' ? '被认领' : '过期'}` };
-    }
-
-    // 检查是否已有认领
-    const existingClaim = announcement.claims?.find(c => c.claimant === 'local');
-    if (existingClaim) {
-      return { content: `⚠️ 你已经认领过这个广播了 (认领ID: ${existingClaim.claimId.slice(0, 8)}...)` };
-    }
-
-    const claim = this.announcementQueue.submitClaim(params.announcement_id, {
-      claimant: 'local', // 实际应该从网络获取本机ID
-      claimantName: this.config.agentName,
-      estimatedTime: params.estimated_time,
-      confidence: params.confidence
-    });
-
-    if (!claim) {
-      return { content: '❌ 认领失败' };
-    }
-
-    // 触发心跳
-    this.api?.runtime?.system?.requestHeartbeatNow?.();
-
-    return {
-      content: `
-✅ 认领已提交
-
-广播ID: ${params.announcement_id.slice(0, 16)}...
-认领ID: ${claim.claimId.slice(0, 16)}...
-${params.estimated_time ? `预计时间: ${Math.round(params.estimated_time / 1000)}秒` : ''}
-${params.confidence ? `信心指数: ${Math.round(params.confidence * 100)}%` : ''}
-
-⏳ 等待广播发布者接受...
-💡 使用 f2a_my_claims 查看认领状态
-      `.trim(),
-      data: {
-        claimId: claim.claimId,
-        status: claim.status
-      }
-    };
-  }
-
-  private async handleManageClaims(
-    params: {
-      announcement_id: string;
-      action: 'list' | 'accept' | 'reject';
-      claim_id?: string;
-    },
-    context: SessionContext
-  ): Promise<ToolResult> {
-    const announcement = this.announcementQueue.get(params.announcement_id);
-    
-    if (!announcement) {
-      return { content: `❌ 找不到广播: ${params.announcement_id}` };
-    }
-
-    // 检查是否是本机的广播
-    if (announcement.from !== 'local') {
-      return { content: '❌ 只能管理自己发布的广播' };
-    }
-
-    switch (params.action) {
-      case 'list': {
-        const claims = announcement.claims || [];
-        if (claims.length === 0) {
-          return { content: '📭 暂无认领' };
-        }
-
-        const content = `
-📋 认领列表 (${claims.length} 个):
-
-${claims.map((c, i) => {
-  const statusIcon = { pending: '⏳', accepted: '✅', rejected: '❌' }[c.status];
-  return `${i + 1}. ${statusIcon} [${c.claimId.slice(0, 8)}...] ${c.claimantName || c.claimant.slice(0, 16)}...
-   ${c.estimatedTime ? `预计: ${Math.round(c.estimatedTime / 1000)}s | ` : ''}${c.confidence ? `信心: ${Math.round(c.confidence * 100)}%` : ''}`;
-}).join('\n\n')}
-
-💡 使用 accept/reject 操作认领
-        `.trim();
-
-        return { content, data: { claims } };
-      }
-
-      case 'accept': {
-        if (!params.claim_id) {
-          return { content: '❌ 请提供 claim_id' };
-        }
-
-        const claim = this.announcementQueue.acceptClaim(params.announcement_id, params.claim_id);
-        if (!claim) {
-          return { content: '❌ 接受认领失败' };
-        }
-
-        return {
-          content: `
-✅ 已接受认领
-
-认领ID: ${params.claim_id.slice(0, 16)}...
-认领者: ${claim.claimantName || claim.claimant.slice(0, 16)}...
-
-现在可以正式委托任务给对方了。
-          `.trim(),
-          data: { claim }
-        };
-      }
-
-      case 'reject': {
-        if (!params.claim_id) {
-          return { content: '❌ 请提供 claim_id' };
-        }
-
-        const claim = this.announcementQueue.rejectClaim(params.announcement_id, params.claim_id);
-        if (!claim) {
-          return { content: '❌ 拒绝认领失败' };
-        }
-
-        return {
-          content: `
-🚫 已拒绝认领
-
-认领ID: ${params.claim_id.slice(0, 16)}...
-认领者: ${claim.claimantName || claim.claimant.slice(0, 16)}...
-          `.trim()
-        };
-      }
-
-      default:
-        return { content: `❌ 未知操作: ${params.action}` };
-    }
-  }
-
-  private async handleMyClaims(
-    params: {
-      status?: 'pending' | 'accepted' | 'rejected' | 'all';
-    },
-    context: SessionContext
-  ): Promise<ToolResult> {
-    const status = params.status || 'all';
-    let claims = this.announcementQueue.getMyClaims('local');
-
-    // 状态过滤
-    if (status !== 'all') {
-      claims = claims.filter(c => c.status === status);
-    }
-
-    if (claims.length === 0) {
-      return { content: `📭 没有${status === 'all' ? '' : status}的认领` };
-    }
-
-    const content = `
-📋 我的认领 (${claims.length} 个):
-
-${claims.map((c, i) => {
-  const announcement = this.announcementQueue.get(c.announcementId);
-  const statusIcon = { pending: '⏳', accepted: '✅', rejected: '❌' }[c.status];
-  return `${i + 1}. ${statusIcon} [${c.claimId.slice(0, 8)}...]
-   广播: ${announcement?.description.slice(0, 40)}...
-   状态: ${c.status}${c.status === 'accepted' ? ' (可以开始执行)' : ''}`;
-}).join('\n\n')}
-    `.trim();
-
-    return {
-      content,
-      data: {
-        count: claims.length,
-        claims: claims.map(c => ({
-          claimId: c.claimId,
-          announcementId: c.announcementId,
-          status: c.status,
-          estimatedTime: c.estimatedTime,
-          confidence: c.confidence
-        }))
-      }
-    };
-  }
-
-  private async handleAnnouncementStats(
-    params: {},
-    context: SessionContext
-  ): Promise<ToolResult> {
-    const stats = this.announcementQueue.getStats();
-    
-    const content = `
-📊 任务广播统计:
-
-📢 开放中: ${stats.open}
-✅ 已认领: ${stats.claimed}
-📋 已委托: ${stats.delegated}
-⏰ 已过期: ${stats.expired}
-📦 总计: ${stats.total}
-
-💡 使用 f2a_list_announcements 查看开放广播
-    `.trim();
-
-    return { content, data: stats };
-  }
-
   // ========== Helpers ==========
 
-  private async resolveAgent(agentRef: string): Promise<AgentInfo | null> {
-    const result = await this.networkClient.discoverAgents();
-    if (!result.success) return null;
-
-    const agents = result.data || [];
-
-    // #索引格式
-    if (agentRef.startsWith('#')) {
-      const index = parseInt(agentRef.slice(1)) - 1;
-      return agents[index] || null;
-    }
-
-    // 精确匹配
-    const exact = agents.find(a => 
-      a.peerId === agentRef || 
-      a.displayName === agentRef
-    );
-    if (exact) return exact;
-
-    // 模糊匹配
-    const fuzzy = agents.find(a => 
-      a.peerId.startsWith(agentRef) ||
-      a.displayName.toLowerCase().includes(agentRef.toLowerCase())
-    );
-
-    return fuzzy || null;
-  }
-
-  private formatBroadcastResults(results: any[]): string {
-    return results.map(r => {
-      const icon = r.success ? '✅' : '❌';
-      const latency = r.latency ? ` (${r.latency}ms)` : '';
-      return `${icon} ${r.agent}${latency}\n   ${r.success ? '完成' : `失败: ${r.error}`}`;
-    }).join('\n\n');
-  }
-
-  private mergeConfig(config: Record<string, unknown> & { _api?: unknown }): F2APluginConfig {
+  /**
+   * 合并配置（公开方法供处理器使用）
+   */
+  mergeConfig(config: Record<string, unknown> & { _api?: unknown }): F2APluginConfig {
     return {
       autoStart: (config.autoStart as boolean) ?? true,
       webhookPort: (config.webhookPort as number) || 9002,
@@ -1401,10 +698,52 @@ ${claims.map((c, i) => {
   }
 
   /**
+   * 格式化广播结果（公共方法，供测试和外部调用）
+   */
+  formatBroadcastResults(results: any[]): string {
+    return results.map(r => {
+      const icon = r.success ? '✅' : '❌';
+      const latency = r.latency ? ` (${r.latency}ms)` : '';
+      return `${icon} ${r.agent}${latency}\n   ${r.success ? '完成' : `失败: ${r.error}`}`;
+    }).join('\n\n');
+  }
+
+  /**
+   * 解析 Agent 引用（公共方法，供测试和外部调用）
+   */
+  async resolveAgent(agentRef: string): Promise<AgentInfo | null> {
+    const result = await this.networkClient?.discoverAgents();
+    if (!result?.success) return null;
+
+    const agents = result.data || [];
+
+    // #索引格式
+    if (agentRef.startsWith('#')) {
+      const index = parseInt(agentRef.slice(1)) - 1;
+      return agents[index] || null;
+    }
+
+    // 精确匹配
+    const exact = agents.find((a: AgentInfo) => 
+      a.peerId === agentRef || 
+      a.displayName === agentRef
+    );
+    if (exact) return exact;
+
+    // 模糊匹配
+    const fuzzy = agents.find((a: AgentInfo) => 
+      a.peerId.startsWith(agentRef) ||
+      a.displayName.toLowerCase().includes(agentRef.toLowerCase())
+    );
+
+    return fuzzy || null;
+  }
+
+  /**
    * 关闭插件，清理资源
    */
   async shutdown(): Promise<void> {
-    console.log('[F2A Plugin] 正在关闭...');
+    logger.info('正在关闭...');
     
     // 停止轮询定时器
     if (this.pollTimer) {
@@ -1420,7 +759,7 @@ ${claims.map((c, i) => {
     // P1 修复：关闭前刷新信誉系统数据，确保持久化
     if (this.reputationSystem) {
       this.reputationSystem.flush();
-      console.log('[F2A Plugin] 信誉系统数据已保存');
+      logger.info('信誉系统数据已保存');
     }
     
     // 停止 F2A Node
@@ -1432,10 +771,10 @@ ${claims.map((c, i) => {
     // 这样重启后可以恢复未完成的任务
     if (this.taskQueue) {
       this.taskQueue.close();
-      console.log('[F2A Plugin] 任务队列已关闭，持久化数据已保留');
+      logger.info('任务队列已关闭，持久化数据已保留');
     }
     
-    console.log('[F2A Plugin] 已关闭');
+    logger.info('已关闭');
   }
 }
 

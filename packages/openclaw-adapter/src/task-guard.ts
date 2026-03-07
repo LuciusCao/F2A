@@ -175,9 +175,23 @@ function detectEncodingBypass(text: string): string[] {
     detected.push('十六进制编码');
   }
   
-  // Unicode 编码: \u007f
-  if (/\\u[0-9a-fA-F]{4}/.test(text)) {
+  // Unicode 编码: \u007f, \u007F, \u{7f} (ES6)
+  if (/\\u[0-9a-fA-F]{4}/.test(text) || /\\u\{[0-9a-fA-F]+\}/.test(text)) {
     detected.push('Unicode编码');
+  }
+  
+  // HTML 实体编码: &#x20;, &#32;, &lt;, &gt;, &amp;
+  // 十六进制格式: &#xHH;
+  if (/&#x[0-9a-fA-F]+;?/i.test(text)) {
+    detected.push('HTML实体编码(十六进制)');
+  }
+  // 十进制格式: &#DDD;
+  if (/&#\d+;?/.test(text)) {
+    detected.push('HTML实体编码(十进制)');
+  }
+  // 命名实体: &lt; &gt; &amp; &quot; &apos;
+  if (/&(lt|gt|amp|quot|apos|#x?\d+);/i.test(text)) {
+    detected.push('HTML实体编码(命名)');
   }
   
   // URL 编码: %20, %2f

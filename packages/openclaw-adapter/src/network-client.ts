@@ -12,6 +12,7 @@ import type {
   DelegateOptions
 } from './types.js';
 import { Result, failure, success, createError } from './types.js';
+import { nodeLogger as logger } from './logger.js';
 
 /** 默认请求超时（毫秒） */
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -113,7 +114,7 @@ export class F2ANetworkClient {
           if (RETRYABLE_STATUS_CODES.includes(response.status) && attempt < this.maxRetries) {
             lastError = new Error(`HTTP ${response.status}: ${errorText}`);
             const delayMs = this.calculateDelay(attempt);
-            console.log(`[NetworkClient] Retrying request to ${path} after ${delayMs}ms (attempt ${attempt + 1}/${this.maxRetries})`);
+            logger.info(`Retrying request to ${path} after ${delayMs}ms (attempt ${attempt + 1}/${this.maxRetries})`);
             clearTimeout(timeoutId);
             await this.delay(delayMs);
             continue;
@@ -135,7 +136,7 @@ export class F2ANetworkClient {
           
           if (attempt < this.maxRetries) {
             const delayMs = this.calculateDelay(attempt);
-            console.log(`[NetworkClient] Retrying request to ${path} after timeout (${delayMs}ms, attempt ${attempt + 1}/${this.maxRetries})`);
+            logger.info(`Retrying request to ${path} after timeout (${delayMs}ms, attempt ${attempt + 1}/${this.maxRetries})`);
             clearTimeout(timeoutId);
             await this.delay(delayMs);
             continue;
@@ -146,7 +147,7 @@ export class F2ANetworkClient {
         if (this.isRetryableError(error) && attempt < this.maxRetries) {
           lastError = error instanceof Error ? error : new Error(String(error));
           const delayMs = this.calculateDelay(attempt);
-          console.log(`[NetworkClient] Retrying request to ${path} after ${delayMs}ms (attempt ${attempt + 1}/${this.maxRetries})`);
+          logger.info(`Retrying request to ${path} after ${delayMs}ms (attempt ${attempt + 1}/${this.maxRetries})`);
           clearTimeout(timeoutId);
           await this.delay(delayMs);
           continue;

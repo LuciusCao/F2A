@@ -8,6 +8,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { promisify } from 'util';
 import type { F2ANodeConfig, Result } from './types.js';
+import { nodeLogger as logger } from './logger.js';
 
 const sleep = promisify(setTimeout);
 

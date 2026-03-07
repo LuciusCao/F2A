@@ -16,15 +16,70 @@ import { Result, failure, success, createError } from './types.js';
 /** 默认请求超时（毫秒） */
 const DEFAULT_TIMEOUT_MS = 30000;
 
+/** 默认重试配置 */
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_BASE_DELAY_MS = 1000;
+
+/** 可重试的错误码 */
+const RETRYABLE_ERROR_CODES = [
+  'ECONNRESET',
+  'ENOTFOUND',
+  'ETIMEDOUT',
+  'ECONNREFUSED',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'EAI_AGAIN'
+];
+
+/** 可重试的 HTTP 状态码 */
+const RETRYABLE_STATUS_CODES = [502, 503, 504, 429];
+
 export class F2ANetworkClient {
   private baseUrl: string;
   private token: string;
   private timeoutMs: number;
+  private maxRetries: number;
+  private baseDelayMs: number;
 
   constructor(config: F2ANodeConfig) {
     this.baseUrl = `http://localhost:${config.controlPort}`;
     this.token = config.controlToken;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
+    this.baseDelayMs = config.retryDelayMs ?? DEFAULT_BASE_DELAY_MS;
+  }
+
+  /**
+   * 判断错误是否可重试
+   */
+  private isRetryableError(error: unknown): boolean {
+    if (error instanceof Error) {
+      // 网络错误
+      if (RETRYABLE_ERROR_CODES.some(code => error.message.includes(code))) {
+        return true;
+      }
+      // 超时错误
+      if (error.name === 'AbortError' || error.message.includes('timeout')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 计算重试延迟（指数退避 + 抖动）
+   */
+  private calculateDelay(attempt: number): number {
+    const exponentialDelay = this.baseDelayMs * Math.pow(2, attempt);
+    const jitter = Math.random() * this.baseDelayMs * 0.5;
+    return Math.min(exponentialDelay + jitter, 30000); // 最大 30 秒
+  }
+
+  /**
+   * 延迟函数
+   */
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   private async request<T>(
@@ -32,48 +87,84 @@ export class F2ANetworkClient {
     path: string, 
     body?: unknown
   ): Promise<Result<T>> {
-    // 使用 AbortController 设置超时
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+    let lastError: Error | null = null;
 
-    try {
-      const response = await fetch(`${this.baseUrl}${path}`, {
-        method,
-        headers: {
-          'Authorization': `Bearer ${this.token}`,
-          'Content-Type': 'application/json'
-        },
-        body: body ? JSON.stringify(body) : undefined,
-        signal: controller.signal
-      });
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      // 使用 AbortController 设置超时
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
-      if (!response.ok) {
-        const errorText = await response.text();
+      try {
+        const response = await fetch(`${this.baseUrl}${path}`, {
+          method,
+          headers: {
+            'Authorization': `Bearer ${this.token}`,
+            'Content-Type': 'application/json'
+          },
+          body: body ? JSON.stringify(body) : undefined,
+          signal: controller.signal
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          
+          // 检查是否是可重试的 HTTP 错误
+          if (RETRYABLE_STATUS_CODES.includes(response.status) && attempt < this.maxRetries) {
+            lastError = new Error(`HTTP ${response.status}: ${errorText}`);
+            const delayMs = this.calculateDelay(attempt);
+            console.log(`[NetworkClient] Retrying request to ${path} after ${delayMs}ms (attempt ${attempt + 1}/${this.maxRetries})`);
+            clearTimeout(timeoutId);
+            await this.delay(delayMs);
+            continue;
+          }
+          
+          return failure(createError(
+            'CONNECTION_FAILED',
+            `HTTP ${response.status}: ${errorText}`
+          ));
+        }
+
+        const data = await response.json() as T;
+        return success(data);
+
+      } catch (error) {
+        // 处理超时错误
+        if (error instanceof Error && error.name === 'AbortError') {
+          lastError = new Error(`Request timed out after ${this.timeoutMs}ms`);
+          
+          if (attempt < this.maxRetries) {
+            const delayMs = this.calculateDelay(attempt);
+            console.log(`[NetworkClient] Retrying request to ${path} after timeout (${delayMs}ms, attempt ${attempt + 1}/${this.maxRetries})`);
+            clearTimeout(timeoutId);
+            await this.delay(delayMs);
+            continue;
+          }
+        }
+        
+        // 检查是否可重试
+        if (this.isRetryableError(error) && attempt < this.maxRetries) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+          const delayMs = this.calculateDelay(attempt);
+          console.log(`[NetworkClient] Retrying request to ${path} after ${delayMs}ms (attempt ${attempt + 1}/${this.maxRetries})`);
+          clearTimeout(timeoutId);
+          await this.delay(delayMs);
+          continue;
+        }
+        
         return failure(createError(
           'CONNECTION_FAILED',
-          `HTTP ${response.status}: ${errorText}`
+          error instanceof Error ? error.message : String(error)
         ));
+      } finally {
+        clearTimeout(timeoutId);
       }
-
-      const data = await response.json() as T;
-      return success(data);
-
-    } catch (error) {
-      // 处理超时错误
-      if (error instanceof Error && error.name === 'AbortError') {
-        return failure(createError(
-          'TIMEOUT',
-          `Request timed out after ${this.timeoutMs}ms`
-        ));
-      }
-      
-      return failure(createError(
-        'CONNECTION_FAILED',
-        error instanceof Error ? error.message : String(error)
-      ));
-    } finally {
-      clearTimeout(timeoutId);
     }
+
+    // 所有重试都失败了
+    return failure(createError(
+      'CONNECTION_FAILED',
+      lastError?.message || `Failed after ${this.maxRetries} retries`
+    ));
   }
 
   /**

@@ -32,6 +32,7 @@ const PROTOCOL_VERSION = 'f2a/1.0';
 
 export interface F2AInstance {
   readonly peerId: string;
+  /** 获取 Agent 信息（延迟获取，确保 peerId 在 start() 后才有效） */
   readonly agentInfo: AgentInfo;
   start(): Promise<Result<void>>;
   stop(): Promise<void>;
@@ -52,7 +53,7 @@ export interface F2AInstance {
 }
 
 export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
-  public readonly agentInfo: AgentInfo;
+  private _agentInfo: AgentInfo;
   private p2pNetwork: P2PNetwork;
   private options: Required<F2AOptions>;
   private running: boolean = false;
@@ -65,12 +66,24 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     options: Required<F2AOptions>
   ) {
     super();
-    this.agentInfo = agentInfo;
+    this._agentInfo = agentInfo;
     this.p2pNetwork = p2pNetwork;
     this.options = options;
     this.logger = new Logger({ level: options.logLevel, component: 'F2A' });
 
     this.bindEvents();
+  }
+
+  /**
+   * 获取 Agent 信息
+   * 使用 getter 延迟获取 peerId，避免在 start() 前读到空值
+   */
+  get agentInfo(): AgentInfo {
+    // 返回一个代理对象，确保 peerId 始终从 p2pNetwork 获取最新值
+    return {
+      ...this._agentInfo,
+      peerId: this.running ? this._agentInfo.peerId : ''
+    };
   }
 
   /**
@@ -135,8 +148,8 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     }
 
     // 更新 agentInfo
-    this.agentInfo.peerId = result.data.peerId;
-    this.agentInfo.multiaddrs = result.data.addresses;
+    this._agentInfo.peerId = result.data.peerId;
+    this._agentInfo.multiaddrs = result.data.addresses;
 
     this.running = true;
 
@@ -522,6 +535,6 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
    * 更新 AgentInfo 中的能力列表
    */
   private updateAgentCapabilities(): void {
-    this.agentInfo.capabilities = this.getCapabilities();
+    this._agentInfo.capabilities = this.getCapabilities();
   }
 }

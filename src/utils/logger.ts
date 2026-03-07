@@ -33,6 +33,10 @@ export interface LoggerOptions {
   filePath?: string;
   /** 是否使用 JSON 格式输出（生产环境推荐） */
   jsonMode?: boolean;
+  /** 文件流重试配置 */
+  maxRetries?: number;
+  /** 重试间隔（毫秒） */
+  retryDelayMs?: number;
 }
 
 /**
@@ -46,6 +50,10 @@ export class Logger {
   private filePath: string | undefined;
   private jsonMode: boolean;
   private fileStream: fs.WriteStream | undefined;
+  private maxRetries: number;
+  private retryDelayMs: number;
+  private retryCount: number = 0;
+  private isReconnecting: boolean = false;
 
   constructor(options: LoggerOptions = {}) {
     this.level = options.level || 'INFO';
@@ -55,6 +63,8 @@ export class Logger {
     this.filePath = options.filePath;
     // 自动检测：生产环境默认使用 JSON 格式
     this.jsonMode = options.jsonMode ?? (process.env.NODE_ENV === 'production');
+    this.maxRetries = options.maxRetries ?? 3;
+    this.retryDelayMs = options.retryDelayMs ?? 1000;
 
     // 初始化文件流
     if (this.enableFile && this.filePath) {
@@ -63,33 +73,113 @@ export class Logger {
   }
 
   /**
-   * 初始化文件写入流
+   * 初始化文件写入流（带重试机制）
    */
   private initFileStream(): void {
     if (!this.filePath) return;
 
-    try {
-      // 确保目录存在
-      const dir = path.dirname(this.filePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+    const attemptInit = (attempt: number): void => {
+      if (attempt > this.maxRetries) {
+        console.error(`[Logger] Failed to initialize file stream after ${this.maxRetries} attempts`);
+        this.enableFile = false;
+        return;
       }
 
-      // 创建写入流（追加模式）
-      this.fileStream = fs.createWriteStream(this.filePath, {
-        flags: 'a',
-        encoding: 'utf8'
-      });
+      try {
+        // 确保目录存在
+        const dir = path.dirname(this.filePath!);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
 
-      this.fileStream.on('error', (err) => {
-        console.error(`[Logger] File stream error: ${err.message}`);
-        this.fileStream = undefined;
-        this.enableFile = false;
-      });
-    } catch (err) {
-      console.error(`[Logger] Failed to initialize file stream: ${err}`);
+        // 创建写入流（追加模式）
+        this.fileStream = fs.createWriteStream(this.filePath!, {
+          flags: 'a',
+          encoding: 'utf8'
+        });
+
+        this.fileStream.on('error', (err) => {
+          console.error(`[Logger] File stream error: ${err.message}`);
+          this.handleStreamError(err);
+        });
+
+        this.fileStream.on('open', () => {
+          // 成功打开，重置重试计数
+          this.retryCount = 0;
+          this.isReconnecting = false;
+        });
+
+        this.fileStream.on('close', () => {
+          // 流关闭，如果需要文件日志则尝试重连
+          if (this.enableFile && !this.isReconnecting) {
+            this.scheduleReconnect();
+          }
+        });
+
+      } catch (err) {
+        console.error(`[Logger] Failed to initialize file stream (attempt ${attempt}/${this.maxRetries}): ${err}`);
+        this.retryCount = attempt;
+        
+        // 延迟后重试
+        setTimeout(() => attemptInit(attempt + 1), this.retryDelayMs);
+      }
+    };
+
+    attemptInit(1);
+  }
+
+  /**
+   * 处理流错误
+   */
+  private handleStreamError(err: Error): void {
+    // 检查是否是可恢复的错误
+    const isRecoverable = 
+      err.message.includes('ENOENT') ||  // 文件不存在
+      err.message.includes('EACCES') ||  // 权限问题（可能临时）
+      err.message.includes('EMFILE') ||  // 文件描述符不足
+      err.message.includes('ENOSPC');    // 磁盘空间不足
+
+    if (isRecoverable && this.retryCount < this.maxRetries) {
+      this.scheduleReconnect();
+    } else {
+      // 不可恢复或超过重试次数，降级到控制台
+      console.warn(`[Logger] File logging disabled due to unrecoverable error: ${err.message}`);
+      this.fileStream = undefined;
       this.enableFile = false;
     }
+  }
+
+  /**
+   * 调度重连
+   */
+  private scheduleReconnect(): void {
+    if (this.isReconnecting) return;
+    
+    this.isReconnecting = true;
+    this.retryCount++;
+
+    if (this.retryCount > this.maxRetries) {
+      console.warn(`[Logger] Max reconnection attempts (${this.maxRetries}) reached, file logging disabled`);
+      this.enableFile = false;
+      this.isReconnecting = false;
+      return;
+    }
+
+    console.log(`[Logger] Attempting to reconnect file stream (attempt ${this.retryCount}/${this.maxRetries})...`);
+    
+    // 关闭旧流
+    if (this.fileStream) {
+      try {
+        this.fileStream.destroy();
+      } catch { /* ignore */ }
+      this.fileStream = undefined;
+    }
+
+    // 延迟后重试
+    setTimeout(() => {
+      this.isReconnecting = false;
+      this.initFileStream();
+    }, this.retryDelayMs * this.retryCount); // 指数退避
   }
 
   /**

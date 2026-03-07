@@ -10,6 +10,7 @@
 import type { TaskAnnouncement, TaskClaim } from './types.js';
 import { randomUUID } from 'crypto';
 import { queueLogger as logger } from './logger.js';
+import { EventEmitter } from 'eventemitter3';
 
 export interface AnnouncementQueueStats {
   open: number;
@@ -24,12 +25,29 @@ export interface AnnouncementQueueOptions {
   maxAgeMs?: number;
 }
 
-export class AnnouncementQueue {
+/** 过期事件载荷 */
+export interface AnnouncementExpiredEvent {
+  announcementId: string;
+  taskType: string;
+  from: string;
+  timestamp: number;
+  reason: 'timeout' | 'manual';
+}
+
+/** 事件类型定义 */
+export interface AnnouncementQueueEvents {
+  'announcement:expired': (event: AnnouncementExpiredEvent) => void;
+  'announcement:created': (announcement: TaskAnnouncement) => void;
+  'announcement:claimed': (announcement: TaskAnnouncement, claim: TaskClaim) => void;
+}
+
+export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
   private announcements = new Map<string, TaskAnnouncement>();
   private maxSize: number;
   private maxAgeMs: number;
 
   constructor(options?: { maxSize?: number; maxAgeMs?: number }) {
+    super();
     this.maxSize = options?.maxSize || 100;
     this.maxAgeMs = options?.maxAgeMs || 30 * 60 * 1000; // 30分钟
   }
@@ -59,6 +77,10 @@ export class AnnouncementQueue {
 
     this.announcements.set(id, created);
     logger.info(' create: announcementId=%s, from=%s, taskType=%s', id, announcement.from, announcement.taskType);
+    
+    // 发出创建事件
+    this.emit('announcement:created', created);
+    
     return created;
   }
 
@@ -171,6 +193,10 @@ export class AnnouncementQueue {
     announcement.status = 'claimed';
 
     logger.info(' acceptClaim: claimId=%s, announcementId=%s, claimant=%s, rejectedCount=%d', claimId, announcementId, claim.claimant, rejectedCount);
+    
+    // 发出认领事件
+    this.emit('announcement:claimed', announcement, claim);
+    
     return claim;
   }
 
@@ -257,6 +283,18 @@ export class AnnouncementQueue {
         if (announcement.status === 'open') {
           announcement.status = 'expired';
           expiredCount++;
+          
+          // 发出过期事件，通知外部系统
+          const expiredEvent: AnnouncementExpiredEvent = {
+            announcementId: announcement.announcementId,
+            taskType: announcement.taskType,
+            from: announcement.from,
+            timestamp: announcement.timestamp,
+            reason: 'timeout'
+          };
+          this.emit('announcement:expired', expiredEvent);
+          logger.info('cleanup: announcement expired, id=%s, taskType=%s, from=%s', 
+            announcement.announcementId, announcement.taskType, announcement.from);
         }
         // 删除已过期一段时间的
         if (age > this.maxAgeMs * 2) {

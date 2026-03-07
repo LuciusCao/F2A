@@ -485,11 +485,23 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         direction: 'inbound'
       });
 
-      // 更新路由表
+      // 更新路由表 - 确保 peer 存在
       const existing = this.peerTable.get(peerId);
       if (existing) {
         existing.connected = true;
         existing.connectedAt = Date.now();
+        existing.lastSeen = Date.now();
+      } else {
+        // Peer 不在路由表中，创建新条目
+        this.logger.info('Creating new peer entry on connect', { peerId: peerId.slice(0, 16) });
+        this.peerTable.set(peerId, {
+          peerId,
+          multiaddrs: [],
+          connected: true,
+          reputation: 50,
+          connectedAt: Date.now(),
+          lastSeen: Date.now()
+        });
       }
     });
 
@@ -500,10 +512,14 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
       this.emit('peer:disconnected', { peerId });
 
-      // 更新路由表
+      // 更新路由表 - 确保 peer 存在
       const existing = this.peerTable.get(peerId);
       if (existing) {
         existing.connected = false;
+        existing.lastSeen = Date.now();
+      } else {
+        // Peer 不在路由表中，记录警告但不创建条目（已断开）
+        this.logger.warn('Peer disconnected but not in routing table', { peerId: peerId.slice(0, 16) });
       }
     });
 
@@ -519,7 +535,20 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         }
         
         const data = Buffer.concat(chunks);
-        const message: F2AMessage = JSON.parse(data.toString());
+        
+        // 安全解析 JSON，捕获解析错误
+        let message: F2AMessage;
+        try {
+          message = JSON.parse(data.toString());
+        } catch (parseError) {
+          this.logger.error('Failed to parse message JSON', {
+            error: parseError instanceof Error ? parseError.message : String(parseError),
+            dataSize: data.length,
+            peerId: connection.remotePeer.toString().slice(0, 16)
+          });
+          return;
+        }
+        
         const peerId = connection.remotePeer.toString();
 
         // 处理消息

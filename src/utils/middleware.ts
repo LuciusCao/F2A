@@ -27,6 +27,12 @@ export interface Middleware {
   name: string;
   /** 执行优先级（数字越小优先级越高） */
   priority?: number;
+  /** 
+   * 中间件类型
+   * - 'essential': 核心中间件，异常时中断链
+   * - 'optional': 可选中间件，异常时继续处理
+   */
+  type?: 'essential' | 'optional';
   /** 处理函数 */
   process(context: MiddlewareContext): Promise<MiddlewareResult> | MiddlewareResult;
 }
@@ -89,9 +95,29 @@ export class MiddlewareManager {
       } catch (error) {
         this.logger.error('Middleware error', {
           middleware: middleware.name,
-          error
+          error,
+          type: middleware.type || 'optional'
         });
-        // 中间件出错时继续处理，不阻塞消息
+        
+        // 根据中间件类型决定是否中断链
+        // essential: 核心中间件，异常时中断链，返回 drop
+        // optional: 可选中间件，异常时继续处理（原有行为）
+        const middlewareType = middleware.type || 'optional';
+        
+        if (middlewareType === 'essential') {
+          this.logger.warn('Essential middleware failed, aborting chain', {
+            middleware: middleware.name
+          });
+          return {
+            action: 'drop',
+            reason: `Essential middleware ${middleware.name} failed: ${error instanceof Error ? error.message : String(error)}`
+          };
+        }
+        
+        // optional 中间件出错时继续处理，不阻塞消息
+        this.logger.info('Optional middleware failed, continuing chain', {
+          middleware: middleware.name
+        });
       }
     }
 

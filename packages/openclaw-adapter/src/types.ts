@@ -104,6 +104,12 @@ export interface F2ANodeConfig {
   p2pPort: number;
   enableMDNS: boolean;
   bootstrapPeers: string[];
+  /** 请求超时（毫秒），默认 30000 */
+  timeoutMs?: number;
+  /** 最大重试次数，默认 3 */
+  maxRetries?: number;
+  /** 重试基础延迟（毫秒），默认 1000 */
+  retryDelayMs?: number;
 }
 
 // F2A Plugin Configuration

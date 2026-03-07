@@ -20,12 +20,15 @@ export interface WebhookPushResult {
   success: boolean;
   error?: string;
   latency?: number;
+  /** 是否处于降级模式（冷却期但允许轮询） */
+  degraded?: boolean;
 }
 
 export class WebhookPusher {
   private config: WebhookPushConfig;
   private consecutiveFailures = 0;
   private lastFailureTime = 0;
+  private degradedMode = false;
   
   // 连续失败后暂停推送一段时间
   private readonly FAILURE_THRESHOLD = 3;
@@ -67,9 +70,13 @@ export class WebhookPusher {
     // 检查是否在冷却期
     if (this.isInCooldown()) {
       const remainingMs = this.getCooldownMs() - (Date.now() - this.lastFailureTime);
+      
+      // 降级机制：冷却期内仍返回特殊结果，让调用方知道可以通过轮询处理
+      // 返回 degraded: true 表示处于降级模式，任务需要通过轮询机制处理
       return { 
         success: false, 
-        error: `In cooldown (${Math.round(remainingMs / 1000)}s remaining)` 
+        error: `In cooldown (${Math.round(remainingMs / 1000)}s remaining)`,
+        degraded: true
       };
     }
 
@@ -96,8 +103,9 @@ export class WebhookPusher {
       const latency = Date.now() - start;
 
       if (response.ok || response.status === 202) {
-        // 成功，重置失败计数
+        // 成功，重置失败计数和降级模式
         this.consecutiveFailures = 0;
+        this.degradedMode = false;
         return { success: true, latency };
       }
 
@@ -128,8 +136,17 @@ export class WebhookPusher {
       const result = await this.pushTask(task);
       results.set(task.taskId, result);
       
-      // 如果进入冷却期，停止推送
-      if (this.isInCooldown()) {
+      // 如果进入冷却期，停止推送但标记剩余任务为可轮询
+      if (result.degraded) {
+        // 剩余任务标记为需要轮询
+        const remainingTasks = tasks.filter(t => !results.has(t.taskId));
+        for (const remaining of remainingTasks) {
+          results.set(remaining.taskId, { 
+            success: false, 
+            error: 'Skipped due to cooldown', 
+            degraded: true 
+          });
+        }
         break;
       }
     }
@@ -156,11 +173,22 @@ export class WebhookPusher {
   private recordFailure(): void {
     this.consecutiveFailures++;
     this.lastFailureTime = Date.now();
+    this.degradedMode = true;
     
     if (this.consecutiveFailures >= this.FAILURE_THRESHOLD) {
       const cooldownSec = Math.round(this.getCooldownMs() / 1000);
-      console.warn(`[WebhookPusher] 连续失败 ${this.consecutiveFailures} 次，进入 ${cooldownSec} 秒冷却期`);
+      console.warn(`[WebhookPusher] 连续失败 ${this.consecutiveFailures} 次，进入 ${cooldownSec} 秒冷却期（降级模式启用）`);
     }
+  }
+
+  /**
+   * 手动重置冷却期（用于外部干预）
+   */
+  resetCooldown(): void {
+    this.consecutiveFailures = 0;
+    this.lastFailureTime = 0;
+    this.degradedMode = false;
+    console.log('[WebhookPusher] 冷却期已手动重置');
   }
 
   /**
@@ -171,12 +199,14 @@ export class WebhookPusher {
     consecutiveFailures: number;
     inCooldown: boolean;
     currentCooldownMs: number;
+    degradedMode: boolean;
   } {
     return {
       enabled: this.config.enabled ?? true,
       consecutiveFailures: this.consecutiveFailures,
       inCooldown: this.isInCooldown(),
-      currentCooldownMs: this.isInCooldown() ? this.getCooldownMs() : 0
+      currentCooldownMs: this.isInCooldown() ? this.getCooldownMs() : 0,
+      degradedMode: this.degradedMode
     };
   }
 

@@ -141,13 +141,16 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   }
 
   /**
-   * 启动兜底轮询
+   * 兜底轮询
    * 当 webhook 推送失败时，轮询确保任务不会丢失
    */
   private startFallbackPolling(): void {
     const interval = this.config.pollInterval || 60000; // 默认 60 秒
     
     this.pollTimer = setInterval(async () => {
+      // P1 修复：定期检查并重置超时的 processing 任务，防止僵尸任务
+      this.resetTimedOutProcessingTasks();
+      
       if (!this.webhookPusher) {
         // 没有配置 webhook，不轮询（保持原有轮询模式）
         return;
@@ -171,6 +174,36 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         console.error('[F2A Plugin] 兜底轮询失败:', error);
       }
     }, interval);
+  }
+  
+  /**
+   * P1 修复：重置超时的 processing 任务
+   * 如果任务在 processing 状态停留超过超时时间，将其重置为 pending
+   * 防止因处理失败导致的僵尸任务
+   */
+  private resetTimedOutProcessingTasks(): void {
+    const stats = this.taskQueue.getStats();
+    if (stats.processing === 0) {
+      return; // 没有处理中的任务，无需检查
+    }
+    
+    const allTasks = this.taskQueue.getAll();
+    const now = Date.now();
+    const processingTimeout = this.config.processingTimeoutMs || 5 * 60 * 1000; // 默认 5 分钟
+    
+    for (const task of allTasks) {
+      if (task.status === 'processing') {
+        const taskTimeout = task.timeout || 30000; // 使用任务自身的超时或默认 30 秒
+        const maxAllowedTime = Math.max(taskTimeout * 2, processingTimeout); // 至少 2 倍任务超时或 processingTimeout
+        const processingTime = now - (task.updatedAt || task.createdAt);
+        
+        if (processingTime > maxAllowedTime) {
+          console.warn(`[F2A Plugin] 检测到僵尸任务 ${task.taskId.slice(0, 8)}... (processing ${Math.round(processingTime / 1000)}s)，重置为 pending`);
+          // 将任务重置为 pending 状态
+          this.taskQueue.resetProcessingTask(task.taskId);
+        }
+      }
+    }
   }
 
   /**

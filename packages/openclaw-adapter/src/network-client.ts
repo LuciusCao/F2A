@@ -87,7 +87,8 @@ export class F2ANetworkClient {
     path: string, 
     body?: unknown
   ): Promise<Result<T>> {
-    let lastError: Error | null = null;
+    // P1 修复：初始化 lastError 为有意义的默认值，避免 null 问题
+    let lastError: Error = new Error('Request failed before any attempt');
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       // 使用 AbortController 设置超时
@@ -151,9 +152,13 @@ export class F2ANetworkClient {
           continue;
         }
         
+        // P1 修复：确保返回有意义的错误信息
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        lastError = error instanceof Error ? error : new Error(errorMessage);
+        
         return failure(createError(
           'CONNECTION_FAILED',
-          error instanceof Error ? error.message : String(error)
+          errorMessage
         ));
       } finally {
         clearTimeout(timeoutId);
@@ -161,9 +166,10 @@ export class F2ANetworkClient {
     }
 
     // 所有重试都失败了
+    // P1 修复：lastError 此时一定有值，不再需要 optional chaining
     return failure(createError(
       'CONNECTION_FAILED',
-      lastError?.message || `Failed after ${this.maxRetries} retries`
+      lastError.message
     ));
   }
 

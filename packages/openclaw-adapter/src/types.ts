@@ -129,6 +129,8 @@ export interface F2APluginConfig {
   maxQueuedTasks?: number;
   /** 兜底轮询间隔（毫秒），默认 60 秒 */
   pollInterval?: number;
+  /** P1 修复：processing 任务超时时间（毫秒），超过此时间将被重置为 pending，默认 5 分钟 */
+  processingTimeoutMs?: number;
   /** Webhook 推送配置 */
   webhookPush?: WebhookPushConfig;
   reputation?: ReputationConfig;

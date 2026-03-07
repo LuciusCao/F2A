@@ -14,11 +14,37 @@ const sleep = promisify(setTimeout);
 // PID 文件路径
 const PID_FILE_NAME = 'f2a-node.pid';
 
+/** 健康检查重启配置 */
+interface HealthCheckRestartConfig {
+  /** 最大连续重启次数 */
+  maxRestarts: number;
+  /** 重启计数重置时间窗口（毫秒） */
+  resetWindowMs: number;
+  /** 冷却期基础时间（毫秒） */
+  cooldownBaseMs: number;
+  /** 冷却期最大时间（毫秒） */
+  cooldownMaxMs: number;
+}
+
+/** 默认重启配置 */
+const DEFAULT_RESTART_CONFIG: HealthCheckRestartConfig = {
+  maxRestarts: 3,           // 最多连续重启 3 次
+  resetWindowMs: 60000,     // 1 分钟内重置计数
+  cooldownBaseMs: 5000,     // 冷却期基础 5 秒
+  cooldownMaxMs: 60000      // 冷却期最大 60 秒
+};
+
 export class F2ANodeManager {
   private process: ChildProcess | null = null;
   private config: F2ANodeConfig;
   private healthCheckInterval?: NodeJS.Timeout;
   private pidFilePath: string;
+  
+  // P1 修复：健康检查重启限制
+  private restartConfig: HealthCheckRestartConfig;
+  private consecutiveRestarts: number = 0;
+  private lastRestartTime: number = 0;
+  private isRestarting: boolean = false;
 
   constructor(config: Partial<F2ANodeConfig>) {
     this.config = {
@@ -30,6 +56,7 @@ export class F2ANodeManager {
       bootstrapPeers: config.bootstrapPeers || []
     };
     this.pidFilePath = join(this.config.nodePath, PID_FILE_NAME);
+    this.restartConfig = { ...DEFAULT_RESTART_CONFIG };
     
     // 启动时清理孤儿进程
     this.cleanupOrphanProcesses();
@@ -320,15 +347,60 @@ export class F2ANodeManager {
 
   /**
    * 启动健康检查
+   * 
+   * P1 修复：添加重启次数限制和冷却期，防止无限重启循环
    */
   private startHealthCheck(): void {
     this.healthCheckInterval = setInterval(async () => {
+      // 如果正在重启，跳过本次检查
+      if (this.isRestarting) {
+        return;
+      }
+
       const isHealthy = await this.isRunning();
       if (!isHealthy && this.process) {
-        console.warn('[F2A] Node 健康检查失败，尝试重启...');
-        await this.stop();
-        await sleep(1000);
-        await this.start();
+        // 检查是否达到重启限制
+        const now = Date.now();
+        
+        // 如果距离上次重启超过重置窗口，重置计数
+        if (now - this.lastRestartTime > this.restartConfig.resetWindowMs) {
+          this.consecutiveRestarts = 0;
+        }
+        
+        // 检查是否达到最大重启次数
+        if (this.consecutiveRestarts >= this.restartConfig.maxRestarts) {
+          console.error(
+            `[F2A] Node 健康检查失败，已达到最大重启次数 (${this.restartConfig.maxRestarts})，` +
+            `将在 ${Math.round(this.restartConfig.resetWindowMs / 1000)} 秒后重置计数`
+          );
+          return;
+        }
+        
+        // 计算冷却期（指数退避）
+        const cooldownMs = Math.min(
+          this.restartConfig.cooldownBaseMs * Math.pow(2, this.consecutiveRestarts),
+          this.restartConfig.cooldownMaxMs
+        );
+        
+        console.warn(
+          `[F2A] Node 健康检查失败，尝试重启... ` +
+          `(第 ${this.consecutiveRestarts + 1}/${this.restartConfig.maxRestarts} 次，` +
+          `冷却 ${Math.round(cooldownMs / 1000)} 秒)`
+        );
+        
+        this.isRestarting = true;
+        this.consecutiveRestarts++;
+        this.lastRestartTime = now;
+        
+        try {
+          await this.stop();
+          await sleep(cooldownMs);
+          await this.start();
+        } catch (error) {
+          console.error('[F2A] 重启失败:', error);
+        } finally {
+          this.isRestarting = false;
+        }
       }
     }, 30000); // 每 30 秒检查一次
   }

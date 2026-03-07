@@ -204,3 +204,81 @@ describe('并发竞态条件', () => {
     expect(updatedTask?.description).toBe('second');
   });
 });
+
+// P1 修复：测试僵尸任务重置功能
+describe('resetProcessingTask', () => {
+  let queue: TaskQueue;
+
+  beforeEach(() => {
+    if (!fs.existsSync(TEST_DIR)) {
+      fs.mkdirSync(TEST_DIR, { recursive: true });
+    }
+    queue = new TaskQueue({
+      maxSize: 5,
+      maxAgeMs: 1000,
+      persistDir: TEST_DIR,
+      persistEnabled: true
+    });
+  });
+
+  afterEach(() => {
+    queue.close();
+    if (fs.existsSync(TEST_DIR)) {
+      fs.rmSync(TEST_DIR, { recursive: true });
+    }
+  });
+
+  it('应该将 processing 任务重置为 pending', () => {
+    queue.add({ taskId: 'task-1', taskType: 'test', from: 'peer-1', timestamp: Date.now(), timeout: 30000 });
+    queue.markProcessing('task-1');
+    
+    expect(queue.get('task-1')?.status).toBe('processing');
+    
+    const result = queue.resetProcessingTask('task-1');
+    
+    expect(result?.status).toBe('pending');
+    expect(queue.get('task-1')?.status).toBe('pending');
+  });
+
+  it('应该只重置 processing 状态的任务', () => {
+    queue.add({ taskId: 'task-1', taskType: 'test', from: 'peer-1', timestamp: Date.now(), timeout: 30000 });
+    // 任务状态是 pending，不应该被重置
+    const result = queue.resetProcessingTask('task-1');
+    expect(result).toBeUndefined();
+    expect(queue.get('task-1')?.status).toBe('pending');
+  });
+
+  it('应该对不存在的任务返回 undefined', () => {
+    const result = queue.resetProcessingTask('non-existent');
+    expect(result).toBeUndefined();
+  });
+
+  it('应该更新 updatedAt 时间戳', () => {
+    queue.add({ taskId: 'task-1', taskType: 'test', from: 'peer-1', timestamp: Date.now(), timeout: 30000 });
+    queue.markProcessing('task-1');
+    
+    const beforeReset = Date.now();
+    const result = queue.resetProcessingTask('task-1');
+    const afterReset = Date.now();
+    
+    expect(result?.updatedAt).toBeGreaterThanOrEqual(beforeReset);
+    expect(result?.updatedAt).toBeLessThanOrEqual(afterReset);
+  });
+
+  it('应该在持久化后保持重置状态', () => {
+    queue.add({ taskId: 'task-1', taskType: 'test', from: 'peer-1', timestamp: Date.now(), timeout: 30000 });
+    queue.markProcessing('task-1');
+    queue.resetProcessingTask('task-1');
+    queue.close();
+
+    // 创建新队列，应该恢复任务且状态为 pending
+    const newQueue = new TaskQueue({
+      maxSize: 5,
+      maxAgeMs: 1000,
+      persistDir: TEST_DIR,
+      persistEnabled: true
+    });
+    expect(newQueue.get('task-1')?.status).toBe('pending');
+    newQueue.close();
+  });
+});

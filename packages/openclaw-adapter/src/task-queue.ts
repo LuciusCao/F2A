@@ -144,6 +144,8 @@ export class TaskQueue {
 
   /**
    * 从数据库恢复任务
+   * 
+   * P1 修复：尝试逐条恢复有效数据，避免数据库损坏时丢失所有任务
    */
   private restore(): void {
     if (!this.db) return;
@@ -161,31 +163,98 @@ export class TaskQueue {
         ORDER BY created_at ASC
       `).all() as any[];
 
+      let recoveredCount = 0;
+      let skippedCount = 0;
+
       for (const row of rows) {
         try {
+          // 验证必要字段
+          if (!row.id || typeof row.id !== 'string') {
+            console.warn(`[TaskQueue] 跳过无效记录: 缺少 id`);
+            skippedCount++;
+            continue;
+          }
+          
+          if (!row.created_at || typeof row.created_at !== 'number') {
+            console.warn(`[TaskQueue] 跳过无效记录 ${row.id}: 缺少 created_at`);
+            skippedCount++;
+            continue;
+          }
+
+          // 检查任务是否过期
+          const age = Date.now() - row.created_at;
+          if (age > this.maxAgeMs) {
+            // 删除过期任务
+            this.db.prepare('DELETE FROM tasks WHERE id = ?').run(row.id);
+            skippedCount++;
+            continue;
+          }
+
           const task: QueuedTask = {
             taskId: row.id,
-            taskType: row.task_type,
-            description: row.description,
+            taskType: row.task_type || undefined,
+            description: row.description || undefined,
             parameters: this.safeJsonParse(row.parameters),
-            status: row.status,
+            status: row.status || 'pending',
             createdAt: row.created_at,
-            updatedAt: row.updated_at,
+            updatedAt: row.updated_at || undefined,
             result: this.safeJsonParse(row.result),
-            error: row.error,
-            latency: row.latency,
+            error: row.error || undefined,
+            latency: row.latency || undefined,
             webhookPushed: row.webhook_pushed === 1
           };
+          
           this.tasks.set(task.taskId, task);
+          recoveredCount++;
         } catch (e) {
           console.warn(`[TaskQueue] 跳过无效任务记录: ${row.id}`, e);
+          skippedCount++;
         }
       }
 
-      console.log(`[TaskQueue] Restored ${this.tasks.size} tasks from persistence`);
+      if (skippedCount > 0) {
+        console.log(`[TaskQueue] 恢复完成: ${recoveredCount} 个任务已恢复, ${skippedCount} 个无效记录已跳过`);
+      } else {
+        console.log(`[TaskQueue] Restored ${this.tasks.size} tasks from persistence`);
+      }
     } catch (e) {
-      console.warn('[TaskQueue] 恢复任务失败，将使用空队列', e);
-      this.tasks.clear();
+      // P1 修复：数据库损坏时不清空所有任务，而是尝试逐条恢复
+      console.warn('[TaskQueue] 批量恢复失败，尝试逐条恢复:', e);
+      
+      try {
+        // 尝试逐条读取并恢复
+        const rows = this.db.prepare(`SELECT * FROM tasks WHERE status IN ('pending', 'processing')`).all() as any[];
+        
+        for (const row of rows) {
+          try {
+            if (row.id && row.created_at) {
+              const task: QueuedTask = {
+                taskId: row.id,
+                taskType: row.task_type || undefined,
+                description: row.description || undefined,
+                parameters: this.safeJsonParse(row.parameters),
+                status: 'pending', // 恢复时默认设为 pending
+                createdAt: row.created_at,
+                updatedAt: row.updated_at || undefined,
+                result: this.safeJsonParse(row.result),
+                error: row.error || undefined,
+                latency: row.latency || undefined,
+                webhookPushed: row.webhook_pushed === 1
+              };
+              this.tasks.set(task.taskId, task);
+            }
+          } catch (rowError) {
+            // 单条记录恢复失败，跳过并继续
+            console.warn(`[TaskQueue] 单条记录恢复失败: ${row?.id}`, rowError);
+          }
+        }
+        
+        console.log(`[TaskQueue] 逐条恢复完成: ${this.tasks.size} 个任务`);
+      } catch (recoverError) {
+        // 所有恢复尝试都失败，记录错误但不清空内存
+        console.error('[TaskQueue] 所有恢复尝试失败，将使用空内存队列', recoverError);
+        // 注意：这里不清空 this.tasks，保留任何可能已部分恢复的数据
+      }
     }
   }
 
@@ -386,6 +455,29 @@ export class TaskQueue {
       const updateTransaction = this.db!.transaction(() => {
         this.db!.prepare(`
           UPDATE tasks SET status = 'processing', updated_at = ? WHERE id = ?
+        `).run(task.updatedAt, taskId);
+      });
+      updateTransaction();
+    }
+
+    return task;
+  }
+
+  /**
+   * P1 修复：重置 processing 任务为 pending
+   * 用于处理因异常导致的僵尸任务
+   */
+  resetProcessingTask(taskId: string): QueuedTask | undefined {
+    const task = this.tasks.get(taskId);
+    if (!task || task.status !== 'processing') return undefined;
+
+    task.status = 'pending';
+    task.updatedAt = Date.now();
+
+    if (this.db) {
+      const updateTransaction = this.db!.transaction(() => {
+        this.db!.prepare(`
+          UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?
         `).run(task.updatedAt, taskId);
       });
       updateTransaction();

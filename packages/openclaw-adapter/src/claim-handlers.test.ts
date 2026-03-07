@@ -491,7 +491,7 @@ describe('ClaimHandlers', () => {
           action: 'accept'
         }, mockContext);
 
-        expect(result.content).toBe('❌ 请提供 claim_id');
+        expect(result.content).toBe('❌ accept/reject 操作需要提供 claim_id 参数');
       });
 
       it('应该处理接受失败的情况', async () => {
@@ -541,7 +541,7 @@ describe('ClaimHandlers', () => {
           action: 'reject'
         }, mockContext);
 
-        expect(result.content).toBe('❌ 请提供 claim_id');
+        expect(result.content).toBe('❌ accept/reject 操作需要提供 claim_id 参数');
       });
 
       it('应该处理拒绝失败的情况', async () => {
@@ -594,7 +594,7 @@ describe('ClaimHandlers', () => {
         action: 'unknown' as any
       }, mockContext);
 
-      expect(result.content).toBe('❌ 未知操作: unknown');
+      expect(result.content).toBe('❌ action 参数必须是 list, accept 或 reject');
     });
   });
 
@@ -722,13 +722,31 @@ describe('ClaimHandlers', () => {
   });
 
   describe('边界条件测试', () => {
-    it('handleAnnounce 应该处理空描述', async () => {
-      const announcement = createMockAnnouncement({ description: '' });
+    it('handleAnnounce 应该拒绝空描述', async () => {
+      const result = await claimHandlers.handleAnnounce({
+        task_type: 'test',
+        description: ''
+      }, mockContext);
+
+      expect(result.content).toContain('❌ 请提供有效的 description 参数');
+    });
+
+    it('handleAnnounce 应该拒绝空任务类型', async () => {
+      const result = await claimHandlers.handleAnnounce({
+        task_type: '',
+        description: 'test description'
+      }, mockContext);
+
+      expect(result.content).toContain('❌ 请提供有效的 task_type 参数');
+    });
+
+    it('handleAnnounce 应该接受有效的参数', async () => {
+      const announcement = createMockAnnouncement({ description: 'valid description' });
       mockAdapter.announcementQueue.create.mockReturnValue(announcement);
 
       const result = await claimHandlers.handleAnnounce({
         task_type: 'test',
-        description: ''
+        description: 'valid description'
       }, mockContext);
 
       expect(result.content).toContain('任务广播已创建');

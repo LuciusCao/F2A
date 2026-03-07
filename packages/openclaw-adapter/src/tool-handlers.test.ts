@@ -645,7 +645,7 @@ describe('ToolHandlers', () => {
       it('应该要求提供 peer_id', async () => {
         const result = await toolHandlers.handleReputation({ action: 'view' }, mockContext);
 
-        expect(result.content).toBe('❌ 请提供 peer_id');
+        expect(result.content).toBe('❌ view/block/unblock 操作需要提供 peer_id 参数');
       });
     });
 
@@ -663,7 +663,7 @@ describe('ToolHandlers', () => {
       it('应该要求提供 peer_id', async () => {
         const result = await toolHandlers.handleReputation({ action: 'block' }, mockContext);
 
-        expect(result.content).toBe('❌ 请提供 peer_id');
+        expect(result.content).toBe('❌ view/block/unblock 操作需要提供 peer_id 参数');
       });
 
       it('应该在没有 security 配置时创建默认配置', async () => {
@@ -696,7 +696,7 @@ describe('ToolHandlers', () => {
       it('应该要求提供 peer_id', async () => {
         const result = await toolHandlers.handleReputation({ action: 'unblock' }, mockContext);
 
-        expect(result.content).toBe('❌ 请提供 peer_id');
+        expect(result.content).toBe('❌ view/block/unblock 操作需要提供 peer_id 参数');
       });
     });
 
@@ -706,7 +706,7 @@ describe('ToolHandlers', () => {
           action: 'unknown-action'
         }, mockContext);
 
-        expect(result.content).toBe('❌ 未知操作: unknown-action');
+        expect(result.content).toBe('❌ action 参数必须是 list, view, block 或 unblock');
       });
     });
   });

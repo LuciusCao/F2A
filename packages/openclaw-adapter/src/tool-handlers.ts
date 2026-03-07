@@ -92,6 +92,14 @@ ${agents.map((a: AgentInfo, i: number) => {
     params: ToolHandlerParams['delegate'],
     context: SessionContext
   ): Promise<ToolResult> {
+    // 输入验证
+    if (!params.agent || typeof params.agent !== 'string' || params.agent.trim() === '') {
+      return { content: '❌ 请提供有效的 agent 参数（Agent ID、名称或 #索引）' };
+    }
+    if (!params.task || typeof params.task !== 'string' || params.task.trim() === '') {
+      return { content: '❌ 请提供有效的 task 参数（任务描述）' };
+    }
+    
     const networkClient = (this.adapter as any).networkClient;
     const reputationSystem = (this.adapter as any).reputationSystem;
     
@@ -142,6 +150,14 @@ ${agents.map((a: AgentInfo, i: number) => {
     params: ToolHandlerParams['broadcast'],
     context: SessionContext
   ): Promise<ToolResult> {
+    // 输入验证
+    if (!params.capability || typeof params.capability !== 'string' || params.capability.trim() === '') {
+      return { content: '❌ 请提供有效的 capability 参数（所需能力）' };
+    }
+    if (!params.task || typeof params.task !== 'string' || params.task.trim() === '') {
+      return { content: '❌ 请提供有效的 task 参数（任务描述）' };
+    }
+    
     const networkClient = (this.adapter as any).networkClient;
     
     const discoverResult = await networkClient.discoverAgents(params.capability);
@@ -248,6 +264,15 @@ ${peers.map((p: any) => {
     params: ToolHandlerParams['reputation'],
     context: SessionContext
   ): Promise<ToolResult> {
+    // 输入验证
+    if (!params.action || !['list', 'view', 'block', 'unblock'].includes(params.action)) {
+      return { content: '❌ action 参数必须是 list, view, block 或 unblock' };
+    }
+    if ((params.action === 'view' || params.action === 'block' || params.action === 'unblock') && 
+        (!params.peer_id || typeof params.peer_id !== 'string' || params.peer_id.trim() === '')) {
+      return { content: '❌ view/block/unblock 操作需要提供 peer_id 参数' };
+    }
+    
     const reputationSystem = (this.adapter as any).reputationSystem;
     const config = (this.adapter as any).config;
     
@@ -313,6 +338,14 @@ ${peers.map((p: any) => {
     params: ToolHandlerParams['pollTasks'],
     context: SessionContext
   ): Promise<ToolResult> {
+    // 输入验证
+    if (params.limit !== undefined && (typeof params.limit !== 'number' || params.limit < 1 || params.limit > 100)) {
+      return { content: '❌ limit 参数必须是 1-100 之间的数字' };
+    }
+    if (params.status !== undefined && !['pending', 'processing', 'completed', 'failed'].includes(params.status)) {
+      return { content: '❌ status 参数必须是 pending, processing, completed 或 failed' };
+    }
+    
     const taskQueue = (this.adapter as any).taskQueue;
     
     let tasks: QueuedTask[];
@@ -385,6 +418,17 @@ ${tasks.map(t => {
     params: ToolHandlerParams['submitResult'],
     context: SessionContext
   ): Promise<ToolResult> {
+    // 输入验证
+    if (!params.task_id || typeof params.task_id !== 'string' || params.task_id.trim() === '') {
+      return { content: '❌ 请提供有效的 task_id 参数' };
+    }
+    if (!params.result || typeof params.result !== 'string') {
+      return { content: '❌ 请提供有效的 result 参数' };
+    }
+    if (params.status !== 'success' && params.status !== 'error') {
+      return { content: '❌ status 参数必须是 success 或 error' };
+    }
+    
     const taskQueue = (this.adapter as any).taskQueue;
     const networkClient = (this.adapter as any).networkClient;
     const reputationSystem = (this.adapter as any).reputationSystem;

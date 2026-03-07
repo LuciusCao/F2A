@@ -56,6 +56,14 @@ export class ClaimHandlers {
     params: ClaimHandlerParams['announce'],
     context: SessionContext
   ): Promise<ToolResult> {
+    // 输入验证
+    if (!params.task_type || typeof params.task_type !== 'string' || params.task_type.trim() === '') {
+      return { content: '❌ 请提供有效的 task_type 参数' };
+    }
+    if (!params.description || typeof params.description !== 'string' || params.description.trim() === '') {
+      return { content: '❌ 请提供有效的 description 参数' };
+    }
+    
     const announcementQueue = (this.adapter as any).announcementQueue;
     const api = (this.adapter as any).api;
     const config = (this.adapter as any).config;
@@ -168,6 +176,11 @@ ${announcements.map((a: any, i: number) => {
     params: ClaimHandlerParams['claim'],
     context: SessionContext
   ): Promise<ToolResult> {
+    // 输入验证
+    if (!params.announcement_id || typeof params.announcement_id !== 'string' || params.announcement_id.trim() === '') {
+      return { content: '❌ 请提供有效的 announcement_id 参数' };
+    }
+    
     const announcementQueue = (this.adapter as any).announcementQueue;
     const api = (this.adapter as any).api;
     const config = (this.adapter as any).config;
@@ -229,6 +242,18 @@ ${params.confidence ? `信心指数: ${Math.round(params.confidence * 100)}%` : 
     params: ClaimHandlerParams['manageClaims'],
     context: SessionContext
   ): Promise<ToolResult> {
+    // 输入验证
+    if (!params.announcement_id || typeof params.announcement_id !== 'string' || params.announcement_id.trim() === '') {
+      return { content: '❌ 请提供有效的 announcement_id 参数' };
+    }
+    if (!params.action || !['list', 'accept', 'reject'].includes(params.action)) {
+      return { content: '❌ action 参数必须是 list, accept 或 reject' };
+    }
+    if ((params.action === 'accept' || params.action === 'reject') && 
+        (!params.claim_id || typeof params.claim_id !== 'string' || params.claim_id.trim() === '')) {
+      return { content: '❌ accept/reject 操作需要提供 claim_id 参数' };
+    }
+    
     const announcementQueue = (this.adapter as any).announcementQueue;
     
     const announcement = announcementQueue.get(params.announcement_id);

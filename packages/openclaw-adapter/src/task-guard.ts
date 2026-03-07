@@ -825,5 +825,36 @@ export class TaskGuard {
   }
 }
 
-// 导出单例
-export const taskGuard = new TaskGuard();
+// 导出单例（带进程退出时自动保存）
+const globalTaskGuard = new TaskGuard();
+
+// 注册进程退出处理，确保状态持久化
+let shutdownHandlersRegistered = false;
+const registerShutdownHandlers = () => {
+  if (shutdownHandlersRegistered) return;
+  shutdownHandlersRegistered = true;
+  
+  // 处理正常退出
+  process.on('beforeExit', () => {
+    globalTaskGuard.shutdown();
+  });
+  
+  // 处理 SIGINT (Ctrl+C)
+  process.on('SIGINT', () => {
+    globalTaskGuard.shutdown();
+    process.exit(0);
+  });
+  
+  // 处理 SIGTERM
+  process.on('SIGTERM', () => {
+    globalTaskGuard.shutdown();
+    process.exit(0);
+  });
+};
+
+// 仅在非测试环境注册
+if (process.env.NODE_ENV !== 'test') {
+  registerShutdownHandlers();
+}
+
+export const taskGuard = globalTaskGuard;

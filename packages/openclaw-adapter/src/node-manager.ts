@@ -217,6 +217,9 @@ export class F2ANodeManager {
       // 启动健康检查
       this.startHealthCheck();
 
+      // P1 修复：成功启动后重置重启计数器
+      this.consecutiveRestarts = 0;
+
       console.log('[F2A] Node 启动成功');
       return { success: true };
 

@@ -1417,6 +1417,12 @@ ${claims.map((c, i) => {
       await this.webhookServer.stop?.();
     }
     
+    // P1 修复：关闭前刷新信誉系统数据，确保持久化
+    if (this.reputationSystem) {
+      this.reputationSystem.flush();
+      console.log('[F2A Plugin] 信誉系统数据已保存');
+    }
+    
     // 停止 F2A Node
     if (this.nodeManager) {
       await this.nodeManager.stop();

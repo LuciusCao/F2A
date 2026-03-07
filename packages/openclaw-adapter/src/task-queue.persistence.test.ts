@@ -8,32 +8,37 @@ import { TaskQueue } from './task-queue.js';
 import fs from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
-
-const TEST_DIR = './test-tmp-persistence';
+import { randomUUID } from 'crypto';
 
 describe('TaskQueue 崩溃恢复测试', () => {
   let queue: TaskQueue;
+  let testDir: string;
 
   beforeEach(() => {
-    if (!fs.existsSync(TEST_DIR)) {
-      fs.mkdirSync(TEST_DIR, { recursive: true });
-    }
+    // 为每个测试使用唯一的目录，确保测试隔离
+    testDir = `./test-tmp-persistence-${randomUUID()}`;
+    fs.mkdirSync(testDir, { recursive: true });
     queue = new TaskQueue({
       maxSize: 1000,
       maxAgeMs: 60000,
-      persistDir: TEST_DIR,
+      persistDir: testDir,
       persistEnabled: true
     });
   });
 
   afterEach(() => {
     try {
-      queue.close();
+      queue?.close();
     } catch (e) {
       // 忽略关闭错误
     }
-    if (fs.existsSync(TEST_DIR)) {
-      fs.rmSync(TEST_DIR, { recursive: true });
+    // 使用唯一目录，清理更可靠
+    if (testDir && fs.existsSync(testDir)) {
+      try {
+        fs.rmSync(testDir, { recursive: true, force: true });
+      } catch (e) {
+        // 忽略删除错误（可能文件被锁定）
+      }
     }
   });
 
@@ -47,7 +52,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
       // 重新打开
       const newQueue = new TaskQueue({
         maxSize: 1000,
-        persistDir: TEST_DIR,
+        persistDir: testDir,
         persistEnabled: true
       });
 
@@ -69,7 +74,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
 
       const newQueue = new TaskQueue({
         maxSize: 1000,
-        persistDir: TEST_DIR,
+        persistDir: testDir,
         persistEnabled: true
       });
 
@@ -92,7 +97,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
 
       const newQueue = new TaskQueue({
         maxSize: 1000,
-        persistDir: TEST_DIR,
+        persistDir: testDir,
         persistEnabled: true
       });
 
@@ -111,7 +116,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
 
       const newQueue = new TaskQueue({
         maxSize: 1000,
-        persistDir: TEST_DIR,
+        persistDir: testDir,
         persistEnabled: true
       });
 
@@ -142,7 +147,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
       // 重新打开
       const newQueue = new TaskQueue({
         maxSize: 1000,
-        persistDir: TEST_DIR,
+        persistDir: testDir,
         persistEnabled: true
       });
 
@@ -156,7 +161,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
 
     it('应该在部分写入后恢复一致状态', () => {
       // 直接操作数据库模拟部分写入
-      const dbPath = path.join(TEST_DIR, 'task-queue.db');
+      const dbPath = path.join(testDir, 'task-queue.db');
       
       queue.add({ taskId: 'partial-1', taskType: 'test' });
       
@@ -171,7 +176,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
       // 重新打开队列
       const newQueue = new TaskQueue({
         maxSize: 1000,
-        persistDir: TEST_DIR,
+        persistDir: testDir,
         persistEnabled: true
       });
 
@@ -190,14 +195,14 @@ describe('TaskQueue 崩溃恢复测试', () => {
       queue.close();
 
       // 损坏数据库文件
-      const dbPath = path.join(TEST_DIR, 'task-queue.db');
+      const dbPath = path.join(testDir, 'task-queue.db');
       fs.writeFileSync(dbPath, 'corrupted data here');
 
       // 应该能够创建新数据库
       expect(() => {
         const newQueue = new TaskQueue({
           maxSize: 1000,
-          persistDir: TEST_DIR,
+          persistDir: testDir,
           persistEnabled: true
         });
         newQueue.close();
@@ -221,7 +226,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
 
       const newQueue = new TaskQueue({
         maxSize: 1000,
-        persistDir: TEST_DIR,
+        persistDir: testDir,
         persistEnabled: true
       });
 
@@ -243,7 +248,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
 
       const newQueue = new TaskQueue({
         maxSize: 1000,
-        persistDir: TEST_DIR,
+        persistDir: testDir,
         persistEnabled: true
       });
 
@@ -262,7 +267,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
 
       const newQueue = new TaskQueue({
         maxSize: 1000,
-        persistDir: TEST_DIR,
+        persistDir: testDir,
         persistEnabled: true
       });
 
@@ -283,7 +288,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
       // 同时打开多个实例（注意：实际中应该避免这种情况）
       const queue1 = new TaskQueue({
         maxSize: 1000,
-        persistDir: TEST_DIR,
+        persistDir: testDir,
         persistEnabled: true
       });
 
@@ -304,7 +309,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
 
       const newQueue = new TaskQueue({
         maxSize: 1000,
-        persistDir: TEST_DIR,
+        persistDir: testDir,
         persistEnabled: true
       });
 
@@ -329,7 +334,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
 
       const newQueue = new TaskQueue({
         maxSize: 1000,
-        persistDir: TEST_DIR,
+        persistDir: testDir,
         persistEnabled: true
       });
 
@@ -345,7 +350,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
 
   describe('错误恢复', () => {
     it('应该处理无效的 JSON 数据', () => {
-      const dbPath = path.join(TEST_DIR, 'task-queue.db');
+      const dbPath = path.join(testDir, 'task-queue.db');
       
       queue.add({ taskId: 'valid-task', taskType: 'test' });
       queue.close();
@@ -359,7 +364,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
       // 应该能够启动并跳过无效数据
       const newQueue = new TaskQueue({
         maxSize: 1000,
-        persistDir: TEST_DIR,
+        persistDir: testDir,
         persistEnabled: true
       });
 
@@ -370,7 +375,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
     });
 
     it('应该处理缺失的列', () => {
-      const dbPath = path.join(TEST_DIR, 'task-queue.db');
+      const dbPath = path.join(testDir, 'task-queue.db');
       
       queue.close();
 
@@ -393,7 +398,7 @@ describe('TaskQueue 崩溃恢复测试', () => {
       expect(() => {
         const newQueue = new TaskQueue({
           maxSize: 1000,
-          persistDir: TEST_DIR,
+          persistDir: testDir,
           persistEnabled: true
         });
         newQueue.close();

@@ -33,6 +33,7 @@ export class AnnouncementQueue {
 
     // 检查容量
     if (this.announcements.size >= this.maxSize) {
+      console.error('[announcement-queue] create: queue is full, size=%d, maxSize=%d', this.announcements.size, this.maxSize);
       throw new Error('Announcement queue is full');
     }
 
@@ -47,6 +48,7 @@ export class AnnouncementQueue {
     };
 
     this.announcements.set(id, created);
+    console.log('[announcement-queue] create: announcementId=%s, from=%s, taskType=%s', id, announcement.from, announcement.taskType);
     return created;
   }
 
@@ -74,12 +76,19 @@ export class AnnouncementQueue {
     claim: Omit<TaskClaim, 'claimId' | 'timestamp' | 'status' | 'announcementId'>
   ): TaskClaim | null {
     const announcement = this.announcements.get(announcementId);
-    if (!announcement) return null;
-    if (announcement.status !== 'open') return null;
+    if (!announcement) {
+      console.warn('[announcement-queue] submitClaim: announcement not found, id=%s, claimant=%s', announcementId, claim.claimant);
+      return null;
+    }
+    if (announcement.status !== 'open') {
+      console.warn('[announcement-queue] submitClaim: announcement not open, id=%s, status=%s, claimant=%s', announcementId, announcement.status, claim.claimant);
+      return null;
+    }
 
     // 检查该 claimant 是否已经提交过认领（防止重复认领）
     const existingClaim = announcement.claims?.find(c => c.claimant === claim.claimant);
     if (existingClaim) {
+      console.log('[announcement-queue] submitClaim: duplicate claim ignored, id=%s, claimant=%s, existingClaimId=%s', announcementId, claim.claimant, existingClaim.claimId);
       // 返回已存在的认领，而不是创建新的
       return existingClaim;
     }
@@ -99,6 +108,7 @@ export class AnnouncementQueue {
     }
     announcement.claims.push(created);
 
+    console.log('[announcement-queue] submitClaim: claimId=%s, announcementId=%s, claimant=%s', claimId, announcementId, claim.claimant);
     return created;
   }
 
@@ -107,24 +117,33 @@ export class AnnouncementQueue {
    */
   acceptClaim(announcementId: string, claimId: string): TaskClaim | null {
     const announcement = this.announcements.get(announcementId);
-    if (!announcement) return null;
+    if (!announcement) {
+      console.warn('[announcement-queue] acceptClaim: announcement not found, id=%s, claimId=%s', announcementId, claimId);
+      return null;
+    }
 
     const claim = announcement.claims?.find(c => c.claimId === claimId);
-    if (!claim) return null;
+    if (!claim) {
+      console.warn('[announcement-queue] acceptClaim: claim not found, announcementId=%s, claimId=%s', announcementId, claimId);
+      return null;
+    }
 
     // 标记该认领为接受
     claim.status = 'accepted';
 
     // 拒绝其他认领
-    announcement.claims?.forEach(c => {
+    const rejectedCount = announcement.claims?.filter(c => {
       if (c.claimId !== claimId) {
         c.status = 'rejected';
+        return true;
       }
-    });
+      return false;
+    }).length || 0;
 
     // 标记广播为已认领
     announcement.status = 'claimed';
 
+    console.log('[announcement-queue] acceptClaim: claimId=%s, announcementId=%s, claimant=%s, rejectedCount=%d', claimId, announcementId, claim.claimant, rejectedCount);
     return claim;
   }
 
@@ -133,12 +152,19 @@ export class AnnouncementQueue {
    */
   rejectClaim(announcementId: string, claimId: string): TaskClaim | null {
     const announcement = this.announcements.get(announcementId);
-    if (!announcement) return null;
+    if (!announcement) {
+      console.warn('[announcement-queue] rejectClaim: announcement not found, id=%s, claimId=%s', announcementId, claimId);
+      return null;
+    }
 
     const claim = announcement.claims?.find(c => c.claimId === claimId);
-    if (!claim) return null;
+    if (!claim) {
+      console.warn('[announcement-queue] rejectClaim: claim not found, announcementId=%s, claimId=%s', announcementId, claimId);
+      return null;
+    }
 
     claim.status = 'rejected';
+    console.log('[announcement-queue] rejectClaim: claimId=%s, announcementId=%s, claimant=%s', claimId, announcementId, claim.claimant);
     return claim;
   }
 
@@ -195,17 +221,26 @@ export class AnnouncementQueue {
    */
   cleanup(): void {
     const now = Date.now();
+    let expiredCount = 0;
+    let deletedCount = 0;
+    
     for (const [id, announcement] of this.announcements) {
       const age = now - announcement.timestamp;
       if (age > this.maxAgeMs) {
         if (announcement.status === 'open') {
           announcement.status = 'expired';
+          expiredCount++;
         }
         // 删除已过期一段时间的
         if (age > this.maxAgeMs * 2) {
           this.announcements.delete(id);
+          deletedCount++;
         }
       }
+    }
+    
+    if (expiredCount > 0 || deletedCount > 0) {
+      console.log('[announcement-queue] cleanup: expired=%d, deleted=%d, remaining=%d', expiredCount, deletedCount, this.announcements.size);
     }
   }
 

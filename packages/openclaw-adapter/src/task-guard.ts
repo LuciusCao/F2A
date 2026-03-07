@@ -97,6 +97,9 @@ export class TaskGuard {
       config: this.config
     };
 
+    const taskId = 'taskId' in task ? task.taskId : task.announcementId;
+    console.log('[task-guard] check: taskId=%s, from=%s, rules=%d', taskId, task.from, this.rules.filter(r => r.enabled).length);
+
     const results: TaskGuardResult[] = [];
 
     // 运行所有规则
@@ -106,7 +109,17 @@ export class TaskGuard {
       try {
         const result = rule.check(task, fullContext);
         results.push(result);
+        
+        // 记录规则执行结果
+        if (!result.passed) {
+          if (result.severity === 'block') {
+            console.warn('[task-guard] rule-blocked: taskId=%s, ruleId=%s, message=%s', taskId, rule.id, result.message);
+          } else if (result.severity === 'warn') {
+            console.log('[task-guard] rule-warning: taskId=%s, ruleId=%s, message=%s', taskId, rule.id, result.message);
+          }
+        }
       } catch (error) {
+        console.error('[task-guard] rule-error: ruleId=%s, taskId=%s, error=%s', rule.id, taskId, error);
         results.push({
           passed: false,
           severity: 'warn',
@@ -127,9 +140,13 @@ export class TaskGuard {
       this.config.requireConfirmationForDangerous
     );
 
+    const passed = blocks.length === 0;
+    console.log('[task-guard] check-result: taskId=%s, passed=%s, blocks=%d, warnings=%d, requiresConfirmation=%s', 
+      taskId, passed, blocks.length, warnings.length, requiresConfirmation);
+
     return {
-      taskId: 'taskId' in task ? task.taskId : task.announcementId,
-      passed: blocks.length === 0,
+      taskId,
+      passed,
       results,
       warnings,
       blocks,
@@ -146,6 +163,8 @@ export class TaskGuard {
     context?: Partial<TaskGuardContext>
   ): boolean {
     const report = this.check(task, context);
+    const taskId = 'taskId' in task ? task.taskId : task.announcementId;
+    console.log('[task-guard] quickCheck: taskId=%s, passed=%s', taskId, report.passed);
     return report.passed;
   }
 
@@ -154,6 +173,7 @@ export class TaskGuard {
    */
   addRule(rule: TaskGuardRule): void {
     this.rules.push(rule);
+    console.log('[task-guard] addRule: ruleId=%s, name=%s, severity=%s, enabled=%s', rule.id, rule.name, rule.severity, rule.enabled);
   }
 
   /**
@@ -163,6 +183,9 @@ export class TaskGuard {
     const rule = this.rules.find(r => r.id === ruleId);
     if (rule) {
       rule.enabled = enabled;
+      console.log('[task-guard] setRuleEnabled: ruleId=%s, enabled=%s', ruleId, enabled);
+    } else {
+      console.warn('[task-guard] setRuleEnabled: rule not found, ruleId=%s', ruleId);
     }
   }
 

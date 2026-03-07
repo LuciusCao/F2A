@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'fs';
 import { join } from 'path';
-import { randomBytes } from 'crypto';
+import { randomBytes, timingSafeEqual } from 'crypto';
 import { homedir } from 'os';
 import { Logger } from '../utils/logger';
 
@@ -69,10 +69,44 @@ export class TokenManager {
 
   /**
    * 验证 Token 是否有效
+   * 使用 timingSafeEqual 防止时序攻击
    */
   verifyToken(token: string | undefined): boolean {
     if (!token) return false;
-    return token === this.getToken();
+    
+    const expectedToken = this.getToken();
+    
+    // 两个 token 长度必须相同
+    if (token.length !== expectedToken.length) {
+      return false;
+    }
+    
+    // 使用 timingSafeEqual 防止时序攻击
+    try {
+      return timingSafeEqual(
+        Buffer.from(token, 'utf-8'),
+        Buffer.from(expectedToken, 'utf-8')
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 记录 Token 使用审计日志
+   */
+  logTokenUsage(clientInfo: { ip?: string; action?: string; success: boolean }): void {
+    const auditPath = join(join(this.tokenPath, '..'), 'token-audit.log');
+    const entry = {
+      timestamp: new Date().toISOString(),
+      ...clientInfo
+    };
+    
+    try {
+      appendFileSync(auditPath, JSON.stringify(entry) + '\n', { mode: 0o600 });
+    } catch (error) {
+      this.logger.error('Failed to write audit log', { error });
+    }
   }
 
   /**

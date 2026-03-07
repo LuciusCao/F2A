@@ -98,7 +98,15 @@ export class ControlServer {
 
     // 验证 Token
     const token = req.headers['x-f2a-token'] as string | undefined;
+    
     if (!this.tokenManager.verifyToken(token)) {
+      // 记录失败的验证尝试
+      this.tokenManager.logTokenUsage({
+        ip: clientIp,
+        action: 'auth',
+        success: false
+      });
+      
       this.logger.warn('Unauthorized request', { clientIp });
       res.writeHead(401);
       res.end(JSON.stringify({
@@ -108,6 +116,13 @@ export class ControlServer {
       }));
       return;
     }
+    
+    // 记录成功的验证
+    this.tokenManager.logTokenUsage({
+      ip: clientIp,
+      action: 'auth',
+      success: true
+    });
 
     let body = '';
     req.on('data', chunk => body += chunk);

@@ -517,7 +517,34 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           return;
         }
       } else {
+        // 解密失败，通知发送方
         this.logger.error('Failed to decrypt message', { peerId: peerId.slice(0, 16) });
+        
+        // 发送解密失败响应
+        const originalMessageId = message.id;
+        const decryptFailResponse: F2AMessage = {
+          id: randomUUID(),
+          type: 'DECRYPT_FAILED',
+          from: this.agentInfo.peerId,
+          to: peerId,
+          timestamp: Date.now(),
+          payload: {
+            originalMessageId,
+            error: 'DECRYPTION_FAILED',
+            message: 'Unable to decrypt message. Key exchange may be incomplete or keys mismatched.'
+          }
+        };
+        
+        // 尝试发送响应（不加密，因为加密通道可能有问题）
+        try {
+          await this.sendMessage(peerId, decryptFailResponse, false);
+        } catch (sendError) {
+          this.logger.error('Failed to send decrypt failure response', { 
+            peerId: peerId.slice(0, 16),
+            error: sendError 
+          });
+        }
+        
         return;
       }
     }
@@ -564,6 +591,35 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         }
         const payload = message.payload as TaskResponsePayload;
         this.handleTaskResponse(payload);
+        break;
+      }
+
+      case 'DECRYPT_FAILED': {
+        // 处理解密失败通知
+        const { originalMessageId, error, message: errorMsg } = message.payload as {
+          originalMessageId: string;
+          error: string;
+          message: string;
+        };
+        
+        this.logger.error('Received decrypt failure notification', {
+          peerId: peerId.slice(0, 16),
+          originalMessageId,
+          error,
+          message: errorMsg
+        });
+        
+        // 尝试重新注册公钥以重新建立加密通道
+        const peerInfo = this.peerTable.get(peerId);
+        if (peerInfo?.agentInfo?.encryptionPublicKey) {
+          this.e2eeCrypto.registerPeerPublicKey(peerId, peerInfo.agentInfo.encryptionPublicKey);
+          this.logger.info('Re-registered encryption key after decrypt failure', {
+            peerId: peerId.slice(0, 16)
+          });
+        }
+        
+        // 发出事件通知上层应用
+        this.emit('error', new Error(`Decrypt failed for message ${originalMessageId}: ${errorMsg}`));
         break;
       }
     }

@@ -4,7 +4,7 @@
  */
 
 import { x25519 } from '@noble/curves/ed25519.js';
-import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'crypto';
+import { randomBytes, createCipheriv, createDecipheriv, createHash, hkdfSync } from 'crypto';
 import { Logger } from '../utils/logger';
 
 // AES-256-GCM 参数
@@ -191,11 +191,18 @@ export class E2EECrypto {
 
   /**
    * 从共享密钥派生 AES 密钥
-   * 使用 HKDF-like 简单实现 (实际生产应使用 proper HKDF)
+   * 使用 HKDF (HMAC-based Key Derivation Function) 进行安全密钥派生
    */
   private deriveAESKey(sharedSecret: Uint8Array): Buffer {
-    // 简单实现：SHA-256(sharedSecret) 取前32字节
-    return createHash('sha256').update(sharedSecret).digest().slice(0, AES_KEY_SIZE);
+    // HKDF 参数
+    const salt = Buffer.from('F2A-E2EE-SALT-2024', 'utf-8'); // 应用特定的盐值
+    const info = Buffer.from('AES-256-GCM-KEY', 'utf-8');    // 密钥用途标识
+    
+    // 使用 HKDF-SHA256 进行密钥派生
+    // hkdfSync(digest, ikm, salt, info, keylen)
+    const derivedKey = hkdfSync('sha256', sharedSecret, salt, info, AES_KEY_SIZE);
+    
+    return Buffer.from(derivedKey);
   }
 
   /**

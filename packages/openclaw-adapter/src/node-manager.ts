@@ -4,17 +4,21 @@
  */
 
 import { spawn, ChildProcess } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { promisify } from 'util';
 import type { F2ANodeConfig, Result } from './types.js';
 
 const sleep = promisify(setTimeout);
 
+// PID 文件路径
+const PID_FILE_NAME = 'f2a-node.pid';
+
 export class F2ANodeManager {
   private process: ChildProcess | null = null;
   private config: F2ANodeConfig;
   private healthCheckInterval?: NodeJS.Timeout;
+  private pidFilePath: string;
 
   constructor(config: Partial<F2ANodeConfig>) {
     this.config = {
@@ -25,6 +29,86 @@ export class F2ANodeManager {
       enableMDNS: config.enableMDNS ?? true,
       bootstrapPeers: config.bootstrapPeers || []
     };
+    this.pidFilePath = join(this.config.nodePath, PID_FILE_NAME);
+    
+    // 启动时清理孤儿进程
+    this.cleanupOrphanProcesses();
+  }
+
+  /**
+   * 清理孤儿进程
+   * 检查 PID 文件中记录的进程是否仍在运行，如果是则尝试清理
+   */
+  private cleanupOrphanProcesses(): void {
+    if (!existsSync(this.pidFilePath)) {
+      return;
+    }
+
+    try {
+      const pidStr = readFileSync(this.pidFilePath, 'utf-8').trim();
+      const pid = parseInt(pidStr, 10);
+
+      if (isNaN(pid)) {
+        // PID 文件无效，删除
+        unlinkSync(this.pidFilePath);
+        return;
+      }
+
+      // 检查进程是否存在
+      try {
+        process.kill(pid, 0); // 不实际发送信号，只检查进程是否存在
+        // 进程存在，尝试终止
+        console.log(`[F2A] 发现孤儿进程 (PID: ${pid})，尝试终止...`);
+        try {
+          process.kill(pid, 'SIGTERM');
+          // 等待进程终止
+          setTimeout(() => {
+            try {
+              process.kill(pid, 0); // 检查是否还在运行
+              process.kill(pid, 'SIGKILL'); // 强制终止
+            } catch {
+              // 进程已终止
+            }
+          }, 3000);
+        } catch (killError) {
+          // 无法终止，可能是权限问题
+          console.warn(`[F2A] 无法终止孤儿进程 (PID: ${pid}):`, killError);
+        }
+      } catch {
+        // 进程不存在，只删除 PID 文件
+      }
+
+      // 删除 PID 文件
+      unlinkSync(this.pidFilePath);
+      console.log('[F2A] 孤儿进程清理完成');
+    } catch (error) {
+      console.warn('[F2A] 清理孤儿进程失败:', error);
+    }
+  }
+
+  /**
+   * 保存 PID 到文件
+   */
+  private savePid(pid: number): void {
+    try {
+      writeFileSync(this.pidFilePath, String(pid), { mode: 0o644 });
+      console.log(`[F2A] PID 文件已保存: ${this.pidFilePath}`);
+    } catch (error) {
+      console.warn('[F2A] 保存 PID 文件失败:', error);
+    }
+  }
+
+  /**
+   * 删除 PID 文件
+   */
+  private removePidFile(): void {
+    try {
+      if (existsSync(this.pidFilePath)) {
+        unlinkSync(this.pidFilePath);
+      }
+    } catch (error) {
+      console.warn('[F2A] 删除 PID 文件失败:', error);
+    }
   }
 
   /**
@@ -71,6 +155,24 @@ export class F2ANodeManager {
         stdio: ['ignore', 'pipe', 'pipe']
       });
 
+      // 记录子进程 PID
+      const pid = this.process.pid;
+      if (pid) {
+        this.savePid(pid);
+      }
+
+      // 监听进程退出事件
+      this.process.on('exit', (code, signal) => {
+        console.log(`[F2A] Node 进程退出 (code: ${code}, signal: ${signal})`);
+        this.removePidFile();
+        this.process = null;
+      });
+
+      this.process.on('error', (err) => {
+        console.error(`[F2A] Node 进程错误:`, err);
+        this.removePidFile();
+      });
+
       this.process.unref();
 
       // 记录日志
@@ -93,6 +195,7 @@ export class F2ANodeManager {
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
+      this.removePidFile();
       return { success: false, error: errorMsg };
     }
   }
@@ -120,7 +223,36 @@ export class F2ANodeManager {
       }
       
       this.process = null;
+    } else {
+      // 没有当前进程引用，但可能存在孤儿进程
+      // 尝试从 PID 文件读取并终止
+      if (existsSync(this.pidFilePath)) {
+        try {
+          const pidStr = readFileSync(this.pidFilePath, 'utf-8').trim();
+          const pid = parseInt(pidStr, 10);
+          if (!isNaN(pid)) {
+            console.log(`[F2A] 尝试终止残留进程 (PID: ${pid})...`);
+            try {
+              process.kill(pid, 'SIGTERM');
+              await sleep(3000);
+              try {
+                process.kill(pid, 0);
+                process.kill(pid, 'SIGKILL');
+              } catch {
+                // 进程已终止
+              }
+            } catch {
+              // 进程不存在或无权限
+            }
+          }
+        } catch (error) {
+          console.warn('[F2A] 清理残留进程失败:', error);
+        }
+      }
     }
+
+    // 清理 PID 文件
+    this.removePidFile();
   }
 
   /**

@@ -28,6 +28,7 @@ import { CapabilityDetector } from './capability-detector.js';
 import { TaskQueue, QueuedTask } from './task-queue.js';
 import { AnnouncementQueue } from './announcement-queue.js';
 import { WebhookPusher, WebhookPushConfig } from './webhook-pusher.js';
+import { taskGuard, TaskGuardContext } from './task-guard.js';
 
 export class F2AOpenClawAdapter implements OpenClawPlugin {
   name = 'f2a-openclaw-adapter';
@@ -479,7 +480,10 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         // 检查白名单/黑名单
         const whitelist = this.config.security?.whitelist || [];
         const blacklist = this.config.security?.blacklist || [];
-        if (whitelist.length > 0 && !whitelist.includes(payload.from)) {
+        const isWhitelisted = whitelist.length > 0 && whitelist.includes(payload.from);
+        const isBlacklisted = blacklist.includes(payload.from);
+
+        if (whitelist.length > 0 && !isWhitelisted) {
           return {
             accepted: false,
             taskId: payload.taskId,
@@ -487,12 +491,42 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           };
         }
 
-        if (blacklist.includes(payload.from)) {
+        if (isBlacklisted) {
           return {
             accepted: false,
             taskId: payload.taskId,
             reason: 'In blacklist'
           };
+        }
+
+        // TaskGuard 安全检查
+        const requesterReputation = this.reputationSystem.getReputation(payload.from);
+        const taskGuardContext: Partial<TaskGuardContext> = {
+          requesterReputation,
+          isWhitelisted,
+          isBlacklisted,
+          recentTaskCount: 0 // Will be tracked internally by TaskGuard
+        };
+
+        const taskGuardReport = taskGuard.check(payload, taskGuardContext);
+
+        if (!taskGuardReport.passed) {
+          // 任务被阻止
+          const blockReasons = taskGuardReport.blocks.map(b => b.message).join('; ');
+          console.warn(`[F2A Plugin] TaskGuard 阻止任务 ${payload.taskId}: ${blockReasons}`);
+          return {
+            accepted: false,
+            taskId: payload.taskId,
+            reason: `TaskGuard blocked: ${blockReasons}`
+          };
+        }
+
+        if (taskGuardReport.requiresConfirmation) {
+          // 任务需要确认（警告但不阻止）
+          const warnReasons = taskGuardReport.warnings.map(w => w.message).join('; ');
+          console.warn(`[F2A Plugin] TaskGuard 警告 ${payload.taskId}: ${warnReasons}`);
+          // 未来可以扩展为请求用户确认
+          // 目前记录警告但继续处理任务
         }
 
         // 检查队列是否已满

@@ -348,12 +348,16 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         resolve: (result: unknown) => {
           if (!taskEntry.resolved) {
             taskEntry.resolved = true;
+            // 从 Map 中移除，确保不会重复处理
+            this.pendingTasks.delete(taskId);
             resolve(success(result));
           }
         },
         reject: (error: string) => {
           if (!taskEntry.resolved) {
             taskEntry.resolved = true;
+            // 从 Map 中移除，确保不会重复处理
+            this.pendingTasks.delete(taskId);
             resolve({ success: false, error: createError('TASK_FAILED', error) } as Result<unknown>);
           }
         },

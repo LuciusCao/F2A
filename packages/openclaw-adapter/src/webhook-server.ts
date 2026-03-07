@@ -91,9 +91,11 @@ export class WebhookServer {
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // 设置 CORS - 使用配置的允许来源
     const origin = req.headers.origin;
-    const allowOrigin = origin && this.allowedOrigins.includes(origin) 
+    // 当 allowedOrigins 为空数组或没有匹配时，使用默认值 'http://localhost'
+    const defaultOrigin = 'http://localhost';
+    const allowOrigin = origin && this.allowedOrigins.length > 0 && this.allowedOrigins.includes(origin) 
       ? origin 
-      : this.allowedOrigins[0];
+      : (this.allowedOrigins.length > 0 ? this.allowedOrigins[0] : defaultOrigin);
     
     res.setHeader('Access-Control-Allow-Origin', allowOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');

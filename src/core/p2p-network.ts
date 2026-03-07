@@ -46,6 +46,8 @@ const F2A_PROTOCOL = '/f2a/1.0.0';
 const PEER_TABLE_CLEANUP_INTERVAL = 5 * 60 * 1000; // 5分钟
 const PEER_STALE_THRESHOLD = 24 * 60 * 60 * 1000; // 24小时
 const PEER_TABLE_MAX_SIZE = 1000; // 最大peer数
+const PEER_TABLE_HIGH_WATERMARK = 0.9; // 高水位线（90%触发主动清理）
+const PEER_TABLE_AGGRESSIVE_CLEANUP_THRESHOLD = 0.8; // 激进清理后保留的目标比例（80%）
 
 export interface P2PNetworkEvents {
   'peer:discovered': (event: PeerDiscoveredEvent) => void;
@@ -698,6 +700,22 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   }
 
   /**
+   * 检查并确保 peerTable 有足够空间
+   * 如果接近容量上限，主动触发清理
+   * @returns 是否有足够空间
+   */
+  private ensureCapacity(): boolean {
+    const highWatermark = Math.floor(PEER_TABLE_MAX_SIZE * PEER_TABLE_HIGH_WATERMARK);
+    
+    if (this.peerTable.size >= highWatermark) {
+      // 接近容量上限，触发激进清理
+      this.cleanupStalePeers(true);
+    }
+    
+    return this.peerTable.size < PEER_TABLE_MAX_SIZE;
+  }
+
+  /**
    * 处理发现消息
    */
   private async handleDiscover(agentInfo: AgentInfo, peerId: string): Promise<void> {
@@ -711,8 +729,17 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     }
 
     // 检查是否需要清理以腾出空间
-    if (this.peerTable.size >= PEER_TABLE_MAX_SIZE && !this.peerTable.has(peerId)) {
-      this.cleanupStalePeers(true); // 强制清理
+    if (!this.peerTable.has(peerId)) {
+      // 新 peer，需要检查容量
+      if (!this.ensureCapacity()) {
+        // 清理后仍无空间，拒绝新 peer
+        this.logger.warn('Peer table full, rejecting new peer', {
+          peerId: peerId.slice(0, 16),
+          currentSize: this.peerTable.size,
+          maxSize: PEER_TABLE_MAX_SIZE
+        });
+        return;
+      }
     }
 
     // 更新路由表
@@ -861,26 +888,57 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
   /**
    * 清理过期的 Peer 记录
+   * @param aggressive 是否使用激进清理策略（清理更多条目）
    */
-  private cleanupStalePeers(force = false): void {
+  private cleanupStalePeers(aggressive = false): void {
     const now = Date.now();
-    const threshold = force ? 0 : PEER_STALE_THRESHOLD;
+    const threshold = aggressive ? 0 : PEER_STALE_THRESHOLD;
     let cleaned = 0;
 
-    for (const [peerId, peer] of this.peerTable) {
-      // 清理条件：长时间未活跃，或者未连接且超过一定时间
-      const shouldClean = 
-        now - peer.lastSeen > threshold ||
-        (!peer.connected && now - peer.lastSeen > 60 * 60 * 1000); // 未连接超过1小时
+    // 激进清理：清理更多类型的条目
+    if (aggressive) {
+      // 1. 清理所有未连接且超过 1 小时的 peer
+      for (const [peerId, peer] of this.peerTable) {
+        if (!peer.connected && now - peer.lastSeen > 60 * 60 * 1000) {
+          this.peerTable.delete(peerId);
+          cleaned++;
+        }
+      }
+      
+      // 2. 如果仍然超过高水位线，按最后活跃时间排序后删除最旧的
+      const highWatermark = Math.floor(PEER_TABLE_MAX_SIZE * PEER_TABLE_HIGH_WATERMARK);
+      if (this.peerTable.size > highWatermark) {
+        const targetSize = Math.floor(PEER_TABLE_MAX_SIZE * PEER_TABLE_AGGRESSIVE_CLEANUP_THRESHOLD);
+        const sorted = Array.from(this.peerTable.entries())
+          .sort((a, b) => a[1].lastSeen - b[1].lastSeen);
+        
+        // 优先删除未连接的 peer
+        const toRemove = sorted
+          .filter(([_, peer]) => !peer.connected)
+          .slice(0, this.peerTable.size - targetSize);
+        
+        for (const [peerId] of toRemove) {
+          this.peerTable.delete(peerId);
+          cleaned++;
+        }
+      }
+    } else {
+      // 常规清理：清理过期条目
+      for (const [peerId, peer] of this.peerTable) {
+        // 清理条件：长时间未活跃，或者未连接且超过一定时间
+        const shouldClean = 
+          now - peer.lastSeen > threshold ||
+          (!peer.connected && now - peer.lastSeen > 60 * 60 * 1000); // 未连接超过1小时
 
-      if (shouldClean) {
-        this.peerTable.delete(peerId);
-        cleaned++;
+        if (shouldClean) {
+          this.peerTable.delete(peerId);
+          cleaned++;
+        }
       }
     }
 
     if (cleaned > 0) {
-      this.logger.info('Cleaned up stale peers', { cleaned, remaining: this.peerTable.size });
+      this.logger.info('Cleaned up stale peers', { cleaned, remaining: this.peerTable.size, aggressive });
     }
 
     // 如果仍然超过最大容量，按最后活跃时间排序后删除最旧的
@@ -888,9 +946,15 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       const sorted = Array.from(this.peerTable.entries())
         .sort((a, b) => a[1].lastSeen - b[1].lastSeen);
 
-      const toRemove = sorted.slice(0, this.peerTable.size - PEER_TABLE_MAX_SIZE);
+      // 优先删除未连接的 peer
+      const disconnected = sorted.filter(([_, peer]) => !peer.connected);
+      const toRemove = disconnected.length > 0 
+        ? disconnected.slice(0, this.peerTable.size - PEER_TABLE_MAX_SIZE)
+        : sorted.slice(0, this.peerTable.size - PEER_TABLE_MAX_SIZE);
+      
       for (const [peerId] of toRemove) {
         this.peerTable.delete(peerId);
+        cleaned++;
       }
 
       this.logger.info('Removed oldest peers to maintain limit', { removed: toRemove.length });

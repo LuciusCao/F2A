@@ -37,6 +37,13 @@ export interface TaskQueueOptions {
   cleanupThreshold?: number;
 }
 
+/** 默认超时时间（毫秒） */
+const DEFAULT_TIMEOUT_MS = 30000;
+/** 最小超时时间（毫秒） */
+const MIN_TIMEOUT_MS = 1000;
+/** 最大超时时间（毫秒） - 24小时 */
+const MAX_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
 export class TaskQueue {
   private tasks = new Map<string, QueuedTask>();
   private maxSize: number;
@@ -199,10 +206,55 @@ export class TaskQueue {
    * 添加新任务到队列
    */
   add(request: TaskRequest): QueuedTask {
-    // 输入验证：taskId 必须是非空字符串
+    // ========== 输入验证（带默认值）==========
+    
+    // taskId 验证（必须）
     if (!request.taskId || typeof request.taskId !== 'string' || request.taskId.trim() === '') {
       throw new Error('taskId must be a non-empty string');
     }
+    
+    // from 验证（可选，默认 'unknown'）
+    const from = request.from && typeof request.from === 'string' && request.from.trim() 
+      ? request.from.trim() 
+      : 'unknown';
+    
+    // timestamp 验证（可选，默认当前时间）
+    let timestamp: number;
+    if (request.timestamp !== undefined) {
+      if (typeof request.timestamp !== 'number' || !Number.isFinite(request.timestamp)) {
+        throw new Error('timestamp must be a finite number if provided');
+      }
+      if (request.timestamp <= 0) {
+        throw new Error('timestamp must be positive');
+      }
+      // timestamp 不能是未来时间（允许 5 分钟的时钟偏差）
+      const maxFutureTime = Date.now() + 5 * 60 * 1000;
+      if (request.timestamp > maxFutureTime) {
+        throw new Error('timestamp cannot be in the future');
+      }
+      timestamp = request.timestamp;
+    } else {
+      timestamp = Date.now();
+    }
+    
+    // timeout 验证（可选，默认 DEFAULT_TIMEOUT_MS）
+    let timeout: number;
+    if (request.timeout !== undefined) {
+      if (typeof request.timeout !== 'number' || !Number.isFinite(request.timeout)) {
+        throw new Error('timeout must be a finite number if provided');
+      }
+      if (request.timeout < MIN_TIMEOUT_MS) {
+        throw new Error(`timeout must be >= ${MIN_TIMEOUT_MS}ms`);
+      }
+      if (request.timeout > MAX_TIMEOUT_MS) {
+        throw new Error(`timeout cannot exceed ${MAX_TIMEOUT_MS}ms (24 hours)`);
+      }
+      timeout = request.timeout;
+    } else {
+      timeout = DEFAULT_TIMEOUT_MS;
+    }
+    
+    // ========== 队列容量管理 ==========
 
     // 智能清理策略：
     // 1. 队列大小超过阈值时触发完整清理
@@ -233,6 +285,9 @@ export class TaskQueue {
 
         const task: QueuedTask = {
           ...request,
+          from,
+          timestamp,
+          timeout,
           status: 'pending',
           createdAt: preservedCreatedAt,
           webhookPushed: false
@@ -268,6 +323,9 @@ export class TaskQueue {
 
     const task: QueuedTask = {
       ...request,
+      from,
+      timestamp,
+      timeout,
       status: 'pending',
       createdAt: preservedCreatedAt,
       webhookPushed: false
@@ -420,6 +478,7 @@ export class TaskQueue {
 
   /**
    * 清理过期任务
+   * 同时清理已完成/失败的任务以腾出空间
    */
   cleanup(): void {
     const now = Date.now();
@@ -427,6 +486,8 @@ export class TaskQueue {
 
     for (const [id, task] of this.tasks) {
       const age = now - task.createdAt;
+      
+      // 清理过期任务
       if (age > this.maxAgeMs) {
         toDelete.push(id);
       }
@@ -436,6 +497,40 @@ export class TaskQueue {
       this.tasks.delete(id);
       if (this.db) {
         this.db!.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+      }
+    }
+    
+    // 如果队列接近满，清理已完成和失败的任务
+    const highWatermark = Math.floor(this.maxSize * 0.9);
+    if (this.tasks.size >= highWatermark) {
+      const completedAndFailed: string[] = [];
+      
+      for (const [id, task] of this.tasks) {
+        if (task.status === 'completed' || task.status === 'failed') {
+          completedAndFailed.push(id);
+        }
+      }
+      
+      // 按更新时间排序，优先删除旧的已完成/失败任务
+      completedAndFailed.sort((a, b) => {
+        const taskA = this.tasks.get(a);
+        const taskB = this.tasks.get(b);
+        return (taskA?.updatedAt || taskA?.createdAt || 0) - (taskB?.updatedAt || taskB?.createdAt || 0);
+      });
+      
+      // 删除足够多的任务以腾出空间
+      const targetSize = Math.floor(this.maxSize * 0.7);
+      const toRemove = completedAndFailed.slice(0, Math.max(0, this.tasks.size - targetSize));
+      
+      for (const id of toRemove) {
+        this.tasks.delete(id);
+        if (this.db) {
+          this.db!.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+        }
+      }
+      
+      if (toRemove.length > 0) {
+        console.log(`[TaskQueue] Cleaned ${toRemove.length} completed/failed tasks to free space`);
       }
     }
   }

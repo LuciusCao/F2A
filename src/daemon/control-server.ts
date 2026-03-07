@@ -12,7 +12,12 @@ import { RateLimiter } from '../utils/rate-limiter';
 export interface ControlServerOptions {
   port: number;
   token?: string;
+  /** 允许的 CORS 来源列表，默认为 ['http://localhost'] */
+  allowedOrigins?: string[];
 }
+
+/** 默认允许的 CORS 来源 */
+const DEFAULT_ALLOWED_ORIGINS = ['http://localhost'];
 
 export class ControlServer {
   private server?: Server;
@@ -21,14 +26,17 @@ export class ControlServer {
   private tokenManager: TokenManager;
   private logger: Logger;
   private rateLimiter: RateLimiter;
+  private allowedOrigins: string[];
 
-  constructor(f2a: F2A, port: number, tokenManager?: TokenManager) {
+  constructor(f2a: F2A, port: number, tokenManager?: TokenManager, options?: ControlServerOptions) {
     this.f2a = f2a;
     this.port = port;
     this.tokenManager = tokenManager || new TokenManager();
     this.logger = new Logger({ component: 'ControlServer' });
     // 速率限制: 每分钟最多 60 个请求
     this.rateLimiter = new RateLimiter({ maxRequests: 60, windowMs: 60000 });
+    // CORS 配置：优先使用传入的 allowedOrigins，否则使用默认值
+    this.allowedOrigins = options?.allowedOrigins ?? DEFAULT_ALLOWED_ORIGINS;
   }
 
   /**
@@ -66,8 +74,13 @@ export class ControlServer {
    * 处理请求
    */
   private handleRequest(req: IncomingMessage, res: ServerResponse): void {
-    // 设置 CORS
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // 设置 CORS - 使用配置的允许来源
+    const origin = req.headers.origin;
+    const allowOrigin = origin && this.allowedOrigins.includes(origin) 
+      ? origin 
+      : this.allowedOrigins[0];
+    
+    res.setHeader('Access-Control-Allow-Origin', allowOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-F2A-Token');
 

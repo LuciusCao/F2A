@@ -13,8 +13,8 @@ import type {
 } from './types.js';
 import { webhookLogger as logger } from './logger.js';
 
-/** 默认请求体大小限制 (1MB) */
-const DEFAULT_MAX_BODY_SIZE = 1024 * 1024;
+/** 默认请求体大小限制 (64KB) - 元数据交换足够，防止 DoS */
+const DEFAULT_MAX_BODY_SIZE = 64 * 1024;
 
 export interface WebhookHandler {
   onDiscover(payload: DiscoverWebhookPayload): Promise<{
@@ -39,11 +39,18 @@ export class WebhookServer {
   private handler: WebhookHandler;
   private server?: ReturnType<typeof createServer>;
   private maxBodySize: number;
+  /** 允许的 CORS 来源列表 */
+  private allowedOrigins: string[];
 
-  constructor(port: number, handler: WebhookHandler, options?: { maxBodySize?: number }) {
+  constructor(port: number, handler: WebhookHandler, options?: { 
+    maxBodySize?: number;
+    allowedOrigins?: string[];
+  }) {
     this.port = port;
     this.handler = handler;
     this.maxBodySize = options?.maxBodySize || DEFAULT_MAX_BODY_SIZE;
+    // 默认只允许 localhost
+    this.allowedOrigins = options?.allowedOrigins ?? ['http://localhost'];
   }
 
   /**
@@ -82,8 +89,13 @@ export class WebhookServer {
    * 处理 HTTP 请求
    */
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // 设置 CORS
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // 设置 CORS - 使用配置的允许来源
+    const origin = req.headers.origin;
+    const allowOrigin = origin && this.allowedOrigins.includes(origin) 
+      ? origin 
+      : this.allowedOrigins[0];
+    
+    res.setHeader('Access-Control-Allow-Origin', allowOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 

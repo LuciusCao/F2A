@@ -47,6 +47,9 @@ export interface ReputationConfig {
   minScore: number;
   maxScore: number;
   maxHistory: number;  // 历史记录上限
+  decayRate: number;   // 衰减率（每日衰减百分比，如 0.01 表示每天衰减 1%）
+  decayIntervalMs: number;  // 衰减检查间隔（毫秒）
+  maxLatency: number;  // 最大可接受的延迟（毫秒）
 }
 
 // ============================================================================
@@ -140,20 +143,83 @@ const DEFAULT_CONFIG: ReputationConfig = {
   minScore: 0,
   maxScore: 100,
   maxHistory: 100,
+  decayRate: 0.01,           // 每天衰减 1%
+  decayIntervalMs: 24 * 60 * 60 * 1000,  // 每 24 小时检查一次
+  maxLatency: 300000,        // 最大可接受延迟 5 分钟
 };
 
 // ============================================================================
 // 信誉管理器
 // ============================================================================
 
-export class ReputationManager {
+export class ReputationManager implements Disposable {
   private config: ReputationConfig;
   private entries: Map<string, ReputationEntry> = new Map();
   private logger: Logger;
+  private decayTimer?: NodeJS.Timeout;
+  private disposed: boolean = false;
 
   constructor(config: Partial<ReputationConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.logger = new Logger({ component: 'Reputation' });
+    
+    // 启动衰减定时器
+    if (this.config.decayRate > 0) {
+      this.startDecayTimer();
+    }
+  }
+
+  /**
+   * 实现 Disposable 接口
+   */
+  [Symbol.dispose](): void {
+    this.stop();
+  }
+
+  /**
+   * 停止定时器和清理资源
+   */
+  stop(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    
+    if (this.decayTimer) {
+      clearInterval(this.decayTimer);
+      this.decayTimer = undefined;
+    }
+  }
+
+  /**
+   * 启动衰减定时器
+   */
+  private startDecayTimer(): void {
+    this.decayTimer = setInterval(() => {
+      this.applyDecay();
+    }, this.config.decayIntervalMs);
+  }
+
+  /**
+   * 应用信誉衰减
+   * 每个节点的信誉分数按 decayRate 比例衰减
+   */
+  private applyDecay(): void {
+    const decayFactor = 1 - this.config.decayRate;
+    
+    for (const [peerId, entry] of this.entries) {
+      // 不衰减初始分数以下的值
+      if (entry.score > this.config.initialScore) {
+        const newScore = entry.score * decayFactor;
+        // 确保不低于初始分数
+        entry.score = Math.max(this.config.initialScore, newScore);
+        entry.level = this.getTier(entry.score).level;
+        entry.lastUpdated = Date.now();
+      }
+    }
+    
+    this.logger.debug('Applied reputation decay', { 
+      decayRate: this.config.decayRate,
+      entriesAffected: this.entries.size 
+    });
   }
 
   /**
@@ -197,8 +263,36 @@ export class ReputationManager {
 
   /**
    * 记录任务成功
+   * @param peerId 节点 ID
+   * @param taskId 任务 ID
+   * @param delta 分数变化量
+   * @param latency 响应延迟（毫秒），可选，用于未来优化
    */
-  recordSuccess(peerId: string, taskId: string, delta: number = 10): void {
+  recordSuccess(peerId: string, taskId: string, delta: number = 10, latency?: number): void {
+    // 验证 latency 参数
+    if (latency !== undefined) {
+      if (typeof latency !== 'number' || !Number.isFinite(latency)) {
+        this.logger.warn('Invalid latency value, ignoring', { 
+          peerId: peerId.slice(0, 16), 
+          latency 
+        });
+        latency = undefined;
+      } else if (latency < 0) {
+        this.logger.warn('Negative latency value, treating as 0', { 
+          peerId: peerId.slice(0, 16), 
+          latency 
+        });
+        latency = 0;
+      } else if (latency > this.config.maxLatency) {
+        this.logger.warn('Latency exceeds max, capping', { 
+          peerId: peerId.slice(0, 16), 
+          latency,
+          maxLatency: this.config.maxLatency 
+        });
+        latency = this.config.maxLatency;
+      }
+    }
+    
     const entry = this.getReputation(peerId);
     const newScore = this.updateScoreEWMA(entry.score, delta);
 
@@ -212,11 +306,17 @@ export class ReputationManager {
       taskId,
     });
 
+    // 截断历史记录，防止无限增长
+    if (entry.history.length > this.config.maxHistory) {
+      entry.history = entry.history.slice(-this.config.maxHistory);
+    }
+
     this.logger.info('Reputation updated', {
       peerId: peerId.slice(0, 16),
       delta,
       newScore,
       level: entry.level,
+      latency
     });
   }
 
@@ -237,6 +337,11 @@ export class ReputationManager {
       reason,
       taskId,
     });
+
+    // 截断历史记录
+    if (entry.history.length > this.config.maxHistory) {
+      entry.history = entry.history.slice(-this.config.maxHistory);
+    }
 
     this.logger.warn('Reputation decreased', {
       peerId: peerId.slice(0, 16),
@@ -265,6 +370,11 @@ export class ReputationManager {
       taskId,
     });
 
+    // 截断历史记录
+    if (entry.history.length > this.config.maxHistory) {
+      entry.history = entry.history.slice(-this.config.maxHistory);
+    }
+
     this.logger.info('Reputation updated (rejection)', {
       peerId: peerId.slice(0, 16),
       delta,
@@ -287,6 +397,11 @@ export class ReputationManager {
       delta,
       timestamp: Date.now(),
     });
+
+    // 截断历史记录
+    if (entry.history.length > this.config.maxHistory) {
+      entry.history = entry.history.slice(-this.config.maxHistory);
+    }
 
     this.logger.info('Review reward', {
       peerId: peerId.slice(0, 16),
@@ -311,6 +426,11 @@ export class ReputationManager {
       timestamp: Date.now(),
       reason,
     });
+
+    // 截断历史记录
+    if (entry.history.length > this.config.maxHistory) {
+      entry.history = entry.history.slice(-this.config.maxHistory);
+    }
 
     this.logger.warn('Review penalty', {
       peerId: peerId.slice(0, 16),
@@ -366,6 +486,11 @@ export class ReputationManager {
       timestamp: Date.now(),
       reason: 'Set by invitation system'
     });
+
+    // 截断历史记录
+    if (entry.history.length > this.config.maxHistory) {
+      entry.history = entry.history.slice(-this.config.maxHistory);
+    }
 
     this.logger.info('Initial score set', {
       peerId: peerId.slice(0, 16),

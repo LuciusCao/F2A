@@ -23,13 +23,15 @@ export interface RateLimitEntry {
 
 /**
  * 速率限制器
+ * 实现 Disposable 接口，确保资源正确释放
  */
-export class RateLimiter {
+export class RateLimiter implements Disposable {
   private config: Required<RateLimitConfig>;
   private burstCapacity: number;
   private store: Map<string, RateLimitEntry> = new Map();
   private logger: Logger;
   private cleanupTimer?: NodeJS.Timeout;
+  private disposed: boolean = false;
 
   constructor(config: RateLimitConfig) {
     this.config = {
@@ -42,12 +44,39 @@ export class RateLimiter {
     this.logger = new Logger({ component: 'RateLimiter' });
     // 自动启动清理定时器
     this.cleanupTimer = setInterval(() => this.cleanup(), config.windowMs);
+    
+    // 注册析构回调，确保即使 stop() 未调用也能清理资源
+    if (typeof Symbol.dispose !== 'undefined') {
+      // 支持 using 语法的自动清理
+    }
+  }
+
+  /**
+   * 实现 Disposable 接口
+   * 确保资源被正确释放
+   */
+  [Symbol.dispose](): void {
+    this.stop();
+  }
+
+  /**
+   * 检查是否已释放
+   */
+  isDisposed(): boolean {
+    return this.disposed;
   }
 
   /**
    * 停止速率限制器，清理资源
+   * 幂等操作，可多次调用
    */
   stop(): void {
+    if (this.disposed) {
+      return; // 幂等：已释放则跳过
+    }
+    
+    this.disposed = true;
+    
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = undefined;

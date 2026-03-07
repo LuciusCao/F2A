@@ -3,7 +3,7 @@
  * 管理 Peer 的信誉分数
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import type { 
   ReputationEntry, 
@@ -236,14 +236,32 @@ export class ReputationSystem {
   }
 
   /**
-   * 保存数据
+   * 保存数据（原子写入）
+   * 先写入临时文件，再重命名为目标文件，确保数据完整性
    */
   private save(): void {
+    const tempPath = `${this.dataPath}.tmp`;
+    
     try {
       const data = Array.from(this.entries.values());
-      writeFileSync(this.dataPath, JSON.stringify(data, null, 2));
+      const jsonContent = JSON.stringify(data, null, 2);
+      
+      // 1. 写入临时文件
+      writeFileSync(tempPath, jsonContent, { encoding: 'utf-8' });
+      
+      // 2. 原子重命名（在 POSIX 系统上是原子操作）
+      renameSync(tempPath, this.dataPath);
     } catch (e) {
       console.error('[F2A Reputation] 保存失败:', e);
+      
+      // 清理临时文件（如果存在）
+      try {
+        if (existsSync(tempPath)) {
+          unlinkSync(tempPath);
+        }
+      } catch {
+        // 忽略清理错误
+      }
     }
   }
 }

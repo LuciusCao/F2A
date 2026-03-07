@@ -9,7 +9,7 @@
 ```
 F2A/
 ├── packages/
-│   └── openclaw-adapter/      # OpenClaw 插件 (f2a-openclaw-adapter)
+│   └── openclaw-adapter/      # OpenClaw 插件 (@f2a/openclaw-adapter)
 ├── src/                         # F2A 核心网络代码
 └── docs/                        # 文档
 ```
@@ -41,7 +41,7 @@ F2A/
 └──────────────────────────────────────────────────────────────────────┘
                                    │
 ┌──────────────────────────────────▼───────────────────────────────────┐
-│              f2a-openclaw-adapter (可选插件)                         │
+│              @f2a/openclaw-adapter (可选插件)                         │
 │                   OpenClaw Agent 集成                                │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -119,7 +119,7 @@ const result = await f2a.delegateTask({
 
 ### 5. OpenClaw 集成 (通过插件)
 
-> 需要安装 `f2a-openclaw-adapter` 插件包
+> 需要安装 `@f2a/openclaw-adapter` 插件包
 
 ```bash
 cd packages/openclaw-adapter
@@ -131,7 +131,7 @@ npm link  # 或 npm install -g
 ```json
 {
   "plugins": {
-    "f2a-openclaw-adapter": {
+    "@f2a/openclaw-adapter": {
       "enabled": true,
       "config": {
         "agentName": "My OpenClaw Agent",

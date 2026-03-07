@@ -27,7 +27,7 @@ F2A/
 | 包 | 路径 | 说明 |
 |----|------|------|
 | `f2a-network` | `./` | F2A P2P 网络核心 |
-| `f2a-openclaw-adapter` | `./packages/openclaw-adapter` | OpenClaw 插件 |
+| `@f2a/openclaw-adapter` | `./packages/openclaw-adapter` | OpenClaw 插件 |
 
 ## 开发
 

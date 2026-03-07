@@ -55,6 +55,14 @@ export interface P2PNetworkEvents {
   'error': (error: Error) => void;
 }
 
+/** 发现选项 */
+export interface DiscoverOptions {
+  /** 发现超时毫秒（默认 2000） */
+  timeoutMs?: number;
+  /** 是否等待首个响应即返回（默认 false） */
+  waitForFirstResponse?: boolean;
+}
+
 export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private node: Libp2p | null = null;
   private config: P2PNetworkConfig;
@@ -198,8 +206,13 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
   /**
    * 发现网络中的 Agent（按能力过滤）
+   * @param capability 可选的能力过滤
+   * @param options 发现选项
    */
-  async discoverAgents(capability?: string): Promise<AgentInfo[]> {
+  async discoverAgents(capability?: string, options?: DiscoverOptions): Promise<AgentInfo[]> {
+    const timeoutMs = options?.timeoutMs ?? 2000;
+    const waitForFirst = options?.waitForFirstResponse ?? false;
+
     const agents: AgentInfo[] = [];
     
     for (const peer of this.peerTable.values()) {
@@ -208,6 +221,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           agents.push(peer.agentInfo);
         }
       }
+    }
+
+    // 如果已经有足够的 agents 且不需要等待响应，直接返回
+    if (agents.length > 0 && !waitForFirst) {
+      return agents;
     }
 
     // 广播能力查询以发现更多节点
@@ -219,8 +237,34 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       payload: { capabilityName: capability } as CapabilityQueryPayload
     });
 
-    // 等待响应（简化版，实际应该使用 Promise + timeout）
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // 使用 Promise.race 等待首个响应或超时
+    if (waitForFirst) {
+      const initialCount = agents.length;
+      
+      await new Promise<void>(resolve => {
+        const timeout = setTimeout(() => {
+          this.off('peer:discovered', onPeerDiscovered);
+          resolve();
+        }, timeoutMs);
+
+        const onPeerDiscovered = (event: PeerDiscoveredEvent) => {
+          if (!capability || this.hasCapability(event.agentInfo, capability)) {
+            // 检查是否是新发现的 agent
+            if (!agents.find(a => a.peerId === event.agentInfo.peerId)) {
+              agents.push(event.agentInfo);
+            }
+          }
+          clearTimeout(timeout);
+          this.off('peer:discovered', onPeerDiscovered);
+          resolve();
+        };
+
+        this.on('peer:discovered', onPeerDiscovered);
+      });
+    } else {
+      // 等待响应（可配置超时）
+      await new Promise(resolve => setTimeout(resolve, timeoutMs));
+    }
 
     // 再次收集
     for (const peer of this.peerTable.values()) {

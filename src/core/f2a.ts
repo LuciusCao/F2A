@@ -245,14 +245,40 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       description: options.description.slice(0, 50)
     });
 
-    // 1. 发现有能力执行任务的 Agents
-    const agents = await this.discoverAgents(options.capability);
+    // 可配置的重试选项
+    const retryOptions = {
+      maxRetries: options.retryOptions?.maxRetries ?? 3,
+      retryDelayMs: options.retryOptions?.retryDelayMs ?? 1000,
+      discoverTimeoutMs: options.retryOptions?.discoverTimeoutMs ?? 5000
+    };
+
+    // 1. 发现有能力执行任务的 Agents（带重试）
+    let agents: AgentInfo[] = [];
+    let lastError: string | undefined;
+    
+    for (let attempt = 0; attempt <= retryOptions.maxRetries; attempt++) {
+      agents = await this.discoverAgents(options.capability);
+      
+      if (agents.length > 0) {
+        break;
+      }
+      
+      if (attempt < retryOptions.maxRetries) {
+        this.logger.warn(`No agents found, retrying (${attempt + 1}/${retryOptions.maxRetries})`, {
+          capability: options.capability
+        });
+        await new Promise(resolve => setTimeout(resolve, retryOptions.retryDelayMs));
+      }
+    }
 
     if (agents.length === 0) {
-      this.logger.warn('No agents found with capability', { capability: options.capability });
+      this.logger.warn('No agents found with capability after retries', {
+        capability: options.capability,
+        retries: retryOptions.maxRetries
+      });
       return failureFromError(
         'CAPABILITY_NOT_SUPPORTED',
-        `No agent found with capability: ${options.capability}`
+        `No agent found with capability: ${options.capability} (after ${retryOptions.maxRetries} retries)`
       );
     }
 

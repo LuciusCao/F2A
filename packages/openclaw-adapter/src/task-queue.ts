@@ -33,6 +33,8 @@ export interface TaskQueueOptions {
   maxAgeMs?: number;
   persistDir?: string;  // 持久化目录
   persistEnabled?: boolean;
+  /** 清理阈值比例（当队列大小超过 maxSize * cleanupThreshold 时触发清理，默认 0.8） */
+  cleanupThreshold?: number;
 }
 
 export class TaskQueue {
@@ -40,12 +42,18 @@ export class TaskQueue {
   private maxSize: number;
   private maxAgeMs: number;
   private persistEnabled: boolean;
+  private cleanupThreshold: number;
+  private lastCleanupTime: number = 0;
+  private cleanupIntervalMs: number;
   private db?: Database.Database;
 
   constructor(options?: TaskQueueOptions) {
     this.maxSize = options?.maxSize || 1000;
     this.maxAgeMs = options?.maxAgeMs || 24 * 60 * 60 * 1000; // 24小时
     this.persistEnabled = options?.persistEnabled ?? true;
+    this.cleanupThreshold = options?.cleanupThreshold || 0.8; // 默认 80% 触发清理
+    // 清理间隔：至少每 maxAgeMs/10 时间执行一次清理检查
+    this.cleanupIntervalMs = Math.min(this.maxAgeMs / 10, 60000); // 最多 1 分钟
 
     if (this.persistEnabled && options?.persistDir) {
       this.initPersistence(options.persistDir);
@@ -190,8 +198,19 @@ export class TaskQueue {
       throw new Error('taskId must be a non-empty string');
     }
 
-    // 清理旧任务
-    this.cleanup();
+    // 智能清理策略：
+    // 1. 队列大小超过阈值时触发完整清理
+    // 2. 距离上次清理超过清理间隔时触发清理
+    const now = Date.now();
+    const cleanupTriggerSize = Math.floor(this.maxSize * this.cleanupThreshold);
+    const shouldCleanup = 
+      this.tasks.size >= cleanupTriggerSize ||
+      (now - this.lastCleanupTime) > this.cleanupIntervalMs;
+
+    if (shouldCleanup) {
+      this.cleanup();
+      this.lastCleanupTime = now;
+    }
 
     // 检查是否为重复添加（保留原 createdAt）
     const existingTask = this.tasks.get(request.taskId);

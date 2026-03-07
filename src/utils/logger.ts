@@ -4,6 +4,8 @@
  */
 
 import { LogLevel } from '../types';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // 日志级别权重
 const LOG_LEVELS: Record<LogLevel, number> = {
@@ -40,14 +42,54 @@ export class Logger {
   private level: LogLevel;
   private component: string;
   private enableConsole: boolean;
+  private enableFile: boolean;
+  private filePath: string | undefined;
   private jsonMode: boolean;
+  private fileStream: fs.WriteStream | undefined;
 
   constructor(options: LoggerOptions = {}) {
     this.level = options.level || 'INFO';
     this.component = options.component || 'F2A';
     this.enableConsole = options.enableConsole !== false;
+    this.enableFile = options.enableFile ?? false;
+    this.filePath = options.filePath;
     // 自动检测：生产环境默认使用 JSON 格式
     this.jsonMode = options.jsonMode ?? (process.env.NODE_ENV === 'production');
+
+    // 初始化文件流
+    if (this.enableFile && this.filePath) {
+      this.initFileStream();
+    }
+  }
+
+  /**
+   * 初始化文件写入流
+   */
+  private initFileStream(): void {
+    if (!this.filePath) return;
+
+    try {
+      // 确保目录存在
+      const dir = path.dirname(this.filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      // 创建写入流（追加模式）
+      this.fileStream = fs.createWriteStream(this.filePath, {
+        flags: 'a',
+        encoding: 'utf8'
+      });
+
+      this.fileStream.on('error', (err) => {
+        console.error(`[Logger] File stream error: ${err.message}`);
+        this.fileStream = undefined;
+        this.enableFile = false;
+      });
+    } catch (err) {
+      console.error(`[Logger] Failed to initialize file stream: ${err}`);
+      this.enableFile = false;
+    }
   }
 
   /**
@@ -74,22 +116,30 @@ export class Logger {
    * 输出日志
    */
   private output(entry: LogEntry): void {
-    if (!this.enableConsole) return;
+    const jsonLine = JSON.stringify(entry);
 
-    if (this.jsonMode) {
-      // 生产环境：JSON 一行，便于日志系统收集
-      console.log(JSON.stringify(entry));
-    } else {
-      // 开发环境：人类可读
-      const { level, msg, timestamp, component, ...meta } = entry;
-      const prefix = `[${timestamp.split('T')[1].split('.')[0]}] [${component}] [${level}]`;
-
-      if (Object.keys(meta).length > 0) {
-        // 结构化输出（开发环境可读格式）
-        console.log(`${prefix} ${msg}`, meta);
+    // 控制台输出
+    if (this.enableConsole) {
+      if (this.jsonMode) {
+        // 生产环境：JSON 一行，便于日志系统收集
+        console.log(jsonLine);
       } else {
-        console.log(`${prefix} ${msg}`);
+        // 开发环境：人类可读
+        const { level, msg, timestamp, component, ...meta } = entry;
+        const prefix = `[${timestamp.split('T')[1].split('.')[0]}] [${component}] [${level}]`;
+
+        if (Object.keys(meta).length > 0) {
+          // 结构化输出（开发环境可读格式）
+          console.log(`${prefix} ${msg}`, meta);
+        } else {
+          console.log(`${prefix} ${msg}`);
+        }
       }
+    }
+
+    // 文件输出
+    if (this.enableFile && this.fileStream && this.fileStream.writable) {
+      this.fileStream.write(jsonLine + '\n');
     }
   }
 
@@ -140,6 +190,26 @@ export class Logger {
   }
 
   /**
+   * 启用文件日志
+   */
+  setFileLogging(enabled: boolean, filePath?: string): void {
+    // 关闭现有流
+    if (this.fileStream) {
+      this.fileStream.end();
+      this.fileStream = undefined;
+    }
+
+    this.enableFile = enabled;
+    if (filePath) {
+      this.filePath = filePath;
+    }
+
+    if (enabled && this.filePath) {
+      this.initFileStream();
+    }
+  }
+
+  /**
    * 创建子日志记录器
    */
   child(component: string): Logger {
@@ -147,8 +217,20 @@ export class Logger {
       level: this.level,
       component: `${this.component}:${component}`,
       enableConsole: this.enableConsole,
+      enableFile: this.enableFile,
+      filePath: this.filePath,
       jsonMode: this.jsonMode
     });
+  }
+
+  /**
+   * 关闭日志记录器，释放资源
+   */
+  close(): void {
+    if (this.fileStream) {
+      this.fileStream.end();
+      this.fileStream = undefined;
+    }
   }
 }
 

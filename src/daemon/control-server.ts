@@ -79,7 +79,11 @@ export class ControlServer {
 
     if (req.method !== 'POST') {
       res.writeHead(405);
-      res.end(JSON.stringify({ success: false, error: 'Method not allowed' }));
+      res.end(JSON.stringify({ 
+        success: false, 
+        error: 'Method not allowed',
+        code: 'METHOD_NOT_ALLOWED'
+      }));
       return;
     }
 
@@ -150,11 +154,19 @@ export class ControlServer {
           break;
         default:
           res.writeHead(400);
-          res.end(JSON.stringify({ success: false, error: 'Unknown action' }));
+          res.end(JSON.stringify({ 
+            success: false, 
+            error: 'Unknown action',
+            code: 'UNKNOWN_ACTION'
+          }));
       }
     } catch {
       res.writeHead(400);
-      res.end(JSON.stringify({ success: false, error: 'Invalid JSON' }));
+      res.end(JSON.stringify({ 
+        success: false, 
+        error: 'Invalid JSON',
+        code: 'INVALID_JSON'
+      }));
     }
   }
 
@@ -197,7 +209,8 @@ export class ControlServer {
       res.writeHead(500);
       res.end(JSON.stringify({
         success: false,
-        error: String(error)
+        error: error instanceof Error ? error.message : String(error),
+        code: 'DISCOVER_FAILED'
       }));
     }
   }

@@ -1,6 +1,6 @@
 /**
  * 速率限制中间件
- * 基于 Token Bucket 算法实现
+ * 基于 Token Bucket 算法实现，支持突发流量
  */
 
 import { Logger } from './logger';
@@ -12,6 +12,8 @@ export interface RateLimitConfig {
   windowMs: number;
   /** 是否跳过成功请求 */
   skipSuccessfulRequests?: boolean;
+  /** 突发容量倍数（默认 1.5，允许短暂的请求爆发） */
+  burstMultiplier?: number;
 }
 
 export interface RateLimitEntry {
@@ -24,6 +26,7 @@ export interface RateLimitEntry {
  */
 export class RateLimiter {
   private config: Required<RateLimitConfig>;
+  private burstCapacity: number;
   private store: Map<string, RateLimitEntry> = new Map();
   private logger: Logger;
   private cleanupTimer?: NodeJS.Timeout;
@@ -31,8 +34,11 @@ export class RateLimiter {
   constructor(config: RateLimitConfig) {
     this.config = {
       skipSuccessfulRequests: false,
+      burstMultiplier: 1.5,
       ...config
     };
+    // 计算突发容量
+    this.burstCapacity = Math.floor(this.config.maxRequests * this.config.burstMultiplier);
     this.logger = new Logger({ component: 'RateLimiter' });
     // 自动启动清理定时器
     this.cleanupTimer = setInterval(() => this.cleanup(), config.windowMs);
@@ -61,6 +67,7 @@ export class RateLimiter {
 
     if (!entry) {
       // 首次请求，初始化令牌桶
+      // 初始令牌数为 maxRequests - 1（本次请求消耗 1 个）
       this.store.set(key, {
         tokens: this.config.maxRequests - 1,
         lastRefill: now
@@ -75,8 +82,9 @@ export class RateLimiter {
     );
 
     if (tokensToAdd > 0) {
+      // 令牌补充后不能超过突发容量
       entry.tokens = Math.min(
-        this.config.maxRequests,
+        this.burstCapacity,
         entry.tokens + tokensToAdd
       );
       entry.lastRefill = now;
@@ -88,7 +96,12 @@ export class RateLimiter {
       return true;
     }
 
-    this.logger.warn('Rate limit exceeded', { key });
+    this.logger.warn('Rate limit exceeded', { 
+      key, 
+      remaining: entry.tokens,
+      maxRequests: this.config.maxRequests,
+      burstCapacity: this.burstCapacity
+    });
     return false;
   }
 
@@ -105,7 +118,7 @@ export class RateLimiter {
       (timePassed / this.config.windowMs) * this.config.maxRequests
     );
 
-    return Math.min(this.config.maxRequests, entry.tokens + tokensToAdd);
+    return Math.min(this.burstCapacity, entry.tokens + tokensToAdd);
   }
 
   /**

@@ -113,6 +113,15 @@ export class RequestSigner {
 export function loadSignatureConfig(): SignatureConfig | null {
   const secretKey = process.env.F2A_SIGNATURE_KEY;
   if (!secretKey) {
+    // 生产环境强制警告，开发环境仅提示
+    const isProduction = process.env.NODE_ENV === 'production';
+    const logger = new Logger({ component: 'SignatureConfig' });
+    
+    if (isProduction) {
+      logger.error('F2A_SIGNATURE_KEY is not set! Signature verification is DISABLED. This is a security risk in production.');
+    } else {
+      logger.warn('F2A_SIGNATURE_KEY is not set. Signature verification is disabled. Set this environment variable for secure message verification.');
+    }
     return null;
   }
 

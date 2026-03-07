@@ -13,13 +13,18 @@ import type {
   Result 
 } from './types.js';
 
+/** 默认请求超时（毫秒） */
+const DEFAULT_TIMEOUT_MS = 30000;
+
 export class F2ANetworkClient {
   private baseUrl: string;
   private token: string;
+  private timeoutMs: number;
 
   constructor(config: F2ANodeConfig) {
     this.baseUrl = `http://localhost:${config.controlPort}`;
     this.token = config.controlToken;
+    this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   private async request<T>(
@@ -27,6 +32,10 @@ export class F2ANetworkClient {
     path: string, 
     body?: unknown
   ): Promise<Result<T>> {
+    // 使用 AbortController 设置超时
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+
     try {
       const response = await fetch(`${this.baseUrl}${path}`, {
         method,
@@ -34,7 +43,8 @@ export class F2ANetworkClient {
           'Authorization': `Bearer ${this.token}`,
           'Content-Type': 'application/json'
         },
-        body: body ? JSON.stringify(body) : undefined
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal
       });
 
       if (!response.ok) {
@@ -49,10 +59,20 @@ export class F2ANetworkClient {
       return { success: true, data };
 
     } catch (error) {
+      // 处理超时错误
+      if (error instanceof Error && error.name === 'AbortError') {
+        return { 
+          success: false, 
+          error: `Request timed out after ${this.timeoutMs}ms` 
+        };
+      }
+      
       return { 
         success: false, 
         error: error instanceof Error ? error.message : String(error) 
       };
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 

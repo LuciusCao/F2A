@@ -4,7 +4,7 @@
 
 import { request, RequestOptions } from 'https';
 import { request as httpRequest } from 'http';
-import { WebhookConfig } from '../types';
+import { WebhookConfig } from '../types/index.js';
 
 export interface WebhookNotification {
   message: string;

@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } fr
 import { join, dirname } from 'path';
 import { randomBytes, timingSafeEqual } from 'crypto';
 import { homedir } from 'os';
-import { Logger } from '../utils/logger';
+import { Logger } from '../utils/logger.js';
 
 /**
  * Token 管理器

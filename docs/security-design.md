@@ -113,7 +113,7 @@ F2A 采用多层安全机制，确保 Agent 间通信的机密性、完整性和
 ## 3. 安全等级配置
 
 ```javascript
-const f2a = new F2A({
+const f2a = await F2A.create({
   security: {
     // low: 仅加密，信任局域网
     // medium: 加密 + 白名单（默认）
@@ -199,7 +199,7 @@ const f2a = new F2A({
 ### 6.1 生产环境建议
 
 ```javascript
-const f2a = new F2A({
+const f2a = await F2A.create({
   security: {
     level: 'high',
     requireConfirmation: true,

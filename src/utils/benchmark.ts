@@ -3,7 +3,7 @@
  */
 
 import { performance } from 'perf_hooks';
-import { Logger } from './logger';
+import { Logger } from './logger.js';
 
 export interface BenchmarkConfig {
   /** 测试名称 */

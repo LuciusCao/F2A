@@ -3,8 +3,8 @@
  * Phase 2: 评审机制
  */
 
-import { Logger } from '../utils/logger';
-import { ReputationManager } from './reputation';
+import { Logger } from '../utils/logger.js';
+import { ReputationManager } from './reputation.js';
 
 // ============================================================================
 // 类型定义

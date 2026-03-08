@@ -338,4 +338,4 @@ export interface RegisteredCapability extends AgentCapability {
 // 从 result.ts 重新导出，用于统一的错误处理模式
 // ============================================================================
 
-export * from './result';
+export * from './result.js';

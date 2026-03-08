@@ -3,9 +3,9 @@
  * Phase 4: 信誉消耗、评审激励、优先级调度
  */
 
-import { Logger } from '../utils/logger';
-import { ReputationManager } from './reputation';
-import { ReviewCommittee, ReviewResult } from './review-committee';
+import { Logger } from '../utils/logger.js';
+import { ReputationManager } from './reputation.js';
+import { ReviewCommittee, ReviewResult } from './review-committee.js';
 
 // ============================================================================
 // 类型定义

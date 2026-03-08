@@ -3,8 +3,8 @@
  * 支持消息拦截、过滤和转换
  */
 
-import { F2AMessage, AgentInfo } from '../types';
-import { Logger } from './logger';
+import { F2AMessage, AgentInfo } from '../types/index.js';
+import { Logger } from './logger.js';
 
 export interface MiddlewareContext {
   /** 消息 */

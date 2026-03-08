@@ -5,7 +5,7 @@
 
 import { x25519 } from '@noble/curves/ed25519.js';
 import { randomBytes, createCipheriv, createDecipheriv, createHash, hkdfSync } from 'crypto';
-import { Logger } from '../utils/logger';
+import { Logger } from '../utils/logger.js';
 
 // AES-256-GCM 参数
 const AES_KEY_SIZE = 32; // 256 bits

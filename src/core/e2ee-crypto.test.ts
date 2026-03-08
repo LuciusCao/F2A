@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { E2EECrypto } from './e2ee-crypto';
+import { E2EECrypto } from './e2ee-crypto.js';
 
 describe('E2EECrypto', () => {
   let cryptoA: E2EECrypto;

@@ -3,9 +3,9 @@
  * 后台服务主入口 - P2P 版本
  */
 
-import { F2A } from '../core/f2a';
-import { ControlServer } from './control-server';
-import { F2AOptions, WebhookConfig } from '../types';
+import { F2A } from '../core/f2a.js';
+import { ControlServer } from './control-server.js';
+import { F2AOptions, WebhookConfig } from '../types/index.js';
 
 export interface DaemonOptions extends F2AOptions {
   webhook?: WebhookConfig;
@@ -40,7 +40,11 @@ export class F2ADaemon {
     const result = await this.f2a.start();
     
     if (!result.success) {
-      throw new Error(`Failed to start F2A: ${result.error}`);
+      const errorData = (result as { error: unknown }).error;
+      const errorMsg = typeof errorData === 'string' 
+        ? errorData 
+        : JSON.stringify(errorData);
+      throw new Error(`Failed to start F2A: ${errorMsg}`);
     }
 
     // 启动控制服务器

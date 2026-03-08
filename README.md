@@ -234,7 +234,7 @@ F2A 使用 Kademlia DHT 实现全局节点发现。
 const f2a = await F2A.create({
   displayName: 'My Agent',
   network: {
-    enableDHT: true,           // 启用 DHT (默认 true)
+    enableDHT: true,           // 启用 DHT (默认 false)
     dhtServerMode: false,      // 客户端模式 (默认)
     bootstrapPeers: [          // 可选：引导节点加速首次连接
       '/ip4/1.2.3.4/tcp/9000/p2p/12D3KooW...'

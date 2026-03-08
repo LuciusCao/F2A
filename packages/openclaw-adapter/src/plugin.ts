@@ -14,8 +14,7 @@ export default async function register(api: OpenClawPluginApi) {
   const plugin = new F2AOpenClawAdapter();
   
   // 从 OpenClaw 配置中获取插件配置
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pluginsConfig = (api.config as any)?.plugins;
+  const pluginsConfig = api.config.plugins;
   const config = pluginsConfig?.entries?.['f2a-openclaw-adapter']?.config || {};
   
   // 将 API 引用传递给插件（用于触发心跳等操作）
@@ -52,18 +51,17 @@ export default async function register(api: OpenClawPluginApi) {
       description: tool.description,
       parameters: tool.parameters,
       // OpenClaw 使用 execute 而不是 handler
-      async execute(_id: string, params: any) {
+      async execute(_id: string, params: unknown) {
         try {
           // 构造一个模拟的 SessionContext
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const workspace = (api.config as any)?.agents?.defaults?.workspace || '.';
+          const workspace = api.config.agents?.defaults?.workspace || '.';
           const mockContext = {
             sessionId: _id,
             workspace,
             toJSON: () => ({})
           };
           
-          const result = await tool.handler(params, mockContext);
+          const result = await tool.handler(params as Record<string, unknown>, mockContext);
           
           // 将 ToolResult 转换为 OpenClaw 期望的格式
           if (typeof result === 'string') {

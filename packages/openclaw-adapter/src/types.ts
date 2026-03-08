@@ -15,6 +15,32 @@ export type { Result, F2AError, ErrorCode } from '../../../src/types/result.js';
 export { success, failure, failureFromError, createError } from '../../../src/types/result.js';
 
 // ============================================================================
+// OpenClaw 配置类型（扩展以支持插件配置访问）
+// ============================================================================
+
+/**
+ * OpenClaw 完整配置结构
+ * 
+ * 注意：此接口定义了 OpenClaw 配置的已知结构。
+ * 实际配置可能包含更多字段，插件应使用可选链访问。
+ */
+export interface OpenClawConfig extends Record<string, unknown> {
+  /** 插件配置容器 */
+  plugins?: {
+    /** 插件条目映射 */
+    entries?: Record<string, { config?: Record<string, unknown> }>;
+  };
+  /** Agent 配置 */
+  agents?: {
+    /** 默认 Agent 配置 */
+    defaults?: {
+      /** 工作空间路径 */
+      workspace?: string;
+    };
+  };
+}
+
+// ============================================================================
 // OpenClaw Plugin SDK Types
 // ============================================================================
 export interface OpenClawPlugin {
@@ -33,7 +59,7 @@ export interface OpenClawPluginApi {
   version?: string;
   description?: string;
   source: string;
-  config: Record<string, unknown>;
+  config: OpenClawConfig;
   pluginConfig?: Record<string, unknown>;
   runtime: {
     version: string;

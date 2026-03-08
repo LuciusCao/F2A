@@ -8,10 +8,10 @@ vi.mock('child_process', () => ({
   exec: vi.fn(),
 }));
 
-// Mock fs
+// Mock fs - 返回合理的默认值
 vi.mock('fs', () => ({
-  existsSync: vi.fn(),
-  readFileSync: vi.fn(),
+  existsSync: vi.fn(() => false),  // 默认 PID 文件不存在
+  readFileSync: vi.fn(() => ''),   // 默认返回空字符串
   writeFileSync: vi.fn(),
   mkdirSync: vi.fn(),
   unlinkSync: vi.fn(),

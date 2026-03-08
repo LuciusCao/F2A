@@ -51,7 +51,11 @@ describe('F2ANetworkClient', () => {
       const result = await client.getConnectedPeers();
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('401');
+      // 新的 Result 类型中 error 是 F2AError 对象
+      if (!result.success) {
+        expect(result.error.message).toContain('401');
+        expect(result.error.code).toBe('CONNECTION_FAILED');
+      }
     });
 
     it('should handle network errors', async () => {
@@ -60,7 +64,11 @@ describe('F2ANetworkClient', () => {
       const result = await client.getConnectedPeers();
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('Connection refused');
+      // 新的 Result 类型中 error 是 F2AError 对象
+      if (!result.success) {
+        expect(result.error.message).toBe('Connection refused');
+        expect(result.error.code).toBe('CONNECTION_FAILED');
+      }
     });
 
     it('should handle JSON parsing errors', async () => {

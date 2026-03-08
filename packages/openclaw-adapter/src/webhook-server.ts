@@ -11,6 +11,10 @@ import type {
   AgentCapability,
   TaskResponse 
 } from './types.js';
+import { webhookLogger as logger } from './logger.js';
+
+/** 默认请求体大小限制 (64KB) - 元数据交换足够，防止 DoS */
+const DEFAULT_MAX_BODY_SIZE = 64 * 1024;
 
 export interface WebhookHandler {
   onDiscover(payload: DiscoverWebhookPayload): Promise<{
@@ -34,10 +38,19 @@ export class WebhookServer {
   private port: number;
   private handler: WebhookHandler;
   private server?: ReturnType<typeof createServer>;
+  private maxBodySize: number;
+  /** 允许的 CORS 来源列表 */
+  private allowedOrigins: string[];
 
-  constructor(port: number, handler: WebhookHandler) {
+  constructor(port: number, handler: WebhookHandler, options?: { 
+    maxBodySize?: number;
+    allowedOrigins?: string[];
+  }) {
     this.port = port;
     this.handler = handler;
+    this.maxBodySize = options?.maxBodySize || DEFAULT_MAX_BODY_SIZE;
+    // 默认只允许 localhost
+    this.allowedOrigins = options?.allowedOrigins ?? ['http://localhost'];
   }
 
   /**
@@ -48,7 +61,7 @@ export class WebhookServer {
       this.server = createServer(this.handleRequest.bind(this));
       
       this.server.listen(this.port, () => {
-        console.log(`[F2A Webhook] 服务器启动在端口 ${this.port}`);
+        logger.info('服务器启动在端口 %d', this.port);
         resolve();
       });
 
@@ -65,7 +78,7 @@ export class WebhookServer {
     if (this.server) {
       return new Promise((resolve) => {
         this.server?.close(() => {
-          console.log('[F2A Webhook] 服务器已停止');
+          logger.info('服务器已停止');
           resolve();
         });
       });
@@ -76,8 +89,25 @@ export class WebhookServer {
    * 处理 HTTP 请求
    */
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // 设置 CORS
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // 设置 CORS - 使用配置的允许来源
+    const origin = req.headers.origin;
+    // 当 allowedOrigins 为空数组时，使用默认值 'http://localhost'
+    // 当 origin 不在允许列表中时，使用第一个允许的来源或默认值
+    const defaultOrigin = 'http://localhost';
+    let allowOrigin: string;
+    
+    if (this.allowedOrigins.length === 0) {
+      // 没有配置允许来源，使用默认值
+      allowOrigin = defaultOrigin;
+    } else if (origin && this.allowedOrigins.includes(origin)) {
+      // origin 在允许列表中
+      allowOrigin = origin;
+    } else {
+      // origin 不在允许列表中，使用第一个允许的来源
+      allowOrigin = this.allowedOrigins[0];
+    }
+    
+    res.setHeader('Access-Control-Allow-Origin', allowOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
@@ -97,7 +127,7 @@ export class WebhookServer {
       const body = await this.parseBody(req);
       const event = body as WebhookEvent;
 
-      console.log(`[F2A Webhook] 收到事件: ${event.type}`);
+      logger.info('收到事件: %s', event.type);
 
       let result: unknown;
 
@@ -124,7 +154,7 @@ export class WebhookServer {
       res.end(JSON.stringify(result));
 
     } catch (error) {
-      console.error('[F2A Webhook] 处理错误:', error);
+      logger.error('处理错误: %s', error);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ 
         error: error instanceof Error ? error.message : 'Internal error' 
@@ -134,12 +164,23 @@ export class WebhookServer {
 
   /**
    * 解析请求体
+   * 带大小限制，防止 DoS 攻击
    */
   private parseBody(req: IncomingMessage): Promise<unknown> {
     return new Promise((resolve, reject) => {
       let body = '';
+      let size = 0;
       
       req.on('data', (chunk) => {
+        size += chunk.length;
+        
+        // 检查请求体大小
+        if (size > this.maxBodySize) {
+          req.destroy();
+          reject(new Error(`Request body too large: ${size} bytes (max: ${this.maxBodySize})`));
+          return;
+        }
+        
         body += chunk.toString();
       });
       

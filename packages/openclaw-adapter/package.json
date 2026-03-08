@@ -1,9 +1,17 @@
 {
-  "name": "@f2a/openclaw-connector",
-  "version": "0.1.0",
-  "description": "OpenClaw plugin for F2A P2P network integration",
+  "name": "f2a-openclaw-adapter",
+  "version": "0.2.0",
+  "description": "OpenClaw adapter for F2A P2P Agent network",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "openclaw": {
+    "extensions": ["./dist/plugin.js"]
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
@@ -17,7 +25,8 @@
     "f2a-network": "file:../..",
     "ws": "^8.16.0",
     "node-fetch": "^3.3.2",
-    "zod": "^3.22.4"
+    "zod": "^3.22.4",
+    "better-sqlite3": "^11.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

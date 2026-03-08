@@ -47,6 +47,9 @@ export interface ReputationConfig {
   minScore: number;
   maxScore: number;
   maxHistory: number;  // 历史记录上限
+  decayRate: number;   // 衰减率（每日衰减百分比，如 0.01 表示每天衰减 1%）
+  decayIntervalMs: number;  // 衰减检查间隔（毫秒）
+  maxLatency: number;  // 最大可接受的延迟（毫秒）
 }
 
 // ============================================================================
@@ -140,24 +143,90 @@ const DEFAULT_CONFIG: ReputationConfig = {
   minScore: 0,
   maxScore: 100,
   maxHistory: 100,
+  decayRate: 0.01,           // 每天衰减 1%
+  decayIntervalMs: 24 * 60 * 60 * 1000,  // 每 24 小时检查一次
+  maxLatency: 300000,        // 最大可接受延迟 5 分钟
 };
 
 // ============================================================================
 // 信誉管理器
 // ============================================================================
 
-export class ReputationManager {
+export class ReputationManager implements Disposable {
   private config: ReputationConfig;
   private entries: Map<string, ReputationEntry> = new Map();
   private logger: Logger;
+  private decayTimer?: NodeJS.Timeout;
+  private disposed: boolean = false;
 
   constructor(config: Partial<ReputationConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.logger = new Logger({ component: 'Reputation' });
+    
+    // 启动衰减定时器
+    if (this.config.decayRate > 0) {
+      this.startDecayTimer();
+    }
   }
 
   /**
-   * 获取节点信誉
+   * 实现 Disposable 接口
+   */
+  [Symbol.dispose](): void {
+    this.stop();
+  }
+
+  /**
+   * 停止定时器和清理资源
+   */
+  stop(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    
+    if (this.decayTimer) {
+      clearInterval(this.decayTimer);
+      this.decayTimer = undefined;
+    }
+  }
+
+  /**
+   * 启动衰减定时器
+   */
+  private startDecayTimer(): void {
+    this.decayTimer = setInterval(() => {
+      this.applyDecay();
+    }, this.config.decayIntervalMs);
+  }
+
+  /**
+   * 应用信誉衰减
+   * 每个节点的信誉分数按 decayRate 比例衰减
+   */
+  private applyDecay(): void {
+    const decayFactor = 1 - this.config.decayRate;
+    
+    for (const [peerId, entry] of this.entries) {
+      // 不衰减初始分数以下的值
+      if (entry.score > this.config.initialScore) {
+        const newScore = entry.score * decayFactor;
+        // 确保不低于初始分数
+        entry.score = Math.max(this.config.initialScore, newScore);
+        entry.level = this.getTier(entry.score).level;
+        entry.lastUpdated = Date.now();
+      }
+    }
+    
+    this.logger.debug('Applied reputation decay', { 
+      decayRate: this.config.decayRate,
+      entriesAffected: this.entries.size 
+    });
+  }
+
+  /**
+   * 获取节点信誉信息
+   * 如果节点不存在，会自动创建一个带有初始分数的条目
+   * @param peerId - 节点的唯一标识符
+   * @returns 节点的信誉条目，包含分数、等级和历史记录
    */
   getReputation(peerId: string): ReputationEntry {
     if (!this.entries.has(peerId)) {
@@ -167,7 +236,10 @@ export class ReputationManager {
   }
 
   /**
-   * 获取信誉等级
+   * 获取信誉等级信息
+   * 根据分数返回对应的信誉等级和权限配置
+   * @param score - 信誉分数 (0-100)
+   * @returns 对应的信誉等级配置
    */
   getTier(score: number): ReputationTier {
     for (const tier of REPUTATION_TIERS) {
@@ -179,7 +251,10 @@ export class ReputationManager {
   }
 
   /**
-   * 检查权限
+   * 检查节点是否具有指定权限
+   * @param peerId - 节点的唯一标识符
+   * @param permission - 要检查的权限类型：'publish'（发布）、'execute'（执行）、'review'（评审）
+   * @returns 如果节点具有该权限则返回 true，否则返回 false
    */
   hasPermission(peerId: string, permission: 'publish' | 'execute' | 'review'): boolean {
     const entry = this.getReputation(peerId);
@@ -197,8 +272,36 @@ export class ReputationManager {
 
   /**
    * 记录任务成功
+   * @param peerId 节点 ID
+   * @param taskId 任务 ID
+   * @param delta 分数变化量
+   * @param latency 响应延迟（毫秒），可选，用于未来优化
    */
-  recordSuccess(peerId: string, taskId: string, delta: number = 10): void {
+  recordSuccess(peerId: string, taskId: string, delta: number = 10, latency?: number): void {
+    // 验证 latency 参数
+    if (latency !== undefined) {
+      if (typeof latency !== 'number' || !Number.isFinite(latency)) {
+        this.logger.warn('Invalid latency value, ignoring', { 
+          peerId: peerId.slice(0, 16), 
+          latency 
+        });
+        latency = undefined;
+      } else if (latency < 0) {
+        this.logger.warn('Negative latency value, treating as 0', { 
+          peerId: peerId.slice(0, 16), 
+          latency 
+        });
+        latency = 0;
+      } else if (latency > this.config.maxLatency) {
+        this.logger.warn('Latency exceeds max, capping', { 
+          peerId: peerId.slice(0, 16), 
+          latency,
+          maxLatency: this.config.maxLatency 
+        });
+        latency = this.config.maxLatency;
+      }
+    }
+    
     const entry = this.getReputation(peerId);
     const newScore = this.updateScoreEWMA(entry.score, delta);
 
@@ -212,16 +315,27 @@ export class ReputationManager {
       taskId,
     });
 
+    // 截断历史记录，防止无限增长
+    if (entry.history.length > this.config.maxHistory) {
+      entry.history = entry.history.slice(-this.config.maxHistory);
+    }
+
     this.logger.info('Reputation updated', {
       peerId: peerId.slice(0, 16),
       delta,
       newScore,
       level: entry.level,
+      latency
     });
   }
 
   /**
    * 记录任务失败
+   * 会降低节点的信誉分数
+   * @param peerId - 节点的唯一标识符
+   * @param taskId - 失败任务的 ID
+   * @param reason - 可选的失败原因描述
+   * @param delta - 分数变化量，默认为 -20
    */
   recordFailure(peerId: string, taskId: string, reason?: string, delta: number = -20): void {
     const entry = this.getReputation(peerId);
@@ -238,6 +352,11 @@ export class ReputationManager {
       taskId,
     });
 
+    // 截断历史记录
+    if (entry.history.length > this.config.maxHistory) {
+      entry.history = entry.history.slice(-this.config.maxHistory);
+    }
+
     this.logger.warn('Reputation decreased', {
       peerId: peerId.slice(0, 16),
       delta,
@@ -249,6 +368,11 @@ export class ReputationManager {
 
   /**
    * 记录任务拒绝
+   * 当节点拒绝接受任务时调用，会轻微降低信誉分数
+   * @param peerId - 节点的唯一标识符
+   * @param taskId - 被拒绝任务的 ID
+   * @param reason - 可选的拒绝原因描述
+   * @param delta - 分数变化量，默认为 -5
    */
   recordRejection(peerId: string, taskId: string, reason?: string, delta: number = -5): void {
     const entry = this.getReputation(peerId);
@@ -265,6 +389,11 @@ export class ReputationManager {
       taskId,
     });
 
+    // 截断历史记录
+    if (entry.history.length > this.config.maxHistory) {
+      entry.history = entry.history.slice(-this.config.maxHistory);
+    }
+
     this.logger.info('Reputation updated (rejection)', {
       peerId: peerId.slice(0, 16),
       delta,
@@ -274,6 +403,9 @@ export class ReputationManager {
 
   /**
    * 记录评审奖励
+   * 当节点完成评审任务时调用，会提高信誉分数
+   * @param peerId - 节点的唯一标识符
+   * @param delta - 分数变化量，默认为 3
    */
   recordReviewReward(peerId: string, delta: number = 3): void {
     const entry = this.getReputation(peerId);
@@ -288,6 +420,11 @@ export class ReputationManager {
       timestamp: Date.now(),
     });
 
+    // 截断历史记录
+    if (entry.history.length > this.config.maxHistory) {
+      entry.history = entry.history.slice(-this.config.maxHistory);
+    }
+
     this.logger.info('Review reward', {
       peerId: peerId.slice(0, 16),
       delta,
@@ -297,6 +434,10 @@ export class ReputationManager {
 
   /**
    * 记录评审惩罚
+   * 当节点提供低质量评审或违规时调用，会降低信誉分数
+   * @param peerId - 节点的唯一标识符
+   * @param delta - 分数变化量，默认为 -5
+   * @param reason - 可选的惩罚原因描述
    */
   recordReviewPenalty(peerId: string, delta: number = -5, reason?: string): void {
     const entry = this.getReputation(peerId);
@@ -312,6 +453,11 @@ export class ReputationManager {
       reason,
     });
 
+    // 截断历史记录
+    if (entry.history.length > this.config.maxHistory) {
+      entry.history = entry.history.slice(-this.config.maxHistory);
+    }
+
     this.logger.warn('Review penalty', {
       peerId: peerId.slice(0, 16),
       delta,
@@ -321,21 +467,29 @@ export class ReputationManager {
   }
 
   /**
-   * 获取所有信誉条目（按分数排序）
+   * 获取所有信誉条目
+   * 返回按分数从高到低排序的所有节点信誉信息
+   * @returns 排序后的信誉条目数组
    */
   getAllReputations(): ReputationEntry[] {
     return Array.from(this.entries.values()).sort((a, b) => b.score - a.score);
   }
 
   /**
-   * 获取高信誉节点（可用于评审）
+   * 获取高信誉节点
+   * 返回分数达到指定阈值的节点列表，可用于评审任务分配
+   * @param minScore - 最低信誉分数阈值，默认为 50
+   * @returns 符合条件的信誉条目数组，按分数排序
    */
   getHighReputationNodes(minScore: number = 50): ReputationEntry[] {
     return this.getAllReputations().filter(e => e.score >= minScore);
   }
 
   /**
-   * 计算发布优先级
+   * 获取节点的发布优先级
+   * 优先级越高，任务分配时越优先被考虑
+   * @param peerId - 节点的唯一标识符
+   * @returns 发布优先级 (0-5)
    */
   getPublishPriority(peerId: string): number {
     const entry = this.getReputation(peerId);
@@ -343,11 +497,45 @@ export class ReputationManager {
   }
 
   /**
-   * 计算发布折扣
+   * 获取节点的发布折扣
+   * 高信誉节点可享受更低的服务费用折扣
+   * @param peerId - 节点的唯一标识符
+   * @returns 发布折扣率 (0.7-1.0，数值越小折扣越大)
    */
   getPublishDiscount(peerId: string): number {
     const entry = this.getReputation(peerId);
     return this.getTier(entry.score).permissions.publishDiscount;
+  }
+
+  /**
+   * 设置节点的初始信誉分数
+   * 用于邀请机制设置被邀请者的初始分数，可覆盖默认初始分数
+   * @param peerId - 节点的唯一标识符
+   * @param score - 要设置的分数 (0-100)，会自动限制在有效范围内
+   */
+  setInitialScore(peerId: string, score: number): void {
+    const entry = this.getReputation(peerId);
+    const clampedScore = Math.max(this.config.minScore, Math.min(this.config.maxScore, score));
+    entry.score = clampedScore;
+    entry.level = this.getTier(clampedScore).level;
+    entry.lastUpdated = Date.now();
+    entry.history.push({
+      type: 'initial',
+      delta: clampedScore - this.config.initialScore,
+      timestamp: Date.now(),
+      reason: 'Set by invitation system'
+    });
+
+    // 截断历史记录
+    if (entry.history.length > this.config.maxHistory) {
+      entry.history = entry.history.slice(-this.config.maxHistory);
+    }
+
+    this.logger.info('Initial score set', {
+      peerId: peerId.slice(0, 16),
+      score: clampedScore,
+      level: entry.level
+    });
   }
 
   // ============================================================================

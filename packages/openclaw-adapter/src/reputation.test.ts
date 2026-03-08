@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ReputationSystem } from './reputation';
 import { ReputationConfig } from './types';
 
@@ -9,6 +9,8 @@ vi.mock('fs', () => {
     readFileSync: vi.fn(),
     writeFileSync: vi.fn(),
     mkdirSync: vi.fn(),
+    renameSync: vi.fn(),
+    unlinkSync: vi.fn(),
   };
 });
 
@@ -28,9 +30,14 @@ describe('ReputationSystem', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    vi.useFakeTimers();
     const { existsSync } = await import('fs');
     vi.mocked(existsSync).mockReturnValue(false);
     system = new ReputationSystem(mockConfig, './test-data');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe('getReputation', () => {
@@ -139,6 +146,76 @@ describe('ReputationSystem', () => {
       const allReps = system.getAllReputations();
       // getAllReputations doesn't have limit param, so we get all
       expect(allReps.length).toBe(3);
+    });
+  });
+
+  // P0 修复：测试防抖保存功能
+  describe('debounced save', () => {
+    it('should debounce multiple save calls', async () => {
+      const { writeFileSync, renameSync } = await import('fs');
+      
+      // 连续调用多次 recordSuccess，每个都会触发 save
+      system.recordSuccess('peer-1', 'task-1', 100);
+      system.recordSuccess('peer-1', 'task-2', 100);
+      system.recordSuccess('peer-1', 'task-3', 100);
+      
+      // 此时应该还没有写入（防抖延迟内）
+      expect(writeFileSync).not.toHaveBeenCalled();
+      
+      // 等待足够长的时间让定时器执行
+      vi.advanceTimersByTime(200);
+      
+      // 执行 setImmediate 回调
+      await vi.runAllTimersAsync();
+      
+      // 应该有写入调用（防抖将多次合并为一次或多次，取决于实现）
+      expect(writeFileSync).toHaveBeenCalled();
+      expect(renameSync).toHaveBeenCalled();
+    });
+
+    it('should use async write to avoid blocking', async () => {
+      const { writeFileSync } = await import('fs');
+      
+      system.recordSuccess('peer-1', 'task-1', 100);
+      
+      // 在 timer 执行前，writeFileSync 不应该被调用（因为是 setImmediate）
+      expect(writeFileSync).not.toHaveBeenCalled();
+      
+      // 等待足够时间
+      vi.advanceTimersByTime(200);
+      await vi.runAllTimersAsync();
+      
+      // 现在应该被调用了
+      expect(writeFileSync).toHaveBeenCalled();
+    });
+  });
+
+  describe('flush', () => {
+    it('should immediately save pending data', async () => {
+      const { writeFileSync, renameSync } = await import('fs');
+      
+      // 调用 recordSuccess 触发 save（设置 savePending = true）
+      system.recordSuccess('peer-1', 'task-1', 100);
+      
+      // 不等待任何 timer，直接调用 flush
+      // flush 应该立即同步保存待保存的数据
+      system.flush();
+      
+      // flush 是同步的，应该立即调用 writeFileSync
+      expect(writeFileSync).toHaveBeenCalled();
+      expect(renameSync).toHaveBeenCalled();
+    });
+
+    it('should not save if no pending data', async () => {
+      const { writeFileSync } = await import('fs');
+      
+      // 创建一个新的 system，没有任何操作
+      const freshSystem = new ReputationSystem(mockConfig, './test-data-fresh');
+      
+      // 没有待保存的数据，flush 不应该触发写入
+      freshSystem.flush();
+      
+      expect(writeFileSync).not.toHaveBeenCalled();
     });
   });
 });

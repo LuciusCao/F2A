@@ -29,7 +29,8 @@ vi.mock('../core/token-manager', () => ({
   TokenManager: vi.fn().mockImplementation(() => ({
     getToken: vi.fn().mockReturnValue(TEST_TOKEN),
     verifyToken: vi.fn((token) => token === TEST_TOKEN),
-    getTokenPath: vi.fn().mockReturnValue('/mock/path')
+    getTokenPath: vi.fn().mockReturnValue('/mock/path'),
+    logTokenUsage: vi.fn() // 添加审计日志方法
   }))
 }));
 

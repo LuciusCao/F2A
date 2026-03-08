@@ -4,7 +4,7 @@
  */
 
 import { x25519 } from '@noble/curves/ed25519.js';
-import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'crypto';
+import { randomBytes, createCipheriv, createDecipheriv, createHash, hkdfSync } from 'crypto';
 import { Logger } from '../utils/logger.js';
 
 // AES-256-GCM 参数
@@ -34,6 +34,8 @@ export interface EncryptedMessage {
   ciphertext: string;
   /** 可选的附加认证数据 */
   aad?: string;
+  /** 密钥派生使用的随机盐值（每次加密随机生成） */
+  salt: string;
 }
 
 /**
@@ -116,8 +118,11 @@ export class E2EECrypto {
     }
 
     try {
-      // 从共享密钥派生 AES 密钥 (简单起见，取前32字节)
-      const aesKey = this.deriveAESKey(sharedSecret);
+      // 生成随机盐值（每次加密使用不同的盐值，提高安全性）
+      const salt = randomBytes(16);
+      
+      // 从共享密钥派生 AES 密钥
+      const aesKey = this.deriveAESKey(sharedSecret, salt);
 
       // 生成随机 IV
       const iv = randomBytes(AES_IV_SIZE);
@@ -142,7 +147,8 @@ export class E2EECrypto {
         iv: iv.toString('base64'),
         authTag: authTag.toString('base64'),
         ciphertext,
-        aad
+        aad,
+        salt: salt.toString('base64')
       };
     } catch (error) {
       this.logger.error('Encryption failed', { error });
@@ -163,7 +169,10 @@ export class E2EECrypto {
       // 使用发送方公钥计算共享密钥
       const senderPublicKey = Buffer.from(encrypted.senderPublicKey, 'base64');
       const sharedSecret = x25519.getSharedSecret(this.keyPair.privateKey, senderPublicKey);
-      const aesKey = this.deriveAESKey(sharedSecret);
+      
+      // 使用消息中的盐值派生 AES 密钥（与加密方使用相同的盐值）
+      const salt = encrypted.salt ? Buffer.from(encrypted.salt, 'base64') : Buffer.from('F2A-E2EE-SALT-2024', 'utf-8');
+      const aesKey = this.deriveAESKey(sharedSecret, salt);
 
       // 解码参数
       const iv = Buffer.from(encrypted.iv, 'base64');
@@ -191,11 +200,27 @@ export class E2EECrypto {
 
   /**
    * 从共享密钥派生 AES 密钥
-   * 使用 HKDF-like 简单实现 (实际生产应使用 proper HKDF)
+   * 使用 HKDF (HMAC-based Key Derivation Function) 进行安全密钥派生
+   * @param sharedSecret 共享密钥
+   * @param salt 随机盐值（每次加密使用不同的盐值，提高安全性）
    */
-  private deriveAESKey(sharedSecret: Uint8Array): Buffer {
-    // 简单实现：SHA-256(sharedSecret) 取前32字节
-    return createHash('sha256').update(sharedSecret).digest().slice(0, AES_KEY_SIZE);
+  private deriveAESKey(sharedSecret: Uint8Array, salt: Buffer): Buffer {
+    // HKDF 参数
+    const info = Buffer.from('AES-256-GCM-KEY', 'utf-8');    // 密钥用途标识
+    
+    // 使用 HKDF-SHA256 进行密钥派生
+    // hkdfSync(digest, ikm, salt, info, keylen)
+    const derivedKey = hkdfSync('sha256', sharedSecret, salt, info, AES_KEY_SIZE);
+    
+    return Buffer.from(derivedKey);
+  }
+
+  /**
+   * 获取已注册的对等方公钥
+   */
+  getPeerPublicKey(peerId: string): string | null {
+    const publicKey = this.peerPublicKeys.get(peerId);
+    return publicKey ? Buffer.from(publicKey).toString('base64') : null;
   }
 
   /**

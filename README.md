@@ -9,7 +9,7 @@
 ```
 F2A/
 ├── packages/
-│   └── openclaw-connector/     # OpenClaw 插件 (@f2a/openclaw-connector)
+│   └── openclaw-adapter/      # OpenClaw 插件 (@f2a/openclaw-adapter)
 ├── src/                         # F2A 核心网络代码
 └── docs/                        # 文档
 ```
@@ -41,7 +41,7 @@ F2A/
 └──────────────────────────────────────────────────────────────────────┘
                                    │
 ┌──────────────────────────────────▼───────────────────────────────────┐
-│              @f2a/openclaw-connector (可选插件)                      │
+│              @f2a/openclaw-adapter (可选插件)                         │
 │                   OpenClaw Agent 集成                                │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -119,10 +119,10 @@ const result = await f2a.delegateTask({
 
 ### 5. OpenClaw 集成 (通过插件)
 
-> 需要安装 &#96;@f2a/openclaw-connector&#96; 插件包
+> 需要安装 `@f2a/openclaw-adapter` 插件包
 
 ```bash
-cd packages/openclaw-connector
+cd packages/openclaw-adapter
 npm link  # 或 npm install -g
 ```
 
@@ -131,7 +131,7 @@ npm link  # 或 npm install -g
 ```json
 {
   "plugins": {
-    "@f2a/openclaw-connector": {
+    "@f2a/openclaw-adapter": {
       "enabled": true,
       "config": {
         "agentName": "My OpenClaw Agent",
@@ -143,13 +143,13 @@ npm link  # 或 npm install -g
 ```
 
 插件提供的工具：
-- &#96;f2a_discover&#96; - 发现网络中的 Agents
-- &#96;f2a_delegate&#96; - 委托任务给特定 Agent  
-- &#96;f2a_broadcast&#96; - 广播任务给多个 Agents
-- &#96;f2a_status&#96; - 查看网络状态
-- &#96;f2a_reputation&#96; - 管理 Peer 信誉
+- `f2a_discover` - 发现网络中的 Agents
+- `f2a_delegate` - 委托任务给特定 Agent  
+- `f2a_broadcast` - 广播任务给多个 Agents
+- `f2a_status` - 查看网络状态
+- `f2a_reputation` - 管理 Peer 信誉
 
-更多细节见 &#96;packages/openclaw-connector/README.md&#96;
+更多细节见 `packages/openclaw-adapter/README.md`
 
 ## CLI 使用
 
@@ -561,7 +561,7 @@ npm run test:coverage
 ```
 F2A/                                    # 根目录 (f2a-network)
 ├── packages/
-│   └── openclaw-connector/             # OpenClaw 插件包
+│   └── openclaw-adapter/            # OpenClaw 插件包
 │       ├── src/
 │       │   ├── index.ts                # 插件主类
 │       │   ├── node-manager.ts         # Node 生命周期

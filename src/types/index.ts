@@ -122,6 +122,7 @@ export type F2AMessageType =
   | 'TASK_REQUEST'  // 任务请求
   | 'TASK_RESPONSE' // 任务响应
   | 'TASK_DELEGATE' // 任务转委托
+  | 'DECRYPT_FAILED' // 解密失败通知
   | 'PING'          // 心跳
   | 'PONG';         // 心跳响应
 
@@ -264,6 +265,16 @@ export interface WebhookConfig {
 // 任务委托
 // ============================================================================
 
+/** 任务委托重试选项 */
+export interface TaskRetryOptions {
+  /** 最大重试次数（默认 3） */
+  maxRetries?: number;
+  /** 重试间隔毫秒（默认 1000） */
+  retryDelayMs?: number;
+  /** 发现超时毫秒（默认 5000） */
+  discoverTimeoutMs?: number;
+}
+
 export interface TaskDelegateOptions {
   /** 目标能力 */
   capability: string;
@@ -277,6 +288,8 @@ export interface TaskDelegateOptions {
   parallel?: boolean;
   /** 最少响应数（parallel=true时） */
   minResponses?: number;
+  /** 重试选项 */
+  retryOptions?: TaskRetryOptions;
 }
 
 export interface TaskDelegateResult {

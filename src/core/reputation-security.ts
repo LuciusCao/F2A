@@ -300,9 +300,8 @@ export class InvitationManager {
       30,
       Math.floor(inviterRep.score * this.config.initialScoreMultiplier)
     );
-    const inviteeEntry = this.reputationManager.getReputation(inviteeId);
-    // 更新初始分数（通过私有属性直接设置，实际实现需要更好的方式）
-    (inviteeEntry as any).score = initialScore;
+    // 使用 ReputationManager 的公开方法设置初始分数
+    this.reputationManager.setInitialScore(inviteeId, initialScore);
 
     this.logger.info('Invitation created', {
       inviterId: inviterId.slice(0, 16),

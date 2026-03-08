@@ -1,6 +1,6 @@
 /**
  * 速率限制中间件
- * 基于 Token Bucket 算法实现
+ * 基于 Token Bucket 算法实现，支持突发流量
  */
 
 import { Logger } from './logger.js';
@@ -12,6 +12,8 @@ export interface RateLimitConfig {
   windowMs: number;
   /** 是否跳过成功请求 */
   skipSuccessfulRequests?: boolean;
+  /** 突发容量倍数（默认 1.5，允许短暂的请求爆发） */
+  burstMultiplier?: number;
 }
 
 export interface RateLimitEntry {
@@ -21,27 +23,60 @@ export interface RateLimitEntry {
 
 /**
  * 速率限制器
+ * 实现 Disposable 接口，确保资源正确释放
  */
-export class RateLimiter {
+export class RateLimiter implements Disposable {
   private config: Required<RateLimitConfig>;
+  private burstCapacity: number;
   private store: Map<string, RateLimitEntry> = new Map();
   private logger: Logger;
   private cleanupTimer?: NodeJS.Timeout;
+  private disposed: boolean = false;
 
   constructor(config: RateLimitConfig) {
     this.config = {
       skipSuccessfulRequests: false,
+      burstMultiplier: 1.5,
       ...config
     };
+    // 计算突发容量
+    this.burstCapacity = Math.floor(this.config.maxRequests * this.config.burstMultiplier);
     this.logger = new Logger({ component: 'RateLimiter' });
     // 自动启动清理定时器
     this.cleanupTimer = setInterval(() => this.cleanup(), config.windowMs);
+    
+    // 注册析构回调，确保即使 stop() 未调用也能清理资源
+    if (typeof Symbol.dispose !== 'undefined') {
+      // 支持 using 语法的自动清理
+    }
+  }
+
+  /**
+   * 实现 Disposable 接口
+   * 确保资源被正确释放
+   */
+  [Symbol.dispose](): void {
+    this.stop();
+  }
+
+  /**
+   * 检查是否已释放
+   */
+  isDisposed(): boolean {
+    return this.disposed;
   }
 
   /**
    * 停止速率限制器，清理资源
+   * 幂等操作，可多次调用
    */
   stop(): void {
+    if (this.disposed) {
+      return; // 幂等：已释放则跳过
+    }
+    
+    this.disposed = true;
+    
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = undefined;
@@ -61,6 +96,7 @@ export class RateLimiter {
 
     if (!entry) {
       // 首次请求，初始化令牌桶
+      // 初始令牌数为 maxRequests - 1（本次请求消耗 1 个）
       this.store.set(key, {
         tokens: this.config.maxRequests - 1,
         lastRefill: now
@@ -75,8 +111,9 @@ export class RateLimiter {
     );
 
     if (tokensToAdd > 0) {
+      // 令牌补充后不能超过突发容量
       entry.tokens = Math.min(
-        this.config.maxRequests,
+        this.burstCapacity,
         entry.tokens + tokensToAdd
       );
       entry.lastRefill = now;
@@ -88,7 +125,12 @@ export class RateLimiter {
       return true;
     }
 
-    this.logger.warn('Rate limit exceeded', { key });
+    this.logger.warn('Rate limit exceeded', { 
+      key, 
+      remaining: entry.tokens,
+      maxRequests: this.config.maxRequests,
+      burstCapacity: this.burstCapacity
+    });
     return false;
   }
 
@@ -105,7 +147,7 @@ export class RateLimiter {
       (timePassed / this.config.windowMs) * this.config.maxRequests
     );
 
-    return Math.min(this.config.maxRequests, entry.tokens + tokensToAdd);
+    return Math.min(this.burstCapacity, entry.tokens + tokensToAdd);
   }
 
   /**

@@ -103,4 +103,4 @@ export { F2AOpenClawAdapter } from './connector.js';
 export * from './types.js';
 export { TaskQueue, QueuedTask, TaskQueueStats } from './task-queue.js';
 export { AnnouncementQueue, AnnouncementQueueStats } from './announcement-queue.js';
-export { TaskGuard, TaskGuardReport, TaskGuardRule, TaskGuardConfig } from './task-guard.js';
+export { TaskGuard, TaskGuardReport, TaskGuardRule, TaskGuardConfig, taskGuard } from './task-guard.js';

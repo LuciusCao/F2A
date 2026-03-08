@@ -1,0 +1,55 @@
+name: Publish to NPM
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  publish-core:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+      
+      - run: npm ci
+      - run: npm run build
+      
+      # 发布核心包
+      - run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-adapter:
+    runs-on: ubuntu-latest
+    needs: publish-core
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+      
+      # 等核心包在 registry 中可用
+      - run: sleep 30
+      
+      # 安装并构建插件（此时核心包已发布）
+      - run: cd packages/openclaw-adapter && npm ci
+      - run: cd packages/openclaw-adapter && npm run build
+      
+      # 发布插件包
+      - run: cd packages/openclaw-adapter && npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

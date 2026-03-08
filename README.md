@@ -28,6 +28,16 @@ npm install
 npm run build
 ```
 
+或者通过 NPM 安装：
+
+```bash
+# 安装 F2A 网络
+npm install -g @f2a/network
+
+# 启动节点
+f2a-network
+```
+
 ### 1.2 启动节点
 
 **方式一：Daemon 模式（推荐）**
@@ -83,8 +93,11 @@ curl http://localhost:9001/status \
 ### 2.1 安装插件
 
 ```bash
-cd packages/openclaw-adapter
-npm link
+# 通过 OpenClaw 安装
+openclaw plugins install @f2a/openclaw-adapter
+
+# 或者手动安装
+npm install -g @f2a/openclaw-adapter
 ```
 
 然后在 OpenClaw 配置中启用：
@@ -96,7 +109,6 @@ npm link
       "enabled": true,
       "config": {
         "agentName": "我的Agent",
-        "f2aPath": "~/projects/F2A",
         "autoStart": true,
         "p2pPort": 9000,
         "enableMDNS": true
@@ -231,6 +243,22 @@ npm run build:all
 ---
 
 ## 快速开始（最小步骤）
+
+### 方式一：NPM 安装（推荐）
+
+```bash
+# 1. 安装并启动 F2A 节点
+npm install -g @f2a/network
+f2a-network
+
+# 2. 配置 OpenClaw 插件
+openclaw plugins install @f2a/openclaw-adapter
+
+# 3. 编辑配置文件，启用插件
+# ~/.openclaw/config.json
+```
+
+### 方式二：源码安装
 
 ```bash
 # 1. 启动 F2A 节点

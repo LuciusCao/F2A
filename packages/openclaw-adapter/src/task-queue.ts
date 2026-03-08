@@ -38,6 +38,21 @@ export interface TaskQueueOptions {
   cleanupThreshold?: number;
 }
 
+/** 数据库行类型 */
+interface TaskRow {
+  id: string;
+  task_type: string | null;
+  description: string | null;
+  parameters: string | null;
+  status: string;
+  created_at: number;
+  updated_at: number | null;
+  result: string | null;
+  error: string | null;
+  latency: number | null;
+  webhook_pushed: number;
+}
+
 /** 默认超时时间（毫秒） */
 const DEFAULT_TIMEOUT_MS = 30000;
 /** 最小超时时间（毫秒） */
@@ -165,7 +180,7 @@ export class TaskQueue {
         SELECT * FROM tasks 
         WHERE status IN ('pending', 'processing')
         ORDER BY created_at ASC
-      `).all() as any[];
+      `).all() as TaskRow[];
 
       let recoveredCount = 0;
       let skippedCount = 0;
@@ -227,7 +242,7 @@ export class TaskQueue {
       
       try {
         // 尝试逐条读取并恢复
-        const rows = this.db.prepare(`SELECT * FROM tasks WHERE status IN ('pending', 'processing')`).all() as any[];
+        const rows = this.db.prepare(`SELECT * FROM tasks WHERE status IN ('pending', 'processing')`).all() as TaskRow[];
         
         for (const row of rows) {
           try {

@@ -4,6 +4,7 @@
  */
 
 import type { QueuedTask } from './task-queue.js';
+import { queueLogger as logger } from './logger.js';
 
 export interface WebhookPushConfig {
   /** OpenClaw webhook URL */
@@ -55,7 +56,7 @@ export class WebhookPusher {
     const multiplier = Math.pow(2, this.consecutiveFailures - this.FAILURE_THRESHOLD);
     const cooldown = Math.min(this.BASE_COOLDOWN_MS * multiplier, this.MAX_COOLDOWN_MS);
     
-    console.log(`[WebhookPusher] 冷却期计算: 失败次数=${this.consecutiveFailures}, 冷却期=${Math.round(cooldown / 1000)}秒`);
+    logger.debug(`冷却期计算: 失败次数=${this.consecutiveFailures}, 冷却期=${Math.round(cooldown / 1000)}秒`);
     return cooldown;
   }
 
@@ -177,7 +178,7 @@ export class WebhookPusher {
     
     if (this.consecutiveFailures >= this.FAILURE_THRESHOLD) {
       const cooldownSec = Math.round(this.getCooldownMs() / 1000);
-      console.warn(`[WebhookPusher] 连续失败 ${this.consecutiveFailures} 次，进入 ${cooldownSec} 秒冷却期（降级模式启用）`);
+      logger.warn(`连续失败 ${this.consecutiveFailures} 次，进入 ${cooldownSec} 秒冷却期（降级模式启用）`);
     }
   }
 
@@ -188,7 +189,7 @@ export class WebhookPusher {
     this.consecutiveFailures = 0;
     this.lastFailureTime = 0;
     this.degradedMode = false;
-    console.log('[WebhookPusher] 冷却期已手动重置');
+    logger.info('冷却期已手动重置');
   }
 
   /**

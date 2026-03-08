@@ -29,6 +29,14 @@ import { ToolHandlers } from './tool-handlers.js';
 import { ClaimHandlers } from './claim-handlers.js';
 import { pluginLogger as logger } from './logger.js';
 
+/** 广播结果类型 */
+interface BroadcastResult {
+  agent: string;
+  success: boolean;
+  error?: string;
+  latency?: number;
+}
+
 export class F2AOpenClawAdapter implements OpenClawPlugin {
   name = 'f2a-openclaw-adapter';
   version = '0.3.0';
@@ -701,7 +709,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   /**
    * 格式化广播结果（公共方法，供测试和外部调用）
    */
-  formatBroadcastResults(results: any[]): string {
+  formatBroadcastResults(results: BroadcastResult[]): string {
     return results.map(r => {
       const icon = r.success ? '✅' : '❌';
       const latency = r.latency ? ` (${r.latency}ms)` : '';

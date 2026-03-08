@@ -7,11 +7,39 @@ import type {
   SessionContext,
   ToolResult,
   AgentInfo,
-  TaskResponse
+  TaskResponse,
+  F2APluginConfig,
+  OpenClawPluginApi
 } from './types.js';
 import type { F2AOpenClawAdapter } from './connector.js';
 import type { QueuedTask } from './task-queue.js';
+import type { ReputationSystem } from './reputation.js';
+import type { F2ANetworkClient } from './network-client.js';
+import type { F2ANodeManager } from './node-manager.js';
+import type { TaskQueue } from './task-queue.js';
+import type { AnnouncementQueue } from './announcement-queue.js';
 import { pluginLogger as logger } from './logger.js';
+
+/** 广播结果类型 */
+interface BroadcastResult {
+  agent: string;
+  success: boolean;
+  error?: string;
+  latency?: number;
+}
+
+/**
+ * Adapter 内部接口 - 用于类型安全的属性访问
+ */
+interface AdapterInternalAccess {
+  networkClient: F2ANetworkClient;
+  reputationSystem: ReputationSystem;
+  nodeManager: F2ANodeManager;
+  taskQueue: TaskQueue;
+  announcementQueue: AnnouncementQueue;
+  config: F2APluginConfig;
+  api?: OpenClawPluginApi;
+}
 
 /**
  * 工具处理器参数类型
@@ -40,8 +68,8 @@ export class ToolHandlers {
     params: ToolHandlerParams['discover'],
     context: SessionContext
   ): Promise<ToolResult> {
-    const networkClient = (this.adapter as any).networkClient;
-    const reputationSystem = (this.adapter as any).reputationSystem;
+    const networkClient = (this.adapter as unknown as AdapterInternalAccess).networkClient;
+    const reputationSystem = (this.adapter as unknown as AdapterInternalAccess).reputationSystem;
     
     const result = await networkClient.discoverAgents(params.capability);
     
@@ -100,8 +128,8 @@ ${agents.map((a: AgentInfo, i: number) => {
       return { content: '❌ 请提供有效的 task 参数（任务描述）' };
     }
     
-    const networkClient = (this.adapter as any).networkClient;
-    const reputationSystem = (this.adapter as any).reputationSystem;
+    const networkClient = (this.adapter as unknown as AdapterInternalAccess).networkClient;
+    const reputationSystem = (this.adapter as unknown as AdapterInternalAccess).reputationSystem;
     
     // 解析 Agent 引用
     const targetAgent = await this.resolveAgent(params.agent);
@@ -158,7 +186,7 @@ ${agents.map((a: AgentInfo, i: number) => {
       return { content: '❌ 请提供有效的 task 参数（任务描述）' };
     }
     
-    const networkClient = (this.adapter as any).networkClient;
+    const networkClient = (this.adapter as unknown as AdapterInternalAccess).networkClient;
     
     const discoverResult = await networkClient.discoverAgents(params.capability);
     
@@ -223,10 +251,10 @@ ${agents.map((a: AgentInfo, i: number) => {
     params: {},
     context: SessionContext
   ): Promise<ToolResult> {
-    const nodeManager = (this.adapter as any).nodeManager;
-    const networkClient = (this.adapter as any).networkClient;
-    const taskQueue = (this.adapter as any).taskQueue;
-    const reputationSystem = (this.adapter as any).reputationSystem;
+    const nodeManager = (this.adapter as unknown as AdapterInternalAccess).nodeManager;
+    const networkClient = (this.adapter as unknown as AdapterInternalAccess).networkClient;
+    const taskQueue = (this.adapter as unknown as AdapterInternalAccess).taskQueue;
+    const reputationSystem = (this.adapter as unknown as AdapterInternalAccess).reputationSystem;
     
     const [nodeStatus, peersResult] = await Promise.all([
       nodeManager.getStatus(),
@@ -273,8 +301,8 @@ ${peers.map((p: any) => {
       return { content: '❌ view/block/unblock 操作需要提供 peer_id 参数' };
     }
     
-    const reputationSystem = (this.adapter as any).reputationSystem;
-    const config = (this.adapter as any).config;
+    const reputationSystem = (this.adapter as unknown as AdapterInternalAccess).reputationSystem;
+    const config = (this.adapter as unknown as AdapterInternalAccess).config;
     
     switch (params.action) {
       case 'list': {
@@ -346,7 +374,7 @@ ${peers.map((p: any) => {
       return { content: '❌ status 参数必须是 pending, processing, completed 或 failed' };
     }
     
-    const taskQueue = (this.adapter as any).taskQueue;
+    const taskQueue = (this.adapter as unknown as AdapterInternalAccess).taskQueue;
     
     let tasks: QueuedTask[];
     
@@ -429,9 +457,9 @@ ${tasks.map(t => {
       return { content: '❌ status 参数必须是 success 或 error' };
     }
     
-    const taskQueue = (this.adapter as any).taskQueue;
-    const networkClient = (this.adapter as any).networkClient;
-    const reputationSystem = (this.adapter as any).reputationSystem;
+    const taskQueue = (this.adapter as unknown as AdapterInternalAccess).taskQueue;
+    const networkClient = (this.adapter as unknown as AdapterInternalAccess).networkClient;
+    const reputationSystem = (this.adapter as unknown as AdapterInternalAccess).reputationSystem;
     
     // 查找任务
     const task = taskQueue.get(params.task_id);
@@ -481,7 +509,7 @@ ${tasks.map(t => {
     params: {},
     context: SessionContext
   ): Promise<ToolResult> {
-    const taskQueue = (this.adapter as any).taskQueue;
+    const taskQueue = (this.adapter as unknown as AdapterInternalAccess).taskQueue;
     const stats = taskQueue.getStats();
     
     const content = `
@@ -505,7 +533,7 @@ ${tasks.map(t => {
    * 解析 Agent 引用
    */
   private async resolveAgent(agentRef: string): Promise<AgentInfo | null> {
-    const networkClient = (this.adapter as any).networkClient;
+    const networkClient = (this.adapter as unknown as AdapterInternalAccess).networkClient;
     const result = await networkClient.discoverAgents();
     if (!result.success) return null;
 
@@ -536,7 +564,7 @@ ${tasks.map(t => {
   /**
    * 格式化广播结果
    */
-  private formatBroadcastResults(results: any[]): string {
+  private formatBroadcastResults(results: BroadcastResult[]): string {
     return results.map(r => {
       const icon = r.success ? '✅' : '❌';
       const latency = r.latency ? ` (${r.latency}ms)` : '';

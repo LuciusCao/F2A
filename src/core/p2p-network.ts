@@ -15,7 +15,6 @@ import type { Multiaddr } from '@multiformats/multiaddr';
 import { EventEmitter } from 'eventemitter3';
 import { randomUUID } from 'crypto';
 import type { Libp2p } from '@libp2p/interface';
-import { Uint8ArrayList } from 'uint8arrays';
 
 import {
   P2PNetworkConfig,
@@ -36,7 +35,7 @@ import {
   failureFromError,
   createError
 } from '../types';
-import { E2EECrypto } from './e2ee-crypto';
+import { E2EECrypto, EncryptedMessage } from './e2ee-crypto';
 import { Logger } from '../utils/logger';
 import { validateF2AMessage, validateTaskRequestPayload, validateTaskResponsePayload } from '../utils/validation';
 import { MiddlewareManager, Middleware } from '../utils/middleware';
@@ -55,16 +54,18 @@ interface Libp2pServices {
 // 加密消息类型定义
 interface EncryptedF2AMessage extends F2AMessage {
   encrypted: true;
-  payload: {
-    ciphertext: string;
-    nonce: string;
-    senderPublicKey?: string;
-  };
+  payload: EncryptedMessage;
 }
 
 // 类型守卫：检查是否为加密消息
 function isEncryptedMessage(msg: F2AMessage): msg is EncryptedF2AMessage {
   return 'encrypted' in msg && msg.encrypted === true && 'payload' in msg;
+}
+
+// 加密消息处理结果
+interface DecryptResult {
+  action: 'continue' | 'return';
+  message: F2AMessage;
 }
 
 // F2A 协议标识
@@ -606,8 +607,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         // 读取数据
         const chunks: Uint8Array[] = [];
         for await (const chunk of stream.source) {
-          // Uint8ArrayList 需要转换为 Uint8Array
-          const data = chunk instanceof Uint8Array ? chunk : (chunk as Uint8ArrayList).subarray();
+          // chunk 可能是 Uint8Array 或 Uint8ArrayList（来自旧版本库）
+          // 统一转换为 Uint8Array
+          const data = chunk instanceof Uint8Array 
+            ? chunk 
+            : new Uint8Array((chunk as { subarray(): Uint8Array }).subarray());
           chunks.push(data);
         }
         
@@ -659,72 +663,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     }
 
     // 处理加密消息
-    if (isEncryptedMessage(message)) {
-      const encryptedPayload = message.payload;
-      const decrypted = this.e2eeCrypto.decrypt(encryptedPayload);
-      if (decrypted) {
-        try {
-          message = JSON.parse(decrypted);
-          
-          // 安全验证：验证解密后的消息发送方身份
-          // 检查加密消息中的 senderPublicKey 是否与 peerId 绑定
-          if (encryptedPayload.senderPublicKey) {
-            const senderPublicKey = encryptedPayload.senderPublicKey;
-            // 验证发送方公钥是否已注册且属于该 peerId
-            const registeredKey = this.e2eeCrypto.getPeerPublicKey(peerId);
-            if (registeredKey && registeredKey !== senderPublicKey) {
-              this.logger.error('Sender identity verification failed: public key mismatch', {
-                peerId: peerId.slice(0, 16),
-                claimedKey: senderPublicKey.slice(0, 16),
-                registeredKey: registeredKey.slice(0, 16)
-              });
-              return;
-            }
-            // 如果发送方声称的身份与消息来源不匹配，拒绝处理
-            if (message.from && message.from !== peerId) {
-              this.logger.error('Sender identity verification failed: from field mismatch', {
-                claimedFrom: message.from?.slice(0, 16),
-                actualPeerId: peerId.slice(0, 16)
-              });
-              return;
-            }
-          }
-        } catch (error) {
-          this.logger.error('Failed to parse decrypted message', { error });
-          return;
-        }
-      } else {
-        // 解密失败，通知发送方
-        this.logger.error('Failed to decrypt message', { peerId: peerId.slice(0, 16) });
-        
-        // 发送解密失败响应
-        const originalMessageId = message.id;
-        const decryptFailResponse: F2AMessage = {
-          id: randomUUID(),
-          type: 'DECRYPT_FAILED',
-          from: this.agentInfo.peerId,
-          to: peerId,
-          timestamp: Date.now(),
-          payload: {
-            originalMessageId,
-            error: 'DECRYPTION_FAILED',
-            message: 'Unable to decrypt message. Key exchange may be incomplete or keys mismatched.'
-          }
-        };
-        
-        // 尝试发送响应（不加密，因为加密通道可能有问题）
-        try {
-          await this.sendMessage(peerId, decryptFailResponse, false);
-        } catch (sendError) {
-          this.logger.error('Failed to send decrypt failure response', { 
-            peerId: peerId.slice(0, 16),
-            error: sendError 
-          });
-        }
-        
-        return;
-      }
+    const decryptResult = await this.handleEncryptedMessage(message, peerId);
+    if (decryptResult.action === 'return') {
+      return;
     }
+    message = decryptResult.message;
 
     // 执行中间件链
     const middlewareResult = await this.middlewareManager.execute({
@@ -745,64 +688,195 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     // 使用可能被中间件修改后的消息
     message = middlewareResult.context.message;
 
-    switch (message.type) {
-      case 'DISCOVER': {
-        const payload = message.payload as DiscoverPayload;
-        await this.handleDiscover(payload.agentInfo, peerId);
-        break;
-      }
-
-      case 'CAPABILITY_QUERY': {
-        const payload = message.payload as CapabilityQueryPayload;
-        await this.handleCapabilityQuery(payload, peerId);
-        break;
-      }
-
-      case 'TASK_RESPONSE': {
-        const payloadValidation = validateTaskResponsePayload(message.payload);
-        if (!payloadValidation.success) {
-          this.logger.warn('Invalid task response payload', {
-            errors: payloadValidation.error.errors
-          });
-          break;
-        }
-        const payload = message.payload as TaskResponsePayload;
-        this.handleTaskResponse(payload);
-        break;
-      }
-
-      case 'DECRYPT_FAILED': {
-        // 处理解密失败通知
-        const { originalMessageId, error, message: errorMsg } = message.payload as {
-          originalMessageId: string;
-          error: string;
-          message: string;
-        };
-        
-        this.logger.error('Received decrypt failure notification', {
-          peerId: peerId.slice(0, 16),
-          originalMessageId,
-          error,
-          message: errorMsg
-        });
-        
-        // 尝试重新注册公钥以重新建立加密通道
-        const peerInfo = this.peerTable.get(peerId);
-        if (peerInfo?.agentInfo?.encryptionPublicKey) {
-          this.e2eeCrypto.registerPeerPublicKey(peerId, peerInfo.agentInfo.encryptionPublicKey);
-          this.logger.info('Re-registered encryption key after decrypt failure', {
-            peerId: peerId.slice(0, 16)
-          });
-        }
-        
-        // 发出事件通知上层应用
-        this.emit('error', new Error(`Decrypt failed for message ${originalMessageId}: ${errorMsg}`));
-        break;
-      }
-    }
+    // 根据消息类型分发处理
+    await this.dispatchMessage(message, peerId);
 
     // 转发给上层处理
     this.emit('message:received', message, peerId);
+  }
+
+  /**
+   * 处理加密消息
+   * @returns 处理结果，包含是否继续处理和解密后的消息
+   */
+  private async handleEncryptedMessage(message: F2AMessage, peerId: string): Promise<DecryptResult> {
+    if (!isEncryptedMessage(message)) {
+      return { action: 'continue', message };
+    }
+
+    const encryptedPayload = message.payload;
+    const decrypted = this.e2eeCrypto.decrypt(encryptedPayload);
+    
+    if (decrypted) {
+      try {
+        const decryptedMessage = JSON.parse(decrypted);
+        
+        // 安全验证：验证解密后的消息发送方身份
+        if (encryptedPayload.senderPublicKey) {
+          const verificationResult = this.verifySenderIdentity(
+            decryptedMessage, 
+            peerId, 
+            encryptedPayload.senderPublicKey
+          );
+          if (!verificationResult.valid) {
+            return { action: 'return', message };
+          }
+        }
+        
+        return { action: 'continue', message: decryptedMessage };
+      } catch (error) {
+        this.logger.error('Failed to parse decrypted message', { error });
+        return { action: 'return', message };
+      }
+    }
+
+    // 解密失败，通知发送方
+    await this.sendDecryptFailureResponse(message.id, peerId);
+    return { action: 'return', message };
+  }
+
+  /**
+   * 验证发送方身份
+   */
+  private verifySenderIdentity(
+    message: F2AMessage, 
+    peerId: string, 
+    senderPublicKey: string
+  ): { valid: boolean } {
+    // 验证发送方公钥是否已注册且属于该 peerId
+    const registeredKey = this.e2eeCrypto.getPeerPublicKey(peerId);
+    if (registeredKey && registeredKey !== senderPublicKey) {
+      this.logger.error('Sender identity verification failed: public key mismatch', {
+        peerId: peerId.slice(0, 16),
+        claimedKey: senderPublicKey.slice(0, 16),
+        registeredKey: registeredKey.slice(0, 16)
+      });
+      return { valid: false };
+    }
+    
+    // 如果发送方声称的身份与消息来源不匹配，拒绝处理
+    if (message.from && message.from !== peerId) {
+      this.logger.error('Sender identity verification failed: from field mismatch', {
+        claimedFrom: message.from?.slice(0, 16),
+        actualPeerId: peerId.slice(0, 16)
+      });
+      return { valid: false };
+    }
+    
+    return { valid: true };
+  }
+
+  /**
+   * 发送解密失败响应
+   */
+  private async sendDecryptFailureResponse(originalMessageId: string, peerId: string): Promise<void> {
+    this.logger.error('Failed to decrypt message', { peerId: peerId.slice(0, 16) });
+    
+    const decryptFailResponse: F2AMessage = {
+      id: randomUUID(),
+      type: 'DECRYPT_FAILED',
+      from: this.agentInfo.peerId,
+      to: peerId,
+      timestamp: Date.now(),
+      payload: {
+        originalMessageId,
+        error: 'DECRYPTION_FAILED',
+        message: 'Unable to decrypt message. Key exchange may be incomplete or keys mismatched.'
+      }
+    };
+    
+    try {
+      await this.sendMessage(peerId, decryptFailResponse, false);
+    } catch (sendError) {
+      this.logger.error('Failed to send decrypt failure response', { 
+        peerId: peerId.slice(0, 16),
+        error: sendError 
+      });
+    }
+  }
+
+  /**
+   * 根据消息类型分发处理
+   */
+  private async dispatchMessage(message: F2AMessage, peerId: string): Promise<void> {
+    switch (message.type) {
+      case 'DISCOVER':
+        await this.handleDiscoverMessage(message, peerId);
+        break;
+
+      case 'CAPABILITY_QUERY':
+        await this.handleCapabilityQueryMessage(message, peerId);
+        break;
+
+      case 'TASK_RESPONSE':
+        await this.handleTaskResponseMessage(message);
+        break;
+
+      case 'DECRYPT_FAILED':
+        await this.handleDecryptFailedMessage(message, peerId);
+        break;
+    }
+  }
+
+  /**
+   * 处理发现消息
+   */
+  private async handleDiscoverMessage(message: F2AMessage, peerId: string): Promise<void> {
+    const payload = message.payload as DiscoverPayload;
+    await this.handleDiscover(payload.agentInfo, peerId);
+  }
+
+  /**
+   * 处理能力查询消息
+   */
+  private async handleCapabilityQueryMessage(message: F2AMessage, peerId: string): Promise<void> {
+    const payload = message.payload as CapabilityQueryPayload;
+    await this.handleCapabilityQuery(payload, peerId);
+  }
+
+  /**
+   * 处理任务响应消息
+   */
+  private async handleTaskResponseMessage(message: F2AMessage): Promise<void> {
+    const payloadValidation = validateTaskResponsePayload(message.payload);
+    if (!payloadValidation.success) {
+      this.logger.warn('Invalid task response payload', {
+        errors: payloadValidation.error.errors
+      });
+      return;
+    }
+    const payload = message.payload as TaskResponsePayload;
+    this.handleTaskResponse(payload);
+  }
+
+  /**
+   * 处理解密失败通知消息
+   */
+  private async handleDecryptFailedMessage(message: F2AMessage, peerId: string): Promise<void> {
+    const { originalMessageId, error, message: errorMsg } = message.payload as {
+      originalMessageId: string;
+      error: string;
+      message: string;
+    };
+    
+    this.logger.error('Received decrypt failure notification', {
+      peerId: peerId.slice(0, 16),
+      originalMessageId,
+      error,
+      message: errorMsg
+    });
+    
+    // 尝试重新注册公钥以重新建立加密通道
+    const peerInfo = this.peerTable.get(peerId);
+    if (peerInfo?.agentInfo?.encryptionPublicKey) {
+      this.e2eeCrypto.registerPeerPublicKey(peerId, peerInfo.agentInfo.encryptionPublicKey);
+      this.logger.info('Re-registered encryption key after decrypt failure', {
+        peerId: peerId.slice(0, 16)
+      });
+    }
+    
+    // 发出事件通知上层应用
+    this.emit('error', new Error(`Decrypt failed for message ${originalMessageId}: ${errorMsg}`));
   }
 
   /**

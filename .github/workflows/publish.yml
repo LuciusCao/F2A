@@ -17,11 +17,14 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
       
-      - run: npm install
-      - run: npm run build
+      - name: Install dependencies
+        run: npm install
       
-      # 发布核心包
-      - run: npm publish --access public
+      - name: Build
+        run: npm run build
+      
+      - name: Publish core package
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -36,14 +39,22 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
       
-      # 等核心包在 registry 中可用
-      - run: sleep 30
+      - name: Wait for package to be available
+        run: sleep 30
       
-      # 安装并构建插件（此时核心包已发布）
-      - run: cd packages/openclaw-adapter && npm install
-      - run: cd packages/openclaw-adapter && npm run build
+      - name: Install dependencies
+        working-directory: packages/openclaw-adapter
+        run: |
+          # Replace file: reference with npm package reference
+          npm install @f2a/network@latest --save
+          npm install
       
-      # 发布插件包
-      - run: cd packages/openclaw-adapter && npm publish --access public
+      - name: Build adapter
+        working-directory: packages/openclaw-adapter
+        run: npm run build
+      
+      - name: Publish adapter package
+        working-directory: packages/openclaw-adapter
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

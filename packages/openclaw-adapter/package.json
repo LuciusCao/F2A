@@ -22,7 +22,7 @@
   "author": "F2A Team",
   "license": "MIT",
   "dependencies": {
-    "@f2a/network": "^0.1.0",
+    "@f2a/network": "file:../..",
     "ws": "^8.16.0",
     "node-fetch": "^3.3.2",
     "zod": "^3.22.4",

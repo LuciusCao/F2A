@@ -57,6 +57,8 @@ describe('WebhookServer', () => {
   afterEach(async () => {
     if (server) {
       await server.stop();
+      // P1 修复：等待端口完全释放，避免 EADDRINUSE 错误
+      await new Promise(resolve => setTimeout(resolve, 50));
     }
   });
 

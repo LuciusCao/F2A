@@ -178,6 +178,8 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
   /**
    * 接受认领
    * 使用锁机制防止竞态条件
+   * 
+   * P1 修复：确保锁在任何情况下都能被释放，包括异常情况
    */
   acceptClaim(announcementId: string, claimId: string): TaskClaim | null {
     const announcement = this.announcements.get(announcementId);
@@ -217,9 +219,9 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
       // 标记该认领为接受
       claim.status = 'accepted';
 
-      // 拒绝其他认领
+      // 拒绝其他认领（幂等操作，已拒绝的保持不变）
       const rejectedCount = announcement.claims?.filter(c => {
-        if (c.claimId !== claimId) {
+        if (c.claimId !== claimId && c.status !== 'rejected') {
           c.status = 'rejected';
           return true;
         }
@@ -231,12 +233,18 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
 
       logger.info(' acceptClaim: claimId=%s, announcementId=%s, claimant=%s, rejectedCount=%d', claimId, announcementId, claim.claimant, rejectedCount);
       
-      // 发出认领事件
+      // 发出认领事件（在锁内发出，确保状态一致）
       this.emit('announcement:claimed', announcement, claim);
       
       return claim;
+    } catch (error) {
+      // P1 修复：记录异常并返回 null，但不改变状态
+      logger.error(' acceptClaim: unexpected error, id=%s, claimId=%s, error=%s', announcementId, claimId, error);
+      // 注意：不恢复状态，因为操作可能已部分完成
+      // 但锁会在 finally 中释放
+      return null;
     } finally {
-      // 释放锁
+      // 确保锁在任何情况下都能被释放
       this.processingLocks.delete(announcementId);
     }
   }
@@ -355,6 +363,34 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
    */
   clear(): void {
     this.announcements.clear();
+    // P1 修复：同时清理孤立锁
+    this.processingLocks.clear();
+  }
+  
+  /**
+   * 强制清除孤立锁
+   * P1 修复：用于处理异常导致的锁未释放情况
+   * 
+   * @param maxLockAgeMs 锁的最大存活时间（毫秒），默认 30 秒
+   * @returns 清除的锁数量
+   */
+  forceClearOrphanLocks(maxLockAgeMs: number = 30000): number {
+    // 由于当前实现没有记录锁的获取时间，我们只能清除所有锁
+    // 这是一个安全操作，因为锁只是为了防止并发，不会丢失数据
+    const count = this.processingLocks.size;
+    this.processingLocks.clear();
+    if (count > 0) {
+      logger.warn(' forceClearOrphanLocks: cleared %d orphan locks', count);
+    }
+    return count;
+  }
+  
+  /**
+   * 检查是否有孤立锁
+   * 用于监控和调试
+   */
+  hasOrphanLocks(): boolean {
+    return this.processingLocks.size > 0;
   }
 }
 

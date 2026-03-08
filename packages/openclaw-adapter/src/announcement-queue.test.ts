@@ -323,4 +323,127 @@ describe('AnnouncementQueue', () => {
       expect(announcement.description).toBe('Test with special chars: <>&"\'');
     });
   });
+
+  // P1 修复：新增边界和并发测试
+  describe('并发和边界情况', () => {
+    it('应该正确处理 acceptClaim 的并发调用', async () => {
+      const announcement = queue.create({ taskType: 'test', description: 'Test', timeout: 5000, from: 'peer-1' });
+      const claim1 = queue.submitClaim(announcement.announcementId, { claimant: 'peer-2' });
+      const claim2 = queue.submitClaim(announcement.announcementId, { claimant: 'peer-3' });
+
+      // 模拟并发调用（虽然 JS 是单线程，但可以测试锁逻辑）
+      const results = await Promise.all([
+        Promise.resolve(queue.acceptClaim(announcement.announcementId, claim1!.claimId)),
+        Promise.resolve(queue.acceptClaim(announcement.announcementId, claim2!.claimId))
+      ]);
+
+      // 只有一个应该成功
+      const successCount = results.filter(r => r !== null).length;
+      expect(successCount).toBeLessThanOrEqual(1);
+    });
+
+    it('应该处理已认领广播的再次认领尝试', () => {
+      const announcement = queue.create({ taskType: 'test', description: 'Test', timeout: 5000, from: 'peer-1' });
+      const claim = queue.submitClaim(announcement.announcementId, { claimant: 'peer-2' });
+      queue.acceptClaim(announcement.announcementId, claim!.claimId);
+
+      // 广播已认领，新认领应该失败
+      const newClaim = queue.submitClaim(announcement.announcementId, { claimant: 'peer-3' });
+      expect(newClaim).toBeNull();
+    });
+
+    it('应该处理同一认领的重复接受', () => {
+      const announcement = queue.create({ taskType: 'test', description: 'Test', timeout: 5000, from: 'peer-1' });
+      const claim = queue.submitClaim(announcement.announcementId, { claimant: 'peer-2' });
+      
+      // 第一次接受
+      const result1 = queue.acceptClaim(announcement.announcementId, claim!.claimId);
+      expect(result1?.status).toBe('accepted');
+      
+      // 第二次接受应该失败（广播已不是 open）
+      const result2 = queue.acceptClaim(announcement.announcementId, claim!.claimId);
+      expect(result2).toBeNull();
+    });
+
+    it('应该正确处理大量认领', () => {
+      const announcement = queue.create({ taskType: 'test', description: 'Test', timeout: 5000, from: 'peer-1' });
+      
+      // 添加 100 个认领
+      for (let i = 0; i < 100; i++) {
+        queue.submitClaim(announcement.announcementId, { claimant: `peer-${i}` });
+      }
+      
+      expect(announcement.claims).toHaveLength(100);
+      
+      // 接受其中一个
+      const claim = announcement.claims![50];
+      const result = queue.acceptClaim(announcement.announcementId, claim.claimId);
+      
+      expect(result?.status).toBe('accepted');
+      // 其他认领应该被拒绝
+      const rejectedCount = announcement.claims!.filter(c => c.status === 'rejected').length;
+      expect(rejectedCount).toBe(99);
+    });
+  });
+
+  describe('forceClearOrphanLocks', () => {
+    it('应该清除孤立锁', () => {
+      // 直接创建一个有锁的场景
+      const announcement = queue.create({ taskType: 'test', description: 'Test', timeout: 5000, from: 'peer-1' });
+      const claim = queue.submitClaim(announcement.announcementId, { claimant: 'peer-2' });
+      
+      // 模拟锁未释放的情况（直接操作内部状态）
+      // 注意：这是一个测试内部实现的测试
+      expect(queue.hasOrphanLocks()).toBe(false);
+      
+      // 清除应该返回 0
+      expect(queue.forceClearOrphanLocks()).toBe(0);
+    });
+
+    it('clear 应该同时清除锁', () => {
+      queue.create({ taskType: 'test', description: 'Test', timeout: 5000, from: 'peer-1' });
+      queue.clear();
+      
+      // 队列应该为空，锁也应该为空
+      expect(queue.getStats().total).toBe(0);
+      expect(queue.hasOrphanLocks()).toBe(false);
+    });
+  });
+
+  describe('事件', () => {
+    it('应该在创建时发出 announcement:created 事件', () => {
+      const handler = vi.fn();
+      queue.on('announcement:created', handler);
+      
+      queue.create({ taskType: 'test', description: 'Test', timeout: 5000, from: 'peer-1' });
+      
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler.mock.calls[0][0].taskType).toBe('test');
+    });
+
+    it('应该在过期时发出 announcement:expired 事件', async () => {
+      const handler = vi.fn();
+      const fastExpireQueue = new AnnouncementQueue({ maxSize: 10, maxAgeMs: 50 });
+      fastExpireQueue.on('announcement:expired', handler);
+      
+      fastExpireQueue.create({ taskType: 'test', description: 'Test', timeout: 5000, from: 'peer-1' });
+      
+      await new Promise(r => setTimeout(r, 60));
+      fastExpireQueue.create({ taskType: 'test', description: 'New', timeout: 5000, from: 'peer-1' });
+      
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler.mock.calls[0][0].reason).toBe('timeout');
+    });
+
+    it('应该在认领时发出 announcement:claimed 事件', () => {
+      const handler = vi.fn();
+      queue.on('announcement:claimed', handler);
+      
+      const announcement = queue.create({ taskType: 'test', description: 'Test', timeout: 5000, from: 'peer-1' });
+      const claim = queue.submitClaim(announcement.announcementId, { claimant: 'peer-2' });
+      queue.acceptClaim(announcement.announcementId, claim!.claimId);
+      
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+  });
 });

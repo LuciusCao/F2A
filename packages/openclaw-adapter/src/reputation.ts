@@ -11,6 +11,7 @@ import type {
   ReputationConfig,
   TaskResponse 
 } from './types.js';
+import { pluginLogger as logger } from './logger.js';
 
 /** 防抖保存配置 */
 interface DebounceConfig {
@@ -245,9 +246,9 @@ export class ReputationSystem {
         for (const entry of data) {
           this.entries.set(entry.peerId, entry);
         }
-        console.log(`[F2A Reputation] 加载了 ${this.entries.size} 条记录`);
+        logger.info('加载了 %d 条信誉记录', this.entries.size);
       } catch (e) {
-        console.error('[F2A Reputation] 加载失败:', e);
+        logger.error('加载信誉数据失败: error=%s', e);
       }
     }
   }
@@ -309,7 +310,7 @@ export class ReputationSystem {
         // 2. 原子重命名（在 POSIX 系统上是原子操作）
         renameSync(tempPath, this.dataPath);
       } catch (e) {
-        console.error('[F2A Reputation] 保存失败:', e);
+        logger.error('保存信誉数据失败: error=%s', e);
         
         // 清理临时文件（如果存在）
         try {
@@ -353,7 +354,7 @@ export class ReputationSystem {
       writeFileSync(tempPath, jsonContent, { encoding: 'utf-8' });
       renameSync(tempPath, this.dataPath);
     } catch (e) {
-      console.error('[F2A Reputation] 同步保存失败:', e);
+      logger.error('同步保存信誉数据失败: error=%s', e);
       
       try {
         if (existsSync(tempPath)) {

@@ -86,7 +86,7 @@ export class F2ANodeManager {
       try {
         process.kill(pid, 0); // 不实际发送信号，只检查进程是否存在
         // 进程存在，尝试终止
-        console.log(`[F2A] 发现孤儿进程 (PID: ${pid})，尝试终止...`);
+        logger.info('发现孤儿进程，尝试终止: pid=%d', pid);
         try {
           process.kill(pid, 'SIGTERM');
           // 等待进程终止
@@ -100,7 +100,7 @@ export class F2ANodeManager {
           }, 3000);
         } catch (killError) {
           // 无法终止，可能是权限问题
-          console.warn(`[F2A] 无法终止孤儿进程 (PID: ${pid}):`, killError);
+          logger.warn('无法终止孤儿进程: pid=%d, error=%s', pid, killError);
         }
       } catch {
         // 进程不存在，只删除 PID 文件
@@ -108,9 +108,9 @@ export class F2ANodeManager {
 
       // 删除 PID 文件
       unlinkSync(this.pidFilePath);
-      console.log('[F2A] 孤儿进程清理完成');
+      logger.info('孤儿进程清理完成');
     } catch (error) {
-      console.warn('[F2A] 清理孤儿进程失败:', error);
+      logger.warn('清理孤儿进程失败: error=%s', error);
     }
   }
 
@@ -120,9 +120,9 @@ export class F2ANodeManager {
   private savePid(pid: number): void {
     try {
       writeFileSync(this.pidFilePath, String(pid), { mode: 0o644 });
-      console.log(`[F2A] PID 文件已保存: ${this.pidFilePath}`);
+      logger.info('PID 文件已保存: path=%s', this.pidFilePath);
     } catch (error) {
-      console.warn('[F2A] 保存 PID 文件失败:', error);
+      logger.warn('保存 PID 文件失败: error=%s', error);
     }
   }
 
@@ -135,7 +135,7 @@ export class F2ANodeManager {
         unlinkSync(this.pidFilePath);
       }
     } catch (error) {
-      console.warn('[F2A] 删除 PID 文件失败:', error);
+      logger.warn('删除 PID 文件失败: error=%s', error);
     }
   }
 
@@ -144,7 +144,7 @@ export class F2ANodeManager {
    */
   async ensureRunning(): Promise<Result<void>> {
     if (await this.isRunning()) {
-      console.log('[F2A] Node 已在运行');
+      logger.info('Node 已在运行');
       return { success: true };
     }
 
@@ -164,9 +164,9 @@ export class F2ANodeManager {
       };
     }
 
-    console.log('[F2A] 启动 Node...');
-    console.log(`[F2A] Control Port: ${this.config.controlPort}`);
-    console.log(`[F2A] P2P Port: ${this.config.p2pPort}`);
+    logger.info('启动 Node...');
+    logger.info('Control Port: %d', this.config.controlPort);
+    logger.info('P2P Port: %d', this.config.p2pPort);
 
     try {
       this.process = spawn('node', [daemonPath], {
@@ -191,13 +191,13 @@ export class F2ANodeManager {
 
       // 监听进程退出事件
       this.process.on('exit', (code, signal) => {
-        console.log(`[F2A] Node 进程退出 (code: ${code}, signal: ${signal})`);
+        logger.info('Node 进程退出: code=%s, signal=%s', code, signal);
         this.removePidFile();
         this.process = null;
       });
 
       this.process.on('error', (err) => {
-        console.error(`[F2A] Node 进程错误:`, err);
+        logger.error('Node 进程错误: error=%s', err);
         this.removePidFile();
       });
 
@@ -205,11 +205,11 @@ export class F2ANodeManager {
 
       // 记录日志
       this.process.stdout?.on('data', (data) => {
-        console.log(`[F2A Node] ${data.toString().trim()}`);
+        logger.info('Node stdout: %s', data.toString().trim());
       });
 
       this.process.stderr?.on('data', (data) => {
-        console.error(`[F2A Node Error] ${data.toString().trim()}`);
+        logger.error('Node stderr: %s', data.toString().trim());
       });
 
       // 等待启动完成
@@ -221,7 +221,7 @@ export class F2ANodeManager {
       // P1 修复：成功启动后重置重启计数器
       this.consecutiveRestarts = 0;
 
-      console.log('[F2A] Node 启动成功');
+      logger.info('Node 启动成功');
       return { success: true };
 
     } catch (error) {
@@ -240,7 +240,7 @@ export class F2ANodeManager {
     }
 
     if (this.process) {
-      console.log('[F2A] 停止 Node...');
+      logger.info('停止 Node...');
       
       // 尝试优雅关闭
       this.process.kill('SIGTERM');
@@ -262,7 +262,7 @@ export class F2ANodeManager {
           const pidStr = readFileSync(this.pidFilePath, 'utf-8').trim();
           const pid = parseInt(pidStr, 10);
           if (!isNaN(pid)) {
-            console.log(`[F2A] 尝试终止残留进程 (PID: ${pid})...`);
+            logger.info('尝试终止残留进程: pid=%d', pid);
             try {
               process.kill(pid, 'SIGTERM');
               await sleep(3000);
@@ -277,7 +277,7 @@ export class F2ANodeManager {
             }
           }
         } catch (error) {
-          console.warn('[F2A] 清理残留进程失败:', error);
+          logger.warn('清理残留进程失败: error=%s', error);
         }
       }
     }
@@ -373,9 +373,10 @@ export class F2ANodeManager {
         
         // 检查是否达到最大重启次数
         if (this.consecutiveRestarts >= this.restartConfig.maxRestarts) {
-          console.error(
-            `[F2A] Node 健康检查失败，已达到最大重启次数 (${this.restartConfig.maxRestarts})，` +
-            `将在 ${Math.round(this.restartConfig.resetWindowMs / 1000)} 秒后重置计数`
+          logger.error(
+            'Node 健康检查失败，已达到最大重启次数: maxRestarts=%d, resetWindowMs=%d',
+            this.restartConfig.maxRestarts,
+            Math.round(this.restartConfig.resetWindowMs / 1000)
           );
           return;
         }
@@ -386,10 +387,11 @@ export class F2ANodeManager {
           this.restartConfig.cooldownMaxMs
         );
         
-        console.warn(
-          `[F2A] Node 健康检查失败，尝试重启... ` +
-          `(第 ${this.consecutiveRestarts + 1}/${this.restartConfig.maxRestarts} 次，` +
-          `冷却 ${Math.round(cooldownMs / 1000)} 秒)`
+        logger.warn(
+          'Node 健康检查失败，尝试重启: attempt=%d/%d, cooldownMs=%d',
+          this.consecutiveRestarts + 1,
+          this.restartConfig.maxRestarts,
+          Math.round(cooldownMs / 1000)
         );
         
         this.isRestarting = true;
@@ -401,7 +403,7 @@ export class F2ANodeManager {
           await sleep(cooldownMs);
           await this.start();
         } catch (error) {
-          console.error('[F2A] 重启失败:', error);
+          logger.error('重启失败: error=%s', error);
         } finally {
           this.isRestarting = false;
         }

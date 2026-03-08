@@ -9,9 +9,6 @@ on:
 jobs:
   publish-core:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@v4
       
@@ -20,7 +17,7 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
       
-      - run: npm ci
+      - run: npm install
       - run: npm run build
       
       # 发布核心包
@@ -31,9 +28,6 @@ jobs:
   publish-adapter:
     runs-on: ubuntu-latest
     needs: publish-core
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@v4
       
@@ -46,7 +40,7 @@ jobs:
       - run: sleep 30
       
       # 安装并构建插件（此时核心包已发布）
-      - run: cd packages/openclaw-adapter && npm ci
+      - run: cd packages/openclaw-adapter && npm install
       - run: cd packages/openclaw-adapter && npm run build
       
       # 发布插件包

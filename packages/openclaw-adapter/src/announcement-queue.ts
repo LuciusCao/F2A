@@ -71,6 +71,8 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
   private announcements = new Map<string, TaskAnnouncement>();
   private maxSize: number;
   private maxAgeMs: number;
+  /** 正在处理的广播 ID 集合，用于防止并发操作 */
+  private processingLocks = new Set<string>();
 
   constructor(options?: { maxSize?: number; maxAgeMs?: number }) {
     super();
@@ -175,7 +177,7 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
 
   /**
    * 接受认领
-   * 使用 double-check locking 模式防止竞态条件
+   * 使用锁机制防止竞态条件
    */
   acceptClaim(announcementId: string, claimId: string): TaskClaim | null {
     const announcement = this.announcements.get(announcementId);
@@ -184,7 +186,13 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
       return null;
     }
 
-    // Double-check locking: 第一次检查广播状态
+    // 检查是否已被锁定（正在被其他操作处理）
+    if (this.processingLocks.has(announcementId)) {
+      logger.warn(' acceptClaim: announcement is being processed, id=%s, claimId=%s', announcementId, claimId);
+      return null;
+    }
+
+    // 检查广播状态
     if (announcement.status !== 'open') {
       logger.warn(' acceptClaim: announcement not open, id=%s, status=%s, claimId=%s', announcementId, announcement.status, claimId);
       return null;
@@ -196,34 +204,41 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
       return null;
     }
 
-    // Double-check locking: 第二次检查广播状态（在找到认领后）
-    // 这确保在查找认领和修改状态之间没有其他操作改变了广播状态
-    if (announcement.status !== 'open') {
-      logger.warn(' acceptClaim: race condition detected, announcement status changed, id=%s, status=%s, claimId=%s', announcementId, announcement.status, claimId);
-      return null;
-    }
+    // 获取锁
+    this.processingLocks.add(announcementId);
 
-    // 标记该认领为接受
-    claim.status = 'accepted';
-
-    // 拒绝其他认领
-    const rejectedCount = announcement.claims?.filter(c => {
-      if (c.claimId !== claimId) {
-        c.status = 'rejected';
-        return true;
+    try {
+      // 再次检查广播状态（双重检查）
+      if (announcement.status !== 'open') {
+        logger.warn(' acceptClaim: race condition detected, announcement status changed, id=%s, status=%s, claimId=%s', announcementId, announcement.status, claimId);
+        return null;
       }
-      return false;
-    }).length || 0;
 
-    // 标记广播为已认领
-    announcement.status = 'claimed';
+      // 标记该认领为接受
+      claim.status = 'accepted';
 
-    logger.info(' acceptClaim: claimId=%s, announcementId=%s, claimant=%s, rejectedCount=%d', claimId, announcementId, claim.claimant, rejectedCount);
-    
-    // 发出认领事件
-    this.emit('announcement:claimed', announcement, claim);
-    
-    return claim;
+      // 拒绝其他认领
+      const rejectedCount = announcement.claims?.filter(c => {
+        if (c.claimId !== claimId) {
+          c.status = 'rejected';
+          return true;
+        }
+        return false;
+      }).length || 0;
+
+      // 标记广播为已认领
+      announcement.status = 'claimed';
+
+      logger.info(' acceptClaim: claimId=%s, announcementId=%s, claimant=%s, rejectedCount=%d', claimId, announcementId, claim.claimant, rejectedCount);
+      
+      // 发出认领事件
+      this.emit('announcement:claimed', announcement, claim);
+      
+      return claim;
+    } finally {
+      // 释放锁
+      this.processingLocks.delete(announcementId);
+    }
   }
 
   /**

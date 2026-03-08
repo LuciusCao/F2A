@@ -804,8 +804,171 @@ describe('ClaimHandlers', () => {
 
       const result = await claimHandlers.handleMyClaims({}, mockContext);
 
-      // 应该仍然返回认领列表，即使 announcement 不存在
+      // 应该处理 announcement 不存在的情况
       expect(result.content).toContain('我的认领');
+    });
+
+    // ========== 新增：输入验证测试 ==========
+
+    it('handleAnnounce 应该拒绝无效的 estimated_complexity', async () => {
+      // 超出范围
+      const result1 = await claimHandlers.handleAnnounce({
+        task_type: 'test',
+        description: 'test',
+        estimated_complexity: 15
+      }, mockContext);
+      expect(result1.content).toContain('estimated_complexity 必须在 1 到 10 之间');
+
+      // 负数
+      const result2 = await claimHandlers.handleAnnounce({
+        task_type: 'test',
+        description: 'test',
+        estimated_complexity: -1
+      }, mockContext);
+      expect(result2.content).toContain('estimated_complexity 必须在 1 到 10 之间');
+
+      // 非数字
+      const result3 = await claimHandlers.handleAnnounce({
+        task_type: 'test',
+        description: 'test',
+        estimated_complexity: 'high' as any
+      }, mockContext);
+      expect(result3.content).toContain('estimated_complexity 必须是有效数字');
+    });
+
+    it('handleAnnounce 应该拒绝无效的 reward', async () => {
+      // 负数
+      const result1 = await claimHandlers.handleAnnounce({
+        task_type: 'test',
+        description: 'test',
+        reward: -100
+      }, mockContext);
+      expect(result1.content).toContain('reward 不能为负数');
+
+      // 非数字
+      const result2 = await claimHandlers.handleAnnounce({
+        task_type: 'test',
+        description: 'test',
+        reward: 'free' as any
+      }, mockContext);
+      expect(result2.content).toContain('reward 必须是有效数字');
+    });
+
+    it('handleAnnounce 应该拒绝无效的 timeout', async () => {
+      // 负数
+      const result1 = await claimHandlers.handleAnnounce({
+        task_type: 'test',
+        description: 'test',
+        timeout: -1000
+      }, mockContext);
+      expect(result1.content).toContain('timeout 必须大于 0');
+
+      // 超过 24 小时
+      const result2 = await claimHandlers.handleAnnounce({
+        task_type: 'test',
+        description: 'test',
+        timeout: 25 * 60 * 60 * 1000
+      }, mockContext);
+      expect(result2.content).toContain('timeout 不能超过 24 小时');
+
+      // 非数字
+      const result3 = await claimHandlers.handleAnnounce({
+        task_type: 'test',
+        description: 'test',
+        timeout: 'forever' as any
+      }, mockContext);
+      expect(result3.content).toContain('timeout 必须是有效数字');
+    });
+
+    it('handleClaim 应该拒绝无效的 estimated_time', async () => {
+      const announcement = createMockAnnouncement();
+      mockAdapter.announcementQueue.get.mockReturnValue(announcement);
+
+      // 负数
+      const result1 = await claimHandlers.handleClaim({
+        announcement_id: 'ann-test',
+        estimated_time: -1000
+      }, mockContext);
+      expect(result1.content).toContain('estimated_time 必须大于 0');
+
+      // 超过 24 小时
+      const result2 = await claimHandlers.handleClaim({
+        announcement_id: 'ann-test',
+        estimated_time: 25 * 60 * 60 * 1000
+      }, mockContext);
+      expect(result2.content).toContain('estimated_time 不能超过 24 小时');
+
+      // 非数字
+      const result3 = await claimHandlers.handleClaim({
+        announcement_id: 'ann-test',
+        estimated_time: 'soon' as any
+      }, mockContext);
+      expect(result3.content).toContain('estimated_time 必须是有效数字');
+    });
+
+    it('handleClaim 应该拒绝无效的 confidence', async () => {
+      const announcement = createMockAnnouncement();
+      mockAdapter.announcementQueue.get.mockReturnValue(announcement);
+
+      // 超过 1
+      const result1 = await claimHandlers.handleClaim({
+        announcement_id: 'ann-test',
+        confidence: 1.5
+      }, mockContext);
+      expect(result1.content).toContain('confidence 必须在 0 到 1 之间');
+
+      // 负数
+      const result2 = await claimHandlers.handleClaim({
+        announcement_id: 'ann-test',
+        confidence: -0.5
+      }, mockContext);
+      expect(result2.content).toContain('confidence 必须在 0 到 1 之间');
+
+      // 非数字
+      const result3 = await claimHandlers.handleClaim({
+        announcement_id: 'ann-test',
+        confidence: 'high' as any
+      }, mockContext);
+      expect(result3.content).toContain('confidence 必须是有效数字');
+    });
+
+    it('handleAnnounce 应该接受有效的可选参数', async () => {
+      const announcement = createMockAnnouncement({ 
+        description: 'valid description',
+        estimatedComplexity: 5,
+        reward: 100,
+        timeout: 60000
+      });
+      mockAdapter.announcementQueue.create.mockReturnValue(announcement);
+
+      const result = await claimHandlers.handleAnnounce({
+        task_type: 'test',
+        description: 'valid description',
+        estimated_complexity: 5,
+        reward: 100,
+        timeout: 60000
+      }, mockContext);
+
+      expect(result.content).toContain('任务广播已创建');
+    });
+
+    it('handleClaim 应该接受有效的可选参数', async () => {
+      const announcement = createMockAnnouncement();
+      const claim = createMockClaim({ 
+        estimatedTime: 60000, 
+        confidence: 0.8 
+      });
+      
+      mockAdapter.announcementQueue.get.mockReturnValue(announcement);
+      mockAdapter.announcementQueue.submitClaim.mockReturnValue(claim);
+
+      const result = await claimHandlers.handleClaim({
+        announcement_id: 'ann-test',
+        estimated_time: 60000,
+        confidence: 0.8
+      }, mockContext);
+
+      expect(result.content).toContain('认领已提交');
     });
   });
 });

@@ -64,6 +64,39 @@ export class ClaimHandlers {
       return { content: '❌ 请提供有效的 description 参数' };
     }
     
+    // estimated_complexity 验证：必须在 1-10 之间
+    if (params.estimated_complexity !== undefined) {
+      if (typeof params.estimated_complexity !== 'number' || !Number.isFinite(params.estimated_complexity)) {
+        return { content: '❌ estimated_complexity 必须是有效数字' };
+      }
+      if (params.estimated_complexity < 1 || params.estimated_complexity > 10) {
+        return { content: '❌ estimated_complexity 必须在 1 到 10 之间' };
+      }
+    }
+    
+    // reward 验证：必须为非负数
+    if (params.reward !== undefined) {
+      if (typeof params.reward !== 'number' || !Number.isFinite(params.reward)) {
+        return { content: '❌ reward 必须是有效数字' };
+      }
+      if (params.reward < 0) {
+        return { content: '❌ reward 不能为负数' };
+      }
+    }
+    
+    // timeout 验证：必须为正数且不超过 24 小时
+    if (params.timeout !== undefined) {
+      if (typeof params.timeout !== 'number' || !Number.isFinite(params.timeout)) {
+        return { content: '❌ timeout 必须是有效数字' };
+      }
+      if (params.timeout <= 0) {
+        return { content: '❌ timeout 必须大于 0' };
+      }
+      if (params.timeout > 24 * 60 * 60 * 1000) {
+        return { content: '❌ timeout 不能超过 24 小时' };
+      }
+    }
+    
     const announcementQueue = (this.adapter as any).announcementQueue;
     const api = (this.adapter as any).api;
     const config = (this.adapter as any).config;
@@ -179,6 +212,29 @@ ${announcements.map((a: any, i: number) => {
     // 输入验证
     if (!params.announcement_id || typeof params.announcement_id !== 'string' || params.announcement_id.trim() === '') {
       return { content: '❌ 请提供有效的 announcement_id 参数' };
+    }
+    
+    // estimated_time 验证：必须为正数且不超过 24 小时
+    if (params.estimated_time !== undefined) {
+      if (typeof params.estimated_time !== 'number' || !Number.isFinite(params.estimated_time)) {
+        return { content: '❌ estimated_time 必须是有效数字' };
+      }
+      if (params.estimated_time <= 0) {
+        return { content: '❌ estimated_time 必须大于 0' };
+      }
+      if (params.estimated_time > 24 * 60 * 60 * 1000) {
+        return { content: '❌ estimated_time 不能超过 24 小时' };
+      }
+    }
+    
+    // confidence 验证：必须在 0-1 之间
+    if (params.confidence !== undefined) {
+      if (typeof params.confidence !== 'number' || !Number.isFinite(params.confidence)) {
+        return { content: '❌ confidence 必须是有效数字' };
+      }
+      if (params.confidence < 0 || params.confidence > 1) {
+        return { content: '❌ confidence 必须在 0 到 1 之间' };
+      }
     }
     
     const announcementQueue = (this.adapter as any).announcementQueue;

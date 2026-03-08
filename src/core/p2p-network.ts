@@ -9,10 +9,13 @@ import { noise } from '@chainsafe/libp2p-noise';
 import { kadDHT } from '@libp2p/kad-dht';
 import { generateKeyPair } from '@libp2p/crypto/keys';
 import { peerIdFromKeys, peerIdFromString } from '@libp2p/peer-id';
+import type { PeerId } from '@libp2p/interface';
 import { multiaddr } from '@multiformats/multiaddr';
+import type { Multiaddr } from '@multiformats/multiaddr';
 import { EventEmitter } from 'eventemitter3';
 import { randomUUID } from 'crypto';
 import type { Libp2p } from '@libp2p/interface';
+import { Uint8ArrayList } from 'uint8arrays';
 
 import {
   P2PNetworkConfig,
@@ -38,6 +41,31 @@ import { Logger } from '../utils/logger';
 import { validateF2AMessage, validateTaskRequestPayload, validateTaskResponsePayload } from '../utils/validation';
 import { MiddlewareManager, Middleware } from '../utils/middleware';
 import { RequestSigner, loadSignatureConfig, SignedMessage } from '../utils/signature';
+
+// DHT 服务类型定义
+interface DHTService {
+  findPeer(peerId: PeerId): Promise<{ multiaddrs: Multiaddr[] } | null>;
+  routingTable?: { size: number };
+}
+
+interface Libp2pServices {
+  dht?: DHTService;
+}
+
+// 加密消息类型定义
+interface EncryptedF2AMessage extends F2AMessage {
+  encrypted: true;
+  payload: {
+    ciphertext: string;
+    nonce: string;
+    senderPublicKey?: string;
+  };
+}
+
+// 类型守卫：检查是否为加密消息
+function isEncryptedMessage(msg: F2AMessage): msg is EncryptedF2AMessage {
+  return 'encrypted' in msg && msg.encrypted === true && 'payload' in msg;
+}
 
 // F2A 协议标识
 const F2A_PROTOCOL = '/f2a/1.0.0';
@@ -579,7 +607,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         const chunks: Uint8Array[] = [];
         for await (const chunk of stream.source) {
           // Uint8ArrayList 需要转换为 Uint8Array
-          const data = chunk instanceof Uint8Array ? chunk : (chunk as any).subarray();
+          const data = chunk instanceof Uint8Array ? chunk : (chunk as Uint8ArrayList).subarray();
           chunks.push(data);
         }
         
@@ -631,8 +659,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     }
 
     // 处理加密消息
-    if ((message as any).encrypted && (message as any).payload) {
-      const encryptedPayload = (message as any).payload;
+    if (isEncryptedMessage(message)) {
+      const encryptedPayload = message.payload;
       const decrypted = this.e2eeCrypto.decrypt(encryptedPayload);
       if (decrypted) {
         try {
@@ -1178,7 +1206,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       return failureFromError('NETWORK_NOT_STARTED', 'P2P network not started');
     }
 
-    const dht = (this.node.services as any).dht;
+    const dht = (this.node.services as Libp2pServices).dht;
     if (!dht) {
       return failureFromError('DHT_NOT_AVAILABLE', 'DHT service not enabled');
     }
@@ -1188,7 +1216,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       const peerInfo = await dht.findPeer(peerIdObj);
       
       if (peerInfo && peerInfo.multiaddrs.length > 0) {
-        return success(peerInfo.multiaddrs.map((ma: any) => ma.toString()));
+        return success(peerInfo.multiaddrs.map(ma => ma.toString()));
       }
       
       return failureFromError('PEER_NOT_FOUND', `Peer ${peerId} not found in DHT`);
@@ -1201,7 +1229,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    * 获取 DHT 路由表大小
    */
   getDHTPeerCount(): number {
-    const dht = (this.node?.services as any)?.dht;
+    const dht = (this.node?.services as Libp2pServices)?.dht;
     return dht?.routingTable?.size || 0;
   }
 
@@ -1209,7 +1237,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    * 检查 DHT 是否启用
    */
   isDHTEnabled(): boolean {
-    return !!(this.node?.services as any)?.dht;
+    return !!(this.node?.services as Libp2pServices)?.dht;
   }
 
   /**

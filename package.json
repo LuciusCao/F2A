@@ -8,6 +8,12 @@
   "bin": {
     "f2a": "./dist/cli/index.js"
   },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "package.json"
+  ],
   "workspaces": [
     "packages/*"
   ],

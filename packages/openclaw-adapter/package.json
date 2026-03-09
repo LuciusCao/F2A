@@ -29,6 +29,10 @@
   ],
   "author": "F2A Team",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LuciusCao/F2A.git"
+  },
   "dependencies": {
     "@f2a/network": "^0.1.2",
     "better-sqlite3": "^11.0.0",

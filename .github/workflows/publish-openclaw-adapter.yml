@@ -1,9 +1,9 @@
-name: Publish Adapter to NPM
+name: Publish OpenClaw Adapter to NPM
 
 on:
   push:
     tags:
-      - 'adapter@v*'
+      - 'openclaw-adapter@v*'
   workflow_dispatch:
 
 permissions:

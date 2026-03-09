@@ -13,6 +13,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "lint": "tsc --noEmit",
     "build:watch": "tsc --watch",
     "build:all": "npm run build && npm run build --workspaces",
     "clean": "rm -rf dist",

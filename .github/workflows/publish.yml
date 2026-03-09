@@ -20,17 +20,16 @@ jobs:
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
+          scope: '@f2a'
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build
         run: npm run build
 
       - name: Publish core package
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish-adapter:
     runs-on: ubuntu-latest
@@ -42,6 +41,7 @@ jobs:
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
+          scope: '@f2a'
       
       - name: Wait for package to be available
         run: sleep 30
@@ -49,9 +49,8 @@ jobs:
       - name: Install dependencies
         working-directory: packages/openclaw-adapter
         run: |
-          # Replace file: reference with npm package reference
           npm install @f2a/network@latest --save
-          npm install
+          npm ci
       
       - name: Build adapter
         working-directory: packages/openclaw-adapter
@@ -60,5 +59,3 @@ jobs:
       - name: Publish adapter package
         working-directory: packages/openclaw-adapter
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -7,6 +7,13 @@ import { request, RequestOptions } from 'http';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import {
+  startForeground,
+  startBackground,
+  stopDaemon,
+  showStatus,
+  getDaemonStatus,
+} from './daemon.js';
 
 const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
 
@@ -42,9 +49,11 @@ const CONTROL_TOKEN = getControlToken();
 
 interface Args {
   command: string;
+  subcommand?: string;
   idOrIndex?: string | number;
   capability?: string;
   reason?: string;
+  detach?: boolean;
 }
 
 /**
@@ -60,10 +69,17 @@ function parseArgs(): Args {
 
   const command = args[0];
   
+  // 解析 daemon 子命令
+  let subcommand: string | undefined;
+  if (command === 'daemon' && args[1]) {
+    subcommand = args[1];
+  }
+
   // 解析 ID 或序号
   let idOrIndex: string | number | undefined;
-  if (args[1]) {
-    idOrIndex = /^\d+$/.test(args[1]) ? parseInt(args[1]) : args[1];
+  const idArg = command === 'daemon' ? args[2] : args[1];
+  if (idArg) {
+    idOrIndex = /^\d+$/.test(idArg) ? parseInt(idArg) : idArg;
   }
 
   // 解析能力过滤
@@ -80,7 +96,10 @@ function parseArgs(): Args {
     reason = args[reasonIndex + 1];
   }
 
-  return { command, idOrIndex, capability, reason };
+  // 解析 detach 标志
+  const detach = args.includes('-d') || args.includes('--detach');
+
+  return { command, subcommand, idOrIndex, capability, reason, detach };
 }
 
 /**
@@ -100,16 +119,27 @@ Commands:
   pending              查看待确认连接
   confirm [id|index]   确认连接请求
   reject [id|index]    拒绝连接请求
+  daemon               启动和管理 daemon 服务
   help                 显示帮助
+
+Daemon Commands:
+  f2a daemon           前台启动 daemon
+  f2a daemon -d        后台启动 daemon
+  f2a daemon --detach  后台启动 daemon
+  f2a daemon stop      停止后台 daemon
+  f2a daemon status    查看 daemon 状态
 
 Options:
   -c, --capability     按能力过滤 (discover 命令)
   --reason [text]      拒绝原因 (reject 命令)
+  -d, --detach         后台启动 daemon (daemon 命令)
 
 Environment Variables:
   F2A_CONTROL_PORT     控制服务器端口 (默认: 9001)
   F2A_CONTROL_TOKEN    控制服务器认证 Token
                        (如果不设置，会读取 ~/.f2a/control-token)
+  F2A_P2P_PORT         P2P 监听端口 (默认: 0 随机分配)
+  BOOTSTRAP_PEERS      引导节点地址 (逗号分隔)
 
 Examples:
   f2a status
@@ -119,6 +149,10 @@ Examples:
   f2a pending
   f2a confirm 1
   f2a reject 2 --reason "unknown"
+  f2a daemon
+  f2a daemon -d
+  f2a daemon stop
+  f2a daemon status
 `);
 }
 
@@ -170,7 +204,7 @@ async function sendCommand(action: string, params?: Record<string, unknown>): Pr
 
     req.on('error', (err) => {
       console.error('Failed to connect to F2A daemon:', err.message);
-      console.log('Make sure the daemon is running (f2a daemon start)');
+      console.log('Make sure the daemon is running (f2a daemon)');
       reject(err);
     });
 
@@ -222,9 +256,51 @@ async function main(): Promise<void> {
       await sendCommand('reject', { id: args.idOrIndex, reason: args.reason });
       break;
 
+    case 'daemon':
+      await handleDaemonCommand(args);
+      break;
+
     case 'help':
     default:
       showHelp();
+  }
+}
+
+/**
+ * 处理 daemon 命令
+ * @param args - 解析后的参数
+ */
+async function handleDaemonCommand(args: Args): Promise<void> {
+  // 如果指定了 detach 标志，后台启动
+  if (args.detach && args.subcommand !== 'stop') {
+    await startBackground();
+    return;
+  }
+
+  switch (args.subcommand) {
+    case 'stop':
+      await stopDaemon();
+      break;
+
+    case 'status':
+      await showStatus();
+      break;
+
+    case '-d':
+    case '--detach':
+      // f2a daemon -d 或 f2a daemon --detach
+      await startBackground();
+      break;
+
+    case undefined:
+      // f2a daemon (无子命令) - 前台启动
+      await startForeground();
+      break;
+
+    default:
+      console.error(`[F2A] 未知的 daemon 子命令: ${args.subcommand}`);
+      console.error('用法: f2a daemon [stop|status|-d|--detach]');
+      process.exit(1);
   }
 }
 

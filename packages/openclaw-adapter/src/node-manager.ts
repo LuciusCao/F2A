@@ -145,7 +145,7 @@ export class F2ANodeManager {
   async ensureRunning(): Promise<Result<void>> {
     if (await this.isRunning()) {
       logger.info('Node 已在运行');
-      return { success: true };
+      return { success: true, data: undefined };
     }
 
     return this.start();
@@ -160,7 +160,7 @@ export class F2ANodeManager {
     if (!existsSync(daemonPath)) {
       return {
         success: false,
-        error: `F2A Node 未找到: ${daemonPath}\n请先运行: cd ${this.config.nodePath} && npm install && npm run build`
+        error: { code: 'INTERNAL_ERROR' as const, message: `F2A Node 未找到: ${daemonPath}\n请先运行: cd ${this.config.nodePath} && npm install && npm run build` }
       };
     }
 
@@ -222,12 +222,12 @@ export class F2ANodeManager {
       this.consecutiveRestarts = 0;
 
       logger.info('Node 启动成功');
-      return { success: true };
+      return { success: true, data: undefined };
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       this.removePidFile();
-      return { success: false, error: errorMsg };
+      return { success: false, error: { code: 'INTERNAL_ERROR' as const, message: errorMsg } };
     }
   }
 
@@ -319,16 +319,17 @@ export class F2ANodeManager {
       });
 
       if (!response.ok) {
-        return { success: false, error: 'Node 未响应' };
+        return { success: false, error: { code: 'INTERNAL_ERROR' as const, message: 'Node 未响应' } };
       }
 
       const data = await response.json() as { running: boolean; peerId?: string; connectedPeers?: number; uptime?: number };
       return { success: true, data };
 
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       return { 
         success: false, 
-        error: error instanceof Error ? error.message : String(error) 
+        error: { code: 'INTERNAL_ERROR' as const, message }
       };
     }
   }

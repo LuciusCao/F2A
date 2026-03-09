@@ -160,8 +160,8 @@ ${agents.map((a: AgentInfo, i: number) => {
 
     if (!result.success) {
       // 记录失败
-      reputationSystem.recordFailure(targetAgent.peerId, 'unknown', result.error);
-      return { content: `❌ 委托失败: ${result.error}` };
+      reputationSystem.recordFailure(targetAgent.peerId, 'unknown', result.error.message);
+      return { content: `❌ 委托失败: ${result.error.message}` };
     }
 
     return {
@@ -214,7 +214,7 @@ ${agents.map((a: AgentInfo, i: number) => {
         peerId: agent.peerId,
         success: result.success,
         result: result.data,
-        error: result.error,
+        error: result.success ? undefined : (result.error?.message || 'Unknown error'),
         latency
       };
     });

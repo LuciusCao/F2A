@@ -346,7 +346,7 @@ ${params.confidence ? `信心指数: ${Math.round(params.confidence * 100)}%` : 
 📋 认领列表 (${claims.length} 个):
 
 ${claims.map((c: any, i: number) => {
-  const statusIcon = { pending: '⏳', accepted: '✅', rejected: '❌' }[c.status];
+  const statusIcon = ({ pending: '⏳', accepted: '✅', rejected: '❌' } as Record<string, string>)[c.status];
   return `${i + 1}. ${statusIcon} [${c.claimId.slice(0, 8)}...] ${c.claimantName || c.claimant.slice(0, 16)}...
    ${c.estimatedTime ? `预计: ${Math.round(c.estimatedTime / 1000)}s | ` : ''}${c.confidence ? `信心: ${Math.round(c.confidence * 100)}%` : ''}`;
 }).join('\n\n')}
@@ -432,7 +432,7 @@ ${claims.map((c: any, i: number) => {
 
 ${claims.map((c: any, i: number) => {
   const announcement = announcementQueue.get(c.announcementId);
-  const statusIcon = { pending: '⏳', accepted: '✅', rejected: '❌' }[c.status];
+  const statusIcon = ({ pending: '⏳', accepted: '✅', rejected: '❌' } as Record<string, string>)[c.status];
   return `${i + 1}. ${statusIcon} [${c.claimId.slice(0, 8)}...]
    广播: ${announcement?.description.slice(0, 40)}...
    状态: ${c.status}${c.status === 'accepted' ? ' (可以开始执行)' : ''}`;

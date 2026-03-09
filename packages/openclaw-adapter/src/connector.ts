@@ -156,7 +156,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
 
     // 启动 Webhook 服务器
     this.webhookServer = new WebhookServer(
-      this.config.webhookPort,
+      this.config.webhookPort || 0,
       this.createWebhookHandler()
     );
     await this.webhookServer.start();

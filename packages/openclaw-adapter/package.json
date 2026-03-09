@@ -1,6 +1,6 @@
 {
   "name": "@f2a/openclaw-adapter",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "OpenClaw adapter for F2A P2P Agent network",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -10,7 +10,9 @@
     "README.md"
   ],
   "openclaw": {
-    "extensions": ["./dist/plugin.js"]
+    "extensions": [
+      "./dist/plugin.js"
+    ]
   },
   "scripts": {
     "build": "tsc",
@@ -18,17 +20,24 @@
     "test": "vitest",
     "lint": "eslint src/**/*.ts"
   },
-  "keywords": ["openclaw", "f2a", "p2p", "agent", "plugin"],
+  "keywords": [
+    "openclaw",
+    "f2a",
+    "p2p",
+    "agent",
+    "plugin"
+  ],
   "author": "F2A Team",
   "license": "MIT",
   "dependencies": {
-    "@f2a/network": "file:../..",
-    "ws": "^8.16.0",
+    "@f2a/network": "^0.1.2",
+    "better-sqlite3": "^11.0.0",
     "node-fetch": "^3.3.2",
-    "zod": "^3.22.4",
-    "better-sqlite3": "^11.0.0"
+    "ws": "^8.16.0",
+    "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.10.0",
     "@types/ws": "^8.5.10",
     "typescript": "^5.3.0",

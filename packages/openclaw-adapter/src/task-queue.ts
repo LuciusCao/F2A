@@ -44,6 +44,9 @@ interface TaskRow {
   task_type: string | null;
   description: string | null;
   parameters: string | null;
+  from: string | null;
+  timestamp: number | null;
+  timeout: number | null;
   status: string;
   created_at: number;
   updated_at: number | null;
@@ -210,16 +213,19 @@ export class TaskQueue {
           }
 
           const task: QueuedTask = {
-            taskId: row.id,
-            taskType: row.task_type || undefined,
-            description: row.description || undefined,
-            parameters: this.safeJsonParse(row.parameters),
-            status: row.status || 'pending',
-            createdAt: row.created_at,
-            updatedAt: row.updated_at || undefined,
+            taskId: row.id as string,
+            taskType: (row.task_type as string) || '',
+            description: (row.description as string) || '',
+            parameters: this.safeJsonParse(row.parameters) as Record<string, unknown> | undefined,
+            from: (row.from as string) || '',
+            timestamp: (row.timestamp as number) || Date.now(),
+            timeout: (row.timeout as number) || 60000,
+            status: (row.status as 'pending' | 'processing' | 'completed' | 'failed') || 'pending',
+            createdAt: row.created_at as number,
+            updatedAt: (row.updated_at as number) || undefined,
             result: this.safeJsonParse(row.result),
-            error: row.error || undefined,
-            latency: row.latency || undefined,
+            error: (row.error as string) || undefined,
+            latency: (row.latency as number) || undefined,
             webhookPushed: row.webhook_pushed === 1
           };
           
@@ -248,16 +254,19 @@ export class TaskQueue {
           try {
             if (row.id && row.created_at) {
               const task: QueuedTask = {
-                taskId: row.id,
-                taskType: row.task_type || undefined,
-                description: row.description || undefined,
-                parameters: this.safeJsonParse(row.parameters),
+                taskId: row.id as string,
+                taskType: (row.task_type as string) || '',
+                description: (row.description as string) || '',
+                parameters: this.safeJsonParse(row.parameters) as Record<string, unknown> | undefined,
+                from: (row.from as string) || '',
+                timestamp: (row.timestamp as number) || Date.now(),
+                timeout: (row.timeout as number) || 60000,
                 status: 'pending', // 恢复时默认设为 pending
-                createdAt: row.created_at,
-                updatedAt: row.updated_at || undefined,
+                createdAt: row.created_at as number,
+                updatedAt: (row.updated_at as number) || undefined,
                 result: this.safeJsonParse(row.result),
-                error: row.error || undefined,
-                latency: row.latency || undefined,
+                error: (row.error as string) || undefined,
+                latency: (row.latency as number) || undefined,
                 webhookPushed: row.webhook_pushed === 1
               };
               this.tasks.set(task.taskId, task);

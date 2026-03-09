@@ -11,8 +11,8 @@
 // ============================================================================
 
 // 重新导出核心 Result 类型，确保整个项目使用统一的错误处理模式
-export type { Result, F2AError, ErrorCode } from '../../../src/types/result.js';
-export { success, failure, failureFromError, createError } from '../../../src/types/result.js';
+export type { Result, F2AError, ErrorCode } from '@f2a/network';
+export { success, failure, failureFromError, createError } from '@f2a/network';
 
 // ============================================================================
 // OpenClaw 配置类型（扩展以支持插件配置访问）

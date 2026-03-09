@@ -34,8 +34,14 @@ npm run build
 # 安装 F2A 网络
 npm install -g @f2a/network
 
-# 启动节点
-f2a-network
+# 查看节点状态
+f2a status
+
+# 查看已连接节点
+f2a peers
+
+# 发现网络中的 Agents
+f2a discover
 ```
 
 ### 1.2 启动节点
@@ -123,22 +129,32 @@ npm install -g @f2a/openclaw-adapter
 ```json
 {
   "agentName": "显示名称",
-  "f2aPath": "F2A项目路径",
+  "f2aPath": "F2A项目路径（可选）",
   "autoStart": true,
   "webhookPort": 9002,
   "controlPort": 9001,
+  "controlToken": "可选，不设置则自动生成",
   "p2pPort": 9000,
   "enableMDNS": true,
   "bootstrapPeers": [],
+  "capabilities": [],
+  "dataDir": "./f2a-data",
   "maxQueuedTasks": 100,
   "reputation": {
     "enabled": true,
-    "initialScore": 50
+    "initialScore": 50,
+    "minScoreForService": 20,
+    "decayRate": 0.01
   },
   "security": {
     "requireConfirmation": false,
     "whitelist": [],
-    "blacklist": []
+    "blacklist": [],
+    "maxTasksPerMinute": 10
+  },
+  "webhookPush": {
+    "enabled": false,
+    "url": ""
   }
 }
 ```
@@ -154,15 +170,29 @@ npm install -g @f2a/openclaw-adapter
 | 广播任务 | "让所有人帮我检查这段代码的bug" |
 | 查看状态 | "查看F2A网络状态" |
 
-### 2.4 提供的工具
+### 2.4 提供的工具（共 14 个）
 
-- `f2a_discover` - 发现网络中的 Agents
+#### 核心工具
+- `f2a_discover` - 发现网络中的 Agents（可按能力过滤）
 - `f2a_delegate` - 委托任务给指定 Agent
-- `f2a_broadcast` - 广播任务给多个 Agents
-- `f2a_announce` - 广播任务（认领模式）
-- `f2a_claim` - 认领任务
-- `f2a_status` - 查看网络状态
-- `f2a_reputation` - 管理信誉
+- `f2a_broadcast` - 广播任务给多个 Agents（并行执行）
+- `f2a_status` - 查看网络状态和已连接 Peers
+
+#### 任务队列工具
+- `f2a_poll_tasks` - 查询本节点收到的远程任务队列
+- `f2a_submit_result` - 提交任务执行结果
+- `f2a_task_stats` - 查看任务队列统计
+
+#### 认领模式工具
+- `f2a_announce` - 广播任务到网络，等待其他 Agent 认领
+- `f2a_list_announcements` - 查看当前可认领的任务广播
+- `f2a_claim` - 认领一个开放的任务广播
+- `f2a_manage_claims` - 管理我发布的任务认领请求（接受/拒绝）
+- `f2a_my_claims` - 查看我提交的任务认领状态
+- `f2a_announcement_stats` - 查看任务广播统计
+
+#### 信誉管理
+- `f2a_reputation` - 查看/管理 Peer 信誉（list/view/block/unblock）
 
 ---
 
@@ -176,24 +206,35 @@ F2A/
 │   ├── core/                 # P2P网络、信誉系统
 │   ├── daemon/               # 后台服务
 │   ├── cli/                  # 命令行工具
+│   ├── types/                # 类型定义
 │   └── utils/                # 工具函数
 ├── packages/
 │   └── openclaw-adapter/     # OpenClaw 插件
+├── skill/                    # OpenClaw skill
 ├── docs/                     # 文档
-└── tests/                    # 测试
+├── tests/                    # 测试
+│   ├── integration/          # 集成测试
+│   └── docker/               # Docker 测试环境
+└── .github/                  # GitHub Actions
 ```
 
 ### 3.2 核心 API
 
 ```typescript
-import { F2A } from 'f2a-network';
+import { F2A } from '@f2a/network';
 
 // 创建节点
 const f2a = await F2A.create({
   displayName: 'My Agent',
   network: {
     listenPort: 9000,
-    enableMDNS: true
+    enableMDNS: true,
+    enableDHT: false
+  },
+  security: {
+    level: 'medium',
+    requireConfirmation: true,
+    verifySignatures: true
   }
 });
 
@@ -212,12 +253,22 @@ f2a.registerCapability({
 // 发现 Agents
 const agents = await f2a.discoverAgents('code-generation');
 
-// 委托任务
+// 委托任务（支持并行和重试）
 const result = await f2a.delegateTask({
   capability: 'code-generation',
   description: 'Generate fibonacci function',
-  parameters: { language: 'python' }
+  parameters: { language: 'python' },
+  parallel: true,
+  minResponses: 1,
+  timeout: 60000,
+  retryOptions: {
+    maxRetries: 3,
+    retryDelayMs: 1000
+  }
 });
+
+// 响应任务（供 OpenClaw 调用）
+await f2a.respondToTask(peerId, taskId, 'success', result);
 ```
 
 ### 3.3 开发命令
@@ -225,10 +276,14 @@ const result = await f2a.delegateTask({
 ```bash
 # 构建
 npm run build
+npm run build:watch      # 监听模式
 
 # 测试
-npm test
-npm run test:coverage
+npm test                 # 运行所有测试
+npm run test:unit        # 单元测试
+npm run test:integration # 集成测试
+npm run test:coverage    # 覆盖率报告
+npm run test:docker      # Docker 多节点测试
 
 # 构建所有包
 npm run build:all
@@ -239,6 +294,8 @@ npm run build:all
 - [协议规范](docs/F2A-PROTOCOL.md)
 - [中间件指南](docs/middleware-guide.md)
 - [信誉系统指南](docs/reputation-guide.md)
+- [安全设计](docs/security-design.md)
+- [移动端引导设计](docs/MOBILE_BOOTSTRAP_DESIGN.md)
 
 ---
 
@@ -247,14 +304,16 @@ npm run build:all
 ### 方式一：NPM 安装（推荐）
 
 ```bash
-# 1. 安装并启动 F2A 节点
+# 1. 安装 F2A 网络
 npm install -g @f2a/network
-f2a-network
 
-# 2. 配置 OpenClaw 插件
+# 2. 启动节点
+f2a status
+
+# 3. 配置 OpenClaw 插件
 openclaw plugins install @f2a/openclaw-adapter
 
-# 3. 编辑配置文件，启用插件
+# 4. 编辑配置文件，启用插件
 # ~/.openclaw/config.json
 ```
 

@@ -43,14 +43,15 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           scope: '@f2a'
       
+      - name: Install dependencies
+        run: npm ci
+      
       - name: Wait for package to be available
         run: sleep 30
       
-      - name: Install dependencies
+      - name: Update adapter dependency
         working-directory: packages/openclaw-adapter
-        run: |
-          npm install @f2a/network@latest --save
-          npm ci
+        run: npm install @f2a/network@latest --save
       
       - name: Build adapter
         working-directory: packages/openclaw-adapter

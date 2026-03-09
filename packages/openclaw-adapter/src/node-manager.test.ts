@@ -71,7 +71,7 @@ describe('F2ANodeManager', () => {
       
       const result = await manager.start();
       expect(result.success).toBe(false);
-      expect(result.error).toContain('F2A Node 未找到');
+      expect(result.error?.message).toContain('F2A Node 未找到');
     });
   });
 

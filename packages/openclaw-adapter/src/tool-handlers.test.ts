@@ -264,7 +264,7 @@ describe('ToolHandlers', () => {
       
       mockAdapter.networkClient.delegateTask.mockResolvedValue({
         success: false,
-        error: 'Connection timeout'
+        error: { code: 'CONNECTION_FAILED' as const, message: 'Connection timeout' }
       });
 
       const result = await toolHandlers.handleDelegate({

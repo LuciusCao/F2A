@@ -3,16 +3,21 @@
  * Daemon 启动和管理命令
  */
 
-import { spawn, ChildProcess, execSync, exec } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { request, RequestOptions } from 'http';
+import { createServer, AddressInfo } from 'net';
+import { fileURLToPath } from 'url';
 
 const F2A_DIR = join(homedir(), '.f2a');
 const PID_FILE = join(F2A_DIR, 'daemon.pid');
 const LOG_FILE = join(F2A_DIR, 'daemon.log');
-const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
+
+// 获取当前模块所在目录（用于定位 daemon 脚本）
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 /**
  * 确保 .f2a 目录存在
@@ -119,6 +124,8 @@ export function getDaemonStatus(): { running: boolean; pid?: number; port: numbe
  * 前台启动 daemon
  */
 export async function startForeground(): Promise<void> {
+  const controlPort = getControlPort();
+  
   // 检查是否已有 daemon 在运行
   if (isDaemonRunning()) {
     console.error('[F2A] Daemon 已经在运行中');
@@ -127,15 +134,15 @@ export async function startForeground(): Promise<void> {
   }
 
   // 检查端口是否被占用
-  const portInUse = await checkPortInUse(CONTROL_PORT);
+  const portInUse = await checkPortInUse(controlPort);
   if (portInUse) {
-    console.error(`[F2A] 端口 ${CONTROL_PORT} 已被占用`);
+    console.error(`[F2A] 端口 ${controlPort} 已被占用`);
     console.error('[F2A] 请检查是否有其他 F2A daemon 在运行，或使用 F2A_CONTROL_PORT 环境变量指定其他端口');
     process.exit(1);
   }
 
   console.log('[F2A] 启动 daemon (前台模式)...');
-  console.log(`[F2A] 控制端口: ${CONTROL_PORT}`);
+  console.log(`[F2A] 控制端口: ${controlPort}`);
   console.log('[F2A] 按 Ctrl+C 停止');
 
   // 动态导入 daemon 模块并启动
@@ -150,7 +157,7 @@ export async function startForeground(): Promise<void> {
   const p2pPort = parseInt(process.env.F2A_P2P_PORT || '0');
 
   const daemon = new F2ADaemon({
-    controlPort: CONTROL_PORT,
+    controlPort,
     network: {
       listenPort: p2pPort,
       bootstrapPeers,
@@ -187,6 +194,8 @@ export async function startForeground(): Promise<void> {
  * 后台启动 daemon
  */
 export async function startBackground(): Promise<void> {
+  const controlPort = getControlPort();
+  
   // 检查是否已有 daemon 在运行
   if (isDaemonRunning()) {
     console.error('[F2A] Daemon 已经在运行中');
@@ -198,9 +207,9 @@ export async function startBackground(): Promise<void> {
   }
 
   // 检查端口是否被占用
-  const portInUse = await checkPortInUse(CONTROL_PORT);
+  const portInUse = await checkPortInUse(controlPort);
   if (portInUse) {
-    console.error(`[F2A] 端口 ${CONTROL_PORT} 已被占用`);
+    console.error(`[F2A] 端口 ${controlPort} 已被占用`);
     console.error('[F2A] 请检查是否有其他 F2A daemon 在运行，或使用 F2A_CONTROL_PORT 环境变量指定其他端口');
     process.exit(1);
   }
@@ -208,12 +217,13 @@ export async function startBackground(): Promise<void> {
   ensureF2ADir();
 
   console.log('[F2A] 启动 daemon (后台模式)...');
-  console.log(`[F2A] 控制端口: ${CONTROL_PORT}`);
+  console.log(`[F2A] 控制端口: ${controlPort}`);
   console.log(`[F2A] 日志文件: ${LOG_FILE}`);
 
-  // 使用 spawn 启动后台进程
+  // 使用脚本所在目录定位 daemon 脚本，而不是 process.cwd()
+  // 这样可以在任何目录执行 f2a daemon 命令
   const nodePath = process.execPath;
-  const daemonScript = join(process.cwd(), 'dist', 'daemon', 'main.js');
+  const daemonScript = join(__dirname, '..', '..', 'daemon', 'main.js');
   
   // 检查 daemon 脚本是否存在
   if (!existsSync(daemonScript)) {
@@ -225,7 +235,16 @@ export async function startBackground(): Promise<void> {
   // 构建环境变量
   const env = { ...process.env };
   if (!env.F2A_CONTROL_PORT) {
-    env.F2A_CONTROL_PORT = CONTROL_PORT.toString();
+    env.F2A_CONTROL_PORT = controlPort.toString();
+  }
+
+  // 再次检查是否有其他进程已启动（防止竞态条件）
+  // 在写入 PID 文件前再次验证
+  const existingPid = readDaemonPid();
+  if (existingPid !== null && isProcessRunning(existingPid)) {
+    console.error('[F2A] Daemon 已经在运行中 (竞态检测)');
+    console.error(`[F2A] PID: ${existingPid}`);
+    process.exit(1);
   }
 
   // 启动后台进程
@@ -233,7 +252,8 @@ export async function startBackground(): Promise<void> {
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
     env,
-    cwd: process.cwd(),
+    // 使用跨平台的工作目录
+    cwd: homedir(),
   });
 
   // 创建日志写入流
@@ -243,7 +263,7 @@ export async function startBackground(): Promise<void> {
   child.stdout?.pipe(logStream);
   child.stderr?.pipe(logStream);
 
-  // 等待一小段时间确认启动成功
+  // 等待 daemon 进程启动
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error('启动超时'));
@@ -252,6 +272,17 @@ export async function startBackground(): Promise<void> {
     let started = false;
 
     child.on('spawn', () => {
+      // 再次检查竞态条件：确保没有其他进程同时写入 PID 文件
+      const currentPid = readDaemonPid();
+      if (currentPid !== null && currentPid !== child.pid && isProcessRunning(currentPid)) {
+        // 另一个进程已启动，终止当前进程
+        child.kill();
+        removePidFile();
+        clearTimeout(timeout);
+        reject(new Error('另一个 daemon 实例已启动'));
+        return;
+      }
+      
       // 写入 PID 文件
       writeDaemonPid(child.pid!);
       console.log(`[F2A] Daemon 已启动，PID: ${child.pid}`);
@@ -279,6 +310,16 @@ export async function startBackground(): Promise<void> {
   // 分离子进程
   child.unref();
 
+  // 等待 daemon HTTP 服务就绪（轮询 /health 端点）
+  console.log('[F2A] 等待 daemon 服务就绪...');
+  const healthReady = await waitForDaemonHealth(controlPort, 15000);
+  
+  if (healthReady) {
+    console.log('[F2A] Daemon 服务已就绪');
+  } else {
+    console.warn('[F2A] 警告: Daemon 服务可能未完全就绪，请检查日志');
+  }
+
   console.log('[F2A] 使用 "f2a daemon status" 查看状态');
   console.log('[F2A] 使用 "f2a daemon stop" 停止 daemon');
 }
@@ -303,29 +344,47 @@ export async function stopDaemon(): Promise<void> {
   console.log(`[F2A] 正在停止 daemon (PID: ${pid})...`);
 
   try {
-    // 发送 SIGTERM 信号
-    process.kill(pid, 'SIGTERM');
-
-    // 等待进程退出
-    let attempts = 0;
-    const maxAttempts = 30; // 最多等待 3 秒
-
-    while (attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      if (!isProcessRunning(pid)) {
-        break;
+    // 跨平台信号处理
+    // Windows 不支持 SIGTERM，使用 SIGKILL 或 taskkill
+    const isWindows = process.platform === 'win32';
+    
+    if (isWindows) {
+      // Windows: 使用 taskkill 强制终止进程树
+      const { execSync } = await import('child_process');
+      try {
+        execSync(`taskkill /pid ${pid} /T /F`, { stdio: 'ignore' });
+      } catch {
+        // 如果 taskkill 失败，尝试使用 process.kill
+        process.kill(pid, 'SIGKILL');
       }
-      attempts++;
+    } else {
+      // Unix: 发送 SIGTERM 信号
+      process.kill(pid, 'SIGTERM');
+
+      // 等待进程退出
+      let attempts = 0;
+      const maxAttempts = 30; // 最多等待 3 秒
+
+      while (attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        if (!isProcessRunning(pid)) {
+          break;
+        }
+        attempts++;
+      }
+
+      // 如果进程还在运行，强制终止
+      if (isProcessRunning(pid)) {
+        console.log('[F2A] Daemon 未响应 SIGTERM，强制终止...');
+        process.kill(pid, 'SIGKILL');
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
     }
 
-    // 如果进程还在运行，强制终止
-    if (isProcessRunning(pid)) {
-      console.log('[F2A] Daemon 未响应 SIGTERM，强制终止...');
-      process.kill(pid, 'SIGKILL');
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-
+    // 再次检查进程状态
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
     if (!isProcessRunning(pid)) {
       console.log('[F2A] Daemon 已停止');
       removePidFile();
@@ -377,8 +436,56 @@ export async function showStatus(): Promise<void> {
 
 /**
  * 检查端口是否被占用
+ * 使用 net 模块直接检测，比 HTTP 请求更可靠
  */
 async function checkPortInUse(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createServer();
+    
+    server.once('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        resolve(true); // 端口被占用
+      } else {
+        resolve(false);
+      }
+    });
+    
+    server.once('listening', () => {
+      server.close(() => resolve(false)); // 端口可用
+    });
+    
+    server.listen(port, '127.0.0.1');
+  });
+}
+
+/**
+ * 等待 daemon HTTP 服务就绪
+ * 轮询 /health 端点直到服务可用
+ */
+async function waitForDaemonHealth(port: number, timeoutMs: number): Promise<boolean> {
+  const startTime = Date.now();
+  const pollInterval = 200; // 每 200ms 检查一次
+  
+  while (Date.now() - startTime < timeoutMs) {
+    try {
+      const healthy = await checkDaemonHealth(port);
+      if (healthy) {
+        return true;
+      }
+    } catch {
+      // 忽略错误，继续轮询
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, pollInterval));
+  }
+  
+  return false;
+}
+
+/**
+ * 检查 daemon 健康状态
+ */
+async function checkDaemonHealth(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const req = request({
       hostname: '127.0.0.1',

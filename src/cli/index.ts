@@ -204,7 +204,7 @@ async function sendCommand(action: string, params?: Record<string, unknown>): Pr
 
     req.on('error', (err) => {
       console.error('Failed to connect to F2A daemon:', err.message);
-      console.log('Make sure the daemon is running (f2a daemon start)');
+      console.log('Make sure the daemon is running (f2a daemon)');
       reject(err);
     });
 

@@ -43,18 +43,27 @@ f2a-network
 **方式一：Daemon 模式（推荐）**
 
 ```bash
-# 启动后台服务
-node dist/daemon/index.js
+# 后台启动 daemon
+f2a daemon
+
+# 或前台启动（用于调试）
+f2a daemon -f
+
+# 查看 daemon 状态
+f2a daemon status
+
+# 停止 daemon
+f2a daemon stop
 ```
 
 **方式二：CLI 模式**
 
 ```bash
 # 查看状态
-node dist/cli/index.js status
+f2a status
 
 # 查看已连接节点
-node dist/cli/index.js peers
+f2a peers
 ```
 
 ### 1.3 配置
@@ -76,7 +85,7 @@ export F2A_CONTROL_TOKEN=$(openssl rand -hex 32)
 export F2A_SIGNATURE_KEY=$(openssl rand -hex 32)
 export NODE_ENV=production
 
-node dist/daemon/index.js
+f2a daemon
 ```
 
 ### 1.4 验证运行
@@ -265,7 +274,7 @@ openclaw plugins install @f2a/openclaw-adapter
 # 1. 启动 F2A 节点
 cd ~/projects/F2A
 npm run build
-node dist/daemon/index.js
+f2a daemon
 
 # 2. 配置 OpenClaw 插件
 # 编辑 ~/.openclaw/config.json，添加插件配置

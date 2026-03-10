@@ -19,6 +19,37 @@ export interface ControlServerOptions {
 /** 默认允许的 CORS 来源 */
 const DEFAULT_ALLOWED_ORIGINS = ['http://localhost'];
 
+/**
+ * P2 修复：生产环境 CORS 配置验证
+ * 检查是否在生产环境使用了宽松的 CORS 配置
+ */
+function validateCorsConfig(allowedOrigins: string[]): void {
+  const isProduction = process.env.NODE_ENV === 'production';
+  
+  if (isProduction) {
+    // 检查是否使用默认配置
+    if (allowedOrigins.length === 1 && allowedOrigins[0] === 'http://localhost') {
+      const logger = new Logger({ component: 'ControlServer' });
+      logger.error('CORS configuration warning: Using default localhost origin in production!');
+      logger.error('Set F2A_ALLOWED_ORIGINS environment variable or pass allowedOrigins option.');
+      logger.error('Example: F2A_ALLOWED_ORIGINS=https://your-domain.com,https://api.your-domain.com');
+    }
+    
+    // 检查是否包含通配符或过于宽松的配置
+    if (allowedOrigins.includes('*')) {
+      const logger = new Logger({ component: 'ControlServer' });
+      logger.error('CORS configuration error: Wildcard origin (*) is not allowed in production!');
+      throw new Error('Wildcard CORS origin is not allowed in production. Configure specific allowed origins.');
+    }
+    
+    // 检查是否包含 localhost
+    if (allowedOrigins.some(o => o.includes('localhost') || o.includes('127.0.0.1'))) {
+      const logger = new Logger({ component: 'ControlServer' });
+      logger.warn('CORS configuration warning: localhost/127.0.0.1 origins in production may be a security risk.');
+    }
+  }
+}
+
 export class ControlServer {
   private server?: Server;
   private f2a: F2A;
@@ -36,7 +67,12 @@ export class ControlServer {
     // 速率限制: 每分钟最多 60 个请求
     this.rateLimiter = new RateLimiter({ maxRequests: 60, windowMs: 60000 });
     // CORS 配置：优先使用传入的 allowedOrigins，否则使用默认值
-    this.allowedOrigins = options?.allowedOrigins ?? DEFAULT_ALLOWED_ORIGINS;
+    // 支持从环境变量 F2A_ALLOWED_ORIGINS 读取（逗号分隔）
+    const envOrigins = process.env.F2A_ALLOWED_ORIGINS?.split(',').map(o => o.trim()).filter(Boolean);
+    this.allowedOrigins = options?.allowedOrigins ?? envOrigins ?? DEFAULT_ALLOWED_ORIGINS;
+    
+    // P2 修复：生产环境强制验证 CORS 配置
+    validateCorsConfig(this.allowedOrigins);
   }
 
   /**

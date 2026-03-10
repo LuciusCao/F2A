@@ -216,7 +216,9 @@ export class Logger {
       } else {
         // 开发环境：人类可读
         const { level, msg, timestamp, component, ...meta } = entry;
-        const prefix = `[${timestamp.split('T')[1].split('.')[0]}] [${component}] [${level}]`;
+        const timestampStr = typeof timestamp === 'string' ? timestamp : String(timestamp);
+        const timePart = timestampStr.includes('T') ? timestampStr.split('T')[1].split('.')[0] : timestampStr;
+        const prefix = `[${timePart}] [${component}] [${level}]`;
 
         if (Object.keys(meta).length > 0) {
           // 结构化输出（开发环境可读格式）

@@ -146,6 +146,7 @@ function normalizePath(path: string): string {
 
 /**
  * 检测变量替换绕过
+ * P1 修复：增加更多危险模式检测
  */
 function detectVariableSubstitution(text: string): string[] {
   const detected: string[] = [];
@@ -161,6 +162,52 @@ function detectVariableSubstitution(text: string): string[] {
     let match;
     while ((match = pattern.exec(text)) !== null) {
       detected.push(`变量替换: ${match[0]}`);
+    }
+  }
+  
+  // P1 修复：检测算术表达式 $((expression))
+  const arithmeticPattern = /\$\(\(([^)]+)\)\)/g;
+  let arithmeticMatch;
+  while ((arithmeticMatch = arithmeticPattern.exec(text)) !== null) {
+    detected.push(`算术表达式: ${arithmeticMatch[0]}`);
+  }
+  
+  // P1 修复：检测数组引用 ${array[@]}, ${array[*]}
+  const arrayPattern = /\$\{[A-Za-z_][A-Za-z0-9_]*\[@?\*?\]\}/g;
+  let arrayMatch;
+  while ((arrayMatch = arrayPattern.exec(text)) !== null) {
+    detected.push(`数组引用: ${arrayMatch[0]}`);
+  }
+  
+  // P1 修复：检测特殊变量: $?, $$, $!, $0, $1-$9, $#, $@, $*, $-
+  // 注意：使用 text.match(pattern) 而非 pattern.test(text) 避免 lastIndex bug
+  const specialVars = [
+    { pattern: /\$\?/g, name: '退出状态($?)' },
+    { pattern: /\$\$/g, name: '进程ID($$)' },
+    { pattern: /\$!/g, name: '后台进程ID($!)' },
+    { pattern: /\$[0-9]/g, name: '位置参数($0-$9)' },
+    { pattern: /\$#/g, name: '参数个数($#)' },
+    { pattern: /\$@/g, name: '所有参数($@)' },
+    { pattern: /\$\*/g, name: '所有参数($*)' },
+    { pattern: /\$-/g, name: 'Shell选项($-)' },
+  ];
+  
+  for (const { pattern, name } of specialVars) {
+    // P0 修复：使用 text.match(pattern) 避免 lastIndex bug
+    // 全局正则的 test() 会更新 lastIndex，导致后续调用结果不一致
+    if (text.match(pattern)) {
+      detected.push(`特殊变量: ${name}`);
+    }
+  }
+  
+  // P1 修复：检测命令替换的变体
+  // ${command} - bash 命令替换
+  const bashCommandPattern = /\$\(([^)]+)\)/g;
+  let bashMatch;
+  while ((bashMatch = bashCommandPattern.exec(text)) !== null) {
+    // 排除已检测的算术表达式
+    if (!bashMatch[0].startsWith('$((')) {
+      detected.push(`命令替换: ${bashMatch[0]}`);
     }
   }
   

@@ -95,28 +95,60 @@ export interface DiscoverOptions {
 
 /**
  * 简单的异步锁实现，用于保护关键资源的并发访问
+ * 
+ * P1 修复：添加超时机制，防止死锁
  */
 class AsyncLock {
   private locked = false;
   private queue: Array<() => void> = [];
+  /** 默认锁超时时间（毫秒） */
+  private static readonly DEFAULT_TIMEOUT_MS = 30000;
 
-  async acquire(): Promise<void> {
+  /**
+   * 获取锁
+   * @param timeoutMs 超时时间（毫秒），默认 30 秒
+   * @throws Error 如果超时未能获取锁
+   */
+  async acquire(timeoutMs: number = AsyncLock.DEFAULT_TIMEOUT_MS): Promise<void> {
     if (!this.locked) {
       this.locked = true;
       return;
     }
-    return new Promise<void>(resolve => {
-      this.queue.push(resolve);
+
+    return new Promise<void>((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        // 从队列中移除此等待者
+        const index = this.queue.indexOf(onAcquire);
+        if (index !== -1) {
+          this.queue.splice(index, 1);
+        }
+        reject(new Error(`AsyncLock acquire timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      const onAcquire = () => {
+        clearTimeout(timeoutId);
+        resolve();
+      };
+
+      this.queue.push(onAcquire);
     });
   }
 
   release(): void {
     const next = this.queue.shift();
     if (next) {
+      // 保持 locked = true，直接传递给下一个等待者
       next();
     } else {
       this.locked = false;
     }
+  }
+
+  /**
+   * 检查锁是否被持有
+   */
+  isLocked(): boolean {
+    return this.locked;
   }
 }
 
@@ -124,6 +156,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private node: Libp2p | null = null;
   private config: P2PNetworkConfig;
   private peerTable: Map<string, PeerInfo> = new Map();
+  /** P2.4 修复：已连接 Peer 索引，用于 O(1) 查询 */
+  private connectedPeers: Set<string> = new Set();
   /** 用于保护 peerTable 并发访问的锁 */
   private peerTableLock = new AsyncLock();
   private agentInfo: AgentInfo;
@@ -589,7 +623,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         // 无法获取 multiaddrs，使用空数组
       }
 
-      // 使用原子操作更新路由表
+      // P2.4 修复：使用原子操作更新路由表和连接索引
       const now = Date.now();
       await this.upsertPeer(
         peerId,
@@ -609,6 +643,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           ...(multiaddrs.length > 0 ? { multiaddrs } : {})
         })
       );
+      
+      // P2.4 修复：维护连接索引
+      this.connectedPeers.add(peerId);
     });
 
     // 断开连接
@@ -617,6 +654,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       this.logger.info('Peer disconnected', { peerId: peerId.slice(0, 16) });
 
       this.emit('peer:disconnected', { peerId });
+
+      // P2.4 修复：从连接索引中移除
+      this.connectedPeers.delete(peerId);
 
       // 使用原子操作更新路由表
       const updated = await this.updatePeer(peerId, (peer) => ({
@@ -941,6 +981,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       return;
     }
 
+    // P1 修复：记录是否需要清理，在锁外执行
+    let needsAggressiveCleanup = false;
+
     // 使用锁保护容量检查和创建操作的原子性
     await this.peerTableLock.acquire();
     try {
@@ -949,8 +992,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         // 新 peer，需要检查容量
         const highWatermark = Math.floor(PEER_TABLE_MAX_SIZE * PEER_TABLE_HIGH_WATERMARK);
         if (this.peerTable.size >= highWatermark) {
-          // 接近容量上限，触发激进清理
-          this.cleanupStalePeersLocked(true);
+          // P1 修复：不在锁内执行耗时清理，仅标记需要清理
+          needsAggressiveCleanup = true;
         }
         
         if (this.peerTable.size >= PEER_TABLE_MAX_SIZE) {
@@ -986,6 +1029,16 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       }
     } finally {
       this.peerTableLock.release();
+    }
+
+    // P1 修复：在锁外异步执行清理，避免阻塞并发操作
+    if (needsAggressiveCleanup) {
+      // 使用 setImmediate 异步执行，不阻塞当前操作
+      setImmediate(() => {
+        this.cleanupStalePeers(true).catch(err => {
+          this.logger.error('Background cleanup failed', { error: err });
+        });
+      });
     }
 
     // 注册对等方的加密公钥
@@ -1093,15 +1146,19 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       return;
     }
 
-    // 使用原子操作避免竞态条件：先删除 Map 条目，再检查 resolved 标志
-    // 这确保即使多个响应并发到达，也只有一个能成功获取到 pending 条目
-    this.pendingTasks.delete(payload.taskId);
-    
+    // P1 修复：使用原子操作避免竞态条件
+    // 先检查 resolved 标志，再决定是否处理
+    // 这确保即使多个响应并发到达，也只有一个能成功处理
     if (pending.resolved) {
       this.logger.warn('Task already resolved, ignoring duplicate response', { taskId: payload.taskId });
       return;
     }
+    
+    // 标记为已处理，防止并发响应重复处理
     pending.resolved = true;
+
+    // 从 Map 中移除
+    this.pendingTasks.delete(payload.taskId);
 
     // 清理资源
     clearTimeout(pending.timeout);
@@ -1330,9 +1387,17 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
   /**
    * 获取已连接的 Peers
+   * P2.4 修复：使用 connectedPeers Set 索引，O(1) 查询复杂度
    */
   getConnectedPeers(): PeerInfo[] {
-    return Array.from(this.peerTable.values()).filter(p => p.connected);
+    const result: PeerInfo[] = [];
+    for (const peerId of this.connectedPeers) {
+      const peer = this.peerTable.get(peerId);
+      if (peer) {
+        result.push(peer);
+      }
+    }
+    return result;
   }
 
   /**

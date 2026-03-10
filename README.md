@@ -182,13 +182,35 @@ npm install -g @f2a/openclaw-adapter
 
 ### 2.4 提供的工具
 
-- `f2a_discover` - 发现网络中的 Agents
-- `f2a_delegate` - 委托任务给指定 Agent
-- `f2a_broadcast` - 广播任务给多个 Agents
-- `f2a_announce` - 广播任务（认领模式）
-- `f2a_claim` - 认领任务
-- `f2a_status` - 查看网络状态
-- `f2a_reputation` - 管理信誉
+**Agent 发现与任务分发**：
+| 工具 | 功能 |
+|------|------|
+| `f2a_discover` | 发现网络中的 Agents，支持按能力过滤 |
+| `f2a_delegate` | 委托任务给指定 Agent |
+| `f2a_broadcast` | 广播任务给多个 Agents（并行执行） |
+
+**任务队列管理**：
+| 工具 | 功能 |
+|------|------|
+| `f2a_poll_tasks` | 查询本节点收到的远程任务队列 |
+| `f2a_submit_result` | 提交任务执行结果 |
+| `f2a_task_stats` | 查看任务队列统计信息 |
+
+**任务认领模式**：
+| 工具 | 功能 |
+|------|------|
+| `f2a_announce` | 发布任务（认领模式） |
+| `f2a_list_announcements` | 列出可认领的任务 |
+| `f2a_claim` | 认领任务 |
+| `f2a_manage_claims` | 管理认领的任务 |
+| `f2a_my_claims` | 查看我认领的任务 |
+| `f2a_announcement_stats` | 查看任务发布统计 |
+
+**网络与信誉管理**：
+| 工具 | 功能 |
+|------|------|
+| `f2a_status` | 查看 F2A 网络状态和已连接 Peers |
+| `f2a_reputation` | 查看或管理 Peer 信誉 |
 
 ---
 

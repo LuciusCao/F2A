@@ -127,11 +127,22 @@ function acquireLock(): boolean {
 }
 
 /**
- * 释放文件锁
+ * 释放文件锁（仅释放当前进程持有的锁）
  */
 function releaseLock(): void {
-  if (existsSync(LOCK_FILE)) {
-    unlinkSync(LOCK_FILE);
+  if (!existsSync(LOCK_FILE)) {
+    return;
+  }
+  
+  try {
+    // 验证锁文件中的 PID 是否为当前进程，避免误删其他进程的锁
+    const lockPid = parseInt(readFileSync(LOCK_FILE, 'utf-8').trim(), 10);
+    if (!isNaN(lockPid) && lockPid === process.pid) {
+      unlinkSync(LOCK_FILE);
+    }
+    // 如果 PID 不匹配，说明锁已被其他进程持有，不删除
+  } catch {
+    // 读取失败，可能锁文件已损坏或被删除，忽略
   }
 }
 
@@ -314,7 +325,8 @@ export async function startBackground(): Promise<void> {
 
   // 获取文件锁（防止竞态条件）
   if (!acquireLock()) {
-    console.error('[F2A] 无法获取锁，可能有其他 daemon 实例正在启动');
+    console.error('[F2A] 无法获取锁，可能有其他 daemon 实例正在启动或刚刚启动');
+    console.error('[F2A] 请稍后重试，或检查是否有其他 f2a daemon 进程在运行');
     process.exit(1);
   }
 
@@ -391,6 +403,7 @@ export async function startBackground(): Promise<void> {
   releaseLock();
 
   // 等待 daemon HTTP 服务就绪（轮询 /health 端点）
+  // 可通过 F2A_HEALTH_TIMEOUT 环境变量配置超时时间（毫秒，默认 15000）
   console.log('[F2A] 等待 daemon 服务就绪...');
   const healthTimeout = parseInt(process.env.F2A_HEALTH_TIMEOUT || '15000', 10);
   const healthReady = await waitForDaemonHealth(controlPort, healthTimeout);

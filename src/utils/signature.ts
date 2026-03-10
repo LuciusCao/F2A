@@ -110,7 +110,7 @@ export class RequestSigner {
 /**
  * 从环境变量加载签名密钥
  * 
- * P1 修复：生产环境强制要求签名密钥，否则禁用签名功能
+ * P1.5 修复：生产环境强制要求签名密钥，否则抛出错误
  */
 export function loadSignatureConfig(): SignatureConfig | null {
   const secretKey = process.env.F2A_SIGNATURE_KEY;
@@ -119,17 +119,15 @@ export function loadSignatureConfig(): SignatureConfig | null {
   
   if (!secretKey) {
     if (isProduction) {
-      // P1 修复：生产环境强制警告
-      // 签名功能在生产环境是可选的，但强烈建议配置
-      // 如果未配置，签名验证将被禁用，这是安全风险
-      logger.error('F2A_SIGNATURE_KEY is not set in production environment!');
-      logger.error('Signature verification is DISABLED. This is a security risk.');
-      logger.error('Please set F2A_SIGNATURE_KEY environment variable to enable secure message verification.');
-      logger.error('Example: export F2A_SIGNATURE_KEY=$(openssl rand -hex 32)');
+      // P1.5 修复：生产环境强制要求签名密钥，抛出错误
+      // 签名验证在生产环境是必需的安全措施
+      const errorMessage = 
+        'F2A_SIGNATURE_KEY is required in production environment. ' +
+        'Set the environment variable to enable secure message verification. ' +
+        'Example: export F2A_SIGNATURE_KEY=$(openssl rand -hex 32)';
       
-      // 返回 null 表示禁用签名功能
-      // 调用方应该检查返回值并相应处理
-      return null;
+      logger.error(errorMessage);
+      throw new Error(errorMessage);
     } else {
       // 开发环境仅提示
       logger.warn('F2A_SIGNATURE_KEY is not set. Signature verification is disabled.');

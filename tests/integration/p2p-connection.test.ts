@@ -6,6 +6,29 @@
 import { describe, it, expect } from 'vitest';
 import { getBootstrapHttp } from './test-config';
 
+/**
+ * 运行说明：
+ * 
+ * 1. 设置环境变量：
+ *    export RUN_INTEGRATION_TESTS=true
+ *    export TEST_TOKEN=$(openssl rand -hex 16)
+ *    export TEST_NODE_COUNT=3  # 可选，默认为 3
+ * 
+ * 2. 启动引导节点（在一个终端中）：
+ *    export F2A_CONTROL_TOKEN=$TEST_TOKEN
+ *    npm run daemon
+ * 
+ * 3. 启动测试节点（在另一个终端中）：
+ *    export F2A_CONTROL_TOKEN=$TEST_TOKEN
+ *    npm run test:integration
+ * 
+ * 或者使用 Docker Compose：
+ *    docker-compose -f tests/integration/docker-compose.yml up -d
+ *    RUN_INTEGRATION_TESTS=true npm run test:integration
+ * 
+ * 注意：集成测试需要至少 2 个节点运行才能通过。
+ */
+
 // 只在集成测试环境运行
 const shouldRun = process.env.RUN_INTEGRATION_TESTS === 'true';
 

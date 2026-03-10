@@ -156,6 +156,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private node: Libp2p | null = null;
   private config: P2PNetworkConfig;
   private peerTable: Map<string, PeerInfo> = new Map();
+  /** P2.4 修复：已连接 Peer 索引，用于 O(1) 查询 */
+  private connectedPeers: Set<string> = new Set();
   /** 用于保护 peerTable 并发访问的锁 */
   private peerTableLock = new AsyncLock();
   private agentInfo: AgentInfo;
@@ -621,7 +623,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         // 无法获取 multiaddrs，使用空数组
       }
 
-      // 使用原子操作更新路由表
+      // P2.4 修复：使用原子操作更新路由表和连接索引
       const now = Date.now();
       await this.upsertPeer(
         peerId,
@@ -641,6 +643,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           ...(multiaddrs.length > 0 ? { multiaddrs } : {})
         })
       );
+      
+      // P2.4 修复：维护连接索引
+      this.connectedPeers.add(peerId);
     });
 
     // 断开连接
@@ -649,6 +654,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       this.logger.info('Peer disconnected', { peerId: peerId.slice(0, 16) });
 
       this.emit('peer:disconnected', { peerId });
+
+      // P2.4 修复：从连接索引中移除
+      this.connectedPeers.delete(peerId);
 
       // 使用原子操作更新路由表
       const updated = await this.updatePeer(peerId, (peer) => ({
@@ -1379,9 +1387,17 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
   /**
    * 获取已连接的 Peers
+   * P2.4 修复：使用 connectedPeers Set 索引，O(1) 查询复杂度
    */
   getConnectedPeers(): PeerInfo[] {
-    return Array.from(this.peerTable.values()).filter(p => p.connected);
+    const result: PeerInfo[] = [];
+    for (const peerId of this.connectedPeers) {
+      const peer = this.peerTable.get(peerId);
+      if (peer) {
+        result.push(peer);
+      }
+    }
+    return result;
   }
 
   /**

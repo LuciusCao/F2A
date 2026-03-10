@@ -180,6 +180,7 @@ function detectVariableSubstitution(text: string): string[] {
   }
   
   // P1 修复：检测特殊变量: $?, $$, $!, $0, $1-$9, $#, $@, $*, $-
+  // 注意：使用 text.match(pattern) 而非 pattern.test(text) 避免 lastIndex bug
   const specialVars = [
     { pattern: /\$\?/g, name: '退出状态($?)' },
     { pattern: /\$\$/g, name: '进程ID($$)' },
@@ -192,7 +193,9 @@ function detectVariableSubstitution(text: string): string[] {
   ];
   
   for (const { pattern, name } of specialVars) {
-    if (pattern.test(text)) {
+    // P0 修复：使用 text.match(pattern) 避免 lastIndex bug
+    // 全局正则的 test() 会更新 lastIndex，导致后续调用结果不一致
+    if (text.match(pattern)) {
       detected.push(`特殊变量: ${name}`);
     }
   }

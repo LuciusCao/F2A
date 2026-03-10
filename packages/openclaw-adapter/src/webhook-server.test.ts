@@ -577,4 +577,105 @@ describe('WebhookServer', () => {
       expect(response.headers['access-control-allow-origin']).toBe('http://localhost');
     });
   });
+
+  describe('生产环境 CORS 验证测试 (P2 安全修复)', () => {
+    const originalEnv = process.env.NODE_ENV;
+
+    afterEach(() => {
+      // 恢复原始环境变量
+      process.env.NODE_ENV = originalEnv;
+      delete process.env.F2A_WEBHOOK_ALLOWED_ORIGINS;
+    });
+
+    it('生产环境使用默认 localhost 配置应该记录警告', async () => {
+      process.env.NODE_ENV = 'production';
+      
+      // webhookLogger 使用 console.error 输出错误日志
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      
+      // 使用默认配置（只包含 localhost）
+      server = new WebhookServer(testPort, mockHandler);
+      await server.start();
+      
+      // 应该记录警告日志
+      const calls = errorSpy.mock.calls.map(call => call.join(' '));
+      const hasCorsWarning = calls.some(msg => 
+        msg.includes('CORS') && msg.includes('localhost')
+      );
+      expect(hasCorsWarning).toBe(true);
+      
+      errorSpy.mockRestore();
+    });
+
+    it('生产环境使用通配符 origin 应该抛出错误', () => {
+      process.env.NODE_ENV = 'production';
+      
+      // 使用通配符配置应该抛出错误
+      expect(() => {
+        new WebhookServer(testPort, mockHandler, {
+          allowedOrigins: ['*']
+        });
+      }).toThrow('Wildcard CORS origin is not allowed in production');
+    });
+
+    it('生产环境使用明确的域名配置应该正常工作', async () => {
+      process.env.NODE_ENV = 'production';
+      
+      // 使用明确的域名配置
+      server = new WebhookServer(testPort, mockHandler, {
+        allowedOrigins: ['https://example.com', 'https://api.example.com']
+      });
+      await server.start();
+
+      const response = await sendRequest({
+        headers: { Origin: 'https://example.com' },
+        body: { type: 'status', payload: {}, timestamp: Date.now() },
+      });
+
+      expect(response.headers['access-control-allow-origin']).toBe('https://example.com');
+    });
+
+    it('开发环境允许使用 localhost 配置', async () => {
+      process.env.NODE_ENV = 'development';
+      
+      // 开发环境应该允许使用默认 localhost 配置
+      server = new WebhookServer(testPort, mockHandler);
+      await server.start();
+
+      const response = await sendRequest({
+        headers: { Origin: 'http://localhost' },
+        body: { type: 'status', payload: {}, timestamp: Date.now() },
+      });
+
+      expect(response.headers['access-control-allow-origin']).toBe('http://localhost');
+    });
+
+    it('开发环境允许使用通配符配置', async () => {
+      process.env.NODE_ENV = 'development';
+      
+      // 开发环境应该允许使用通配符配置
+      server = new WebhookServer(testPort, mockHandler, {
+        allowedOrigins: ['*']
+      });
+      await server.start();
+      
+      // 应该正常启动
+      expect(server.getUrl()).toContain('localhost');
+    });
+
+    it('应该支持从环境变量读取 CORS 配置', async () => {
+      process.env.NODE_ENV = 'development';
+      process.env.F2A_WEBHOOK_ALLOWED_ORIGINS = 'https://env-origin.com,https://another.com';
+      
+      server = new WebhookServer(testPort, mockHandler);
+      await server.start();
+
+      const response = await sendRequest({
+        headers: { Origin: 'https://env-origin.com' },
+        body: { type: 'status', payload: {}, timestamp: Date.now() },
+      });
+
+      expect(response.headers['access-control-allow-origin']).toBe('https://env-origin.com');
+    });
+  });
 });

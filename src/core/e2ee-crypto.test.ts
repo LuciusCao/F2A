@@ -122,4 +122,69 @@ describe('E2EECrypto', () => {
       expect(decrypted).toBeNull();
     });
   });
+
+  describe('盐值验证 (P2 安全修复)', () => {
+    beforeEach(() => {
+      cryptoA.registerPeerPublicKey('peer-b', cryptoB.getPublicKey()!);
+      cryptoB.registerPeerPublicKey('peer-a', cryptoA.getPublicKey()!);
+    });
+
+    it('应该拒绝没有盐值的加密消息', () => {
+      const plaintext = 'Secret message';
+      const encrypted = cryptoA.encrypt('peer-b', plaintext);
+      expect(encrypted).not.toBeNull();
+      
+      // 删除盐值
+      const encryptedWithoutSalt = { ...encrypted!, salt: undefined as any };
+      
+      const decrypted = cryptoB.decrypt(encryptedWithoutSalt);
+      expect(decrypted).toBeNull();
+    });
+
+    it('应该拒绝盐值过短的加密消息', () => {
+      const plaintext = 'Secret message';
+      const encrypted = cryptoA.encrypt('peer-b', plaintext);
+      expect(encrypted).not.toBeNull();
+      
+      // 使用过短的盐值（只有 8 字节）
+      const shortSalt = Buffer.alloc(8).toString('base64');
+      const encryptedWithShortSalt = { ...encrypted!, salt: shortSalt };
+      
+      const decrypted = cryptoB.decrypt(encryptedWithShortSalt);
+      expect(decrypted).toBeNull();
+    });
+
+    it('应该接受有效的盐值（16 字节）', () => {
+      const plaintext = 'Secret message';
+      const encrypted = cryptoA.encrypt('peer-b', plaintext);
+      expect(encrypted).not.toBeNull();
+      
+      // 验证加密消息包含盐值
+      expect(encrypted!.salt).toBeDefined();
+      
+      // 验证盐值长度（base64 编码的 16 字节）
+      const saltBuffer = Buffer.from(encrypted!.salt, 'base64');
+      expect(saltBuffer.length).toBeGreaterThanOrEqual(16);
+      
+      // 正常解密应该成功
+      const decrypted = cryptoB.decrypt(encrypted!);
+      expect(decrypted).toBe(plaintext);
+    });
+
+    it('每次加密应该使用不同的盐值', () => {
+      const plaintext = 'Same message';
+      
+      const encrypted1 = cryptoA.encrypt('peer-b', plaintext);
+      const encrypted2 = cryptoA.encrypt('peer-b', plaintext);
+      
+      expect(encrypted1).not.toBeNull();
+      expect(encrypted2).not.toBeNull();
+      
+      // 两次加密的盐值应该不同
+      expect(encrypted1!.salt).not.toBe(encrypted2!.salt);
+      
+      // 但密文也应该不同（因为盐值影响密钥派生）
+      expect(encrypted1!.ciphertext).not.toBe(encrypted2!.ciphertext);
+    });
+  });
 });

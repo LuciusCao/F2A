@@ -3,12 +3,12 @@
  * Daemon 启动和管理命令
  */
 
-import { spawn, ChildProcess } from 'child_process';
+import { spawn } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, statSync, renameSync, openSync, closeSync, writeSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { request, RequestOptions } from 'http';
-import { createServer, AddressInfo } from 'net';
+import { createServer } from 'net';
 import { fileURLToPath } from 'url';
 
 const F2A_DIR = join(homedir(), '.f2a');

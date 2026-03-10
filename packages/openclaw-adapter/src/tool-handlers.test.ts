@@ -22,7 +22,8 @@ const createMockReputationSystem = () => ({
   isAllowed: vi.fn(),
   recordSuccess: vi.fn(),
   recordFailure: vi.fn(),
-  getAllReputations: vi.fn()
+  getAllReputations: vi.fn(),
+  hasPermission: vi.fn()
 });
 
 const createMockTaskQueue = () => ({
@@ -38,6 +39,13 @@ const createMockNodeManager = () => ({
   getStatus: vi.fn()
 });
 
+const createMockReviewCommittee = () => ({
+  submitReview: vi.fn(),
+  isReviewComplete: vi.fn(),
+  getReviewStatus: vi.fn(),
+  finalizeReview: vi.fn()
+});
+
 const createMockAdapter = () => ({
   networkClient: createMockNetworkClient(),
   reputationSystem: createMockReputationSystem(),
@@ -50,7 +58,8 @@ const createMockAdapter = () => ({
       blacklist: [] as string[],
       maxTasksPerMinute: 10
     }
-  }
+  },
+  reviewCommittee: createMockReviewCommittee()
 });
 
 // 创建 mock SessionContext
@@ -901,6 +910,332 @@ describe('ToolHandlers', () => {
 
       expect(result.content).toContain('待处理: 0');
       expect(result.content).toContain('总计: 0');
+    });
+  });
+
+  // ========== 新增：任务评估和评审相关测试 ==========
+
+  describe('handleEstimateTask', () => {
+    it('应该正确评估任务工作量', async () => {
+      const result = await toolHandlers.handleEstimateTask({
+        task_type: 'code-generation',
+        description: '创建一个简单的 Hello World 程序',
+        required_capabilities: ['code-generation']
+      }, mockContext);
+
+      expect(result.content).toContain('任务评估结果');
+      expect(result.content).toContain('code-generation');
+      expect(result.data).toHaveProperty('workload');
+      expect(result.data).toHaveProperty('complexity');
+      expect(result.data).toHaveProperty('estimated_time_ms');
+      expect(result.data).toHaveProperty('confidence');
+      expect((result.data as any).workload).toBeGreaterThanOrEqual(0);
+      expect((result.data as any).workload).toBeLessThanOrEqual(100);
+      expect((result.data as any).complexity).toBeGreaterThanOrEqual(1);
+      expect((result.data as any).complexity).toBeLessThanOrEqual(10);
+    });
+
+    it('应该根据任务类型调整复杂度', async () => {
+      const simpleResult = await toolHandlers.handleEstimateTask({
+        task_type: 'web-search',
+        description: '搜索天气信息',
+        required_capabilities: []
+      }, mockContext);
+
+      const complexResult = await toolHandlers.handleEstimateTask({
+        task_type: 'security-audit',
+        description: '对整个代码库进行安全审计',
+        required_capabilities: ['security-analysis', 'code-review']
+      }, mockContext);
+
+      expect((simpleResult.data as any).complexity).toBeLessThan((complexResult.data as any).complexity);
+    });
+
+    it('应该处理长描述增加工作量', async () => {
+      const shortDesc = '写一个函数';
+      const longDesc = '写一个函数'.repeat(100);
+
+      const shortResult = await toolHandlers.handleEstimateTask({
+        task_type: 'code-generation',
+        description: shortDesc,
+        required_capabilities: []
+      }, mockContext);
+
+      const longResult = await toolHandlers.handleEstimateTask({
+        task_type: 'code-generation',
+        description: longDesc,
+        required_capabilities: []
+      }, mockContext);
+
+      expect((longResult.data as any).workload).toBeGreaterThanOrEqual((shortResult.data as any).workload);
+    });
+
+    it('应该要求提供 task_type 参数', async () => {
+      const result = await toolHandlers.handleEstimateTask({
+        task_type: '',
+        description: '测试任务'
+      }, mockContext);
+
+      expect(result.content).toContain('请提供有效的 task_type 参数');
+    });
+
+    it('应该要求提供 description 参数', async () => {
+      const result = await toolHandlers.handleEstimateTask({
+        task_type: 'code-generation',
+        description: ''
+      }, mockContext);
+
+      expect(result.content).toContain('请提供有效的 description 参数');
+    });
+  });
+
+  describe('handleReviewTask', () => {
+    it('应该在评审系统未初始化时返回错误', async () => {
+      // 移除 reviewCommittee 模拟未初始化
+      mockAdapter.reviewCommittee = undefined;
+
+      const result = await toolHandlers.handleReviewTask({
+        task_id: 'task-123',
+        workload: 50,
+        value: 30
+      }, mockContext);
+
+      expect(result.content).toBe('❌ 评审系统未初始化');
+    });
+
+    it('应该在评审者信誉不足时返回错误', async () => {
+      mockAdapter.reputationSystem.hasPermission.mockReturnValue(false);
+
+      const result = await toolHandlers.handleReviewTask({
+        task_id: 'task-123',
+        workload: 50,
+        value: 30
+      }, mockContext);
+
+      expect(result.content).toContain('信誉等级不足以进行评审');
+    });
+
+    it('应该成功提交评审', async () => {
+      mockAdapter.reputationSystem.hasPermission.mockReturnValue(true);
+      mockAdapter.reviewCommittee!.submitReview.mockReturnValue({
+        success: true,
+        message: 'Review submitted'
+      });
+      mockAdapter.reviewCommittee!.isReviewComplete.mockReturnValue(false);
+
+      const result = await toolHandlers.handleReviewTask({
+        task_id: 'task-123',
+        workload: 50,
+        value: 30,
+        comment: '这是一个合理的任务'
+      }, mockContext);
+
+      expect(result.content).toContain('评审已提交');
+      expect(result.data).toHaveProperty('submitted', true);
+    });
+
+    it('应该处理评审提交失败', async () => {
+      mockAdapter.reputationSystem.hasPermission.mockReturnValue(true);
+      mockAdapter.reviewCommittee!.submitReview.mockReturnValue({
+        success: false,
+        message: 'Task not found'
+      });
+
+      const result = await toolHandlers.handleReviewTask({
+        task_id: 'task-123',
+        workload: 50,
+        value: 30
+      }, mockContext);
+
+      expect(result.content).toContain('评审提交失败');
+    });
+
+    it('应该验证 workload 参数范围', async () => {
+      const result = await toolHandlers.handleReviewTask({
+        task_id: 'task-123',
+        workload: 150, // 超出范围
+        value: 30
+      }, mockContext);
+
+      expect(result.content).toContain('workload 参数必须是 0-100 之间的数字');
+    });
+
+    it('应该验证 value 参数范围', async () => {
+      const result = await toolHandlers.handleReviewTask({
+        task_id: 'task-123',
+        workload: 50,
+        value: 200 // 超出范围
+      }, mockContext);
+
+      expect(result.content).toContain('value 参数必须是 -100 到 100 之间的数字');
+    });
+  });
+
+  describe('handleGetReviews', () => {
+    it('应该在评审系统未初始化时返回错误', async () => {
+      mockAdapter.reviewCommittee = undefined;
+
+      const result = await toolHandlers.handleGetReviews({
+        task_id: 'task-123'
+      }, mockContext);
+
+      expect(result.content).toBe('❌ 评审系统未初始化');
+    });
+
+    it('应该返回评审进行中的状态', async () => {
+      mockAdapter.reviewCommittee!.getReviewStatus.mockReturnValue({
+        taskId: 'task-123',
+        taskDescription: '测试任务',
+        reviews: [
+          { reviewerId: 'reviewer-1', dimensions: { workload: 50, value: 30 } }
+        ],
+        requiredReviewers: 3
+      });
+
+      const result = await toolHandlers.handleGetReviews({
+        task_id: 'task-123'
+      }, mockContext);
+
+      expect(result.content).toContain('评审进行中');
+      expect(result.data).toHaveProperty('status', 'in_progress');
+    });
+
+    it('应该返回评审完成的结果', async () => {
+      mockAdapter.reviewCommittee!.getReviewStatus.mockReturnValue({
+        taskId: 'task-123',
+        taskDescription: '测试任务',
+        reviews: [
+          { reviewerId: 'reviewer-1', dimensions: { workload: 50, value: 30 } },
+          { reviewerId: 'reviewer-2', dimensions: { workload: 55, value: 35 } },
+          { reviewerId: 'reviewer-3', dimensions: { workload: 45, value: 25 } }
+        ],
+        requiredReviewers: 3
+      });
+
+      mockAdapter.reviewCommittee!.finalizeReview.mockReturnValue({
+        taskId: 'task-123',
+        finalWorkload: 50,
+        finalValue: 30,
+        reviews: [
+          { reviewerId: 'reviewer-1', dimensions: { workload: 50, value: 30 } },
+          { reviewerId: 'reviewer-2', dimensions: { workload: 55, value: 35 } },
+          { reviewerId: 'reviewer-3', dimensions: { workload: 45, value: 25 } }
+        ],
+        outliers: []
+      });
+
+      const result = await toolHandlers.handleGetReviews({
+        task_id: 'task-123'
+      }, mockContext);
+
+      expect(result.content).toContain('评审完成');
+      expect(result.data).toHaveProperty('status', 'completed');
+    });
+
+    it('应该处理找不到评审记录', async () => {
+      mockAdapter.reviewCommittee!.getReviewStatus.mockReturnValue(null);
+
+      const result = await toolHandlers.handleGetReviews({
+        task_id: 'non-existent-task'
+      }, mockContext);
+
+      expect(result.content).toContain('找不到任务');
+    });
+  });
+
+  describe('handleGetCapabilities', () => {
+    it('应该返回指定 Agent 的能力列表', async () => {
+      const agent = createMockAgent({
+        peerId: 'peer-target-123',
+        displayName: 'Target Agent',
+        capabilities: [
+          { name: 'code-generation', description: '生成代码' },
+          { name: 'code-review', description: '代码审查' }
+        ]
+      });
+
+      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+        success: true,
+        data: [agent]
+      });
+
+      const result = await toolHandlers.handleGetCapabilities({
+        peer_id: 'peer-target'
+      }, mockContext);
+
+      expect(result.content).toContain('Agent 能力列表');
+      expect(result.content).toContain('Target Agent');
+      expect(result.content).toContain('code-generation');
+      expect(result.content).toContain('code-review');
+    });
+
+    it('应该支持按名称查找 Agent', async () => {
+      const agent = createMockAgent({
+        displayName: 'Code Helper',
+        capabilities: [{ name: 'code-generation', description: '生成代码' }]
+      });
+
+      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+        success: true,
+        data: [agent]
+      });
+
+      const result = await toolHandlers.handleGetCapabilities({
+        agent_name: 'Code Helper'
+      }, mockContext);
+
+      expect(result.content).toContain('Code Helper');
+    });
+
+    it('应该处理找不到 Agent 的情况', async () => {
+      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+        success: true,
+        data: []
+      });
+
+      const result = await toolHandlers.handleGetCapabilities({
+        peer_id: 'non-existent'
+      }, mockContext);
+
+      expect(result.content).toContain('找不到 Agent');
+    });
+
+    it('应该要求提供 peer_id 或 agent_name', async () => {
+      const result = await toolHandlers.handleGetCapabilities({}, mockContext);
+
+      expect(result.content).toContain('请提供 peer_id 或 agent_name 参数');
+    });
+
+    it('应该处理查询失败', async () => {
+      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+        success: false,
+        error: { code: 'NETWORK_ERROR' as const, message: 'Network error' }
+      });
+
+      const result = await toolHandlers.handleGetCapabilities({
+        peer_id: 'some-peer'
+      }, mockContext);
+
+      expect(result.content).toContain('查询失败');
+    });
+
+    it('应该处理无能力信息的 Agent', async () => {
+      const agent = createMockAgent({
+        peerId: 'peer-no-caps',
+        displayName: 'No Capabilities Agent',
+        capabilities: []
+      });
+
+      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+        success: true,
+        data: [agent]
+      });
+
+      const result = await toolHandlers.handleGetCapabilities({
+        peer_id: 'peer-no-caps'
+      }, mockContext);
+
+      expect(result.content).toContain('暂无能力信息');
     });
   });
 });

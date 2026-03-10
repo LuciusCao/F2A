@@ -95,7 +95,7 @@ function removePidFile(): void {
  * 获取文件锁（防止竞态条件）
  * @returns 是否成功获取锁
  */
-function acquireLock(): boolean {
+export function acquireLock(): boolean {
   try {
     ensureF2ADir();
     
@@ -129,7 +129,7 @@ function acquireLock(): boolean {
 /**
  * 释放文件锁（仅释放当前进程持有的锁）
  */
-function releaseLock(): void {
+export function releaseLock(): void {
   if (!existsSync(LOCK_FILE)) {
     return;
   }
@@ -149,7 +149,7 @@ function releaseLock(): void {
 /**
  * 检查日志文件大小并轮转
  */
-function rotateLogIfNeeded(): void {
+export function rotateLogIfNeeded(): void {
   if (!existsSync(LOG_FILE)) {
     return;
   }

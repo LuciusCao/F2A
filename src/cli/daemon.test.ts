@@ -66,17 +66,22 @@ describe('CLI Daemon Commands', () => {
       (writeSync as any).mockReturnValue(0);
       (closeSync as any).mockReturnValue(undefined);
 
-      // Re-import to test lock functions
-      vi.resetModules();
-      const { startBackground } = await import('./daemon.js');
+      const { acquireLock } = await import('./daemon.js');
+      const result = acquireLock();
       
-      // The lock is tested indirectly via startBackground
-      expect(openSync).toBeDefined();
+      expect(result).toBe(true);
+      expect(openSync).toHaveBeenCalledWith(LOCK_FILE, 'wx');
+      expect(writeSync).toHaveBeenCalledWith(3, process.pid.toString());
+      expect(closeSync).toHaveBeenCalledWith(3);
     });
 
     it('should clean up stale lock when process is dead', async () => {
-      // Lock file exists with PID of dead process
-      (existsSync as any).mockReturnValue(true);
+      // ensureF2ADir() checks F2A_DIR exists
+      // acquireLock() checks LOCK_FILE exists
+      (existsSync as any)
+        .mockReturnValueOnce(true) // F2A_DIR exists (ensureF2ADir)
+        .mockReturnValueOnce(true); // LOCK_FILE exists
+      
       (readFileSync as any).mockReturnValue('99999');
       
       // Mock process.kill to throw ESRCH (process not running)
@@ -87,19 +92,20 @@ describe('CLI Daemon Commands', () => {
         throw err;
       });
 
-      // Mock successful lock acquisition after cleanup
       (openSync as any).mockReturnValue(3);
       (writeSync as any).mockReturnValue(0);
       (closeSync as any).mockReturnValue(undefined);
 
-      // The lock cleanup should happen internally
-      expect(unlinkSync).toBeDefined();
+      const { acquireLock } = await import('./daemon.js');
+      const result = acquireLock();
+      
+      expect(result).toBe(true);
+      expect(unlinkSync).toHaveBeenCalledWith(LOCK_FILE); // Stale lock cleaned
       
       (process as any).kill = originalKill;
     });
 
     it('should fail to acquire lock when another process holds it', async () => {
-      // Lock file exists with PID of running process
       (existsSync as any).mockReturnValue(true);
       (readFileSync as any).mockReturnValue('12345');
       
@@ -107,17 +113,43 @@ describe('CLI Daemon Commands', () => {
       const originalKill = process.kill;
       (process as any).kill = vi.fn(() => true);
 
-      // Mock openSync to fail (lock file exists)
-      (openSync as any).mockImplementation(() => {
-        const err = new Error('EEXIST') as NodeJS.ErrnoException;
-        err.code = 'EEXIST';
-        throw err;
-      });
-
-      // The lock should not be acquired
-      expect(openSync).toBeDefined();
+      const { acquireLock } = await import('./daemon.js');
+      const result = acquireLock();
+      
+      expect(result).toBe(false);
+      expect(openSync).not.toHaveBeenCalled(); // No attempt to create lock
       
       (process as any).kill = originalKill;
+    });
+
+    it('should release lock owned by current process', async () => {
+      (existsSync as any).mockReturnValue(true);
+      (readFileSync as any).mockReturnValue(process.pid.toString());
+      (unlinkSync as any).mockReturnValue(undefined);
+
+      const { releaseLock } = await import('./daemon.js');
+      releaseLock();
+      
+      expect(unlinkSync).toHaveBeenCalledWith(LOCK_FILE);
+    });
+
+    it('should not release lock owned by different process', async () => {
+      (existsSync as any).mockReturnValue(true);
+      (readFileSync as any).mockReturnValue('54321'); // Different PID
+
+      const { releaseLock } = await import('./daemon.js');
+      releaseLock();
+      
+      expect(unlinkSync).not.toHaveBeenCalled();
+    });
+
+    it('should handle corrupted lock file on release', async () => {
+      (existsSync as any).mockReturnValue(true);
+      (readFileSync as any).mockReturnValue('invalid-content');
+
+      const { releaseLock } = await import('./daemon.js');
+      // Should not throw
+      expect(() => releaseLock()).not.toThrow();
     });
   });
 
@@ -125,38 +157,39 @@ describe('CLI Daemon Commands', () => {
     it('should not rotate when log file does not exist', async () => {
       (existsSync as any).mockReturnValue(false);
 
-      vi.resetModules();
-      await import('./daemon.js');
+      const { rotateLogIfNeeded } = await import('./daemon.js');
+      rotateLogIfNeeded();
       
-      // No rotation should happen
       expect(statSync).not.toHaveBeenCalled();
+      expect(renameSync).not.toHaveBeenCalled();
     });
 
     it('should not rotate when log file is small', async () => {
       (existsSync as any).mockReturnValue(true);
       (statSync as any).mockReturnValue({ size: 1024 }); // 1KB, less than 10MB
 
-      vi.resetModules();
-      await import('./daemon.js');
+      const { rotateLogIfNeeded } = await import('./daemon.js');
+      rotateLogIfNeeded();
       
+      expect(statSync).toHaveBeenCalledWith(LOG_FILE);
       expect(renameSync).not.toHaveBeenCalled();
     });
 
-    it('should rotate when log file exceeds max size', async () => {
+    it('should rotate when log file exceeds max size (10MB)', async () => {
       (existsSync as any)
         .mockReturnValueOnce(true) // LOG_FILE exists
         .mockReturnValueOnce(false); // .old file does not exist
       (statSync as any).mockReturnValue({ size: 15 * 1024 * 1024 }); // 15MB
       (renameSync as any).mockReturnValue(undefined);
 
-      vi.resetModules();
-      await import('./daemon.js');
+      const { rotateLogIfNeeded } = await import('./daemon.js');
+      rotateLogIfNeeded();
       
-      // Rotation logic should be available
-      expect(renameSync).toBeDefined();
+      expect(statSync).toHaveBeenCalledWith(LOG_FILE);
+      expect(renameSync).toHaveBeenCalledWith(LOG_FILE, LOG_FILE + '.old');
     });
 
-    it('should delete old backup when rotating', async () => {
+    it('should delete old backup before rotating', async () => {
       (existsSync as any)
         .mockReturnValueOnce(true) // LOG_FILE exists
         .mockReturnValueOnce(true); // .old file exists
@@ -164,10 +197,22 @@ describe('CLI Daemon Commands', () => {
       (unlinkSync as any).mockReturnValue(undefined);
       (renameSync as any).mockReturnValue(undefined);
 
-      vi.resetModules();
-      await import('./daemon.js');
+      const { rotateLogIfNeeded } = await import('./daemon.js');
+      rotateLogIfNeeded();
       
-      expect(unlinkSync).toBeDefined();
+      expect(unlinkSync).toHaveBeenCalledWith(LOG_FILE + '.old');
+      expect(renameSync).toHaveBeenCalledWith(LOG_FILE, LOG_FILE + '.old');
+    });
+
+    it('should handle errors gracefully', async () => {
+      (existsSync as any).mockReturnValue(true);
+      (statSync as any).mockImplementation(() => {
+        throw new Error('Permission denied');
+      });
+
+      const { rotateLogIfNeeded } = await import('./daemon.js');
+      // Should not throw
+      expect(() => rotateLogIfNeeded()).not.toThrow();
     });
   });
 

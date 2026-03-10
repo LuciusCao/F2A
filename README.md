@@ -67,6 +67,7 @@ node dist/cli/index.js peers
 | `F2A_CONTROL_TOKEN` | 自动生成 | 认证 Token（生产环境必须设置） |
 | `F2A_P2P_PORT` | 9000 | P2P 网络端口 |
 | `F2A_SIGNATURE_KEY` | - | 请求签名密钥（可选） |
+| `F2A_HEALTH_TIMEOUT` | 15000 | Daemon 启动健康检查超时（毫秒） |
 
 **生产环境配置示例：**
 

@@ -11,6 +11,7 @@ import type {
   ReputationConfig,
   TaskResponse 
 } from './types.js';
+import { INTERNAL_REPUTATION_CONFIG } from './types.js';
 import { pluginLogger as logger } from './logger.js';
 
 /** 防抖保存配置 */
@@ -211,7 +212,7 @@ export class ReputationSystem {
    * @param peerId - 节点的唯一标识符
    * @param delta - 分数变化量，默认为 3
    */
-  recordReviewReward(peerId: string, delta: number = 3): void {
+  recordReviewReward(peerId: string, delta: number = INTERNAL_REPUTATION_CONFIG.reviewReward): void {
     const entry = this.getReputation(peerId);
     
     entry.score = Math.min(100, entry.score + delta);
@@ -234,7 +235,7 @@ export class ReputationSystem {
    * @param delta - 分数变化量，默认为 -5
    * @param reason - 可选的惩罚原因描述
    */
-  recordReviewPenalty(peerId: string, delta: number = -5, reason?: string): void {
+  recordReviewPenalty(peerId: string, delta: number = -INTERNAL_REPUTATION_CONFIG.reviewPenalty, reason?: string): void {
     const entry = this.getReputation(peerId);
     
     entry.score = Math.max(0, entry.score + delta);

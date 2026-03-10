@@ -20,6 +20,7 @@ import { F2ANodeManager } from './node-manager.js';
 import { F2ANetworkClient } from './network-client.js';
 import { WebhookServer, WebhookHandler } from './webhook-server.js';
 import { ReputationSystem, ReputationManagerAdapter } from './reputation.js';
+import { INTERNAL_REPUTATION_CONFIG } from './types.js';
 import { CapabilityDetector } from './capability-detector.js';
 import { TaskQueue } from './task-queue.js';
 import { AnnouncementQueue } from './announcement-queue.js';
@@ -126,12 +127,13 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     // 初始化组件
     this.nodeManager = new F2ANodeManager(this.nodeConfig);
     this.networkClient = new F2ANetworkClient(this.nodeConfig);
+    // 使用程序内部控制的经济参数，防止用户作弊
     this.reputationSystem = new ReputationSystem(
-      this.config.reputation || {
-        enabled: true,
-        initialScore: 50,
-        minScoreForService: 20,
-        decayRate: 0.01
+      {
+        enabled: INTERNAL_REPUTATION_CONFIG.enabled,
+        initialScore: INTERNAL_REPUTATION_CONFIG.initialScore,
+        minScoreForService: INTERNAL_REPUTATION_CONFIG.minScoreForService,
+        decayRate: INTERNAL_REPUTATION_CONFIG.decayRate,
       },
       this.config.dataDir || './f2a-data'
     );
@@ -142,7 +144,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     this.reviewCommittee = new ReviewCommittee(reputationAdapter, {
       minReviewers: 1,
       maxReviewers: 5,
-      minReputation: 40,
+      minReputation: INTERNAL_REPUTATION_CONFIG.minScoreForReview,
       reviewTimeout: 5 * 60 * 1000 // 5 分钟
     });
 

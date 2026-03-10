@@ -4,7 +4,7 @@
  */
 
 import { spawn, ChildProcess } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, statSync, renameSync, openSync, closeSync, writeSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { request, RequestOptions } from 'http';
@@ -14,6 +14,8 @@ import { fileURLToPath } from 'url';
 const F2A_DIR = join(homedir(), '.f2a');
 const PID_FILE = join(F2A_DIR, 'daemon.pid');
 const LOG_FILE = join(F2A_DIR, 'daemon.log');
+const LOCK_FILE = join(F2A_DIR, 'daemon.lock');
+const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
 
 // 获取当前模块所在目录（用于定位 daemon 脚本）
 const __filename = fileURLToPath(import.meta.url);
@@ -90,6 +92,72 @@ function removePidFile(): void {
 }
 
 /**
+ * 获取文件锁（防止竞态条件）
+ * @returns 是否成功获取锁
+ */
+function acquireLock(): boolean {
+  try {
+    ensureF2ADir();
+    
+    // 检查是否存在过期锁（进程已死亡但锁文件残留）
+    if (existsSync(LOCK_FILE)) {
+      try {
+        const lockPid = parseInt(readFileSync(LOCK_FILE, 'utf-8').trim(), 10);
+        if (!isNaN(lockPid) && !isProcessRunning(lockPid)) {
+          // 进程已死亡，清理过期锁
+          unlinkSync(LOCK_FILE);
+        } else {
+          // 锁被其他活跃进程持有
+          return false;
+        }
+      } catch {
+        // 无法读取锁文件，尝试删除
+        unlinkSync(LOCK_FILE);
+      }
+    }
+    
+    // 尝试创建锁文件（原子操作）
+    const fd = openSync(LOCK_FILE, 'wx');
+    writeSync(fd, process.pid.toString());
+    closeSync(fd);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 释放文件锁
+ */
+function releaseLock(): void {
+  if (existsSync(LOCK_FILE)) {
+    unlinkSync(LOCK_FILE);
+  }
+}
+
+/**
+ * 检查日志文件大小并轮转
+ */
+function rotateLogIfNeeded(): void {
+  if (!existsSync(LOG_FILE)) {
+    return;
+  }
+  
+  try {
+    const stats = statSync(LOG_FILE);
+    if (stats.size > MAX_LOG_SIZE) {
+      const oldLogFile = LOG_FILE + '.old';
+      if (existsSync(oldLogFile)) {
+        unlinkSync(oldLogFile);
+      }
+      renameSync(LOG_FILE, oldLogFile);
+    }
+  } catch {
+    // 忽略错误
+  }
+}
+
+/**
  * 检查 daemon 是否在运行
  */
 export function isDaemonRunning(): boolean {
@@ -141,6 +209,9 @@ export async function startForeground(): Promise<void> {
     process.exit(1);
   }
 
+  ensureF2ADir();
+  rotateLogIfNeeded();
+  
   console.log('[F2A] 启动 daemon (前台模式)...');
   console.log(`[F2A] 控制端口: ${controlPort}`);
   console.log('[F2A] 按 Ctrl+C 停止');
@@ -216,6 +287,9 @@ export async function startBackground(): Promise<void> {
 
   ensureF2ADir();
 
+  // 日志轮转
+  rotateLogIfNeeded();
+
   console.log('[F2A] 启动 daemon (后台模式)...');
   console.log(`[F2A] 控制端口: ${controlPort}`);
   console.log(`[F2A] 日志文件: ${LOG_FILE}`);
@@ -238,81 +312,88 @@ export async function startBackground(): Promise<void> {
     env.F2A_CONTROL_PORT = controlPort.toString();
   }
 
-  // 再次检查是否有其他进程已启动（防止竞态条件）
-  // 在写入 PID 文件前再次验证
-  const existingPid = readDaemonPid();
-  if (existingPid !== null && isProcessRunning(existingPid)) {
-    console.error('[F2A] Daemon 已经在运行中 (竞态检测)');
-    console.error(`[F2A] PID: ${existingPid}`);
+  // 获取文件锁（防止竞态条件）
+  if (!acquireLock()) {
+    console.error('[F2A] 无法获取锁，可能有其他 daemon 实例正在启动');
     process.exit(1);
   }
 
-  // 启动后台进程
-  const child = spawn(nodePath, [daemonScript], {
-    detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env,
-    // 使用跨平台的工作目录
-    cwd: homedir(),
-  });
+  try {
+    // 启动后台进程
+    const child = spawn(nodePath, [daemonScript], {
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env,
+      // 使用跨平台的工作目录
+      cwd: homedir(),
+    });
 
-  // 创建日志写入流
-  const { createWriteStream } = await import('fs');
-  const logStream = createWriteStream(LOG_FILE, { flags: 'a' });
-  
-  child.stdout?.pipe(logStream);
-  child.stderr?.pipe(logStream);
+    // 创建日志写入流
+    const { createWriteStream } = await import('fs');
+    const logStream = createWriteStream(LOG_FILE, { flags: 'a' });
+    
+    child.stdout?.pipe(logStream);
+    child.stderr?.pipe(logStream);
 
-  // 等待 daemon 进程启动
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error('启动超时'));
-    }, 10000);
+    // 等待 daemon 进程启动
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('启动超时'));
+      }, 10000);
 
-    let started = false;
+      let started = false;
 
-    child.on('spawn', () => {
-      // 再次检查竞态条件：确保没有其他进程同时写入 PID 文件
-      const currentPid = readDaemonPid();
-      if (currentPid !== null && currentPid !== child.pid && isProcessRunning(currentPid)) {
-        // 另一个进程已启动，终止当前进程
-        child.kill();
-        removePidFile();
+      child.on('spawn', () => {
+        // 再次检查竞态条件：确保没有其他进程同时写入 PID 文件
+        const currentPid = readDaemonPid();
+        if (currentPid !== null && currentPid !== child.pid && isProcessRunning(currentPid)) {
+          // 另一个进程已启动，终止当前进程
+          child.kill();
+          removePidFile();
+          clearTimeout(timeout);
+          reject(new Error('另一个 daemon 实例已启动'));
+          return;
+        }
+        
+        // 写入 PID 文件
+        writeDaemonPid(child.pid!);
+        console.log(`[F2A] Daemon 已启动，PID: ${child.pid}`);
+        started = true;
         clearTimeout(timeout);
-        reject(new Error('另一个 daemon 实例已启动'));
-        return;
-      }
-      
-      // 写入 PID 文件
-      writeDaemonPid(child.pid!);
-      console.log(`[F2A] Daemon 已启动，PID: ${child.pid}`);
-      started = true;
-      clearTimeout(timeout);
-      resolve();
+        resolve();
+      });
+
+      child.on('error', (err) => {
+        clearTimeout(timeout);
+        if (!started) {
+          reject(err);
+        }
+      });
+
+      // 检查进程是否立即退出
+      child.on('exit', (code) => {
+        clearTimeout(timeout);
+        if (!started) {
+          reject(new Error(`Daemon 启动失败，退出码: ${code}`));
+        }
+      });
     });
 
-    child.on('error', (err) => {
-      clearTimeout(timeout);
-      if (!started) {
-        reject(err);
-      }
-    });
-
-    // 检查进程是否立即退出
-    child.on('exit', (code) => {
-      clearTimeout(timeout);
-      if (!started) {
-        reject(new Error(`Daemon 启动失败，退出码: ${code}`));
-      }
-    });
-  });
-
-  // 分离子进程
-  child.unref();
+    // 分离子进程
+    child.unref();
+  } catch (error) {
+    // 启动失败，释放锁
+    releaseLock();
+    throw error;
+  }
+  
+  // 释放文件锁（daemon 已成功启动）
+  releaseLock();
 
   // 等待 daemon HTTP 服务就绪（轮询 /health 端点）
   console.log('[F2A] 等待 daemon 服务就绪...');
-  const healthReady = await waitForDaemonHealth(controlPort, 15000);
+  const healthTimeout = parseInt(process.env.F2A_HEALTH_TIMEOUT || '15000', 10);
+  const healthReady = await waitForDaemonHealth(controlPort, healthTimeout);
   
   if (healthReady) {
     console.log('[F2A] Daemon 服务已就绪');

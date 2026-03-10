@@ -500,6 +500,85 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         description: '查看任务广播统计',
         parameters: {},
         handler: this.claimHandlers.handleAnnouncementStats.bind(this.claimHandlers)
+      },
+      // 任务评估相关工具
+      {
+        name: 'f2a_estimate_task',
+        description: '评估任务成本（工作量、复杂度、预估时间）',
+        parameters: {
+          task_type: {
+            type: 'string',
+            description: '任务类型',
+            required: true
+          },
+          description: {
+            type: 'string',
+            description: '任务描述',
+            required: true
+          },
+          required_capabilities: {
+            type: 'array',
+            description: '所需能力列表',
+            required: false
+          }
+        },
+        handler: this.toolHandlers.handleEstimateTask.bind(this.toolHandlers)
+      },
+      {
+        name: 'f2a_review_task',
+        description: '作为评审者评审任务的工作量和价值',
+        parameters: {
+          task_id: {
+            type: 'string',
+            description: '任务ID',
+            required: true
+          },
+          workload: {
+            type: 'number',
+            description: '工作量评估 (0-100)',
+            required: true
+          },
+          value: {
+            type: 'number',
+            description: '价值评估 (-100 ~ 100)',
+            required: true
+          },
+          risk_flags: {
+            type: 'array',
+            description: '风险标记: dangerous, malicious, spam, invalid',
+            required: false
+          },
+          comment: {
+            type: 'string',
+            description: '评审意见',
+            required: false
+          }
+        },
+        handler: this.toolHandlers.handleReviewTask.bind(this.toolHandlers)
+      },
+      {
+        name: 'f2a_get_reviews',
+        description: '获取任务的评审汇总结果',
+        parameters: {
+          task_id: {
+            type: 'string',
+            description: '任务ID',
+            required: true
+          }
+        },
+        handler: this.toolHandlers.handleGetReviews.bind(this.toolHandlers)
+      },
+      {
+        name: 'f2a_get_capabilities',
+        description: '获取指定 Agent 的能力列表',
+        parameters: {
+          peer_id: {
+            type: 'string',
+            description: 'Agent 的 Peer ID 或名称',
+            required: false
+          }
+        },
+        handler: this.toolHandlers.handleGetCapabilities.bind(this.toolHandlers)
       }
     ];
   }

@@ -170,8 +170,20 @@ export class E2EECrypto {
       const senderPublicKey = Buffer.from(encrypted.senderPublicKey, 'base64');
       const sharedSecret = x25519.getSharedSecret(this.keyPair.privateKey, senderPublicKey);
       
-      // 使用消息中的盐值派生 AES 密钥（与加密方使用相同的盐值）
-      const salt = encrypted.salt ? Buffer.from(encrypted.salt, 'base64') : Buffer.from('F2A-E2EE-SALT-2024', 'utf-8');
+      // P2 修复：强制要求盐值，不使用硬编码默认值
+      if (!encrypted.salt) {
+        this.logger.error('Decryption failed: missing salt value. Salt is required for security.');
+        return null;
+      }
+      
+      const salt = Buffer.from(encrypted.salt, 'base64');
+      
+      // 验证盐值长度（至少 16 字节）
+      if (salt.length < 16) {
+        this.logger.error('Decryption failed: salt value too short. Minimum 16 bytes required.');
+        return null;
+      }
+      
       const aesKey = this.deriveAESKey(sharedSecret, salt);
 
       // 解码参数

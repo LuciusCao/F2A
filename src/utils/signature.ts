@@ -109,28 +109,72 @@ export class RequestSigner {
 
 /**
  * 从环境变量加载签名密钥
+ * 
+ * P1 修复：生产环境强制要求签名密钥，否则禁用签名功能
  */
 export function loadSignatureConfig(): SignatureConfig | null {
   const secretKey = process.env.F2A_SIGNATURE_KEY;
+  const isProduction = process.env.NODE_ENV === 'production';
+  const logger = new Logger({ component: 'SignatureConfig' });
+  
   if (!secretKey) {
-    // 生产环境强制警告，开发环境仅提示
-    const isProduction = process.env.NODE_ENV === 'production';
-    const logger = new Logger({ component: 'SignatureConfig' });
-    
     if (isProduction) {
-      logger.error('F2A_SIGNATURE_KEY is not set! Signature verification is DISABLED. This is a security risk in production.');
+      // P1 修复：生产环境强制警告
+      // 签名功能在生产环境是可选的，但强烈建议配置
+      // 如果未配置，签名验证将被禁用，这是安全风险
+      logger.error('F2A_SIGNATURE_KEY is not set in production environment!');
+      logger.error('Signature verification is DISABLED. This is a security risk.');
+      logger.error('Please set F2A_SIGNATURE_KEY environment variable to enable secure message verification.');
+      logger.error('Example: export F2A_SIGNATURE_KEY=$(openssl rand -hex 32)');
+      
+      // 返回 null 表示禁用签名功能
+      // 调用方应该检查返回值并相应处理
+      return null;
     } else {
-      logger.warn('F2A_SIGNATURE_KEY is not set. Signature verification is disabled. Set this environment variable for secure message verification.');
+      // 开发环境仅提示
+      logger.warn('F2A_SIGNATURE_KEY is not set. Signature verification is disabled.');
+      logger.warn('Set this environment variable for secure message verification.');
+      logger.warn('Example: export F2A_SIGNATURE_KEY=$(openssl rand -hex 32)');
     }
     return null;
+  }
+
+  // 验证密钥强度
+  if (secretKey.length < 32) {
+    logger.warn('F2A_SIGNATURE_KEY is too short. Recommended minimum length is 32 characters.');
   }
 
   const tolerance = process.env.F2A_SIGNATURE_TOLERANCE
     ? parseInt(process.env.F2A_SIGNATURE_TOLERANCE, 10)
     : undefined;
 
+  logger.info('Signature verification enabled', { 
+    timestampTolerance: tolerance || 300000 // 默认 5 分钟
+  });
+
   return {
     secretKey,
     timestampTolerance: tolerance
   };
+}
+
+/**
+ * 检查签名功能是否可用
+ * 在生产环境，如果签名密钥未设置，应考虑禁用需要签名的功能
+ */
+export function isSignatureAvailable(): boolean {
+  return !!process.env.F2A_SIGNATURE_KEY;
+}
+
+/**
+ * 生产环境签名检查装饰器
+ * 如果签名功能不可用且处于生产环境，抛出错误
+ */
+export function requireSignatureInProduction(): void {
+  if (process.env.NODE_ENV === 'production' && !process.env.F2A_SIGNATURE_KEY) {
+    throw new Error(
+      'Signature verification is required in production but F2A_SIGNATURE_KEY is not set. ' +
+      'Please set F2A_SIGNATURE_KEY environment variable.'
+    );
+  }
 }

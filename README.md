@@ -130,16 +130,28 @@ npm install -g @f2a/openclaw-adapter
 
 ### 2.2 配置详解
 
+**基础配置：**
+
+```json
+{
+  "agentName": "显示名称",        // 在网络中显示的名称
+  "autoStart": true,             // 自动启动 F2A daemon
+  "p2pPort": 9000,               // P2P 网络端口
+  "enableMDNS": true             // 启用本地网络自动发现
+}
+```
+
+**完整配置（可选）：**
+
 ```json
 {
   "agentName": "显示名称",
-  "f2aPath": "F2A项目路径",
   "autoStart": true,
-  "webhookPort": 9002,
-  "controlPort": 9001,
+  "controlPort": 9001,           // HTTP 控制端口
   "p2pPort": 9000,
+  "webhookPort": 9002,           // Webhook 接收端口
   "enableMDNS": true,
-  "bootstrapPeers": [],
+  "bootstrapPeers": [],          // 引导节点（用于连接远程节点）
   "maxQueuedTasks": 100,
   "reputation": {
     "enabled": true,
@@ -149,8 +161,12 @@ npm install -g @f2a/openclaw-adapter
     "requireConfirmation": false,
     "whitelist": [],
     "blacklist": []
-  }
+  },
+  "f2aPath": "/path/to/F2A"      // 仅开发调试时需要
 }
+```
+
+> **提示**：`f2aPath` 仅在开发调试时需要，用于指定本地 F2A 源码路径。通过 `openclaw plugins install` 安装时不需要配置。
 ```
 
 ### 2.3 使用方式

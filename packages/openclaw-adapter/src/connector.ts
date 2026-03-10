@@ -19,7 +19,8 @@ import type {
 import { F2ANodeManager } from './node-manager.js';
 import { F2ANetworkClient } from './network-client.js';
 import { WebhookServer, WebhookHandler } from './webhook-server.js';
-import { ReputationSystem } from './reputation.js';
+import { ReputationSystem, ReputationManagerAdapter } from './reputation.js';
+import { INTERNAL_REPUTATION_CONFIG } from './types.js';
 import { CapabilityDetector } from './capability-detector.js';
 import { TaskQueue } from './task-queue.js';
 import { AnnouncementQueue } from './announcement-queue.js';
@@ -28,6 +29,7 @@ import { taskGuard, TaskGuardContext } from './task-guard.js';
 import { ToolHandlers } from './tool-handlers.js';
 import { ClaimHandlers } from './claim-handlers.js';
 import { pluginLogger as logger } from './logger.js';
+import { ReviewCommittee } from '@f2a/network';
 
 /** 广播结果类型 */
 interface BroadcastResult {
@@ -49,6 +51,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   private taskQueue!: TaskQueue;
   private announcementQueue!: AnnouncementQueue;
   private webhookPusher?: WebhookPusher;
+  private reviewCommittee?: ReviewCommittee;
   
   // 处理器实例（延迟初始化）
   private _toolHandlers?: ToolHandlers;
@@ -124,16 +127,26 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     // 初始化组件
     this.nodeManager = new F2ANodeManager(this.nodeConfig);
     this.networkClient = new F2ANetworkClient(this.nodeConfig);
+    // 使用程序内部控制的经济参数，防止用户作弊
     this.reputationSystem = new ReputationSystem(
-      this.config.reputation || {
-        enabled: true,
-        initialScore: 50,
-        minScoreForService: 20,
-        decayRate: 0.01
+      {
+        enabled: INTERNAL_REPUTATION_CONFIG.enabled,
+        initialScore: INTERNAL_REPUTATION_CONFIG.initialScore,
+        minScoreForService: INTERNAL_REPUTATION_CONFIG.minScoreForService,
+        decayRate: INTERNAL_REPUTATION_CONFIG.decayRate,
       },
       this.config.dataDir || './f2a-data'
     );
     this.capabilityDetector = new CapabilityDetector();
+
+    // 初始化评审委员会（使用适配器包装 ReputationSystem）
+    const reputationAdapter = new ReputationManagerAdapter(this.reputationSystem);
+    this.reviewCommittee = new ReviewCommittee(reputationAdapter, {
+      minReviewers: 1,
+      maxReviewers: 5,
+      minReputation: INTERNAL_REPUTATION_CONFIG.minScoreForReview,
+      reviewTimeout: 5 * 60 * 1000 // 5 分钟
+    });
 
     // 处理器使用 getter 延迟初始化，无需在此显式创建
 

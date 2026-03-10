@@ -19,7 +19,7 @@ import type { F2ANetworkClient } from './network-client.js';
 import type { F2ANodeManager } from './node-manager.js';
 import type { TaskQueue } from './task-queue.js';
 import type { AnnouncementQueue } from './announcement-queue.js';
-import type { ReviewCommittee, TaskReview, RiskFlag, ReviewResult } from '../../src/core/review-committee.js';
+import type { ReviewCommittee, TaskReview, RiskFlag, ReviewResult } from '@f2a/network';
 import { pluginLogger as logger } from './logger.js';
 
 /** 广播结果类型 */
@@ -41,6 +41,7 @@ interface AdapterInternalAccess {
   announcementQueue: AnnouncementQueue;
   config: F2APluginConfig;
   api?: OpenClawPluginApi;
+  reviewCommittee?: ReviewCommittee;
 }
 
 /**

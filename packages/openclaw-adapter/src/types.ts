@@ -164,11 +164,24 @@ export interface F2APluginConfig {
 }
 
 export interface ReputationConfig {
-  enabled: boolean;
-  initialScore: number;
-  minScoreForService: number;
-  decayRate: number;
+  // 已废弃：reputation 核心参数由程序内部控制
+  // 不再允许用户配置 enabled、initialScore、minScoreForService、decayRate
+  // 这些是核心经济机制参数，必须统一管理
 }
+
+/**
+ * 程序内部控制的信誉配置
+ * 用户不可配置，防止作弊
+ */
+export const INTERNAL_REPUTATION_CONFIG = {
+  enabled: true,                    // 强制启用
+  initialScore: 30,                 // 新用户低分起步
+  minScoreForService: 50,           // 低于此分无法接任务
+  decayRate: 0.01,                  // 每小时衰减率
+  reviewReward: 3,                  // 评审奖励
+  reviewPenalty: 5,                 // 评审惩罚
+  minScoreForReview: 40,            // 评审最低信誉
+} as const;
 
 export interface SecurityConfig {
   requireConfirmation: boolean;

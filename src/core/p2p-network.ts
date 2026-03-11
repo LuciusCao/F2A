@@ -158,6 +158,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private peerTable: Map<string, PeerInfo> = new Map();
   /** P2.4 修复：已连接 Peer 索引，用于 O(1) 查询 */
   private connectedPeers: Set<string> = new Set();
+  /** P1 修复：信任的 Peer 白名单，不会被清理 */
+  private trustedPeers: Set<string> = new Set();
   /** 用于保护 peerTable 并发访问的锁 */
   private peerTableLock = new AsyncLock();
   private agentInfo: AgentInfo;
@@ -186,6 +188,22 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       ...config
     };
     this.logger = new Logger({ component: 'P2P' });
+    
+    // 初始化信任的 Peer 白名单
+    if (this.config.trustedPeers) {
+      this.config.trustedPeers.forEach(peerId => this.trustedPeers.add(peerId));
+    }
+    // 引导节点自动加入白名单
+    if (this.config.bootstrapPeers) {
+      this.config.bootstrapPeers.forEach(addr => {
+        // 从 multiaddr 提取 peer ID
+        try {
+          const ma = multiaddr(addr);
+          const peerId = ma.getPeerId();
+          if (peerId) this.trustedPeers.add(peerId);
+        } catch { /* ignore invalid addresses */ }
+      });
+    }
   }
 
   /**
@@ -1235,27 +1253,35 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     const now = Date.now();
     const threshold = aggressive ? 0 : PEER_STALE_THRESHOLD;
     let cleaned = 0;
+    let skippedTrusted = 0;
+
+    // 辅助函数：检查 peer 是否在白名单中
+    const isTrusted = (peerId: string): boolean => this.trustedPeers.has(peerId);
 
     // 激进清理：清理更多类型的条目
     if (aggressive) {
-      // 1. 清理所有未连接且超过 1 小时的 peer
+      // 1. 清理所有未连接且超过 1 小时的 peer（跳过白名单）
       for (const [peerId, peer] of this.peerTable) {
+        if (isTrusted(peerId)) {
+          skippedTrusted++;
+          continue;
+        }
         if (!peer.connected && now - peer.lastSeen > 60 * 60 * 1000) {
           this.peerTable.delete(peerId);
           cleaned++;
         }
       }
       
-      // 2. 如果仍然超过高水位线，按最后活跃时间排序后删除最旧的
+      // 2. 如果仍然超过高水位线，按最后活跃时间排序后删除最旧的（跳过白名单）
       const highWatermark = Math.floor(PEER_TABLE_MAX_SIZE * PEER_TABLE_HIGH_WATERMARK);
       if (this.peerTable.size > highWatermark) {
         const targetSize = Math.floor(PEER_TABLE_MAX_SIZE * PEER_TABLE_AGGRESSIVE_CLEANUP_THRESHOLD);
         const sorted = Array.from(this.peerTable.entries())
           .sort((a, b) => a[1].lastSeen - b[1].lastSeen);
         
-        // 优先删除未连接的 peer
+        // 优先删除未连接的 peer（跳过白名单）
         const toRemove = sorted
-          .filter(([_, peer]) => !peer.connected)
+          .filter(([peerId, peer]) => !isTrusted(peerId) && !peer.connected)
           .slice(0, this.peerTable.size - targetSize);
         
         for (const [peerId] of toRemove) {
@@ -1264,12 +1290,18 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         }
       }
     } else {
-      // 常规清理：清理过期条目
+      // 常规清理：清理过期条目（跳过白名单）
       for (const [peerId, peer] of this.peerTable) {
+        // 跳过白名单中的 peer
+        if (isTrusted(peerId)) {
+          skippedTrusted++;
+          continue;
+        }
+        
         // 清理条件：长时间未活跃，或者未连接且超过一定时间
         const shouldClean = 
           now - peer.lastSeen > threshold ||
-          (!peer.connected && now - peer.lastSeen > 60 * 60 * 1000); // 未连接超过1小时
+          (!peer.connected && now - peer.lastSeen > 60 * 60 * 1000); // 未连接超过 1 小时
 
         if (shouldClean) {
           this.peerTable.delete(peerId);
@@ -1278,20 +1310,16 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       }
     }
 
-    if (cleaned > 0) {
-      this.logger.info('Cleaned up stale peers', { cleaned, remaining: this.peerTable.size, aggressive });
-    }
-
-    // 如果仍然超过最大容量，按最后活跃时间排序后删除最旧的
+    // 如果仍然超过最大容量，按最后活跃时间排序后删除最旧的（跳过白名单）
     if (this.peerTable.size > PEER_TABLE_MAX_SIZE) {
       const sorted = Array.from(this.peerTable.entries())
         .sort((a, b) => a[1].lastSeen - b[1].lastSeen);
 
-      // 优先删除未连接的 peer
-      const disconnected = sorted.filter(([_, peer]) => !peer.connected);
+      // 优先删除未连接的 peer（跳过白名单）
+      const disconnected = sorted.filter(([peerId, _]) => !isTrusted(peerId) && !this.connectedPeers.has(peerId));
       const toRemove = disconnected.length > 0 
         ? disconnected.slice(0, this.peerTable.size - PEER_TABLE_MAX_SIZE)
-        : sorted.slice(0, this.peerTable.size - PEER_TABLE_MAX_SIZE);
+        : sorted.filter(([peerId, _]) => !isTrusted(peerId)).slice(0, this.peerTable.size - PEER_TABLE_MAX_SIZE);
       
       for (const [peerId] of toRemove) {
         this.peerTable.delete(peerId);
@@ -1299,6 +1327,16 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       }
 
       this.logger.info('Removed oldest peers to maintain limit', { removed: toRemove.length });
+    }
+
+    if (cleaned > 0 || skippedTrusted > 0) {
+      this.logger.info('Cleaned up stale peers', { 
+        cleaned, 
+        skippedTrusted,
+        remaining: this.peerTable.size, 
+        aggressive,
+        trustedCount: this.trustedPeers.size 
+      });
     }
   }
 

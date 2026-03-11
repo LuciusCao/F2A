@@ -279,7 +279,7 @@ export interface ReputationEntry {
 }
 
 export interface ReputationEvent {
-  type: 'task_success' | 'task_failure' | 'task_rejected' | 'timeout' | 'malicious';
+  type: 'task_success' | 'task_failure' | 'task_rejected' | 'timeout' | 'malicious' | 'review_reward' | 'review_penalty';
   taskId?: string;
   delta: number;
   timestamp: number;

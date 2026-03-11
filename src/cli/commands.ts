@@ -7,20 +7,37 @@ import { request, RequestOptions } from 'http';
 
 const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
 
-// 生产环境强制要求设置 F2A_CONTROL_TOKEN
-const CONTROL_TOKEN = process.env.F2A_CONTROL_TOKEN;
-if (!CONTROL_TOKEN) {
-  console.error('[F2A] 错误：必须设置 F2A_CONTROL_TOKEN 环境变量');
-  console.error('[F2A] 请运行：export F2A_CONTROL_TOKEN=$(openssl rand -hex 32)');
-  console.error('[F2A] 或者在 daemon 启动时设置：F2A_CONTROL_TOKEN=your-secure-token f2a start');
-  process.exit(1);
+/**
+ * 获取并验证控制 Token
+ * 生产环境强制要求设置 F2A_CONTROL_TOKEN
+ */
+function getControlToken(): string {
+  const token = process.env.F2A_CONTROL_TOKEN;
+  
+  if (!token) {
+    console.error('[F2A] 错误：必须设置 F2A_CONTROL_TOKEN 环境变量');
+    console.error('[F2A] 请运行：export F2A_CONTROL_TOKEN=$(openssl rand -hex 32)');
+    console.error('[F2A] 或者在 daemon 启动时设置：F2A_CONTROL_TOKEN=your-secure-token f2a start');
+    process.exit(1);
+  }
+
+  // 安全检查：禁止使用不安全的默认值
+  if (token === 'f2a-default-token') {
+    console.error('[F2A] 错误：F2A_CONTROL_TOKEN 不能使用默认值 "f2a-default-token"');
+    console.error('[F2A] 请设置一个安全的 token：export F2A_CONTROL_TOKEN=$(openssl rand -hex 32)');
+    process.exit(1);
+  }
+
+  return token;
 }
 
-// 安全检查：禁止使用不安全的默认值
-if (CONTROL_TOKEN === 'f2a-default-token') {
-  console.error('[F2A] 错误：F2A_CONTROL_TOKEN 不能使用默认值 "f2a-default-token"');
-  console.error('[F2A] 请设置一个安全的 token：export F2A_CONTROL_TOKEN=$(openssl rand -hex 32)');
-  process.exit(1);
+// 惰性获取 token，避免模块加载时立即验证（便于测试）
+let _controlToken: string | undefined;
+function getControlTokenLazy(): string {
+  if (!_controlToken) {
+    _controlToken = getControlToken();
+  }
+  return _controlToken;
 }
 
 interface ControlResponse {
@@ -54,7 +71,7 @@ async function sendControlCommand(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-F2A-Token': CONTROL_TOKEN,
+        'X-F2A-Token': getControlTokenLazy(),
         'Content-Length': Buffer.byteLength(payload)
       }
     };

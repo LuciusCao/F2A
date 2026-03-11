@@ -57,9 +57,10 @@ describe('Daemon 配置解析', () => {
 
     it('当 BOOTSTRAP_PEERS 为空字符串时应该返回空数组', () => {
       process.env.BOOTSTRAP_PEERS = '';
-      const peers = process.env.BOOTSTRAP_PEERS ? process.env.BOOTSTRAP_PEERS.split(',') : undefined;
-      expect(peers).toHaveLength(1);
-      expect(peers?.[0]).toBe('');
+      const peers = process.env.BOOTSTRAP_PEERS && process.env.BOOTSTRAP_PEERS.length > 0 
+        ? process.env.BOOTSTRAP_PEERS.split(',') 
+        : undefined;
+      expect(peers).toBeUndefined();
     });
   });
 

@@ -103,7 +103,14 @@
   - 测试重试机制（指数退避）
   - 测试子日志记录器
   - 测试资源清理
-- ✅ 测试总数从 747 个提升至 772 个
+- ✅ 补充 `f2a.ts` handleTaskRequest 相关测试，覆盖率从 69.96% 提升至 79.71%
+  - 测试不支持的 capability 拒绝逻辑
+  - 测试任务成功执行流程
+  - 测试任务执行失败处理
+  - 测试非 Error 类型异常处理
+  - 测试无 handler 时的行为
+  - 测试 task:request 事件触发
+- ✅ 测试总数从 747 个提升至 778 个
 
 ### P3 修复（低优先级）- Round 2
 - ✅ 更新 P2/P3 改进文档，记录最新覆盖率数据
@@ -113,8 +120,8 @@
 | 模块 | 原始覆盖率 | 当前覆盖率 | 改进 |
 |------|-----------|-----------|------|
 | `src/utils/logger.ts` | 59.11% | 90.88% | +31.77% ✅ |
+| `src/core/f2a.ts` | 69.96% | 79.71% | +9.75% ✅ |
 | `src/core/p2p-network.ts` | 45.47% | 45.47% | 待改进 |
-| `src/core/f2a.ts` | 69.96% | 69.96% | 待改进 |
 | `packages/openclaw-adapter/src/connector.ts` | 62.34% | 62.34% | 待改进 |
 | `packages/openclaw-adapter/src/node-manager.ts` | 60.93% | 60.93% | 待改进 |
 | `packages/openclaw-adapter/src/task-guard.ts` | 67.58% | 67.58% | 待改进 |

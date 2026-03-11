@@ -419,4 +419,153 @@ describe('P2PNetwork', () => {
       });
     });
   });
+
+  describe('信任的 Peer 白名单', () => {
+    it('应该从配置中初始化信任的 Peer 白名单', () => {
+      const network = new P2PNetwork(mockAgentInfo, {
+        trustedPeers: ['trusted-peer-1', 'trusted-peer-2']
+      });
+
+      // 通过反射访问私有属性
+      const trustedPeers = (network as any).trustedPeers;
+      expect(trustedPeers).toBeDefined();
+      expect(trustedPeers.has('trusted-peer-1')).toBe(true);
+      expect(trustedPeers.has('trusted-peer-2')).toBe(true);
+    });
+
+    it('应该自动将引导节点加入白名单', () => {
+      const bootstrapPeers = [
+        '/ip4/127.0.0.1/tcp/9001/p2p/12D3KooWBootstrap1',
+        '/ip4/127.0.0.1/tcp/9002/p2p/12D3KooWBootstrap2'
+      ];
+      const network = new P2PNetwork(mockAgentInfo, { bootstrapPeers });
+
+      const trustedPeers = (network as any).trustedPeers;
+      expect(trustedPeers.has('12D3KooWBootstrap1')).toBe(true);
+      expect(trustedPeers.has('12D3KooWBootstrap2')).toBe(true);
+    });
+
+    it('应该跳过白名单中的 peer 在清理时', async () => {
+      const network = new P2PNetwork(mockAgentInfo, {
+        trustedPeers: ['trusted-peer']
+      });
+
+      // 添加一些 peer，包括信任的 peer
+      (network as any).peerTable.set('trusted-peer', {
+        peerId: 'trusted-peer',
+        connected: false,
+        lastSeen: Date.now() - 25 * 60 * 60 * 1000, // 25 小时前
+        agentInfo: mockAgentInfo
+      });
+
+      (network as any).peerTable.set('normal-peer', {
+        peerId: 'normal-peer',
+        connected: false,
+        lastSeen: Date.now() - 25 * 60 * 60 * 1000, // 25 小时前
+        agentInfo: mockAgentInfo
+      });
+
+      // 执行清理
+      await (network as any).cleanupStalePeers();
+
+      const peers = (network as any).peerTable;
+      expect(peers.has('trusted-peer')).toBe(true);
+      expect(peers.has('normal-peer')).toBe(false);
+    });
+
+    it('应该在激进清理模式下也跳过白名单', async () => {
+      const network = new P2PNetwork(mockAgentInfo, {
+        trustedPeers: ['trusted-peer']
+      });
+
+      // 添加大量 peer 触发高水位线清理
+      (network as any).peerTable.set('trusted-peer', {
+        peerId: 'trusted-peer',
+        connected: false,
+        lastSeen: Date.now() - 2 * 60 * 60 * 1000, // 2 小时前
+        agentInfo: mockAgentInfo
+      });
+
+      // 添加 900 个普通 peer（超过高水位线 900 = 1000 * 0.9）
+      for (let i = 0; i < 900; i++) {
+        (network as any).peerTable.set(`peer-${i}`, {
+          peerId: `peer-${i}`,
+          connected: false,
+          lastSeen: Date.now() - 2 * 60 * 60 * 1000,
+          agentInfo: mockAgentInfo
+        });
+      }
+
+      // 执行激进清理
+      await (network as any).cleanupStalePeers(true);
+
+      const peers = (network as any).peerTable;
+      expect(peers.has('trusted-peer')).toBe(true);
+      // 信任的 peer 应该被保留
+    });
+  });
+
+  describe('Peer 表清理策略', () => {
+    it('应该清理超过阈值的过期 peer', async () => {
+      const network = new P2PNetwork(mockAgentInfo);
+
+      // 添加过期 peer
+      (network as any).peerTable.set('stale-peer', {
+        peerId: 'stale-peer',
+        connected: false,
+        lastSeen: Date.now() - 25 * 60 * 60 * 1000, // 25 小时前
+        agentInfo: mockAgentInfo
+      });
+
+      // 添加活跃 peer
+      (network as any).peerTable.set('active-peer', {
+        peerId: 'active-peer',
+        connected: false,
+        lastSeen: Date.now() - 1 * 60 * 60 * 1000, // 1 小时前
+        agentInfo: mockAgentInfo
+      });
+
+      await (network as any).cleanupStalePeers();
+
+      const peers = (network as any).peerTable;
+      expect(peers.has('stale-peer')).toBe(false);
+      expect(peers.has('active-peer')).toBe(true);
+    });
+
+    it('应该清理未连接超过 1 小时的 peer', async () => {
+      const network = new P2PNetwork(mockAgentInfo);
+
+      (network as any).peerTable.set('disconnected-peer', {
+        peerId: 'disconnected-peer',
+        connected: false,
+        lastSeen: Date.now() - 2 * 60 * 60 * 1000, // 2 小时前，但未连接
+        agentInfo: mockAgentInfo
+      });
+
+      await (network as any).cleanupStalePeers();
+
+      const peers = (network as any).peerTable;
+      expect(peers.has('disconnected-peer')).toBe(false);
+    });
+
+    it('应该在超过最大容量时删除最旧的 peer', async () => {
+      const network = new P2PNetwork(mockAgentInfo);
+
+      // 添加超过最大容量的 peer
+      const maxCount = 1000;
+      for (let i = 0; i < maxCount + 50; i++) {
+        (network as any).peerTable.set(`peer-${i}`, {
+          peerId: `peer-${i}`,
+          connected: false,
+          lastSeen: Date.now() - i * 60 * 1000, // 每个 peer 间隔 1 分钟
+          agentInfo: mockAgentInfo
+        });
+      }
+
+      await (network as any).cleanupStalePeers();
+
+      const peers = (network as any).peerTable;
+      expect(peers.size).toBeLessThanOrEqual(maxCount);
+    });
+  });
 });

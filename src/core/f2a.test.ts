@@ -266,4 +266,163 @@ describe('F2A', () => {
       expect(error.message).toBe('Test error');
     });
   });
+
+  describe('handleTaskRequest', () => {
+    it('应该拒绝不支持的 capability 任务', async () => {
+      const sendTaskResponseSpy = vi.fn().mockResolvedValue({ success: true });
+      (f2a as any).p2pNetwork.sendTaskResponse = sendTaskResponseSpy;
+
+      await (f2a as any).handleTaskRequest(
+        {
+          taskId: 'test-task-id',
+          taskType: 'unsupported-capability',
+          parameters: {}
+        },
+        'test-peer-id'
+      );
+
+      expect(sendTaskResponseSpy).toHaveBeenCalledWith(
+        'test-peer-id',
+        'test-task-id',
+        'rejected',
+        undefined,
+        expect.stringContaining('Capability not supported')
+      );
+    });
+
+    it('应该成功执行有 handler 的任务', async () => {
+      const mockHandler = vi.fn().mockResolvedValue({ result: 'success' });
+      f2a.registerCapability(
+        { name: 'test-cap', description: 'Test', tools: [] },
+        mockHandler
+      );
+
+      const sendTaskResponseSpy = vi.fn().mockResolvedValue({ success: true });
+      (f2a as any).p2pNetwork.sendTaskResponse = sendTaskResponseSpy;
+
+      await (f2a as any).handleTaskRequest(
+        {
+          taskId: 'test-task-id',
+          taskType: 'test-cap',
+          parameters: { param: 'value' }
+        },
+        'test-peer-id'
+      );
+
+      expect(mockHandler).toHaveBeenCalledWith({ param: 'value' });
+      expect(sendTaskResponseSpy).toHaveBeenCalledWith(
+        'test-peer-id',
+        'test-task-id',
+        'success',
+        { result: 'success' }
+      );
+    });
+
+    it('应该处理任务执行失败的情况', async () => {
+      const mockHandler = vi.fn().mockRejectedValue(new Error('Task failed'));
+      f2a.registerCapability(
+        { name: 'test-cap', description: 'Test', tools: [] },
+        mockHandler
+      );
+
+      const sendTaskResponseSpy = vi.fn().mockResolvedValue({ success: true });
+      (f2a as any).p2pNetwork.sendTaskResponse = sendTaskResponseSpy;
+
+      await (f2a as any).handleTaskRequest(
+        {
+          taskId: 'test-task-id',
+          taskType: 'test-cap',
+          parameters: {}
+        },
+        'test-peer-id'
+      );
+
+      expect(sendTaskResponseSpy).toHaveBeenCalledWith(
+        'test-peer-id',
+        'test-task-id',
+        'error',
+        undefined,
+        'Task failed'
+      );
+    });
+
+    it('应该处理非 Error 类型的异常', async () => {
+      const mockHandler = vi.fn().mockRejectedValue('String error');
+      f2a.registerCapability(
+        { name: 'test-cap', description: 'Test', tools: [] },
+        mockHandler
+      );
+
+      const sendTaskResponseSpy = vi.fn().mockResolvedValue({ success: true });
+      (f2a as any).p2pNetwork.sendTaskResponse = sendTaskResponseSpy;
+
+      await (f2a as any).handleTaskRequest(
+        {
+          taskId: 'test-task-id',
+          taskType: 'test-cap',
+          parameters: {}
+        },
+        'test-peer-id'
+      );
+
+      expect(sendTaskResponseSpy).toHaveBeenCalledWith(
+        'test-peer-id',
+        'test-task-id',
+        'error',
+        undefined,
+        'String error'
+      );
+    });
+
+    it('应该在没有 handler 时不自动响应', async () => {
+      f2a.registerCapability(
+        { name: 'test-cap', description: 'Test', tools: [] },
+        // 不提供 handler
+        undefined as any
+      );
+
+      const sendTaskResponseSpy = vi.fn().mockResolvedValue({ success: true });
+      (f2a as any).p2pNetwork.sendTaskResponse = sendTaskResponseSpy;
+
+      await (f2a as any).handleTaskRequest(
+        {
+          taskId: 'test-task-id',
+          taskType: 'test-cap',
+          parameters: {}
+        },
+        'test-peer-id'
+      );
+
+      // 不应该调用 sendTaskResponse，等待手动响应
+      expect(sendTaskResponseSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('task:request event', () => {
+    it('应该在收到任务请求时触发 task:request 事件', async () => {
+      const eventPromise = new Promise((resolve) => {
+        f2a.on('task:request', (event) => {
+          resolve(event);
+        });
+      });
+
+      f2a.registerCapability(
+        { name: 'test-cap', description: 'Test', tools: [] },
+        async () => 'result'
+      );
+
+      (f2a as any).handleTaskRequest(
+        {
+          taskId: 'test-task-id',
+          taskType: 'test-cap',
+          parameters: {}
+        },
+        'test-peer-id'
+      );
+
+      const event = await eventPromise;
+      expect(event).toBeDefined();
+      expect((event as any).taskId).toBe('test-task-id');
+    });
+  });
 });

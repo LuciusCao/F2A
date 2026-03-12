@@ -205,7 +205,27 @@ export class E2EECrypto {
 
       return plaintext;
     } catch (error) {
-      this.logger.error('Decryption failed', { error });
+      // 增强错误处理：区分不同类型的解密失败
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorType = errorMessage.includes('authTag') || errorMessage.includes('authentication')
+        ? 'AUTH_FAILED'
+        : errorMessage.includes('invalid') || errorMessage.includes('corrupt')
+          ? 'INVALID_FORMAT'
+          : 'DECRYPTION_ERROR';
+      
+      this.logger.error('Decryption failed', {
+        errorType,
+        errorMessage,
+        hasKey: !!this.keyPair,
+        hasSalt: !!encrypted.salt,
+        ciphertextLength: encrypted.ciphertext?.length || 0
+      });
+      
+      // 安全提示：认证失败可能表示消息被篡改
+      if (errorType === 'AUTH_FAILED') {
+        this.logger.warn('Possible message tampering detected: authentication tag verification failed');
+      }
+      
       return null;
     }
   }

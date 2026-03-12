@@ -219,7 +219,7 @@ export class ReputationSystem {
     entry.lastInteraction = Date.now();
     
     entry.history.push({
-      type: 'review_reward' as any,
+      type: 'review_reward',
       delta,
       timestamp: Date.now()
     });
@@ -242,7 +242,7 @@ export class ReputationSystem {
     entry.lastInteraction = Date.now();
     
     entry.history.push({
-      type: 'review_penalty' as any,
+      type: 'review_penalty',
       delta,
       timestamp: Date.now(),
       reason

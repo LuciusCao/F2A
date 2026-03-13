@@ -53,11 +53,6 @@ describe('P2P Network mDNS Discovery', () => {
       // 启动网络
       const result = await network.start();
       
-      // 调试输出
-      if (!result.success) {
-        console.log('Network start failed:', result.error);
-      }
-      
       expect(result.success).toBe(true);
 
       // 验证 mDNS 配置

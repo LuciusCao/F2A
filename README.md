@@ -15,15 +15,40 @@
 
 ## 1. 快速开始
 
-### 1.1 一键安装
+### 1.1 选择安装方式
+
+**方式一：NPM 全局安装（推荐给开发者）**
+
+适用场景：
+- 已有 Node.js 18+ 环境
+- 快速尝鲜、本地开发
+- 已熟悉 Node.js 生态
 
 ```bash
-# 全局安装（推荐）
-curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bash -s -- --global
-
-# 或者通过 NPM 直接安装
 npm install -g @f2a/network
 ```
+
+**方式二：一键安装脚本（推荐给生产环境）**
+
+适用场景：
+- 生产服务器部署（自动配置 systemd 服务）
+- 无 Node.js 环境（脚本自动安装 Node.js）
+- 系统级安装（/usr/local/bin）
+- 克隆源码后快速编译
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bash -s -- --global
+```
+
+**两种方式对比：**
+
+| 特性 | NPM 安装 | install.sh |
+|------|----------|------------|
+| 需要 Node.js | ✅ 是 | ❌ 否（自动安装） |
+| 安装速度 | ⚡ 快 | 🐢 较慢 |
+| 系统服务 | ❌ 无 | ✅ systemd |
+| 安装位置 | npm global | /usr/local |
+| 适用场景 | 开发、尝鲜 | 生产部署 |
 
 ### 1.2 配置向导
 

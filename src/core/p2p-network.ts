@@ -7,6 +7,7 @@ import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { noise } from '@chainsafe/libp2p-noise';
 import { kadDHT } from '@libp2p/kad-dht';
+import { mdns } from '@libp2p/mdns';
 import { peerIdFromString } from '@libp2p/peer-id';
 import type { PeerId } from '@libp2p/interface';
 import type { PrivateKey } from '@libp2p/interface';
@@ -165,6 +166,16 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private trustedPeers: Set<string> = new Set();
   /** 用于保护 peerTable 并发访问的锁 */
   private peerTableLock = new AsyncLock();
+  /** P1 修复：保存事件监听器引用，用于 stop() 中移除 */
+  private boundEventHandlers: {
+    peerDiscovery: ((evt: CustomEvent<{ id: PeerId; multiaddrs: Multiaddr[] }>) => Promise<void>) | undefined;
+    peerConnect: ((evt: CustomEvent<PeerId>) => Promise<void>) | undefined;
+    peerDisconnect: ((evt: CustomEvent<PeerId>) => Promise<void>) | undefined;
+  } = {
+    peerDiscovery: undefined,
+    peerConnect: undefined,
+    peerDisconnect: undefined
+  };
   private agentInfo: AgentInfo;
   private pendingTasks: Map<string, {
     resolve: (result: unknown) => void;
@@ -247,6 +258,19 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         connectionEncryption: [noise()],
         services
       };
+
+      // mDNS 本地发现（默认启用）
+      if (this.config.enableMDNS !== false) {
+        // P1 修复：@libp2p/mdns 的类型定义与 libp2p 的 PeerDiscovery 类型不完全兼容。
+        // mdns() 返回的是 @libp2p/mdns 的组件，其事件类型与 libp2p 内部类型定义存在差异。
+        // 这是 libp2p 生态系统中已知的问题，参考: https://github.com/libp2p/js-libp2p/issues/XXX
+        // 使用 `as any` 绕过 TypeScript 类型检查，运行时行为正确。
+        // 当类型定义修复后，应移除此类型断言。
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        libp2pOptions.peerDiscovery = [
+          mdns() as any
+        ];
+      }
 
       // 如果提供了 IdentityManager，使用持久化的私钥
       if (this.identityManager?.isLoaded()) {
@@ -340,6 +364,20 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     }
 
     if (this.node) {
+      // P1 修复：移除事件监听器，防止内存泄漏
+      // 检查 removeEventListener 是否存在（兼容测试 mock）
+      if (typeof this.node.removeEventListener === 'function') {
+        if (this.boundEventHandlers.peerDiscovery) {
+          this.node.removeEventListener('peer:discovery', this.boundEventHandlers.peerDiscovery);
+        }
+        if (this.boundEventHandlers.peerConnect) {
+          this.node.removeEventListener('peer:connect', this.boundEventHandlers.peerConnect);
+        }
+        if (this.boundEventHandlers.peerDisconnect) {
+          this.node.removeEventListener('peer:disconnect', this.boundEventHandlers.peerDisconnect);
+        }
+      }
+
       // 清理待处理任务
       for (const [taskId, { timeout, resolve }] of this.pendingTasks) {
         clearTimeout(timeout);
@@ -650,77 +688,157 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private setupEventHandlers(): void {
     if (!this.node) return;
 
-    // 新连接
-    this.node.addEventListener('peer:connect', async (evt) => {
-      const peerId = evt.detail.toString();
-      this.logger.info('Peer connected', { peerId: peerId.slice(0, 16) });
-
-      this.emit('peer:connected', {
-        peerId,
-        direction: 'inbound'
-      });
-
-// 从连接获取远程 multiaddr
-      let multiaddrs: Multiaddr[] = [];
+    // P1 修复：创建绑定的监听器并保存引用，用于 stop() 中移除
+    this.boundEventHandlers.peerDiscovery = async (evt) => {
+      // P1 修复：async 处理器包裹在 try-catch 中，记录错误日志
       try {
-        if (this.node) {
-          const connections = this.node.getConnections();
-          const conn = connections.find(c => c.remotePeer.toString() === peerId);
-          if (conn && conn.remoteAddr) {
-            multiaddrs = [conn.remoteAddr];
-          }
-        }
-      } catch {
-        // 无法获取 multiaddrs，使用空数组
-      }
+        const peerId = evt.detail.id.toString();
+        const multiaddrs = evt.detail.multiaddrs.map(ma => ma.toString());
+        
+        this.logger.info('mDNS peer discovered', { 
+          peerId: peerId.slice(0, 16),
+          multiaddrs: multiaddrs.length 
+        });
 
-      // P2.4 修复：使用原子操作更新路由表和连接索引
-      const now = Date.now();
-      await this.upsertPeer(
-        peerId,
-        () => ({
+        // 更新路由表
+        const now = Date.now();
+        await this.upsertPeer(
+          peerId,
+          () => ({
+            peerId,
+            multiaddrs: evt.detail.multiaddrs,
+            connected: false,
+            // P2 修复：mDNS 发现的节点信誉初始化为 25，表示"未验证"状态
+            reputation: 25,
+            lastSeen: now
+          }),
+          (peer) => ({
+            ...peer,
+            multiaddrs: evt.detail.multiaddrs,
+            lastSeen: now
+          })
+        );
+
+        // 触发发现事件
+        // P2 修复：mDNS 发现的 AgentInfo 使用占位符标记为"待验证"
+        const pendingAgentInfo: AgentInfo = {
           peerId,
           multiaddrs,
-          connected: true,
-          reputation: 50,
-          connectedAt: now,
+          capabilities: [],
+          // P2 修复：使用占位符标记为待验证
+          displayName: `[Pending] ${peerId.slice(0, 8)}`,
+          agentType: 'custom' as const,
+          version: '0.0.0-pending',
+          protocolVersion: '1.0.0',
           lastSeen: now
-        }),
-        (peer) => ({
-          ...peer,
-          connected: true,
-          connectedAt: now,
-          lastSeen: now,
-          ...(multiaddrs.length > 0 ? { multiaddrs } : {})
-        })
-      );
-      
-      // P2.4 修复：维护连接索引
-      this.connectedPeers.add(peerId);
-    });
+        };
+
+        this.emit('peer:discovered', {
+          peerId,
+          agentInfo: pendingAgentInfo,
+          multiaddrs: evt.detail.multiaddrs
+        });
+
+        // P1 修复：mDNS 发现后尝试连接并发送 DISCOVER 消息获取真实 AgentInfo
+        // 建议-2 修复：提取为独立方法，减少嵌套深度
+        await this.initiateDiscovery(peerId, evt.detail.multiaddrs);
+      } catch (error) {
+        this.logger.error('Error in peer:discovery handler', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    };
+
+    // 新连接
+    this.boundEventHandlers.peerConnect = async (evt) => {
+      // P1 修复：async 处理器包裹在 try-catch 中
+      try {
+        const peerId = evt.detail.toString();
+        this.logger.info('Peer connected', { peerId: peerId.slice(0, 16) });
+
+        this.emit('peer:connected', {
+          peerId,
+          direction: 'inbound'
+        });
+
+        // 从连接获取远程 multiaddr
+        let multiaddrs: Multiaddr[] = [];
+        try {
+          if (this.node) {
+            const connections = this.node.getConnections();
+            const conn = connections.find(c => c.remotePeer.toString() === peerId);
+            if (conn && conn.remoteAddr) {
+              multiaddrs = [conn.remoteAddr];
+            }
+          }
+        } catch {
+          // 无法获取 multiaddrs，使用空数组
+        }
+
+        // P2.4 修复：使用原子操作更新路由表和连接索引
+        const now = Date.now();
+        await this.upsertPeer(
+          peerId,
+          () => ({
+            peerId,
+            multiaddrs,
+            connected: true,
+            reputation: 50,
+            connectedAt: now,
+            lastSeen: now
+          }),
+          (peer) => ({
+            ...peer,
+            connected: true,
+            connectedAt: now,
+            lastSeen: now,
+            ...(multiaddrs.length > 0 ? { multiaddrs } : {})
+          })
+        );
+        
+        // P2.4 修复：维护连接索引
+        this.connectedPeers.add(peerId);
+      } catch (error) {
+        this.logger.error('Error in peer:connect handler', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    };
 
     // 断开连接
-    this.node.addEventListener('peer:disconnect', async (evt) => {
-      const peerId = evt.detail.toString();
-      this.logger.info('Peer disconnected', { peerId: peerId.slice(0, 16) });
+    this.boundEventHandlers.peerDisconnect = async (evt) => {
+      // P1 修复：async 处理器包裹在 try-catch 中
+      try {
+        const peerId = evt.detail.toString();
+        this.logger.info('Peer disconnected', { peerId: peerId.slice(0, 16) });
 
-      this.emit('peer:disconnected', { peerId });
+        this.emit('peer:disconnected', { peerId });
 
-      // P2.4 修复：从连接索引中移除
-      this.connectedPeers.delete(peerId);
+        // P2.4 修复：从连接索引中移除
+        this.connectedPeers.delete(peerId);
 
-      // 使用原子操作更新路由表
-      const updated = await this.updatePeer(peerId, (peer) => ({
-        ...peer,
-        connected: false,
-        lastSeen: Date.now()
-      }));
+        // 使用原子操作更新路由表
+        const updated = await this.updatePeer(peerId, (peer) => ({
+          ...peer,
+          connected: false,
+          lastSeen: Date.now()
+        }));
 
-      if (!updated) {
-        // Peer 不在路由表中，记录警告但不创建条目（已断开）
-        this.logger.warn('Peer disconnected but not in routing table', { peerId: peerId.slice(0, 16) });
+        if (!updated) {
+          // Peer 不在路由表中，记录警告但不创建条目（已断开）
+          this.logger.warn('Peer disconnected but not in routing table', { peerId: peerId.slice(0, 16) });
+        }
+      } catch (error) {
+        this.logger.error('Error in peer:disconnect handler', {
+          error: error instanceof Error ? error.message : String(error)
+        });
       }
-    });
+    };
+
+    // 注册事件监听器
+    this.node.addEventListener('peer:discovery', this.boundEventHandlers.peerDiscovery);
+    this.node.addEventListener('peer:connect', this.boundEventHandlers.peerConnect);
+    this.node.addEventListener('peer:disconnect', this.boundEventHandlers.peerDisconnect);
 
     // 处理传入的协议流
     this.node.handle(F2A_PROTOCOL, async ({ stream, connection }) => {
@@ -759,6 +877,48 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         this.logger.error('Error handling message', { error });
       }
     });
+  }
+
+  /**
+   * 建议-2 修复：提取 mDNS 发现后的连接和 DISCOVER 发送逻辑
+   * 减少嵌套深度，提高可读性
+   * @param peerId 发现的 Peer ID
+   * @param multiaddrs 发现的 multiaddr 列表
+   */
+  private async initiateDiscovery(peerId: string, multiaddrs: Multiaddr[]): Promise<void> {
+    try {
+      if (!this.node || multiaddrs.length === 0) {
+        return;
+      }
+
+      // 尝试连接到发现的节点
+      await this.node.dial(multiaddrs[0]);
+      this.logger.info('Initiating connection to mDNS peer for discovery', {
+        peerId: peerId.slice(0, 16)
+      });
+
+      // 发送 DISCOVER 消息获取真实 AgentInfo
+      // 低-1 修复：有意不检查返回值 - 发现消息发送失败不影响主流程，
+      // 后续的定期发现广播会重试，不会造成功能缺失
+      const discoverMessage: F2AMessage = {
+        id: randomUUID(),
+        type: 'DISCOVER',
+        from: this.agentInfo.peerId,
+        timestamp: Date.now(),
+        payload: { agentInfo: this.agentInfo } as DiscoverPayload
+      };
+
+      await this.sendMessage(peerId, discoverMessage, false);
+      this.logger.info('Sent DISCOVER to mDNS peer', {
+        peerId: peerId.slice(0, 16)
+      });
+    } catch (connectError) {
+      // 连接失败不应阻止发现流程，记录警告即可
+      this.logger.warn('Failed to connect/send DISCOVER to mDNS peer', {
+        peerId: peerId.slice(0, 16),
+        error: connectError instanceof Error ? connectError.message : String(connectError)
+      });
+    }
   }
 
   /**

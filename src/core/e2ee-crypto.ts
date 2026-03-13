@@ -64,9 +64,35 @@ export class E2EECrypto {
 
   /**
    * 从已有密钥初始化
+   * P1-2: 添加输入验证
    */
   initializeWithKeyPair(privateKey: Uint8Array, publicKey: Uint8Array): void {
+    // 验证私钥长度 (X25519 私钥应为 32 字节)
+    if (privateKey.length !== 32) {
+      throw new Error(`Invalid private key length: expected 32 bytes, got ${privateKey.length}`);
+    }
+    
+    // 验证公钥长度 (X25519 公钥应为 32 字节)
+    if (publicKey.length !== 32) {
+      throw new Error(`Invalid public key length: expected 32 bytes, got ${publicKey.length}`);
+    }
+    
+    // 验证公私钥配对
+    try {
+      const derivedPublicKey = x25519.getPublicKey(privateKey);
+      const publicKeyMatch = Buffer.from(derivedPublicKey).equals(Buffer.from(publicKey));
+      if (!publicKeyMatch) {
+        throw new Error('Public key does not match the private key. The key pair is invalid.');
+      }
+    } catch (error) {
+      // 如果派生失败，可能是无效的私钥
+      throw new Error(`Invalid key pair: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    
     this.keyPair = { privateKey, publicKey };
+    this.logger.info('Key pair initialized successfully', {
+      publicKeyPrefix: Buffer.from(publicKey).toString('hex').slice(0, 16)
+    });
   }
 
   /**

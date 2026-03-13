@@ -128,3 +128,6 @@ skill/memory/
 tmp/
 temp/
 *.tmp
+
+# Test temporary directories
+test-tmp-persistence-*

@@ -646,6 +646,23 @@ export class TaskGuard {
             }
           }
           
+          // P1 修复：集成变量替换和编码绕过检测
+          const variableSubstitutions = detectVariableSubstitution(description);
+          if (variableSubstitutions.length > 0) {
+            found.push(...variableSubstitutions);
+          }
+          
+          const encodingBypasses = detectEncodingBypass(description);
+          if (encodingBypasses.length > 0) {
+            found.push(...encodingBypasses);
+          }
+          
+          // P0 修复：集成命令注入绕过检测（包括反引号命令替换）
+          const commandInjectionBypasses = detectCommandInjectionBypass(description);
+          if (commandInjectionBypasses.length > 0) {
+            found.push(...commandInjectionBypasses);
+          }
+          
           return {
             passed: found.length === 0,
             severity: 'block',
@@ -653,7 +670,7 @@ export class TaskGuard {
             message: found.length > 0 
               ? `发现危险命令模式` 
               : '未检测到危险模式',
-            details: { patternsFound: found.length }
+            details: { patternsFound: found.length, details: found }
           };
         }
       },

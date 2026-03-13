@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { E2EECrypto } from './e2ee-crypto.js';
+import { x25519 } from '@noble/curves/ed25519.js';
 
 describe('E2EECrypto', () => {
   let cryptoA: E2EECrypto;
@@ -39,6 +40,59 @@ describe('E2EECrypto', () => {
       cryptoC.initializeWithKeyPair(privateKey, publicKey);
       
       expect(cryptoC.getPublicKey()).toBe(exported!.publicKey);
+    });
+
+    describe('initializeWithKeyPair validation (P1-2)', () => {
+      it('should throw error for invalid private key length', () => {
+        const crypto = new E2EECrypto();
+        const invalidPrivateKey = new Uint8Array(16); // 只16字节，应该是32字节
+        const publicKey = new Uint8Array(32);
+        
+        expect(() => {
+          crypto.initializeWithKeyPair(invalidPrivateKey, publicKey);
+        }).toThrow('Invalid private key length: expected 32 bytes, got 16');
+      });
+
+      it('should throw error for invalid public key length', () => {
+        const crypto = new E2EECrypto();
+        const privateKey = new Uint8Array(32);
+        const invalidPublicKey = new Uint8Array(16); // 只16字节，应该是32字节
+        
+        expect(() => {
+          crypto.initializeWithKeyPair(privateKey, invalidPublicKey);
+        }).toThrow('Invalid public key length: expected 32 bytes, got 16');
+      });
+
+      it('should throw error when public key does not match private key', () => {
+        const crypto = new E2EECrypto();
+        
+        // 生成一个有效的密钥对
+        const validPrivate = x25519.utils.randomSecretKey();
+        const validPublic = x25519.getPublicKey(validPrivate);
+        
+        // 使用另一个随机公钥
+        const otherPrivate = x25519.utils.randomSecretKey();
+        const otherPublic = x25519.getPublicKey(otherPrivate);
+        
+        expect(() => {
+          crypto.initializeWithKeyPair(validPrivate, otherPublic);
+        }).toThrow('Public key does not match the private key');
+      });
+
+      it('should accept valid key pair', () => {
+        const crypto = new E2EECrypto();
+        
+        // 生成有效的密钥对
+        const privateKey = x25519.utils.randomSecretKey();
+        const publicKey = x25519.getPublicKey(privateKey);
+        
+        // 应该不抛出异常
+        expect(() => {
+          crypto.initializeWithKeyPair(privateKey, publicKey);
+        }).not.toThrow();
+        
+        expect(crypto.getPublicKey()).toBe(Buffer.from(publicKey).toString('base64'));
+      });
     });
   });
 

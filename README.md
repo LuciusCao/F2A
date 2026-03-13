@@ -167,7 +167,6 @@ npm install -g @f2a/openclaw-adapter
 ```
 
 > **提示**：`f2aPath` 仅在开发调试时需要，用于指定本地 F2A 源码路径。通过 `openclaw plugins install` 安装时不需要配置。
-```
 
 ### 2.3 使用方式
 

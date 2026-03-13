@@ -8,7 +8,7 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { generateKeyPair, unmarshalPrivateKey, marshalPrivateKey } from '@libp2p/crypto/keys';
-import { createFromPrivKey } from '@libp2p/peer-id-factory';
+import { peerIdFromKeys } from '@libp2p/peer-id';
 import type { PeerId } from '@libp2p/interface';
 import type { PrivateKey } from '@libp2p/interface';
 import { x25519 } from '@noble/curves/ed25519.js';
@@ -275,7 +275,10 @@ export class IdentityManager {
     // Restore private key and PeerId
     const privateKeyBytes = Buffer.from(persisted.peerId, 'base64');
     this.privateKey = await unmarshalPrivateKey(privateKeyBytes);
-    this.peerId = await createFromPrivKey(this.privateKey);
+    this.peerId = await peerIdFromKeys(
+      this.privateKey.public.bytes,
+      this.privateKey.bytes
+    );
 
     // Securely wipe temporary private key bytes after use
     secureWipe(privateKeyBytes);
@@ -293,7 +296,10 @@ export class IdentityManager {
     try {
       // Generate Ed25519 key pair for libp2p PeerId
       this.privateKey = await generateKeyPair('Ed25519');
-      this.peerId = await createFromPrivKey(this.privateKey);
+      this.peerId = await peerIdFromKeys(
+        this.privateKey.public.bytes,
+        this.privateKey.bytes
+      );
       
       // Generate X25519 key pair for E2EE
       this.e2eePrivateKey = x25519.utils.randomSecretKey();

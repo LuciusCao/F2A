@@ -279,6 +279,21 @@ if [ "${SETUP_SYSTEMD}" = true ]; then
         # 生成随机控制 token (32 字节 hex = 64 字符)
         CONTROL_TOKEN=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | xxd -p)
         
+        # 创建安全的环境文件目录和文件
+        ENV_DIR="/etc/f2a"
+        ENV_FILE="$ENV_DIR/control.env"
+        sudo mkdir -p "$ENV_DIR"
+        
+        # 使用临时文件写入 token，然后安全移动
+        TEMP_ENV_FILE=$(mktemp)
+        cat > "$TEMP_ENV_FILE" << EOF
+# F2A 控制令牌 - 请勿分享此文件
+F2A_CONTROL_TOKEN=${CONTROL_TOKEN}
+EOF
+        sudo mv "$TEMP_ENV_FILE" "$ENV_FILE"
+        sudo chmod 600 "$ENV_FILE"
+        sudo chown root:root "$ENV_FILE"
+        
         # 使用临时文件避免 sudo tee 权限提升风险
         TEMP_SERVICE_FILE=$(mktemp)
         cat > "$TEMP_SERVICE_FILE" << EOF
@@ -295,7 +310,7 @@ Restart=on-failure
 RestartSec=10
 Environment=NODE_ENV=production
 Environment=F2A_CONTROL_PORT=9001
-Environment=F2A_CONTROL_TOKEN=${CONTROL_TOKEN}
+EnvironmentFile=${ENV_FILE}
 
 [Install]
 WantedBy=multi-user.target
@@ -303,15 +318,15 @@ EOF
         
         # 使用 sudo mv 替代 sudo tee (更安全)
         sudo mv "$TEMP_SERVICE_FILE" "$SERVICE_FILE"
-        sudo chmod 644 "$SERVICE_FILE"
+        sudo chmod 600 "$SERVICE_FILE"
 
         sudo systemctl daemon-reload
         sudo systemctl enable f2a
         
         # 输出控制 token 提示
         echo ""
-        echo -e "${YELLOW}  ⚠️  控制令牌已自动生成并保存到 systemd 服务配置${NC}"
-        echo -e "${YELLOW}     查看令牌: sudo systemctl show f2a --property=Environment | grep TOKEN${NC}"
+        echo -e "${YELLOW}  ⚠️  控制令牌已自动生成并安全保存${NC}"
+        echo -e "${YELLOW}     查看令牌: sudo cat ${ENV_FILE}${NC}"
         
         echo -e "${GREEN}  ✅ systemd 服务已设置${NC}"
         echo ""

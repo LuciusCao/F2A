@@ -1,7 +1,7 @@
 /**
- * 身份管理器
- * 管理 libp2p PeerId (Ed25519) 和 E2EE 密钥对 (X25519)
- * 持久化身份到本地文件系统
+ * Identity Manager
+ * Manages libp2p PeerId (Ed25519) and E2EE key pair (X25519)
+ * Persists identity to local filesystem
  */
 
 import { promises as fs } from 'fs';
@@ -13,7 +13,7 @@ import type { PeerId } from '@libp2p/interface';
 import type { PrivateKey } from '@libp2p/interface';
 import { x25519 } from '@noble/curves/ed25519.js';
 import { Logger } from '../../utils/logger.js';
-import { success, failureFromError, Result } from '../../types/index.js';
+import { success, failure, failureFromError, Result, createError } from '../../types/index.js';
 import { encryptIdentity, decryptIdentity } from './encrypted-key-store.js';
 import type { 
   PersistedIdentity, 
@@ -24,13 +24,28 @@ import type {
 import { DEFAULT_DATA_DIR, IDENTITY_FILE } from './types.js';
 
 /**
- * 身份管理器
+ * Securely wipe a Uint8Array/Buffer by filling with zeros
+ * @param data - The data to wipe (modified in place)
+ */
+function secureWipe(data: Uint8Array | null | undefined): void {
+  if (data) {
+    // Use fill(0) to overwrite memory with zeros
+    if (Buffer.isBuffer(data)) {
+      data.fill(0);
+    } else {
+      data.fill(0);
+    }
+  }
+}
+
+/**
+ * Identity Manager
  * 
- * 负责：
- * - 管理 libp2p PeerId (Ed25519 密钥对)
- * - 管理 E2EE 密钥对 (X25519)
- * - 持久化身份到本地文件系统
- * - 支持密码加密存储
+ * Responsibilities:
+ * - Manage libp2p PeerId (Ed25519 key pair)
+ * - Manage E2EE key pair (X25519)
+ * - Persist identity to local filesystem
+ * - Support password-encrypted storage
  */
 export class IdentityManager {
   private dataDir: string;
@@ -49,19 +64,19 @@ export class IdentityManager {
   }
 
   /**
-   * 获取身份数据文件路径
+   * Get identity data file path
    */
   private getIdentityFilePath(): string {
     return join(this.dataDir, IDENTITY_FILE);
   }
 
   /**
-   * 确保数据目录存在
+   * Ensure data directory exists with secure permissions
    */
   private async ensureDataDir(): Promise<void> {
     try {
       await fs.mkdir(this.dataDir, { recursive: true });
-      // 设置目录权限为 700 (仅所有者可读写执行)
+      // Set directory permissions to 700 (owner only)
       await fs.chmod(this.dataDir, 0o700);
     } catch (error) {
       this.logger.error('Failed to create data directory', { error });
@@ -70,10 +85,10 @@ export class IdentityManager {
   }
 
   /**
-   * 加载或创建身份
+   * Load or create identity
    * 
-   * - 如果存在身份文件，则加载
-   * - 如果不存在，则创建新身份
+   * - If identity file exists, load it
+   * - If not, create new identity
    */
   async loadOrCreate(): Promise<Result<ExportedIdentity>> {
     try {
@@ -82,45 +97,66 @@ export class IdentityManager {
       const identityFile = this.getIdentityFilePath();
       
       try {
-        // 尝试读取现有身份
+        // Try to read existing identity
         const data = await fs.readFile(identityFile, 'utf-8');
-        const encrypted = JSON.parse(data);
+        const parsed = JSON.parse(data);
         
-        // 解密或直接加载
-        let persisted: PersistedIdentity;
-        try {
-          persisted = this.password 
-            ? await decryptIdentity(encrypted, this.password)
-            : encrypted as PersistedIdentity;
-        } catch (decryptError) {
-          // 解密失败（可能是密码错误），创建新身份
-          this.logger.warn('Failed to decrypt identity, creating new one', {
-            error: decryptError instanceof Error ? decryptError.message : String(decryptError)
-          });
-          return await this.createNewIdentity();
+        // Check if file is encrypted
+        const isEncrypted = parsed.encrypted === true;
+        
+        if (isEncrypted) {
+          // File is encrypted, password is required
+          if (!this.password) {
+            this.logger.error('Identity file is encrypted but no password provided');
+            return failure(createError(
+              'IDENTITY_PASSWORD_REQUIRED',
+              'Identity file is encrypted but no password was provided. Please provide a password to decrypt.'
+            ));
+          }
+          
+          // Attempt decryption
+          try {
+            const persisted = decryptIdentity(parsed, this.password);
+            await this.loadPersistedIdentity(persisted);
+            
+            // Update last used time
+            await this.saveIdentity();
+            
+            this.logger.info('Loaded existing encrypted identity', {
+              peerId: this.peerId?.toString().slice(0, 16),
+              createdAt: this.createdAt?.toISOString()
+            });
+            
+            return success(this.exportIdentity());
+          } catch (decryptError) {
+            this.logger.error('Failed to decrypt identity with provided password', {
+              error: decryptError instanceof Error ? decryptError.message : String(decryptError)
+            });
+            return failure(createError(
+              'IDENTITY_DECRYPT_FAILED',
+              'Failed to decrypt identity. The password may be incorrect.'
+            ));
+          }
         }
         
-        // 恢复私钥和 PeerId
-        const privateKeyBytes = Buffer.from(persisted.peerId, 'base64');
-        this.privateKey = await unmarshalPrivateKey(privateKeyBytes);
-        this.peerId = await createFromPrivKey(this.privateKey);
+        // Plaintext identity data (backward compatible)
+        const persisted = parsed as PersistedIdentity;
+        await this.loadPersistedIdentity(persisted);
         
-        // 恢复 E2EE 密钥对
-        this.e2eePrivateKey = Buffer.from(persisted.e2eePrivateKey, 'base64');
-        this.e2eePublicKey = Buffer.from(persisted.e2eePublicKey, 'base64');
-        this.createdAt = new Date(persisted.createdAt);
-        
-        // 更新最后使用时间
+        // Update last used time
         await this.saveIdentity();
         
-        this.logger.info('Loaded existing identity', {
-          peerId: this.peerId.toString().slice(0, 16),
-          createdAt: this.createdAt.toISOString()
+        this.logger.info('Loaded existing plaintext identity', {
+          peerId: this.peerId?.toString().slice(0, 16),
+          createdAt: this.createdAt?.toISOString()
         });
+        
+        // Warn about plaintext storage
+        this.logger.warn('Identity is stored in plaintext. Consider setting a password for encryption.');
         
         return success(this.exportIdentity());
       } catch (readError: unknown) {
-        // 文件不存在或解析失败，创建新身份
+        // File doesn't exist or parse failed, create new identity
         if ((readError as NodeJS.ErrnoException).code === 'ENOENT') {
           this.logger.info('No existing identity found, creating new one');
           return await this.createNewIdentity();
@@ -133,21 +169,36 @@ export class IdentityManager {
   }
 
   /**
-   * 创建新身份
+   * Load identity from persisted data
+   */
+  private async loadPersistedIdentity(persisted: PersistedIdentity): Promise<void> {
+    // Restore private key and PeerId
+    const privateKeyBytes = Buffer.from(persisted.peerId, 'base64');
+    this.privateKey = await unmarshalPrivateKey(privateKeyBytes);
+    this.peerId = await createFromPrivKey(this.privateKey);
+    
+    // Restore E2EE key pair
+    this.e2eePrivateKey = Buffer.from(persisted.e2eePrivateKey, 'base64');
+    this.e2eePublicKey = Buffer.from(persisted.e2eePublicKey, 'base64');
+    this.createdAt = new Date(persisted.createdAt);
+  }
+
+  /**
+   * Create new identity
    */
   private async createNewIdentity(): Promise<Result<ExportedIdentity>> {
     try {
-      // 生成 Ed25519 密钥对用于 libp2p PeerId
+      // Generate Ed25519 key pair for libp2p PeerId
       this.privateKey = await generateKeyPair('Ed25519');
       this.peerId = await createFromPrivKey(this.privateKey);
       
-      // 生成 X25519 密钥对用于 E2EE
+      // Generate X25519 key pair for E2EE
       this.e2eePrivateKey = x25519.utils.randomSecretKey();
       this.e2eePublicKey = x25519.getPublicKey(this.e2eePrivateKey);
       
       this.createdAt = new Date();
       
-      // 保存身份
+      // Save identity
       await this.saveIdentity();
       
       this.logger.info('Created new identity', {
@@ -162,7 +213,7 @@ export class IdentityManager {
   }
 
   /**
-   * 保存身份到文件
+   * Save identity to file
    */
   private async saveIdentity(): Promise<void> {
     if (!this.privateKey || !this.peerId || !this.e2eePrivateKey || !this.e2eePublicKey || !this.createdAt) {
@@ -177,19 +228,31 @@ export class IdentityManager {
       lastUsedAt: new Date().toISOString()
     };
     
-    // 加密或直接保存
-    const data = this.password 
-      ? JSON.stringify(await encryptIdentity(persisted, this.password))
-      : JSON.stringify(persisted, null, 2);
-    
-    const identityFile = this.getIdentityFilePath();
-    await fs.writeFile(identityFile, data, 'utf-8');
-    // 设置文件权限为 600 (仅所有者可读写)
-    await fs.chmod(identityFile, 0o600);
+    // Encrypt or save directly
+    if (this.password) {
+      const data = JSON.stringify(encryptIdentity(persisted, this.password));
+      const identityFile = this.getIdentityFilePath();
+      await fs.writeFile(identityFile, data, 'utf-8');
+      // Set file permissions to 600 (owner only)
+      await fs.chmod(identityFile, 0o600);
+    } else {
+      // Warn about plaintext storage
+      this.logger.warn('Saving identity without encryption. Consider setting a password for better security.');
+      const data = JSON.stringify(persisted, null, 2);
+      const identityFile = this.getIdentityFilePath();
+      await fs.writeFile(identityFile, data, 'utf-8');
+      // Set file permissions to 600 (owner only)
+      await fs.chmod(identityFile, 0o600);
+    }
   }
 
   /**
-   * 导出身份信息
+   * Export identity information
+   * 
+   * WARNING: This returns sensitive private key material in plaintext.
+   * - Do not log or expose the returned data
+   * - Clear from memory when no longer needed
+   * - Only call when absolutely necessary
    */
   exportIdentity(): ExportedIdentity {
     if (!this.peerId || !this.privateKey || !this.e2eePublicKey || !this.e2eePrivateKey || !this.createdAt) {
@@ -208,28 +271,28 @@ export class IdentityManager {
   }
 
   /**
-   * 获取 PeerId
+   * Get PeerId
    */
   getPeerId(): PeerId | null {
     return this.peerId;
   }
 
   /**
-   * 获取 PeerId 字符串
+   * Get PeerId string
    */
   getPeerIdString(): string | null {
     return this.peerId?.toString() || null;
   }
 
   /**
-   * 获取 libp2p 私钥
+   * Get libp2p private key
    */
   getPrivateKey(): PrivateKey | null {
     return this.privateKey;
   }
 
   /**
-   * 获取 E2EE 密钥对
+   * Get E2EE key pair
    */
   getE2EEKeyPair(): { publicKey: Uint8Array; privateKey: Uint8Array } | null {
     if (!this.e2eePublicKey || !this.e2eePrivateKey) return null;
@@ -240,35 +303,46 @@ export class IdentityManager {
   }
 
   /**
-   * 获取 E2EE 公钥 (base64)
+   * Get E2EE public key (base64)
    */
   getE2EEPublicKeyBase64(): string | null {
     return this.e2eePublicKey ? Buffer.from(this.e2eePublicKey).toString('base64') : null;
   }
 
   /**
-   * 检查身份是否已加载
+   * Check if identity is fully loaded
    */
   isLoaded(): boolean {
-    return this.peerId !== null && this.privateKey !== null;
+    return (
+      this.peerId !== null &&
+      this.privateKey !== null &&
+      this.e2eePublicKey !== null &&
+      this.e2eePrivateKey !== null &&
+      this.createdAt !== null
+    );
   }
 
   /**
-   * 删除身份文件（危险操作）
+   * Delete identity file and securely wipe memory (dangerous operation)
    */
   async deleteIdentity(): Promise<Result<void>> {
     try {
       const identityFile = this.getIdentityFilePath();
       await fs.unlink(identityFile);
       
-      // 清除内存中的数据
+      // Securely wipe private key data from memory
+      if (this.e2eePrivateKey) {
+        secureWipe(this.e2eePrivateKey);
+      }
+      
+      // Clear all identity data from memory
       this.peerId = null;
       this.privateKey = null;
       this.e2eePublicKey = null;
       this.e2eePrivateKey = null;
       this.createdAt = null;
       
-      this.logger.warn('Identity deleted');
+      this.logger.warn('Identity deleted and memory cleared');
       return success(undefined);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {

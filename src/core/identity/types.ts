@@ -1,61 +1,72 @@
 /**
- * 身份管理器类型定义
+ * Identity manager type definitions
  */
 
-/** AES-256-GCM 参数 */
+/** AES-256-GCM parameters */
 export const AES_KEY_SIZE = 32;
 export const AES_IV_SIZE = 12;
 export const AES_TAG_SIZE = 16;
 
-/** 数据目录 */
+/** Scrypt parameters for key derivation */
+export const SCRYPT_N = 16384; // CPU/memory cost parameter (default, ~64MB memory)
+export const SCRYPT_R = 8;     // Block size
+export const SCRYPT_P = 1;     // Parallelization parameter
+
+/** Salt size for key derivation */
+export const SALT_SIZE = 16;
+
+/** Data directory */
 export const DEFAULT_DATA_DIR = '.f2a';
 export const IDENTITY_FILE = 'identity.json';
 
 /**
- * 持久化的身份数据结构
+ * Persisted identity data structure
  */
 export interface PersistedIdentity {
-  /** libp2p PeerId (Ed25519) 的 protobuf 编码 (base64) */
+  /** libp2p PeerId (Ed25519) protobuf encoded (base64) */
   peerId: string;
-  /** E2EE 私钥 (X25519, base64) */
+  /** E2EE private key (X25519, base64) */
   e2eePrivateKey: string;
-  /** E2EE 公钥 (X25519, base64) */
+  /** E2EE public key (X25519, base64) */
   e2eePublicKey: string;
-  /** 创建时间 (ISO 字符串) */
+  /** Creation time (ISO string) */
   createdAt: string;
-  /** 最后使用时间 (ISO 字符串) */
+  /** Last used time (ISO string) */
   lastUsedAt: string;
 }
 
 /**
- * 身份配置选项
+ * Identity configuration options
  */
 export interface IdentityManagerOptions {
-  /** 数据目录 (默认 ~/.f2a/) */
+  /** Data directory (default ~/.f2a/) */
   dataDir?: string;
-  /** 加密密码 (可选，用于加密存储) */
+  /** Encryption password (optional, for encrypted storage) */
   password?: string;
 }
 
 /**
- * 导出的身份信息
+ * Exported identity information
+ * 
+ * WARNING: This contains sensitive private key material.
+ * Handle with care and avoid logging or exposing this data.
  */
 export interface ExportedIdentity {
-  /** PeerId 字符串 */
+  /** PeerId string */
   peerId: string;
-  /** libp2p 私钥 (protobuf 编码, base64) */
+  /** libp2p private key (protobuf encoded, base64) - SENSITIVE */
   privateKey: string;
-  /** E2EE 密钥对 */
+  /** E2EE key pair */
   e2eeKeyPair: {
     publicKey: string;
-    privateKey: string;
+    privateKey: string; // SENSITIVE
   };
-  /** 创建时间 */
+  /** Creation time */
   createdAt: Date;
 }
 
 /**
- * 加密后的身份数据结构
+ * Encrypted identity data structure
  */
 export interface EncryptedIdentity {
   encrypted: true;

@@ -129,14 +129,56 @@ describe('IdentityManager', () => {
       
       // 创建加密的身份
       const manager1 = new IdentityManager({ dataDir: tempDir, password });
-      await manager1.loadOrCreate();
+      const result1 = await manager1.loadOrCreate();
+      expect(result1.success).toBe(true);
+      if (!result1.success) return;
+
+      const originalPeerId = result1.data.peerId;
 
       // 使用错误密码尝试解密
       const manager2 = new IdentityManager({ dataDir: tempDir, password: 'wrong-password' });
       const result2 = await manager2.loadOrCreate();
       
-      // 应该成功创建新身份
+      // P0-2/P1-1: 现在应该返回 IDENTITY_DECRYPT_FAILED 错误，而不是创建新身份
+      expect(result2.success).toBe(false);
+      if (result2.success) return;
+      expect(result2.error.code).toBe('IDENTITY_DECRYPT_FAILED');
+    });
+
+    it('should return IDENTITY_PASSWORD_REQUIRED when encrypted file has no password', async () => {
+      const password = 'secure-password';
+      
+      // 创建加密的身份
+      const manager1 = new IdentityManager({ dataDir: tempDir, password });
+      const result1 = await manager1.loadOrCreate();
+      expect(result1.success).toBe(true);
+
+      // 不提供密码尝试加载
+      const manager2 = new IdentityManager({ dataDir: tempDir });
+      const result2 = await manager2.loadOrCreate();
+      
+      // P0-2/P1-1: 应该返回 IDENTITY_PASSWORD_REQUIRED 错误
+      expect(result2.success).toBe(false);
+      if (result2.success) return;
+      expect(result2.error.code).toBe('IDENTITY_PASSWORD_REQUIRED');
+    });
+
+    it('should load plaintext identity without password (backward compatible)', async () => {
+      // 创建明文身份
+      const manager1 = new IdentityManager({ dataDir: tempDir });
+      const result1 = await manager1.loadOrCreate();
+      expect(result1.success).toBe(true);
+      if (!result1.success) return;
+
+      const peerId = result1.data.peerId;
+
+      // 不提供密码加载明文身份（向后兼容）
+      const manager2 = new IdentityManager({ dataDir: tempDir });
+      const result2 = await manager2.loadOrCreate();
+      
       expect(result2.success).toBe(true);
+      if (!result2.success) return;
+      expect(result2.data.peerId).toBe(peerId);
     });
   });
 

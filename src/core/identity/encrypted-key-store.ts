@@ -1,24 +1,27 @@
 /**
- * 加密密钥存储
- * 提供 AES-256-GCM 加密和解密功能
+ * Encrypted key store
+ * Provides AES-256-GCM encryption and decryption functionality
  */
 
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 import type { PersistedIdentity, EncryptedIdentity } from './types.js';
-import { AES_KEY_SIZE, AES_IV_SIZE } from './types.js';
+import { AES_KEY_SIZE, AES_IV_SIZE, SCRYPT_N, SCRYPT_R, SCRYPT_P, SALT_SIZE } from './types.js';
 
 /**
- * 加密身份数据
+ * Encrypt identity data
+ * 
+ * Security note: Uses scrypt with N=32768 for key derivation,
+ * which provides strong resistance against brute-force attacks.
  */
-export async function encryptIdentity(
+export function encryptIdentity(
   identity: PersistedIdentity, 
   password: string
-): Promise<EncryptedIdentity> {
-  // 生成随机盐值
-  const salt = randomBytes(16);
-  // 使用 scrypt 派生密钥
-  const key = scryptSync(password, salt, AES_KEY_SIZE);
-  // 生成随机 IV
+): EncryptedIdentity {
+  // Generate random salt
+  const salt = randomBytes(SALT_SIZE);
+  // Derive key using scrypt with secure parameters
+  const key = scryptSync(password, salt, AES_KEY_SIZE, { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P });
+  // Generate random IV
   const iv = randomBytes(AES_IV_SIZE);
   
   const cipher = createCipheriv('aes-256-gcm', key, iv);
@@ -39,18 +42,20 @@ export async function encryptIdentity(
 }
 
 /**
- * 解密身份数据
+ * Decrypt identity data
+ * 
+ * @throws Error if decryption fails (wrong password or corrupted data)
  */
-export async function decryptIdentity(
+export function decryptIdentity(
   encrypted: EncryptedIdentity, 
   password: string
-): Promise<PersistedIdentity> {
+): PersistedIdentity {
   const salt = Buffer.from(encrypted.salt, 'base64');
   const iv = Buffer.from(encrypted.iv, 'base64');
   const authTag = Buffer.from(encrypted.authTag, 'base64');
   
-  // 使用 scrypt 派生密钥
-  const key = scryptSync(password, salt, AES_KEY_SIZE);
+  // Derive key using scrypt with secure parameters
+  const key = scryptSync(password, salt, AES_KEY_SIZE, { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P });
   
   const decipher = createDecipheriv('aes-256-gcm', key, iv);
   decipher.setAuthTag(authTag);

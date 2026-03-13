@@ -6,48 +6,116 @@
 
 ## 目录
 
-1. [运行 F2A 节点](#1-运行-f2a-节点) - 把机器变成一个 P2P 节点
-2. [OpenClaw 插件](#2-openclaw-插件) - 在 OpenClaw 里使用 F2A
-3. [开发指南](#3-开发指南) - 基于 F2A 开发
+1. [快速开始](#1-快速开始) - 一键安装和配置
+2. [运行 F2A 节点](#2-运行-f2a-节点) - 把机器变成一个 P2P 节点
+3. [OpenClaw 插件](#3-openclaw-插件) - 在 OpenClaw 里使用 F2A
+4. [开发指南](#4-开发指南) - 基于 F2A 开发
 
 ---
 
-## 1. 运行 F2A 节点
+## 1. 快速开始
 
-### 1.1 安装
+### 1.1 一键安装
 
 ```bash
-# 克隆仓库
+# 全局安装（推荐）
+curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bash -s -- --global
+
+# 或者通过 NPM 直接安装
+npm install -g @f2a/network
+```
+
+### 1.2 配置向导
+
+安装后运行交互式配置向导：
+
+```bash
+f2a init
+```
+
+只需回答 3 个必需问题即可完成基本配置：
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| agentName | Agent 名称（网络中显示） | 用户名-主机名 |
+| network.bootstrapPeers | 引导节点列表 | 空（本地网络） |
+| autoStart | 是否自动启动 | false |
+
+### 1.3 启动 F2A
+
+```bash
+# 后台启动
+f2a daemon -d
+
+# 查看状态
+f2a status
+
+# 查看已连接节点
+f2a peers
+```
+
+### 1.4 配置文件
+
+配置文件位于 `~/.f2a/config.json`：
+
+```json
+{
+  "agentName": "my-agent",
+  "network": {
+    "bootstrapPeers": []
+  },
+  "autoStart": false
+}
+```
+
+**分层配置说明：**
+
+| 层级 | 配置项 | 必需性 |
+|------|--------|--------|
+| **必需** | agentName, network, autoStart | 必须配置 |
+| **进阶** | controlPort, p2pPort, enableMDNS, enableDHT, logLevel | 可选 |
+| **专家** | security, rateLimit, dataDir | 极少需要 |
+
+---
+
+## 2. 运行 F2A 节点
+
+### 2.1 安装
+
+```bash
+# 方式一：一键安装（推荐）
+curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bash -s -- --global
+
+# 方式二：源码安装
 git clone https://github.com/LuciusCao/F2A.git
 cd F2A
-
-# 安装依赖
 npm install
-
-# 构建
 npm run build
+
+# 方式三：NPM 全局安装
+npm install -g @f2a/network
 ```
 
-或者通过 NPM 安装：
+### 2.2 配置
 
 ```bash
-# 安装 F2A 网络
-npm install -g @f2a/network
+# 交互式配置向导
+f2a init
 
-# 启动节点
-f2a-network
+# 查看当前配置
+f2a config
 ```
 
-### 1.2 启动节点
+### 2.3 启动节点
 
 **方式一：Daemon 模式（推荐）**
 
 ```bash
 # 后台启动 daemon
-f2a daemon
+f2a daemon -d
 
-# 或前台启动（用于调试）
-f2a daemon -f
+# 前台启动（用于调试）
+f2a daemon
 
 # 查看 daemon 状态
 f2a daemon status
@@ -66,15 +134,15 @@ f2a status
 f2a peers
 ```
 
-### 1.3 配置
+### 2.4 环境变量
 
-通过环境变量配置：
+通过环境变量可以覆盖配置文件：
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `F2A_CONTROL_PORT` | 9001 | HTTP 控制端口 |
 | `F2A_CONTROL_TOKEN` | 自动生成 | 认证 Token（生产环境必须设置） |
-| `F2A_P2P_PORT` | 9000 | P2P 网络端口 |
+| `F2A_P2P_PORT` | 0 | P2P 网络端口（0=随机分配） |
 | `F2A_SIGNATURE_KEY` | - | 请求签名密钥（可选） |
 | `F2A_HEALTH_TIMEOUT` | 15000 | Daemon 启动健康检查超时（毫秒） |
 
@@ -88,7 +156,7 @@ export NODE_ENV=production
 f2a daemon
 ```
 
-### 1.4 验证运行
+### 2.5 验证运行
 
 ```bash
 # 查看节点状态
@@ -98,9 +166,9 @@ curl http://localhost:9001/status \
 
 ---
 
-## 2. OpenClaw 插件
+## 3. OpenClaw 插件
 
-### 2.1 安装插件
+### 3.1 安装插件
 
 ```bash
 # 通过 OpenClaw 安装
@@ -128,7 +196,7 @@ npm install -g @f2a/openclaw-adapter
 }
 ```
 
-### 2.2 配置详解
+### 3.2 配置详解
 
 **基础配置：**
 
@@ -169,7 +237,7 @@ npm install -g @f2a/openclaw-adapter
 > **提示**：`f2aPath` 仅在开发调试时需要，用于指定本地 F2A 源码路径。通过 `openclaw plugins install` 安装时不需要配置。
 ```
 
-### 2.3 使用方式
+### 3.3 使用方式
 
 安装后，直接在 OpenClaw 对话中使用：
 
@@ -180,7 +248,7 @@ npm install -g @f2a/openclaw-adapter
 | 广播任务 | "让所有人帮我检查这段代码的bug" |
 | 查看状态 | "查看F2A网络状态" |
 
-### 2.4 提供的工具
+### 3.4 提供的工具
 
 **Agent 发现与任务分发**：
 | 工具 | 功能 |
@@ -214,9 +282,9 @@ npm install -g @f2a/openclaw-adapter
 
 ---
 
-## 3. 开发指南
+## 4. 开发指南
 
-### 3.1 项目结构
+### 4.1 项目结构
 
 ```
 F2A/
@@ -231,7 +299,7 @@ F2A/
 └── tests/                    # 测试
 ```
 
-### 3.2 核心 API
+### 4.2 核心 API
 
 ```typescript
 import { F2A } from 'f2a-network';
@@ -268,7 +336,7 @@ const result = await f2a.delegateTask({
 });
 ```
 
-### 3.3 开发命令
+### 4.3 开发命令
 
 ```bash
 # 构建
@@ -282,7 +350,7 @@ npm run test:coverage
 npm run build:all
 ```
 
-### 3.4 文档
+### 4.4 文档
 
 - [协议规范](docs/F2A-PROTOCOL.md)
 - [中间件指南](docs/middleware-guide.md)
@@ -292,33 +360,49 @@ npm run build:all
 
 ## 快速开始（最小步骤）
 
-### 方式一：NPM 安装（推荐）
+### 方式一：一键安装（推荐）
 
 ```bash
-# 1. 安装并启动 F2A 节点
-npm install -g @f2a/network
-f2a-network
+# 1. 安装 F2A
+curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bash -s -- --global
 
-# 2. 配置 OpenClaw 插件
-openclaw plugins install @f2a/openclaw-adapter
+# 2. 配置
+f2a init
 
-# 3. 编辑配置文件，启用插件
-# ~/.openclaw/config.json
+# 3. 启动
+f2a daemon -d
+
+# 4. 验证
+f2a status
 ```
 
-### 方式二：源码安装
+### 方式二：NPM 安装
 
 ```bash
-# 1. 启动 F2A 节点
-cd ~/projects/F2A
+# 1. 安装
+npm install -g @f2a/network
+
+# 2. 配置
+f2a init
+
+# 3. 启动
+f2a daemon -d
+```
+
+### 方式三：源码安装
+
+```bash
+# 1. 克隆并构建
+git clone https://github.com/LuciusCao/F2A.git
+cd F2A
+npm install
 npm run build
-f2a daemon
 
-# 2. 配置 OpenClaw 插件
-# 编辑 ~/.openclaw/config.json，添加插件配置
+# 2. 配置
+node dist/cli/index.js init
 
-# 3. 开始使用
-# 在 OpenClaw 中对话："帮我找一下网络里的Agents"
+# 3. 启动
+node dist/cli/index.js daemon -d
 ```
 
 ---

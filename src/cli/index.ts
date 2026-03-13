@@ -14,6 +14,8 @@ import {
   showStatus,
   getDaemonStatus,
 } from './daemon.js';
+import { initConfig, showConfig } from './init.js';
+import { loadConfig, getConfigPath } from './config.js';
 
 const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
 
@@ -113,6 +115,8 @@ F2A CLI - Friend-to-Agent P2P Networking
 Usage: f2a [command] [options]
 
 Commands:
+  init                 交互式配置向导
+  config               显示当前配置
   status               查看节点状态
   peers                查看已连接的 Peers
   discover [options]   发现网络中的 Agents
@@ -134,6 +138,10 @@ Options:
   --reason [text]      拒绝原因 (reject 命令)
   -d, --detach         后台启动 daemon (daemon 命令)
 
+Configuration:
+  配置文件: ~/.f2a/config.json
+  运行 f2a init 进行交互式配置
+
 Environment Variables:
   F2A_CONTROL_PORT     控制服务器端口 (默认: 9001)
   F2A_CONTROL_TOKEN    控制服务器认证 Token
@@ -142,17 +150,19 @@ Environment Variables:
   BOOTSTRAP_PEERS      引导节点地址 (逗号分隔)
 
 Examples:
-  f2a status
-  f2a peers
-  f2a discover
-  f2a discover --capability code-generation
-  f2a pending
-  f2a confirm 1
-  f2a reject 2 --reason "unknown"
-  f2a daemon
-  f2a daemon -d
-  f2a daemon stop
-  f2a daemon status
+  # 首次使用
+  f2a init             # 交互式配置
+  f2a daemon -d        # 后台启动
+  
+  # 日常使用
+  f2a status           # 查看状态
+  f2a peers            # 查看已连接节点
+  f2a discover         # 发现网络中的 Agents
+  
+  # 连接管理
+  f2a pending          # 查看待确认连接
+  f2a confirm 1        # 确认连接
+  f2a reject 2         # 拒绝连接
 `);
 }
 
@@ -222,6 +232,14 @@ async function main(): Promise<void> {
   const args = parseArgs();
 
   switch (args.command) {
+    case 'init':
+      await initConfig();
+      break;
+
+    case 'config':
+      showConfig();
+      break;
+
     case 'status':
       await sendCommand('status');
       break;

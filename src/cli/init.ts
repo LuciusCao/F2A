@@ -13,14 +13,12 @@ import {
   getConfigPath,
   configExists,
   validateAgentName,
+  validateMultiaddr,
 } from './config.js';
 
 // 端口验证常量
 const MIN_PORT = 1024;
 const MAX_PORT = 65535;
-
-// Multiaddr 验证正则 (基本格式: /protocol/value/...)
-const MULTIADDR_REGEX = /^\/(ip4|ip6|dns|dns4|dns6)\/[^/]+\/(tcp|udp)\/\d+(\/p2p\/[a-zA-Z0-9]+)?$/;
 
 // 颜色输出
 const colors = {
@@ -293,7 +291,7 @@ export async function initConfig(): Promise<void> {
       const invalidPeers: string[] = [];
       
       for (const peer of peers) {
-        if (MULTIADDR_REGEX.test(peer)) {
+        if (validateMultiaddr(peer).valid) {
           validPeers.push(peer);
         } else {
           invalidPeers.push(peer);

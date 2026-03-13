@@ -1,22 +1,39 @@
 /**
+ * F2A CLI 配置管理
+ */
+
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, copyFileSync, readdirSync, statSync, unlinkSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
+import { z } from 'zod';
+
+// ============================================================================
+// 常量
+// ============================================================================
+
+/**
  * Agent 名称过滤正则
  * 只允许字母、数字、连字符和下划线
  */
-const AGENT_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
+export const AGENT_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
 
 /**
  * Multiaddr 格式正则
- * 支持 /ip4/..., /ip6/..., /dns4/..., /dns6/..., /dnsaddr/... 等格式
+ * 支持 /ip4/..., /ip6/..., /dns/..., /dns4/..., /dns6/..., /dnsaddr/... 等格式
  * 必须包含 /p2p/<peer-id> 或 /ipfs/<peer-id>
  */
-const MULTIADDR_REGEX = /^\/(ip4|ip6|dns4|dns6|dnsaddr)(\/[a-zA-Z0-9.\-:]+)+\/(p2p|ipfs)\/[a-zA-Z0-9]+$/;
+export const MULTIADDR_REGEX = /^\/(ip4|ip6|dns|dns4|dns6|dnsaddr)(\/[a-zA-Z0-9.\-:]+)+\/(p2p|ipfs)\/[a-zA-Z0-9]+$/;
+
+// ============================================================================
+// 辅助函数
+// ============================================================================
 
 /**
  * 调试日志（仅在 DEBUG 模式下输出详细信息）
  */
 function debugLog(message: string, data?: unknown): void {
   if (process.env.F2A_DEBUG === 'true') {
-    console.error(`[F2A DEBUG] ${message}`, data !== undefined ? data : '');
+    console.warn(`[F2A DEBUG] ${message}`, data !== undefined ? data : '');
   }
 }
 
@@ -39,12 +56,12 @@ export function validateAgentName(name: string): { valid: boolean; error?: strin
 /**
  * 验证 multiaddr 格式
  */
-function validateMultiaddr(addr: string): { valid: boolean; error?: string } {
+export function validateMultiaddr(addr: string): { valid: boolean; error?: string } {
   if (!addr || typeof addr !== 'string') {
     return { valid: false, error: 'Invalid multiaddr: empty or not a string' };
   }
   if (!MULTIADDR_REGEX.test(addr)) {
-    return { valid: false, error: 'Invalid multiaddr format. Expected: /ip4|ip6|dns4|dns6|dnsaddr/<host>/p2p/<peer-id>' };
+    return { valid: false, error: 'Invalid multiaddr format. Expected: /ip4|ip6|dns|dns4|dns6|dnsaddr/<host>/p2p/<peer-id>' };
   }
   return { valid: true };
 }
@@ -53,7 +70,7 @@ function validateMultiaddr(addr: string): { valid: boolean; error?: string } {
  * 验证路径安全性
  * 禁止路径遍历（..）和危险字符
  */
-function validatePath(path: string): { valid: boolean; error?: string } {
+export function validatePath(path: string): { valid: boolean; error?: string } {
   if (!path || typeof path !== 'string') {
     return { valid: false, error: 'Invalid path: empty or not a string' };
   }
@@ -95,11 +112,6 @@ function cleanupOldBackups(configDir: string, keepCount: number = 5): void {
     // 清理失败不阻止保存
   }
 }
-
-import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, copyFileSync, readdirSync, statSync, unlinkSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
-import { z } from 'zod';
 
 // ============================================================================
 // 配置 Schema
@@ -411,11 +423,11 @@ export function validateConfig(config: F2AConfig): { valid: boolean; missing: st
     }
   }
   
-  // 额外的 dataDir 路径安全验证
+  // 额外的 dataDir 路径安全验证（使用 validatePath 函数）
   if (config.dataDir) {
-    // 检测路径遍历攻击
-    if (config.dataDir.includes('..') || /[<>:"|?*\x00-\x1f]/.test(config.dataDir)) {
-      errors.push('dataDir: Path contains forbidden characters or traversal patterns');
+    const pathValidation = validatePath(config.dataDir);
+    if (!pathValidation.valid) {
+      errors.push(`dataDir: ${pathValidation.error}`);
     }
     // 必须是绝对路径
     if (!config.dataDir.startsWith('/')) {

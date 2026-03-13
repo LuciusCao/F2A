@@ -12,7 +12,15 @@ import {
   F2AConfig,
   getConfigPath,
   configExists,
+  validateAgentName,
 } from './config.js';
+
+// 端口验证常量
+const MIN_PORT = 1024;
+const MAX_PORT = 65535;
+
+// Multiaddr 验证正则 (基本格式: /protocol/value/...)
+const MULTIADDR_REGEX = /^\/(ip4|ip6|dns|dns4|dns6)\/[^/]+\/(tcp|udp)\/\d+(\/p2p\/[a-zA-Z0-9]+)?$/;
 
 // 颜色输出
 const colors = {
@@ -130,6 +138,13 @@ function showSummary(config: F2AConfig): void {
  * 主配置流程
  */
 export async function initConfig(): Promise<void> {
+  // TTY 检测：确保在交互式环境中运行
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    console.error(color('Error: This command requires an interactive terminal (TTY).', 'red'));
+    console.error(color('Please run "f2a init" in a terminal.', 'red'));
+    process.exit(1);
+  }
+  
   showWelcome();
   
   const rl = createInterface();
@@ -158,7 +173,30 @@ export async function initConfig(): Promise<void> {
   // Agent 名称
   const hostnameShort = hostname().split('.')[0];
   const defaultName = existingConfig.agentName || `${process.env.USER || 'user'}-${hostnameShort}`;
-  const agentName = await question(rl, 'Agent 名称 (用于在网络中识别)', defaultName);
+  let agentName = '';
+  let nameAttempts = 0;
+  const maxNameAttempts = 3;
+  
+  while (nameAttempts < maxNameAttempts) {
+    const input = await question(rl, 'Agent name (used to identify in network)', defaultName);
+    const validation = validateAgentName(input || defaultName);
+    
+    if (validation.valid) {
+      agentName = input || defaultName;
+      break;
+    } else {
+      console.log(color(`  Invalid: ${validation.error}`, 'red'));
+      nameAttempts++;
+      if (nameAttempts < maxNameAttempts) {
+        console.log(color(`  Please try again (${maxNameAttempts - nameAttempts} attempts remaining)`, 'yellow'));
+      }
+    }
+  }
+  
+  if (!agentName) {
+    console.log(color('Using default name...', 'yellow'));
+    agentName = defaultName;
+  }
   
   // 自动启动
   console.log('');
@@ -174,11 +212,11 @@ export async function initConfig(): Promise<void> {
   const configureAdvanced = await confirm(rl, '是否配置进阶选项？（端口、发现等）', false);
   
   let advancedConfig = {
-    controlPort: existingConfig.controlPort || 9001,
+    controlPort: existingConfig.controlPort ?? 9001,
     p2pPort: existingConfig.p2pPort ?? 0,
     enableMDNS: existingConfig.enableMDNS ?? true,
     enableDHT: existingConfig.enableDHT ?? true,
-    logLevel: existingConfig.logLevel || 'INFO',
+    logLevel: existingConfig.logLevel ?? 'INFO',
   };
   
   if (configureAdvanced) {
@@ -189,16 +227,21 @@ export async function initConfig(): Promise<void> {
     console.log('');
     
     // 控制端口
-    const controlPortStr = await question(rl, '控制端口 (CLI 与 daemon 通信)', advancedConfig.controlPort.toString());
+    console.log(`Port range: ${MIN_PORT}-${MAX_PORT}`);
+    const controlPortStr = await question(rl, 'Control port (CLI communicates with daemon)', advancedConfig.controlPort.toString());
     const controlPort = parseInt(controlPortStr);
-    if (!isNaN(controlPort) && controlPort > 0 && controlPort < 65536) {
+    if (controlPortStr && (isNaN(controlPort) || controlPort < MIN_PORT || controlPort > MAX_PORT)) {
+      console.log(color(`  Warning: Invalid port "${controlPortStr}". Port must be between ${MIN_PORT} and ${MAX_PORT}. Using default: ${advancedConfig.controlPort}`, 'yellow'));
+    } else if (!isNaN(controlPort) && controlPort >= MIN_PORT && controlPort <= MAX_PORT) {
       advancedConfig.controlPort = controlPort;
     }
     
     // P2P 端口
-    const p2pPortStr = await question(rl, 'P2P 端口 (0 = 随机分配)', advancedConfig.p2pPort.toString());
+    const p2pPortStr = await question(rl, 'P2P port (0 = random assignment)', advancedConfig.p2pPort.toString());
     const p2pPort = parseInt(p2pPortStr);
-    if (!isNaN(p2pPort) && p2pPort >= 0 && p2pPort < 65536) {
+    if (p2pPortStr && (isNaN(p2pPort) || p2pPort < 0 || p2pPort > MAX_PORT)) {
+      console.log(color(`  Warning: Invalid port "${p2pPortStr}". Port must be between 0 and ${MAX_PORT}. Using default: ${advancedConfig.p2pPort}`, 'yellow'));
+    } else if (!isNaN(p2pPort) && p2pPort >= 0 && p2pPort <= MAX_PORT) {
       advancedConfig.p2pPort = p2pPort;
     }
     
@@ -230,14 +273,34 @@ export async function initConfig(): Promise<void> {
   
   if (configureBootstrap) {
     console.log('');
-    console.log('引导节点用于连接到远程 F2A 网络。');
-    console.log('输入引导节点的 multiaddr 地址（如：/ip4/1.2.3.4/tcp/9000/p2p/PeerID）');
-    console.log('多个地址用逗号分隔，留空跳过。');
+    console.log('Bootstrap peers are used to connect to remote F2A networks.');
+    console.log('Enter multiaddr addresses (e.g., /ip4/1.2.3.4/tcp/9000/p2p/PeerID)');
+    console.log('Multiple addresses separated by commas, leave empty to skip.');
     console.log('');
     
-    const peersStr = await question(rl, '引导节点', bootstrapPeers.join(', '));
+    const peersStr = await question(rl, 'Bootstrap peers', bootstrapPeers.join(', '));
     if (peersStr) {
-      bootstrapPeers = peersStr.split(',').map(p => p.trim()).filter(Boolean);
+      const peers = peersStr.split(',').map(p => p.trim()).filter(Boolean);
+      const validPeers: string[] = [];
+      const invalidPeers: string[] = [];
+      
+      for (const peer of peers) {
+        if (MULTIADDR_REGEX.test(peer)) {
+          validPeers.push(peer);
+        } else {
+          invalidPeers.push(peer);
+        }
+      }
+      
+      if (invalidPeers.length > 0) {
+        console.log(color(`  Warning: Invalid multiaddr format: ${invalidPeers.join(', ')}`, 'yellow'));
+        console.log(color(`  Valid format: /ip4|ip6|dns/.../tcp|udp/PORT[/p2p/PEERID]`, 'yellow'));
+      }
+      
+      bootstrapPeers = validPeers;
+      if (validPeers.length > 0) {
+        console.log(color(`  Added ${validPeers.length} valid bootstrap peer(s)`, 'green'));
+      }
     }
   }
   

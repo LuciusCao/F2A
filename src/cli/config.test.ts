@@ -14,24 +14,37 @@ import {
   configExists,
   validateConfig,
   getConfigPath,
+  validateAgentName,
   F2AConfig,
+  F2AConfigSchema,
 } from './config.js';
 
 // 测试用的临时目录
 const TEST_DIR = join(tmpdir(), 'f2a-config-test-' + Date.now());
 
 describe('Config', () => {
+  // 保存原始环境变量
+  const originalConfigDir = process.env.F2A_CONFIG_DIR;
+
   beforeEach(() => {
     // 创建测试目录
     if (!existsSync(TEST_DIR)) {
       mkdirSync(TEST_DIR, { recursive: true });
     }
+    // 设置测试配置目录
+    process.env.F2A_CONFIG_DIR = TEST_DIR;
   });
 
   afterEach(() => {
     // 清理测试目录
     if (existsSync(TEST_DIR)) {
       rmSync(TEST_DIR, { recursive: true, force: true });
+    }
+    // 恢复环境变量
+    if (originalConfigDir !== undefined) {
+      process.env.F2A_CONFIG_DIR = originalConfigDir;
+    } else {
+      delete process.env.F2A_CONFIG_DIR;
     }
   });
 
@@ -78,22 +91,92 @@ describe('Config', () => {
       expect(result.valid).toBe(false);
     });
 
-    it('should validate port range', () => {
+    it('should reject port below 1024 for controlPort', () => {
+      // 注意：validateConfig 只验证 RequiredConfigSchema
+      // controlPort 在 AdvancedConfigSchema 中，需要使用 F2AConfigSchema 直接验证
       const config = {
         ...getDefaultConfig(),
         controlPort: 80, // 低于 1024
       };
+      const result = F2AConfigSchema.safeParse(config);
+      
+      expect(result.success).toBe(false);
+    });
+
+    it('should accept valid port in range 1024-65535', () => {
+      const config = {
+        ...getDefaultConfig(),
+        controlPort: 9001,
+      };
       const result = validateConfig(config);
       
-      // 注意：我们的 schema 允许任何有效端口，这只是示例
-      // 实际验证取决于 schema 定义
-      expect(result.valid).toBe(true); // 因为 controlPort 验证 min 1024
+      expect(result.valid).toBe(true);
+    });
+
+    it('should reject port above 65535', () => {
+      // 注意：validateConfig 只验证 RequiredConfigSchema
+      // controlPort 在 AdvancedConfigSchema 中，需要使用 F2AConfigSchema 直接验证
+      const config = {
+        ...getDefaultConfig(),
+        controlPort: 70000,
+      };
+      const result = F2AConfigSchema.safeParse(config);
+      
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('validateAgentName', () => {
+    it('should reject empty name', () => {
+      const result = validateAgentName('');
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('empty');
+    });
+
+    it('should reject name with special characters', () => {
+      const result = validateAgentName('test@agent');
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('letters, numbers');
+    });
+
+    it('should accept valid name with hyphens and underscores', () => {
+      const result = validateAgentName('my-test_agent');
+      expect(result.valid).toBe(true);
+    });
+
+    it('should reject name longer than 50 characters', () => {
+      const longName = 'a'.repeat(51);
+      const result = validateAgentName(longName);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('50');
+    });
+  });
+
+  describe('saveConfig and loadConfig', () => {
+    it('should save and load config correctly', () => {
+      const config = getDefaultConfig();
+      config.agentName = 'test-agent';
+      
+      saveConfig(config);
+      
+      const loaded = loadConfig();
+      expect(loaded.agentName).toBe('test-agent');
+    });
+
+    it('should use test directory', () => {
+      const config = getDefaultConfig();
+      saveConfig(config);
+      
+      const configPath = getConfigPath();
+      expect(configPath).toContain(TEST_DIR);
     });
   });
 
   describe('updateConfig', () => {
     it('should merge partial config', () => {
-      const original = getDefaultConfig();
+      // 先保存一个基础配置
+      saveConfig(getDefaultConfig());
+      
       const updated = updateConfig({
         agentName: 'new-agent',
         controlPort: 9002,
@@ -101,10 +184,12 @@ describe('Config', () => {
       
       expect(updated.agentName).toBe('new-agent');
       expect(updated.controlPort).toBe(9002);
-      expect(updated.enableMDNS).toBe(original.enableMDNS);
+      expect(updated.enableMDNS).toBe(true);
     });
 
     it('should deep merge network config', () => {
+      saveConfig(getDefaultConfig());
+      
       const updated = updateConfig({
         network: {
           bootstrapPeers: ['peer1', 'peer2'],
@@ -112,6 +197,55 @@ describe('Config', () => {
       });
       
       expect(updated.network.bootstrapPeers).toEqual(['peer1', 'peer2']);
+    });
+
+    it('should deep merge security config', () => {
+      const config = getDefaultConfig();
+      config.security = {
+        level: 'medium',
+        requireConfirmation: true,
+      };
+      saveConfig(config);
+      
+      const updated = updateConfig({
+        security: {
+          level: 'high',
+          requireConfirmation: true,
+        },
+      });
+      
+      expect(updated.security?.level).toBe('high');
+      expect(updated.security?.requireConfirmation).toBe(true);
+    });
+
+    it('should deep merge rateLimit config', () => {
+      const config = getDefaultConfig();
+      config.rateLimit = {
+        maxRequests: 100,
+        windowMs: 60000,
+      };
+      saveConfig(config);
+      
+      const updated = updateConfig({
+        rateLimit: {
+          maxRequests: 200,
+          windowMs: 60000,
+        },
+      });
+      
+      expect(updated.rateLimit?.maxRequests).toBe(200);
+      expect(updated.rateLimit?.windowMs).toBe(60000);
+    });
+  });
+
+  describe('configExists', () => {
+    it('should return false when config does not exist', () => {
+      expect(configExists()).toBe(false);
+    });
+
+    it('should return true when config exists', () => {
+      saveConfig(getDefaultConfig());
+      expect(configExists()).toBe(true);
     });
   });
 });

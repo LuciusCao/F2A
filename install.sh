@@ -31,6 +31,21 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     --dir)
       INSTALL_DIR="$2"
+      # 验证路径安全性
+      if [[ -z "$INSTALL_DIR" ]]; then
+        echo -e "${RED}❌ 错误: --dir 参数不能为空${NC}"
+        exit 1
+      fi
+      # 必须是绝对路径
+      if [[ "$INSTALL_DIR" != /* ]]; then
+        echo -e "${RED}❌ 错误: --dir 必须是绝对路径 (以 / 开头)${NC}"
+        exit 1
+      fi
+      # 禁止路径遍历和特殊字符
+      if [[ "$INSTALL_DIR" =~ \.\. || "$INSTALL_DIR" =~ [^a-zA-Z0-9_./\-] ]]; then
+        echo -e "${RED}❌ 错误: --dir 路径包含不允许的字符 (禁止使用 .. 或特殊字符)${NC}"
+        exit 1
+      fi
       shift 2
       ;;
     --global)
@@ -249,9 +264,19 @@ if [ "${SETUP_SYSTEMD}" = true ]; then
   else
     echo -e "${BLUE}🔧 设置 systemd 服务...${NC}"
     
-    SERVICE_FILE="/etc/systemd/system/f2a.service"
-    
-    cat << EOF | sudo tee "$SERVICE_FILE" > /dev/null
+    # 验证 f2a 命令存在
+    F2A_PATH=$(which f2a 2>/dev/null || true)
+    if [ -z "$F2A_PATH" ]; then
+      echo -e "${RED}  ❌ f2a 命令未找到，无法创建 systemd 服务${NC}"
+      echo -e "${YELLOW}     请确保 F2A 已正确安装并添加到 PATH${NC}"
+    else
+      NODE_PATH=$(which node 2>/dev/null || true)
+      if [ -z "$NODE_PATH" ]; then
+        echo -e "${RED}  ❌ node 命令未找到${NC}"
+      else
+        SERVICE_FILE="/etc/systemd/system/f2a.service"
+        
+        cat << EOF | sudo tee "$SERVICE_FILE" > /dev/null
 [Unit]
 Description=F2A P2P Agent Network
 After=network.target
@@ -260,7 +285,7 @@ After=network.target
 Type=simple
 User=$(whoami)
 WorkingDirectory=${HOME}
-ExecStart=$(which node) $(which f2a) daemon
+ExecStart=${NODE_PATH} ${F2A_PATH} daemon
 Restart=on-failure
 RestartSec=10
 Environment=NODE_ENV=production
@@ -271,19 +296,20 @@ WantedBy=multi-user.target
 EOF
 
     sudo systemctl daemon-reload
-    sudo systemctl enable f2a
+        sudo systemctl enable f2a
+        
+        echo -e "${GREEN}  ✅ systemd 服务已设置${NC}"
+        echo ""
+        echo "服务管理命令:"
+        echo "  sudo systemctl start f2a    # 启动服务"
+        echo "  sudo systemctl stop f2a     # 停止服务"
+        echo "  sudo systemctl status f2a   # 查看状态"
+        echo "  sudo journalctl -u f2a -f   # 查看日志"
+      fi
+    fi
     
-    echo -e "${GREEN}  ✅ systemd 服务已设置${NC}"
     echo ""
-    echo "服务管理命令:"
-    echo "  sudo systemctl start f2a    # 启动服务"
-    echo "  sudo systemctl stop f2a     # 停止服务"
-    echo "  sudo systemctl status f2a   # 查看状态"
-    echo "  sudo journalctl -u f2a -f   # 查看日志"
   fi
-  
-  echo ""
-fi
 
 # ============================================
 # 6. 完成提示

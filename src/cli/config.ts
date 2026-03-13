@@ -1,10 +1,37 @@
 /**
- * F2A 配置管理
- * 支持分层配置：必需 -> 进阶 -> 专家
+ * Agent 名称过滤正则
+ * 只允许字母、数字、连字符和下划线
  */
+const AGENT_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { join } from 'path';
+/**
+ * 验证并清理 Agent 名称
+ */
+function sanitizeAgentName(name: string): string {
+  // 过滤特殊字符
+  const sanitized = name.replace(/[^a-zA-Z0-9_-]/g, '');
+  // 限制长度
+  return sanitized.substring(0, 50);
+}
+
+/**
+ * 验证 Agent 名称格式
+ */
+export function validateAgentName(name: string): { valid: boolean; error?: string } {
+  if (!name || name.trim().length === 0) {
+    return { valid: false, error: 'Agent name cannot be empty' };
+  }
+  if (name.length > 50) {
+    return { valid: false, error: 'Agent name cannot exceed 50 characters' };
+  }
+  if (!AGENT_NAME_REGEX.test(name)) {
+    return { valid: false, error: 'Agent name can only contain letters, numbers, hyphens, and underscores' };
+  }
+  return { valid: true };
+}
+
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, copyFileSync } from 'fs';
+import { join, basename } from 'path';
 import { homedir } from 'os';
 import { z } from 'zod';
 
@@ -17,7 +44,10 @@ import { z } from 'zod';
  */
 const RequiredConfigSchema = z.object({
   /** Agent 名称 */
-  agentName: z.string().min(1).max(50),
+  agentName: z.string()
+    .min(1, 'Agent name cannot be empty')
+    .max(50, 'Agent name cannot exceed 50 characters')
+    .regex(AGENT_NAME_REGEX, 'Agent name can only contain letters, numbers, hyphens, and underscores'),
   /** 网络配置 */
   network: z.object({
     /** 引导节点列表 */
@@ -72,22 +102,28 @@ export type F2AConfig = z.infer<typeof F2AConfigSchema>;
 // 配置管理器
 // ============================================================================
 
-const CONFIG_DIR = join(homedir(), '.f2a');
-const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
+/**
+ * 获取配置目录路径
+ * 支持通过环境变量 F2A_CONFIG_DIR 注入测试目录
+ */
+function getConfigDir(): string {
+  return process.env.F2A_CONFIG_DIR || join(homedir(), '.f2a');
+}
 
 /**
  * 获取配置文件路径
  */
 export function getConfigPath(): string {
-  return CONFIG_FILE;
+  return join(getConfigDir(), 'config.json');
 }
 
 /**
  * 确保配置目录存在
  */
 function ensureConfigDir(): void {
-  if (!existsSync(CONFIG_DIR)) {
-    mkdirSync(CONFIG_DIR, { recursive: true });
+  const configDir = getConfigDir();
+  if (!existsSync(configDir)) {
+    mkdirSync(configDir, { recursive: true });
   }
 }
 
@@ -114,12 +150,13 @@ export function getDefaultConfig(): F2AConfig {
  * 如果文件不存在，返回默认配置
  */
 export function loadConfig(): F2AConfig {
-  if (!existsSync(CONFIG_FILE)) {
+  const configFile = getConfigPath();
+  if (!existsSync(configFile)) {
     return getDefaultConfig();
   }
 
   try {
-    const content = readFileSync(CONFIG_FILE, 'utf-8');
+    const content = readFileSync(configFile, 'utf-8');
     const rawConfig = JSON.parse(content);
     
     // 合并默认配置
@@ -132,46 +169,100 @@ export function loadConfig(): F2AConfig {
     const result = F2AConfigSchema.safeParse(mergedConfig);
     
     if (!result.success) {
-      console.warn('[F2A] 配置文件格式错误，使用默认配置:', result.error.message);
+      console.warn('[F2A] Invalid config file format, using defaults:', result.error.message);
       return getDefaultConfig();
     }
     
     return result.data;
   } catch (error) {
-    console.warn('[F2A] 无法读取配置文件:', error instanceof Error ? error.message : String(error));
+    console.warn('[F2A] Failed to read config file:', error instanceof Error ? error.message : String(error));
     return getDefaultConfig();
   }
 }
 
 /**
  * 保存配置文件
+ * 会自动备份旧配置并设置安全权限
  */
 export function saveConfig(config: F2AConfig): void {
   ensureConfigDir();
+  
+  const configFile = getConfigPath();
+  const configDir = getConfigDir();
   
   // 验证配置
   const result = F2AConfigSchema.safeParse(config);
   
   if (!result.success) {
-    throw new Error(`配置验证失败: ${result.error.message}`);
+    throw new Error(`Configuration validation failed: ${result.error.message}`);
   }
   
-  writeFileSync(CONFIG_FILE, JSON.stringify(result.data, null, 2), 'utf-8');
+  // 备份现有配置文件
+  if (existsSync(configFile)) {
+    const backupFile = join(configDir, `config.json.backup-${Date.now()}`);
+    try {
+      copyFileSync(configFile, backupFile);
+      // 保留最近 5 个备份文件（可选清理逻辑）
+    } catch {
+      // 备份失败不阻止保存
+    }
+  }
+  
+  // 写入配置文件
+  writeFileSync(configFile, JSON.stringify(result.data, null, 2), 'utf-8');
+  
+  // 设置文件权限为 600 (仅所有者可读写)
+  try {
+    chmodSync(configFile, 0o600);
+  } catch {
+    // 权限设置失败不阻止保存
+  }
+}
+
+/**
+ * 深度合并两个对象
+ * 对于嵌套对象，递归合并而不是覆盖
+ */
+function deepMerge<T extends Record<string, unknown>>(target: T, source: Partial<T>): T {
+  const result = { ...target };
+  
+  for (const key in source) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      const sourceValue = source[key];
+      const targetValue = target[key];
+      
+      if (
+        sourceValue !== undefined &&
+        typeof sourceValue === 'object' &&
+        sourceValue !== null &&
+        !Array.isArray(sourceValue) &&
+        targetValue !== undefined &&
+        typeof targetValue === 'object' &&
+        targetValue !== null &&
+        !Array.isArray(targetValue)
+      ) {
+        // 递归合并嵌套对象
+        result[key] = deepMerge(
+          targetValue as Record<string, unknown>,
+          sourceValue as Record<string, unknown>
+        ) as T[Extract<keyof T, string>];
+      } else {
+        // 直接赋值（包括数组和基本类型）
+        result[key] = sourceValue as T[Extract<keyof T, string>];
+      }
+    }
+  }
+  
+  return result;
 }
 
 /**
  * 更新部分配置
+ * 支持深度合并嵌套对象（network, security, rateLimit）
  */
 export function updateConfig(partial: Partial<F2AConfig>): F2AConfig {
   const current = loadConfig();
-  const updated = {
-    ...current,
-    ...partial,
-    network: {
-      ...current.network,
-      ...partial.network,
-    },
-  };
+  const updated = deepMerge(current, partial);
   
   saveConfig(updated);
   return updated;
@@ -181,7 +272,7 @@ export function updateConfig(partial: Partial<F2AConfig>): F2AConfig {
  * 检查配置是否存在
  */
 export function configExists(): boolean {
-  return existsSync(CONFIG_FILE);
+  return existsSync(getConfigPath());
 }
 
 // ============================================================================

@@ -15,7 +15,7 @@ import {
   getDaemonStatus,
 } from './daemon.js';
 import { initConfig, showConfig } from './init.js';
-import { loadConfig, getConfigPath } from './config.js';
+import { getConfigPath } from './config.js';
 
 const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
 
@@ -258,8 +258,8 @@ async function main(): Promise<void> {
 
     case 'confirm':
       if (args.idOrIndex === undefined) {
-        console.error('[F2A] 错误: 需要指定 ID 或序号');
-        console.error('用法: f2a confirm [id|index]');
+        console.error('[F2A] Error: ID or index is required');
+        console.error('Usage: f2a confirm [id|index]');
         process.exit(1);
       }
       await sendCommand('confirm', { id: args.idOrIndex });
@@ -267,8 +267,8 @@ async function main(): Promise<void> {
 
     case 'reject':
       if (args.idOrIndex === undefined) {
-        console.error('[F2A] 错误: 需要指定 ID 或序号');
-        console.error('用法: f2a reject [id|index]');
+        console.error('[F2A] Error: ID or index is required');
+        console.error('Usage: f2a reject [id|index]');
         process.exit(1);
       }
       await sendCommand('reject', { id: args.idOrIndex, reason: args.reason });
@@ -316,13 +316,13 @@ async function handleDaemonCommand(args: Args): Promise<void> {
       break;
 
     default:
-      console.error(`[F2A] 未知的 daemon 子命令: ${args.subcommand}`);
-      console.error('用法: f2a daemon [stop|status|-d|--detach]');
+      console.error(`[F2A] Unknown daemon subcommand: ${args.subcommand}`);
+      console.error('Usage: f2a daemon [stop|status|-d|--detach]');
       process.exit(1);
   }
 }
 
 main().catch(err => {
-  console.error('[F2A] 错误:', err);
+  console.error('[F2A] Error:', err);
   process.exit(1);
 });

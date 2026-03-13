@@ -276,7 +276,12 @@ if [ "${SETUP_SYSTEMD}" = true ]; then
       else
         SERVICE_FILE="/etc/systemd/system/f2a.service"
         
-        cat << EOF | sudo tee "$SERVICE_FILE" > /dev/null
+        # 生成随机控制 token (32 字节 hex = 64 字符)
+        CONTROL_TOKEN=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | xxd -p)
+        
+        # 使用临时文件避免 sudo tee 权限提升风险
+        TEMP_SERVICE_FILE=$(mktemp)
+        cat > "$TEMP_SERVICE_FILE" << EOF
 [Unit]
 Description=F2A P2P Agent Network
 After=network.target
@@ -290,13 +295,23 @@ Restart=on-failure
 RestartSec=10
 Environment=NODE_ENV=production
 Environment=F2A_CONTROL_PORT=9001
+Environment=F2A_CONTROL_TOKEN=${CONTROL_TOKEN}
 
 [Install]
 WantedBy=multi-user.target
 EOF
+        
+        # 使用 sudo mv 替代 sudo tee (更安全)
+        sudo mv "$TEMP_SERVICE_FILE" "$SERVICE_FILE"
+        sudo chmod 644 "$SERVICE_FILE"
 
         sudo systemctl daemon-reload
         sudo systemctl enable f2a
+        
+        # 输出控制 token 提示
+        echo ""
+        echo -e "${YELLOW}  ⚠️  控制令牌已自动生成并保存到 systemd 服务配置${NC}"
+        echo -e "${YELLOW}     查看令牌: sudo systemctl show f2a --property=Environment | grep TOKEN${NC}"
         
         echo -e "${GREEN}  ✅ systemd 服务已设置${NC}"
         echo ""

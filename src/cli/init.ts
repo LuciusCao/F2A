@@ -229,20 +229,28 @@ export async function initConfig(): Promise<void> {
     // 控制端口
     console.log(`Port range: ${MIN_PORT}-${MAX_PORT}`);
     const controlPortStr = await question(rl, 'Control port (CLI communicates with daemon)', advancedConfig.controlPort.toString());
-    const controlPort = parseInt(controlPortStr);
-    if (controlPortStr && (isNaN(controlPort) || controlPort < MIN_PORT || controlPort > MAX_PORT)) {
-      console.log(color(`  Warning: Invalid port "${controlPortStr}". Port must be between ${MIN_PORT} and ${MAX_PORT}. Using default: ${advancedConfig.controlPort}`, 'yellow'));
-    } else if (!isNaN(controlPort) && controlPort >= MIN_PORT && controlPort <= MAX_PORT) {
-      advancedConfig.controlPort = controlPort;
+    if (controlPortStr === '') {
+      // 空输入使用默认值，不需要提示
+    } else {
+      const controlPort = parseInt(controlPortStr);
+      if (isNaN(controlPort) || controlPort < MIN_PORT || controlPort > MAX_PORT) {
+        console.log(color(`  Warning: Invalid port "${controlPortStr}". Port must be between ${MIN_PORT} and ${MAX_PORT}. Using default: ${advancedConfig.controlPort}`, 'yellow'));
+      } else {
+        advancedConfig.controlPort = controlPort;
+      }
     }
     
     // P2P 端口
     const p2pPortStr = await question(rl, 'P2P port (0 = random assignment)', advancedConfig.p2pPort.toString());
-    const p2pPort = parseInt(p2pPortStr);
-    if (p2pPortStr && (isNaN(p2pPort) || p2pPort < 0 || p2pPort > MAX_PORT)) {
-      console.log(color(`  Warning: Invalid port "${p2pPortStr}". Port must be between 0 and ${MAX_PORT}. Using default: ${advancedConfig.p2pPort}`, 'yellow'));
-    } else if (!isNaN(p2pPort) && p2pPort >= 0 && p2pPort <= MAX_PORT) {
-      advancedConfig.p2pPort = p2pPort;
+    if (p2pPortStr === '') {
+      // 空输入使用默认值，不需要提示
+    } else {
+      const p2pPort = parseInt(p2pPortStr);
+      if (isNaN(p2pPort) || p2pPort < 0 || p2pPort > MAX_PORT) {
+        console.log(color(`  Warning: Invalid port "${p2pPortStr}". Port must be between 0 and ${MAX_PORT}. Using default: ${advancedConfig.p2pPort}`, 'yellow'));
+      } else {
+        advancedConfig.p2pPort = p2pPort;
+      }
     }
     
     // MDNS

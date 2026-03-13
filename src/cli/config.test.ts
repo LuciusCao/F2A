@@ -192,11 +192,11 @@ describe('Config', () => {
       
       const updated = updateConfig({
         network: {
-          bootstrapPeers: ['peer1', 'peer2'],
+          bootstrapPeers: ['/ip4/1.2.3.4/tcp/9000/p2p/peer1', '/ip4/5.6.7.8/tcp/9000/p2p/peer2'],
         },
       });
       
-      expect(updated.network.bootstrapPeers).toEqual(['peer1', 'peer2']);
+      expect(updated.network.bootstrapPeers).toEqual(['/ip4/1.2.3.4/tcp/9000/p2p/peer1', '/ip4/5.6.7.8/tcp/9000/p2p/peer2']);
     });
 
     it('should deep merge security config', () => {

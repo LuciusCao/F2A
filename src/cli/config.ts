@@ -5,6 +5,22 @@
 const AGENT_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
 
 /**
+ * Multiaddr 格式正则
+ * 支持 /ip4/..., /ip6/..., /dns4/..., /dns6/..., /dnsaddr/... 等格式
+ * 必须包含 /p2p/<peer-id> 或 /ipfs/<peer-id>
+ */
+const MULTIADDR_REGEX = /^\/(ip4|ip6|dns4|dns6|dnsaddr)(\/[a-zA-Z0-9.\-:]+)+\/(p2p|ipfs)\/[a-zA-Z0-9]+$/;
+
+/**
+ * 调试日志（仅在 DEBUG 模式下输出详细信息）
+ */
+function debugLog(message: string, data?: unknown): void {
+  if (process.env.F2A_DEBUG === 'true') {
+    console.error(`[F2A DEBUG] ${message}`, data !== undefined ? data : '');
+  }
+}
+
+/**
  * 验证 Agent 名称格式
  */
 export function validateAgentName(name: string): { valid: boolean; error?: string } {
@@ -20,7 +36,68 @@ export function validateAgentName(name: string): { valid: boolean; error?: strin
   return { valid: true };
 }
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, copyFileSync } from 'fs';
+/**
+ * 验证 multiaddr 格式
+ */
+function validateMultiaddr(addr: string): { valid: boolean; error?: string } {
+  if (!addr || typeof addr !== 'string') {
+    return { valid: false, error: 'Invalid multiaddr: empty or not a string' };
+  }
+  if (!MULTIADDR_REGEX.test(addr)) {
+    return { valid: false, error: 'Invalid multiaddr format. Expected: /ip4|ip6|dns4|dns6|dnsaddr/<host>/p2p/<peer-id>' };
+  }
+  return { valid: true };
+}
+
+/**
+ * 验证路径安全性
+ * 禁止路径遍历（..）和危险字符
+ */
+function validatePath(path: string): { valid: boolean; error?: string } {
+  if (!path || typeof path !== 'string') {
+    return { valid: false, error: 'Invalid path: empty or not a string' };
+  }
+  if (path.includes('..')) {
+    return { valid: false, error: 'Invalid path: path traversal (..) is not allowed' };
+  }
+  // 检查是否为绝对路径或有效的相对路径
+  // 允许字母、数字、连字符、下划线、斜杠、点（但不能连续）、波浪号
+  if (!/^[a-zA-Z0-9_./\-~]+$/.test(path)) {
+    return { valid: false, error: 'Invalid path: contains disallowed characters' };
+  }
+  return { valid: true };
+}
+
+/**
+ * 清理旧备份文件，保留最近 N 个
+ */
+function cleanupOldBackups(configDir: string, keepCount: number = 5): void {
+  try {
+    const { readdirSync, statSync, unlinkSync } = require('fs');
+    const backupFiles = readdirSync(configDir)
+      .filter((f: string) => f.startsWith('config.json.backup-'))
+      .map((f: string) => ({
+        name: f,
+        path: join(configDir, f),
+        time: statSync(join(configDir, f)).mtime.getTime(),
+      }))
+      .sort((a: { time: number }, b: { time: number }) => b.time - a.time);
+
+    // 删除超出保留数量的备份
+    for (let i = keepCount; i < backupFiles.length; i++) {
+      try {
+        unlinkSync(backupFiles[i].path);
+        debugLog('Removed old backup', backupFiles[i].name);
+      } catch {
+        // 删除失败不阻止保存
+      }
+    }
+  } catch {
+    // 清理失败不阻止保存
+  }
+}
+
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, copyFileSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { z } from 'zod';
@@ -40,8 +117,11 @@ const RequiredConfigSchema = z.object({
     .regex(AGENT_NAME_REGEX, 'Agent name can only contain letters, numbers, hyphens, and underscores'),
   /** 网络配置 */
   network: z.object({
-    /** 引导节点列表 */
-    bootstrapPeers: z.array(z.string()).default([]),
+    /** 引导节点列表 - 必须是有效的 multiaddr 格式 */
+    bootstrapPeers: z.array(z.string()).default([]).refine(
+      (peers) => peers.every((peer) => validateMultiaddr(peer).valid),
+      { message: 'Invalid bootstrap peer format. Expected multiaddr: /ip4|ip6|dns*/<host>/p2p/<peer-id>' }
+    ),
   }),
   /** 是否自动启动 */
   autoStart: z.boolean().default(false),
@@ -68,7 +148,16 @@ const AdvancedConfigSchema = z.object({
  */
 const ExpertConfigSchema = z.object({
   /** 数据目录 */
-  dataDir: z.string().optional(),
+  dataDir: z.string()
+    .refine(
+      (val) => val.startsWith('/'),
+      'dataDir must be an absolute path'
+    )
+    .refine(
+      (val) => !val.includes('..') && !/[<>:"|?*\x00-\x1f]/.test(val),
+      'dataDir contains forbidden characters or path traversal patterns'
+    )
+    .optional(),
   /** 安全级别 */
   security: z.object({
     level: z.enum(['low', 'medium', 'high']).default('medium'),
@@ -159,7 +248,7 @@ export function loadConfig(): F2AConfig {
     const result = F2AConfigSchema.safeParse(mergedConfig);
     
     if (!result.success) {
-      console.warn('[F2A] Invalid config file format, using defaults:', result.error.message);
+      console.warn('[F2A] Invalid config file format, using defaults. Please run "f2a init" to reconfigure.');
       return getDefaultConfig();
     }
     
@@ -271,25 +360,63 @@ export function configExists(): boolean {
 
 /**
  * 验证配置完整性
- * 返回 { valid: boolean, missing: string[] }
+ * 验证所有 Schema（Required + Advanced + Expert）
+ * 返回 { valid: boolean, missing: string[]; errors: string[] }
  */
 export function validateConfig(config: F2AConfig): { valid: boolean; missing: string[]; errors: string[] } {
-  const result = RequiredConfigSchema.safeParse(config);
-  
-  if (result.success) {
-    return { valid: true, missing: [], errors: [] };
-  }
-  
   const errors: string[] = [];
   const missing: string[] = [];
   
-  for (const issue of result.error.issues) {
-    const path = issue.path.join('.');
-    if (issue.code === 'invalid_type' && issue.expected === 'string') {
-      missing.push(path);
+  // 验证必需配置
+  const requiredResult = RequiredConfigSchema.safeParse(config);
+  if (!requiredResult.success) {
+    for (const issue of requiredResult.error.issues) {
+      const path = issue.path.join('.');
+      if (issue.code === 'invalid_type' && issue.expected === 'string') {
+        missing.push(path);
+      }
+      errors.push(`${path}: ${issue.message}`);
     }
-    errors.push(`${path}: ${issue.message}`);
   }
   
-  return { valid: false, missing, errors };
+  // 验证进阶配置（如果存在相关字段）
+  const advancedFields = ['controlPort', 'p2pPort', 'enableMDNS', 'enableDHT', 'logLevel'];
+  const hasAdvancedFields = advancedFields.some(field => field in config);
+  if (hasAdvancedFields) {
+    const advancedResult = AdvancedConfigSchema.safeParse(config);
+    if (!advancedResult.success) {
+      for (const issue of advancedResult.error.issues) {
+        const path = issue.path.join('.');
+        errors.push(`${path}: ${issue.message}`);
+      }
+    }
+  }
+  
+  // 验证专家配置（如果存在相关字段）
+  const expertFields = ['dataDir', 'security', 'rateLimit'];
+  const hasExpertFields = expertFields.some(field => field in config);
+  if (hasExpertFields) {
+    const expertResult = ExpertConfigSchema.safeParse(config);
+    if (!expertResult.success) {
+      for (const issue of expertResult.error.issues) {
+        const path = issue.path.join('.');
+        errors.push(`${path}: ${issue.message}`);
+      }
+    }
+  }
+  
+  // 额外的 dataDir 路径安全验证
+  if (config.dataDir) {
+    // 检测路径遍历攻击
+    if (config.dataDir.includes('..') || /[<>:"|?*\x00-\x1f]/.test(config.dataDir)) {
+      errors.push('dataDir: Path contains forbidden characters or traversal patterns');
+    }
+    // 必须是绝对路径
+    if (!config.dataDir.startsWith('/')) {
+      errors.push('dataDir: Must be an absolute path');
+    }
+  }
+  
+  const valid = errors.length === 0 && missing.length === 0;
+  return { valid, missing, errors };
 }

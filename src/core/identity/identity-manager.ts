@@ -52,6 +52,8 @@ export class IdentityManager {
   private e2eePrivateKey: Uint8Array | null = null;
   private createdAt: Date | null = null;
   private logger: Logger;
+  /** P0 修复：并发锁，防止 loadOrCreate 重复调用 */
+  private loadPromise: Promise<Result<ExportedIdentity>> | null = null;
 
   constructor(options: IdentityManagerOptions = {}) {
     this.dataDir = options.dataDir || join(homedir(), DEFAULT_DATA_DIR);
@@ -85,8 +87,36 @@ export class IdentityManager {
    * 
    * - If identity file exists, load it
    * - If not, create new identity
+   * - P0 修复：添加并发保护，防止重复调用
+   * - P1 修复：已加载时直接返回现有身份
    */
   async loadOrCreate(): Promise<Result<ExportedIdentity>> {
+    // P1 修复：如果已加载，直接返回现有身份
+    if (this.isLoaded()) {
+      return success(this.exportIdentity());
+    }
+
+    // P0 修复：并发保护 - 如果正在加载，等待现有操作完成
+    if (this.loadPromise) {
+      return this.loadPromise;
+    }
+
+    // 创建新的加载操作
+    this.loadPromise = this.doLoadOrCreate();
+    
+    try {
+      const result = await this.loadPromise;
+      return result;
+    } finally {
+      // 清除锁，允许后续调用
+      this.loadPromise = null;
+    }
+  }
+
+  /**
+   * 实际的加载或创建逻辑（内部方法）
+   */
+  private async doLoadOrCreate(): Promise<Result<ExportedIdentity>> {
     try {
       await this.ensureDataDir();
       
@@ -95,10 +125,33 @@ export class IdentityManager {
       try {
         // Try to read existing identity
         const data = await fs.readFile(identityFile, 'utf-8');
-        const parsed = JSON.parse(data);
+        
+        // P1 修复：安全解析 JSON，处理文件损坏
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(data);
+        } catch (parseError) {
+          this.logger.error('Identity file is corrupted - invalid JSON', {
+            error: parseError instanceof Error ? parseError.message : String(parseError)
+          });
+          return failure(createError(
+            'IDENTITY_CORRUPTED',
+            'Identity file is corrupted and cannot be parsed. The file may need to be deleted and a new identity created.'
+          ));
+        }
+        
+        // P1 修复：类型安全检查 - 验证解析结果是否为有效对象
+        if (typeof parsed !== 'object' || parsed === null) {
+          this.logger.error('Identity file is corrupted - not an object');
+          return failure(createError(
+            'IDENTITY_CORRUPTED',
+            'Identity file is corrupted: invalid data structure.'
+          ));
+        }
         
         // Check if file is encrypted
-        const isEncrypted = parsed.encrypted === true;
+        const parsedObj = parsed as Record<string, unknown>;
+        const isEncrypted = parsedObj.encrypted === true;
         
         if (isEncrypted) {
           // File is encrypted, password is required
@@ -112,7 +165,7 @@ export class IdentityManager {
           
           // Attempt decryption
           try {
-            const persisted = decryptIdentity(parsed, this.password);
+            const persisted = decryptIdentity(parsedObj as unknown as EncryptedIdentity, this.password);
             await this.loadPersistedIdentity(persisted);
             
             // Update last used time
@@ -227,22 +280,30 @@ export class IdentityManager {
       lastUsedAt: new Date().toISOString()
     };
     
-    // Encrypt or save directly
-    if (this.password !== undefined && this.password !== '') {
-      const data = JSON.stringify(encryptIdentity(persisted, this.password));
-      const identityFile = this.getIdentityFilePath();
-      await fs.writeFile(identityFile, data, 'utf-8');
-      // Set file permissions to 600 (owner only)
-      await fs.chmod(identityFile, 0o600);
-    } else {
+    // Medium 修复：提取公共文件写入逻辑，避免重复代码
+    const shouldEncrypt = this.password !== undefined && this.password !== '';
+    
+    if (!shouldEncrypt) {
       // Warn about plaintext storage
       this.logger.warn('Saving identity without encryption. Consider setting a password for better security.');
-      const data = JSON.stringify(persisted, null, 2);
-      const identityFile = this.getIdentityFilePath();
-      await fs.writeFile(identityFile, data, 'utf-8');
-      // Set file permissions to 600 (owner only)
-      await fs.chmod(identityFile, 0o600);
     }
+    
+    const data = shouldEncrypt
+      ? JSON.stringify(encryptIdentity(persisted, this.password!))
+      : JSON.stringify(persisted, null, 2);
+    
+    await this.writeIdentityFile(data);
+  }
+
+  /**
+   * 写入身份文件（公共方法）
+   * @param data 要写入的数据
+   */
+  private async writeIdentityFile(data: string): Promise<void> {
+    const identityFile = this.getIdentityFilePath();
+    await fs.writeFile(identityFile, data, 'utf-8');
+    // Set file permissions to 600 (owner only)
+    await fs.chmod(identityFile, 0o600);
   }
 
   /**

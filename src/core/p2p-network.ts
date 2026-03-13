@@ -9,6 +9,8 @@ import { noise } from '@chainsafe/libp2p-noise';
 import { kadDHT } from '@libp2p/kad-dht';
 import { peerIdFromString } from '@libp2p/peer-id';
 import type { PeerId } from '@libp2p/interface';
+import type { PrivateKey } from '@libp2p/interface';
+import type { Libp2pInit } from 'libp2p';
 import { multiaddr } from '@multiformats/multiaddr';
 import type { Multiaddr } from '@multiformats/multiaddr';
 import { EventEmitter } from 'eventemitter3';
@@ -236,8 +238,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         });
       }
 
-      // 使用持久化身份或自动生成
-      let libp2pOptions: any = {
+      // Medium 修复：使用 libp2p 提供的类型定义
+      const libp2pOptions: Libp2pInit = {
         addresses: {
           listen: listenAddresses
         },

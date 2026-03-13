@@ -326,4 +326,135 @@ describe('IdentityManager', () => {
       expect(manager.getE2EEKeyPair()).toBeNull();
     });
   });
+
+  // P1 修复：添加并发 loadOrCreate 测试
+  describe('concurrent loadOrCreate', () => {
+    it('should handle concurrent loadOrCreate calls safely', async () => {
+      const manager = new IdentityManager({ dataDir: tempDir });
+      
+      // 同时发起多个 loadOrCreate 调用
+      const promises = await Promise.all([
+        manager.loadOrCreate(),
+        manager.loadOrCreate(),
+        manager.loadOrCreate()
+      ]);
+      
+      // 所有调用都应该成功
+      for (const result of promises) {
+        expect(result.success).toBe(true);
+      }
+      
+      // 所有调用应该返回相同的 peerId
+      const peerIds = promises.map(r => r.success ? r.data.peerId : null);
+      expect(peerIds[0]).toBe(peerIds[1]);
+      expect(peerIds[1]).toBe(peerIds[2]);
+    });
+
+    it('should return existing identity when already loaded', async () => {
+      const manager = new IdentityManager({ dataDir: tempDir });
+      
+      // 首次加载
+      const result1 = await manager.loadOrCreate();
+      expect(result1.success).toBe(true);
+      if (!result1.success) return;
+      
+      const peerId1 = result1.data.peerId;
+      
+      // 再次调用应该直接返回现有身份（不重新加载）
+      const result2 = await manager.loadOrCreate();
+      expect(result2.success).toBe(true);
+      if (!result2.success) return;
+      
+      expect(result2.data.peerId).toBe(peerId1);
+    });
+
+    it('should handle concurrent calls with password protection', async () => {
+      const password = 'test-password-123';
+      const manager = new IdentityManager({ dataDir: tempDir, password });
+      
+      // 并发调用
+      const promises = await Promise.all([
+        manager.loadOrCreate(),
+        manager.loadOrCreate()
+      ]);
+      
+      // 都应该成功且返回相同身份
+      for (const result of promises) {
+        expect(result.success).toBe(true);
+      }
+      
+      const peerIds = promises.map(r => r.success ? r.data.peerId : null);
+      expect(peerIds[0]).toBe(peerIds[1]);
+    });
+  });
+
+  // P1 修复：添加文件权限验证测试
+  describe('file permissions', () => {
+    it('should set identity file permissions to 600 (owner only)', async () => {
+      const manager = new IdentityManager({ dataDir: tempDir });
+      await manager.loadOrCreate();
+      
+      const identityFile = join(tempDir, 'identity.json');
+      const stats = await fs.stat(identityFile);
+      const mode = stats.mode & 0o777; // 只取权限位
+      
+      // 验证文件权限为 600
+      expect(mode).toBe(0o600);
+    });
+
+    it('should set data directory permissions to 700 (owner only)', async () => {
+      const manager = new IdentityManager({ dataDir: tempDir });
+      await manager.loadOrCreate();
+      
+      const stats = await fs.stat(tempDir);
+      const mode = stats.mode & 0o777; // 只取权限位
+      
+      // 验证目录权限为 700
+      expect(mode).toBe(0o700);
+    });
+
+    it('should set correct permissions for encrypted identity file', async () => {
+      const manager = new IdentityManager({ 
+        dataDir: tempDir, 
+        password: 'secure-password' 
+      });
+      await manager.loadOrCreate();
+      
+      const identityFile = join(tempDir, 'identity.json');
+      const stats = await fs.stat(identityFile);
+      const mode = stats.mode & 0o777;
+      
+      // 加密文件也应该有 600 权限
+      expect(mode).toBe(0o600);
+    });
+  });
+
+  // P1 修复：添加文件损坏处理测试
+  describe('corrupted identity file handling', () => {
+    it('should return IDENTITY_CORRUPTED for invalid JSON', async () => {
+      // 创建一个损坏的身份文件
+      const identityFile = join(tempDir, 'identity.json');
+      await fs.writeFile(identityFile, 'not valid json {{{', 'utf-8');
+      
+      const manager = new IdentityManager({ dataDir: tempDir });
+      const result = await manager.loadOrCreate();
+      
+      expect(result.success).toBe(false);
+      if (result.success) return;
+      expect(result.error.code).toBe('IDENTITY_CORRUPTED');
+    });
+
+    it('should return IDENTITY_CORRUPTED for truncated JSON', async () => {
+      // 创建一个截断的 JSON 文件
+      const identityFile = join(tempDir, 'identity.json');
+      await fs.writeFile(identityFile, '{"peerId": "incomplete', 'utf-8');
+      
+      const manager = new IdentityManager({ dataDir: tempDir });
+      const result = await manager.loadOrCreate();
+      
+      expect(result.success).toBe(false);
+      if (result.success) return;
+      expect(result.error.code).toBe('IDENTITY_CORRUPTED');
+    });
+  });
 });

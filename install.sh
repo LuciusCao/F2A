@@ -323,6 +323,7 @@ EOF
         # 使用 sudo mv 替代 sudo tee (更安全)
         sudo mv "$TEMP_SERVICE_FILE" "$SERVICE_FILE"
         sudo chmod 600 "$SERVICE_FILE"
+        sudo chown root:root "$SERVICE_FILE"
 
         sudo systemctl daemon-reload
         sudo systemctl enable f2a

@@ -10,7 +10,7 @@ import { AES_KEY_SIZE, AES_IV_SIZE, SCRYPT_N, SCRYPT_R, SCRYPT_P, SALT_SIZE } fr
 /**
  * Encrypt identity data
  * 
- * Security note: Uses scrypt with N=32768 for key derivation,
+ * Security note: Uses scrypt with N=16384 for key derivation,
  * which provides strong resistance against brute-force attacks.
  */
 export function encryptIdentity(

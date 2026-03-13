@@ -283,13 +283,17 @@ if [ "${SETUP_SYSTEMD}" = true ]; then
         ENV_DIR="/etc/f2a"
         ENV_FILE="$ENV_DIR/control.env"
         sudo mkdir -p "$ENV_DIR"
+        sudo chmod 700 "$ENV_DIR"
+        sudo chown root:root "$ENV_DIR"
         
         # 使用临时文件写入 token，然后安全移动
+        # 使用 umask 077 确保临时文件在写入时权限安全
         TEMP_ENV_FILE=$(mktemp)
-        cat > "$TEMP_ENV_FILE" << EOF
+        (umask 077; cat > "$TEMP_ENV_FILE" << EOF
 # F2A 控制令牌 - 请勿分享此文件
 F2A_CONTROL_TOKEN=${CONTROL_TOKEN}
 EOF
+)
         sudo mv "$TEMP_ENV_FILE" "$ENV_FILE"
         sudo chmod 600 "$ENV_FILE"
         sudo chown root:root "$ENV_FILE"

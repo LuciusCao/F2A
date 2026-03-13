@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { IdentityManager, ExportedIdentity } from './identity-manager.js';
+import { IdentityManager } from './identity-manager.js';
 import { unmarshalPrivateKey } from '@libp2p/crypto/keys';
 import { createFromPrivKey } from '@libp2p/peer-id-factory';
 
@@ -132,7 +132,6 @@ describe('IdentityManager', () => {
       await manager1.loadOrCreate();
 
       // 使用错误密码尝试解密
-      // 由于错误密码解密会抛出异常，loadOrCreate 应该创建新身份
       const manager2 = new IdentityManager({ dataDir: tempDir, password: 'wrong-password' });
       const result2 = await manager2.loadOrCreate();
       

@@ -8,65 +8,20 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { generateKeyPair, unmarshalPrivateKey, marshalPrivateKey } from '@libp2p/crypto/keys';
-import { createFromPrivKey, exportToProtobuf, createFromProtobuf } from '@libp2p/peer-id-factory';
+import { createFromPrivKey } from '@libp2p/peer-id-factory';
 import type { PeerId } from '@libp2p/interface';
 import type { PrivateKey } from '@libp2p/interface';
 import { x25519 } from '@noble/curves/ed25519.js';
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
-import { Logger } from '../utils/logger.js';
-import { success, failureFromError, Result } from '../types/index.js';
-
-/** AES-256-GCM 参数 */
-const AES_KEY_SIZE = 32;
-const AES_IV_SIZE = 12;
-const AES_TAG_SIZE = 16;
-
-/** 数据目录 */
-const DEFAULT_DATA_DIR = '.f2a';
-const IDENTITY_FILE = 'identity.json';
-
-/**
- * 持久化的身份数据结构
- */
-export interface PersistedIdentity {
-  /** libp2p PeerId (Ed25519) 的 protobuf 编码 (base64) */
-  peerId: string;
-  /** E2EE 私钥 (X25519, base64) */
-  e2eePrivateKey: string;
-  /** E2EE 公钥 (X25519, base64) */
-  e2eePublicKey: string;
-  /** 创建时间 (ISO 字符串) */
-  createdAt: string;
-  /** 最后使用时间 (ISO 字符串) */
-  lastUsedAt: string;
-}
-
-/**
- * 身份配置选项
- */
-export interface IdentityManagerOptions {
-  /** 数据目录 (默认 ~/.f2a/) */
-  dataDir?: string;
-  /** 加密密码 (可选，用于加密存储) */
-  password?: string;
-}
-
-/**
- * 导出的身份信息
- */
-export interface ExportedIdentity {
-  /** PeerId 字符串 */
-  peerId: string;
-  /** libp2p 私钥 (protobuf 编码, base64) */
-  privateKey: string;
-  /** E2EE 密钥对 */
-  e2eeKeyPair: {
-    publicKey: string;
-    privateKey: string;
-  };
-  /** 创建时间 */
-  createdAt: Date;
-}
+import { Logger } from '../../utils/logger.js';
+import { success, failureFromError, Result } from '../../types/index.js';
+import { encryptIdentity, decryptIdentity } from './encrypted-key-store.js';
+import type { 
+  PersistedIdentity, 
+  IdentityManagerOptions, 
+  ExportedIdentity,
+  EncryptedIdentity 
+} from './types.js';
+import { DEFAULT_DATA_DIR, IDENTITY_FILE } from './types.js';
 
 /**
  * 身份管理器
@@ -135,7 +90,7 @@ export class IdentityManager {
         let persisted: PersistedIdentity;
         try {
           persisted = this.password 
-            ? await this.decryptIdentity(encrypted, this.password)
+            ? await decryptIdentity(encrypted, this.password)
             : encrypted as PersistedIdentity;
         } catch (decryptError) {
           // 解密失败（可能是密码错误），创建新身份
@@ -224,61 +179,13 @@ export class IdentityManager {
     
     // 加密或直接保存
     const data = this.password 
-      ? JSON.stringify(await this.encryptIdentity(persisted, this.password))
+      ? JSON.stringify(await encryptIdentity(persisted, this.password))
       : JSON.stringify(persisted, null, 2);
     
     const identityFile = this.getIdentityFilePath();
     await fs.writeFile(identityFile, data, 'utf-8');
     // 设置文件权限为 600 (仅所有者可读写)
     await fs.chmod(identityFile, 0o600);
-  }
-
-  /**
-   * 加密身份数据
-   */
-  private async encryptIdentity(identity: PersistedIdentity, password: string): Promise<EncryptedIdentity> {
-    // 生成随机盐值
-    const salt = randomBytes(16);
-    // 使用 scrypt 派生密钥
-    const key = scryptSync(password, salt, AES_KEY_SIZE);
-    // 生成随机 IV
-    const iv = randomBytes(AES_IV_SIZE);
-    
-    const cipher = createCipheriv('aes-256-gcm', key, iv);
-    const plaintext = JSON.stringify(identity);
-    
-    let ciphertext = cipher.update(plaintext, 'utf-8', 'base64');
-    ciphertext += cipher.final('base64');
-    
-    const authTag = cipher.getAuthTag();
-    
-    return {
-      encrypted: true,
-      salt: salt.toString('base64'),
-      iv: iv.toString('base64'),
-      authTag: authTag.toString('base64'),
-      ciphertext
-    };
-  }
-
-  /**
-   * 解密身份数据
-   */
-  private async decryptIdentity(encrypted: EncryptedIdentity, password: string): Promise<PersistedIdentity> {
-    const salt = Buffer.from(encrypted.salt, 'base64');
-    const iv = Buffer.from(encrypted.iv, 'base64');
-    const authTag = Buffer.from(encrypted.authTag, 'base64');
-    
-    // 使用 scrypt 派生密钥
-    const key = scryptSync(password, salt, AES_KEY_SIZE);
-    
-    const decipher = createDecipheriv('aes-256-gcm', key, iv);
-    decipher.setAuthTag(authTag);
-    
-    let plaintext = decipher.update(encrypted.ciphertext, 'base64', 'utf-8');
-    plaintext += decipher.final('utf-8');
-    
-    return JSON.parse(plaintext);
   }
 
   /**
@@ -370,15 +277,4 @@ export class IdentityManager {
       return failureFromError('IDENTITY_DELETE_FAILED', 'Failed to delete identity', error as Error);
     }
   }
-}
-
-/**
- * 加密后的身份数据结构
- */
-interface EncryptedIdentity {
-  encrypted: true;
-  salt: string;
-  iv: string;
-  authTag: string;
-  ciphertext: string;
 }

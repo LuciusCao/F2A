@@ -35,7 +35,7 @@ import {
   createError
 } from '../types/index.js';
 import { E2EECrypto, EncryptedMessage } from './e2ee-crypto.js';
-import { IdentityManager } from './identity-manager.js';
+import { IdentityManager } from './identity/index.js';
 import { Logger } from '../utils/logger.js';
 import { validateF2AMessage, validateTaskRequestPayload, validateTaskResponsePayload } from '../utils/validation.js';
 import { MiddlewareManager, Middleware } from '../utils/middleware.js';

@@ -35,6 +35,24 @@ function secureWipe(data: Uint8Array | null | undefined): void {
 }
 
 /**
+ * Type guard to validate EncryptedIdentity structure
+ * P2 修复：使用类型守卫替代类型断言链
+ */
+function isEncryptedIdentity(obj: unknown): obj is EncryptedIdentity {
+  if (typeof obj !== 'object' || obj === null) {
+    return false;
+  }
+  const record = obj as Record<string, unknown>;
+  return (
+    record.encrypted === true &&
+    typeof record.salt === 'string' &&
+    typeof record.iv === 'string' &&
+    typeof record.authTag === 'string' &&
+    typeof record.ciphertext === 'string'
+  );
+}
+
+/**
  * Identity Manager
  * 
  * Responsibilities:
@@ -151,7 +169,9 @@ export class IdentityManager {
         
         // Check if file is encrypted
         const parsedObj = parsed as Record<string, unknown>;
-        const isEncrypted = parsedObj.encrypted === true;
+        // P2 修复：类型守卫验证 - 检查 encrypted 字段是否为布尔值
+        const encryptedValue = parsedObj.encrypted;
+        const isEncrypted = typeof encryptedValue === 'boolean' && encryptedValue === true;
         
         if (isEncrypted) {
           // File is encrypted, password is required
@@ -165,7 +185,15 @@ export class IdentityManager {
           
           // Attempt decryption
           try {
-            const persisted = decryptIdentity(parsedObj as unknown as EncryptedIdentity, this.password);
+            // P2 修复：使用类型守卫验证 EncryptedIdentity 结构
+            if (!isEncryptedIdentity(parsedObj)) {
+              this.logger.error('Identity file is corrupted - invalid encrypted identity structure');
+              return failure(createError(
+                'IDENTITY_CORRUPTED',
+                'Identity file is corrupted: invalid encrypted identity structure.'
+              ));
+            }
+            const persisted = decryptIdentity(parsedObj, this.password);
             await this.loadPersistedIdentity(persisted);
             
             // Update last used time
@@ -296,7 +324,7 @@ export class IdentityManager {
   }
 
   /**
-   * 写入身份文件（公共方法）
+   * 写入身份文件（内部方法）
    * @param data 要写入的数据
    */
   private async writeIdentityFile(data: string): Promise<void> {
@@ -353,6 +381,11 @@ export class IdentityManager {
 
   /**
    * Get E2EE key pair
+   *
+   * @敏感 此方法返回敏感的私钥材料
+   * - 不要记录或暴露返回的数据
+   * - 使用完毕后从内存中清除
+   * - 仅在必要时调用
    */
   getE2EEKeyPair(): { publicKey: Uint8Array; privateKey: Uint8Array } | null {
     if (!this.e2eePublicKey || !this.e2eePrivateKey) return null;

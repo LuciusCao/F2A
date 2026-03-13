@@ -168,10 +168,14 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private peerTableLock = new AsyncLock();
   /** P1 修复：保存事件监听器引用，用于 stop() 中移除 */
   private boundEventHandlers: {
-    peerDiscovery?: (evt: CustomEvent<{ id: PeerId; multiaddrs: Multiaddr[] }>) => Promise<void>;
-    peerConnect?: (evt: CustomEvent<PeerId>) => Promise<void>;
-    peerDisconnect?: (evt: CustomEvent<PeerId>) => Promise<void>;
-  } = {};
+    peerDiscovery: ((evt: CustomEvent<{ id: PeerId; multiaddrs: Multiaddr[] }>) => Promise<void>) | undefined;
+    peerConnect: ((evt: CustomEvent<PeerId>) => Promise<void>) | undefined;
+    peerDisconnect: ((evt: CustomEvent<PeerId>) => Promise<void>) | undefined;
+  } = {
+    peerDiscovery: undefined,
+    peerConnect: undefined,
+    peerDisconnect: undefined
+  };
   private agentInfo: AgentInfo;
   private pendingTasks: Map<string, {
     resolve: (result: unknown) => void;
@@ -724,7 +728,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           // P2 修复：使用占位符标记为待验证
           displayName: `[Pending] ${peerId.slice(0, 8)}`,
           agentType: 'custom' as const,
-          version: 'pending',
+          version: '0.0.0-pending',
           protocolVersion: '1.0.0',
           lastSeen: now
         };
@@ -736,35 +740,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         });
 
         // P1 修复：mDNS 发现后尝试连接并发送 DISCOVER 消息获取真实 AgentInfo
-        try {
-          if (this.node && evt.detail.multiaddrs.length > 0) {
-            // 尝试连接到发现的节点
-            await this.node.dial(evt.detail.multiaddrs[0]);
-            this.logger.info('Initiating connection to mDNS peer for discovery', {
-              peerId: peerId.slice(0, 16)
-            });
-            
-            // 发送 DISCOVER 消息获取真实 AgentInfo
-            const discoverMessage: F2AMessage = {
-              id: randomUUID(),
-              type: 'DISCOVER',
-              from: this.agentInfo.peerId,
-              timestamp: Date.now(),
-              payload: { agentInfo: this.agentInfo } as DiscoverPayload
-            };
-            
-            await this.sendMessage(peerId, discoverMessage, false);
-            this.logger.info('Sent DISCOVER to mDNS peer', {
-              peerId: peerId.slice(0, 16)
-            });
-          }
-        } catch (connectError) {
-          // 连接失败不应阻止发现流程，记录警告即可
-          this.logger.warn('Failed to connect/send DISCOVER to mDNS peer', {
-            peerId: peerId.slice(0, 16),
-            error: connectError instanceof Error ? connectError.message : String(connectError)
-          });
-        }
+        // 建议-2 修复：提取为独立方法，减少嵌套深度
+        await this.initiateDiscovery(peerId, evt.detail.multiaddrs);
       } catch (error) {
         this.logger.error('Error in peer:discovery handler', {
           error: error instanceof Error ? error.message : String(error)
@@ -900,6 +877,48 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         this.logger.error('Error handling message', { error });
       }
     });
+  }
+
+  /**
+   * 建议-2 修复：提取 mDNS 发现后的连接和 DISCOVER 发送逻辑
+   * 减少嵌套深度，提高可读性
+   * @param peerId 发现的 Peer ID
+   * @param multiaddrs 发现的 multiaddr 列表
+   */
+  private async initiateDiscovery(peerId: string, multiaddrs: Multiaddr[]): Promise<void> {
+    try {
+      if (!this.node || multiaddrs.length === 0) {
+        return;
+      }
+
+      // 尝试连接到发现的节点
+      await this.node.dial(multiaddrs[0]);
+      this.logger.info('Initiating connection to mDNS peer for discovery', {
+        peerId: peerId.slice(0, 16)
+      });
+
+      // 发送 DISCOVER 消息获取真实 AgentInfo
+      // 低-1 修复：有意不检查返回值 - 发现消息发送失败不影响主流程，
+      // 后续的定期发现广播会重试，不会造成功能缺失
+      const discoverMessage: F2AMessage = {
+        id: randomUUID(),
+        type: 'DISCOVER',
+        from: this.agentInfo.peerId,
+        timestamp: Date.now(),
+        payload: { agentInfo: this.agentInfo } as DiscoverPayload
+      };
+
+      await this.sendMessage(peerId, discoverMessage, false);
+      this.logger.info('Sent DISCOVER to mDNS peer', {
+        peerId: peerId.slice(0, 16)
+      });
+    } catch (connectError) {
+      // 连接失败不应阻止发现流程，记录警告即可
+      this.logger.warn('Failed to connect/send DISCOVER to mDNS peer', {
+        peerId: peerId.slice(0, 16),
+        error: connectError instanceof Error ? connectError.message : String(connectError)
+      });
+    }
   }
 
   /**

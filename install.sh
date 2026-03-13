@@ -295,7 +295,7 @@ Environment=F2A_CONTROL_PORT=9001
 WantedBy=multi-user.target
 EOF
 
-    sudo systemctl daemon-reload
+        sudo systemctl daemon-reload
         sudo systemctl enable f2a
         
         echo -e "${GREEN}  ✅ systemd 服务已设置${NC}"
@@ -310,6 +310,7 @@ EOF
     
     echo ""
   fi
+fi
 
 # ============================================
 # 6. 完成提示

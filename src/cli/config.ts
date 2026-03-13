@@ -5,16 +5,6 @@
 const AGENT_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
 
 /**
- * 验证并清理 Agent 名称
- */
-function sanitizeAgentName(name: string): string {
-  // 过滤特殊字符
-  const sanitized = name.replace(/[^a-zA-Z0-9_-]/g, '');
-  // 限制长度
-  return sanitized.substring(0, 50);
-}
-
-/**
  * 验证 Agent 名称格式
  */
 export function validateAgentName(name: string): { valid: boolean; error?: string } {
@@ -31,7 +21,7 @@ export function validateAgentName(name: string): { valid: boolean; error?: strin
 }
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, copyFileSync } from 'fs';
-import { join, basename } from 'path';
+import { join } from 'path';
 import { homedir } from 'os';
 import { z } from 'zod';
 

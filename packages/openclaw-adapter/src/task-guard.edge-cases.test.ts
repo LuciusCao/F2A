@@ -150,7 +150,9 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      // 修复：使用正确的断言格式检查是否有规则检测到问题
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测 $() 命令替换', () => {
@@ -164,7 +166,9 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      // 修复：使用正确的断言格式检查是否有规则检测到问题
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测分号命令链接', () => {

@@ -53,6 +53,18 @@ function isEncryptedIdentity(obj: unknown): obj is EncryptedIdentity {
 }
 
 /**
+ * Validate if a string is valid base64
+ * P4 修复：添加 base64 验证函数
+ */
+function isValidBase64Field(str: unknown): str is string {
+  if (typeof str !== 'string' || str.length === 0) {
+    return false;
+  }
+  const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+  return base64Regex.test(str);
+}
+
+/**
  * Identity Manager
  * 
  * Responsibilities:
@@ -249,6 +261,17 @@ export class IdentityManager {
    * Load identity from persisted data
    */
   private async loadPersistedIdentity(persisted: PersistedIdentity): Promise<void> {
+    // P4 修复：验证字段是否为有效的 base64
+    if (!isValidBase64Field(persisted.peerId)) {
+      throw new Error('Invalid persisted identity: peerId is not valid base64');
+    }
+    if (!isValidBase64Field(persisted.e2eePrivateKey)) {
+      throw new Error('Invalid persisted identity: e2eePrivateKey is not valid base64');
+    }
+    if (!isValidBase64Field(persisted.e2eePublicKey)) {
+      throw new Error('Invalid persisted identity: e2eePublicKey is not valid base64');
+    }
+    
     // Restore private key and PeerId
     const privateKeyBytes = Buffer.from(persisted.peerId, 'base64');
     this.privateKey = await unmarshalPrivateKey(privateKeyBytes);

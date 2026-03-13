@@ -41,8 +41,9 @@ describe('TaskGuard - 高价值边缘情况', () => {
 
       const report = guard.check(task);
       
-      // 应该被检测为可疑（虽然不是直接阻止）
-      expect(report.results.length).toBeGreaterThan(0);
+      // 应该被检测为可疑，至少有一个规则未通过
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测十六进制编码', () => {
@@ -56,7 +57,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测 Unicode 编码', () => {
@@ -70,7 +72,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测 HTML 实体编码（十六进制）', () => {
@@ -84,7 +87,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测 HTML 实体编码（十进制）', () => {
@@ -98,7 +102,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测 HTML 命名实体', () => {
@@ -112,7 +117,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测 URL 编码', () => {
@@ -126,7 +132,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
   });
 
@@ -239,7 +246,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测 ${VAR} 格式', () => {
@@ -253,7 +261,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测 %VAR% 格式（Windows）', () => {
@@ -267,7 +276,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测算术表达式 $((expression))', () => {
@@ -281,7 +291,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测数组引用 ${array[@]}', () => {
@@ -295,7 +306,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测特殊变量 $?', () => {
@@ -309,7 +321,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测特殊变量 $$', () => {
@@ -323,7 +336,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测特殊变量 $!', () => {
@@ -337,7 +351,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测位置参数 $0-$9', () => {
@@ -351,7 +366,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测 $#', () => {
@@ -365,7 +381,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测 $@', () => {
@@ -379,7 +396,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测 $*', () => {
@@ -393,7 +411,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
 
     it('应该检测 $-', () => {
@@ -407,7 +426,8 @@ describe('TaskGuard - 高价值边缘情况', () => {
       };
 
       const report = guard.check(task);
-      expect(report.results.length).toBeGreaterThan(0);
+      const failedRules = report.results.filter(r => r.passed === false);
+      expect(failedRules.length).toBeGreaterThan(0);
     });
   });
 

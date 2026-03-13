@@ -7,6 +7,7 @@ import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { noise } from '@chainsafe/libp2p-noise';
 import { kadDHT } from '@libp2p/kad-dht';
+import { mdns } from '@libp2p/mdns';
 import { peerIdFromString } from '@libp2p/peer-id';
 import type { PeerId } from '@libp2p/interface';
 import type { PrivateKey } from '@libp2p/interface';
@@ -247,6 +248,16 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         connectionEncryption: [noise()],
         services
       };
+
+      // mDNS 本地发现（默认启用）
+      if (this.config.enableMDNS !== false) {
+        // @libp2p/mdns 的类型定义与 libp2p 略有不兼容，使用 any 绕过
+        // 参考: https://github.com/libp2p/js-libp2p/issues/XXX
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        libp2pOptions.peerDiscovery = [
+          mdns() as any
+        ];
+      }
 
       // 如果提供了 IdentityManager，使用持久化的私钥
       if (this.identityManager?.isLoaded()) {
@@ -649,6 +660,51 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    */
   private setupEventHandlers(): void {
     if (!this.node) return;
+
+    // mDNS 发现事件 - 发现新节点时触发
+    this.node.addEventListener('peer:discovery', async (evt) => {
+      const peerId = evt.detail.id.toString();
+      const multiaddrs = evt.detail.multiaddrs.map(ma => ma.toString());
+      
+      this.logger.info('mDNS peer discovered', { 
+        peerId: peerId.slice(0, 16),
+        multiaddrs: multiaddrs.length 
+      });
+
+      // 更新路由表
+      const now = Date.now();
+      await this.upsertPeer(
+        peerId,
+        () => ({
+          peerId,
+          multiaddrs: evt.detail.multiaddrs,
+          connected: false,
+          reputation: 50,
+          lastSeen: now
+        }),
+        (peer) => ({
+          ...peer,
+          multiaddrs: evt.detail.multiaddrs,
+          lastSeen: now
+        })
+      );
+
+      // 触发发现事件
+      this.emit('peer:discovered', {
+        peerId,
+        agentInfo: {
+          peerId,
+          multiaddrs,
+          capabilities: [],
+          displayName: `F2A-${peerId.slice(0, 8)}`,
+          agentType: 'custom' as const,
+          version: '0.0.0',
+          protocolVersion: '1.0.0',
+          lastSeen: now
+        },
+        multiaddrs: evt.detail.multiaddrs
+      });
+    });
 
     // 新连接
     this.node.addEventListener('peer:connect', async (evt) => {

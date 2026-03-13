@@ -268,4 +268,62 @@ describe('IdentityManager', () => {
       expect(peerId.toString()).toBe(exported.peerId);
     });
   });
+
+  describe('password edge cases', () => {
+    it('should treat empty string password as no password (not encrypt)', async () => {
+      // 创建时使用空字符串密码
+      const manager1 = new IdentityManager({ dataDir: tempDir, password: '' });
+      const result1 = await manager1.loadOrCreate();
+      expect(result1.success).toBe(true);
+
+      // 验证文件内容是明文的（空字符串密码不加密）
+      const identityFile = join(tempDir, 'identity.json');
+      const content = await fs.readFile(identityFile, 'utf-8');
+      const parsed = JSON.parse(content);
+      
+      // 没有 encrypted 字段，说明是明文存储
+      expect(parsed.encrypted).toBeUndefined();
+      expect(parsed.peerId).toBeDefined();
+    });
+
+    it('should encrypt with non-empty password', async () => {
+      const manager = new IdentityManager({ 
+        dataDir: tempDir, 
+        password: 'non-empty-password' 
+      });
+      const result = await manager.loadOrCreate();
+
+      expect(result.success).toBe(true);
+
+      // 验证文件内容是加密的
+      const identityFile = join(tempDir, 'identity.json');
+      const content = await fs.readFile(identityFile, 'utf-8');
+      const parsed = JSON.parse(content);
+      
+      expect(parsed.encrypted).toBe(true);
+      expect(parsed.ciphertext).toBeDefined();
+    });
+  });
+
+  describe('deleteIdentity memory cleanup', () => {
+    it('should clear all sensitive data from memory after delete', async () => {
+      const manager = new IdentityManager({ dataDir: tempDir });
+      await manager.loadOrCreate();
+      
+      // 确保身份已加载
+      expect(manager.isLoaded()).toBe(true);
+      expect(manager.getPrivateKey()).not.toBeNull();
+      expect(manager.getE2EEKeyPair()).not.toBeNull();
+      
+      // 删除身份
+      const result = await manager.deleteIdentity();
+      expect(result.success).toBe(true);
+      
+      // 验证内存已清理
+      expect(manager.isLoaded()).toBe(false);
+      expect(manager.getPeerId()).toBeNull();
+      expect(manager.getPrivateKey()).toBeNull();
+      expect(manager.getE2EEKeyPair()).toBeNull();
+    });
+  });
 });

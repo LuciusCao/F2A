@@ -29,12 +29,8 @@ import { DEFAULT_DATA_DIR, IDENTITY_FILE } from './types.js';
  */
 function secureWipe(data: Uint8Array | null | undefined): void {
   if (data) {
-    // Use fill(0) to overwrite memory with zeros
-    if (Buffer.isBuffer(data)) {
-      data.fill(0);
-    } else {
-      data.fill(0);
-    }
+    // Both Buffer and Uint8Array have fill(), no need for type check
+    data.fill(0);
   }
 }
 
@@ -106,7 +102,7 @@ export class IdentityManager {
         
         if (isEncrypted) {
           // File is encrypted, password is required
-          if (!this.password) {
+          if (this.password === undefined || this.password === '') {
             this.logger.error('Identity file is encrypted but no password provided');
             return failure(createError(
               'IDENTITY_PASSWORD_REQUIRED',
@@ -176,7 +172,10 @@ export class IdentityManager {
     const privateKeyBytes = Buffer.from(persisted.peerId, 'base64');
     this.privateKey = await unmarshalPrivateKey(privateKeyBytes);
     this.peerId = await createFromPrivKey(this.privateKey);
-    
+
+    // Securely wipe temporary private key bytes after use
+    secureWipe(privateKeyBytes);
+
     // Restore E2EE key pair
     this.e2eePrivateKey = Buffer.from(persisted.e2eePrivateKey, 'base64');
     this.e2eePublicKey = Buffer.from(persisted.e2eePublicKey, 'base64');
@@ -229,7 +228,7 @@ export class IdentityManager {
     };
     
     // Encrypt or save directly
-    if (this.password) {
+    if (this.password !== undefined && this.password !== '') {
       const data = JSON.stringify(encryptIdentity(persisted, this.password));
       const identityFile = this.getIdentityFilePath();
       await fs.writeFile(identityFile, data, 'utf-8');
@@ -333,6 +332,15 @@ export class IdentityManager {
       // Securely wipe private key data from memory
       if (this.e2eePrivateKey) {
         secureWipe(this.e2eePrivateKey);
+      }
+      
+      // Securely wipe libp2p Ed25519 private key bytes
+      if (this.privateKey) {
+        // Access the raw bytes of the Ed25519 private key and wipe them
+        const privateKeyBytes = this.privateKey.bytes;
+        if (privateKeyBytes) {
+          secureWipe(privateKeyBytes);
+        }
       }
       
       // Clear all identity data from memory

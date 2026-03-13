@@ -73,15 +73,14 @@ function validatePath(path: string): { valid: boolean; error?: string } {
  */
 function cleanupOldBackups(configDir: string, keepCount: number = 5): void {
   try {
-    const { readdirSync, statSync, unlinkSync } = require('fs');
     const backupFiles = readdirSync(configDir)
-      .filter((f: string) => f.startsWith('config.json.backup-'))
-      .map((f: string) => ({
+      .filter((f) => f.startsWith('config.json.backup-'))
+      .map((f) => ({
         name: f,
         path: join(configDir, f),
         time: statSync(join(configDir, f)).mtime.getTime(),
       }))
-      .sort((a: { time: number }, b: { time: number }) => b.time - a.time);
+      .sort((a, b) => b.time - a.time);
 
     // 删除超出保留数量的备份
     for (let i = keepCount; i < backupFiles.length; i++) {
@@ -248,13 +247,17 @@ export function loadConfig(): F2AConfig {
     const result = F2AConfigSchema.safeParse(mergedConfig);
     
     if (!result.success) {
+      // 仅输出通用提示，详细错误写入调试日志
       console.warn('[F2A] Invalid config file format, using defaults. Please run "f2a init" to reconfigure.');
+      debugLog('Config validation failed', result.error.issues);
       return getDefaultConfig();
     }
     
     return result.data;
   } catch (error) {
-    console.warn('[F2A] Failed to read config file:', error instanceof Error ? error.message : String(error));
+    // 仅输出通用提示，详细错误写入调试日志
+    console.warn('[F2A] Failed to read config file, using defaults. Please check file permissions and format.');
+    debugLog('Config load error', error instanceof Error ? error.message : String(error));
     return getDefaultConfig();
   }
 }
@@ -273,7 +276,9 @@ export function saveConfig(config: F2AConfig): void {
   const result = F2AConfigSchema.safeParse(config);
   
   if (!result.success) {
-    throw new Error(`Configuration validation failed: ${result.error.message}`);
+    // 仅输出简化错误信息，详细错误写入调试日志
+    debugLog('Config validation failed', result.error.issues);
+    throw new Error('Configuration validation failed. Please check your configuration values.');
   }
   
   // 备份现有配置文件
@@ -281,7 +286,8 @@ export function saveConfig(config: F2AConfig): void {
     const backupFile = join(configDir, `config.json.backup-${Date.now()}`);
     try {
       copyFileSync(configFile, backupFile);
-      // 保留最近 5 个备份文件（可选清理逻辑）
+      // 清理旧备份文件，保留最近 5 个
+      cleanupOldBackups(configDir, 5);
     } catch {
       // 备份失败不阻止保存
     }

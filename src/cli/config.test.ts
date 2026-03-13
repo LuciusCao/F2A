@@ -2,7 +2,7 @@
  * F2A CLI 配置测试
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, rmSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -246,6 +246,128 @@ describe('Config', () => {
     it('should return true when config exists', () => {
       saveConfig(getDefaultConfig());
       expect(configExists()).toBe(true);
+    });
+  });
+
+  describe('Security: bootstrapPeers validation', () => {
+    it('should accept valid multiaddr format', () => {
+      const config = {
+        ...getDefaultConfig(),
+        network: {
+          bootstrapPeers: ['/ip4/192.168.1.1/tcp/9000/p2p/QmPeerId123'],
+        },
+      };
+      const result = F2AConfigSchema.safeParse(config);
+      expect(result.success).toBe(true);
+    });
+
+    it('should accept dns4 multiaddr format', () => {
+      const config = {
+        ...getDefaultConfig(),
+        network: {
+          bootstrapPeers: ['/dns4/bootstrap.example.com/tcp/9000/p2p/QmPeerId123'],
+        },
+      };
+      const result = F2AConfigSchema.safeParse(config);
+      expect(result.success).toBe(true);
+    });
+
+    it('should reject invalid multiaddr format', () => {
+      const config = {
+        ...getDefaultConfig(),
+        network: {
+          bootstrapPeers: ['invalid-peer-address'],
+        },
+      };
+      const result = F2AConfigSchema.safeParse(config);
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject multiaddr without p2p peer-id', () => {
+      const config = {
+        ...getDefaultConfig(),
+        network: {
+          bootstrapPeers: ['/ip4/192.168.1.1/tcp/9000'],
+        },
+      };
+      const result = F2AConfigSchema.safeParse(config);
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('Security: dataDir path validation', () => {
+    it('should reject dataDir with path traversal', () => {
+      const config = {
+        ...getDefaultConfig(),
+        dataDir: '/var/data/../etc/passwd',
+      };
+      const result = F2AConfigSchema.safeParse(config);
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject relative path for dataDir', () => {
+      const config = {
+        ...getDefaultConfig(),
+        dataDir: 'relative/path/data',
+      };
+      const result = F2AConfigSchema.safeParse(config);
+      expect(result.success).toBe(false);
+    });
+
+    it('should accept valid absolute path for dataDir', () => {
+      const config = {
+        ...getDefaultConfig(),
+        dataDir: '/var/f2a/data',
+      };
+      const result = F2AConfigSchema.safeParse(config);
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('Security: no sensitive info in errors', () => {
+    it('should not leak config details in loadConfig errors', () => {
+      // 写入无效 JSON
+      writeFileSync(join(TEST_DIR, 'config.json'), '{ invalid json', 'utf-8');
+      
+      // 捕获 console.warn 输出
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      
+      const config = loadConfig();
+      
+      // 应该返回默认配置
+      expect(config).toEqual(getDefaultConfig());
+      
+      // 检查 console.warn 不包含敏感信息
+      const warnCalls = warnSpy.mock.calls.map(c => c.join(' ')).join(' ');
+      expect(warnCalls).not.toContain('invalid json');
+      expect(warnCalls).not.toContain('{');
+      
+      warnSpy.mockRestore();
+    });
+
+    it('should not leak validation details in saveConfig errors', () => {
+      const invalidConfig = {
+        ...getDefaultConfig(),
+        network: {
+          bootstrapPeers: ['not-a-valid-multiaddr'],
+        },
+      } as F2AConfig;
+      
+      // 捕获 console.error (debugLog 使用 console.error)
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      
+      expect(() => saveConfig(invalidConfig)).toThrow('Configuration validation failed');
+      
+      // 检查抛出的错误不包含详细验证信息
+      try {
+        saveConfig(invalidConfig);
+      } catch (e) {
+        const errorMessage = (e as Error).message;
+        expect(errorMessage).not.toContain('multiaddr');
+        expect(errorMessage).not.toContain('bootstrapPeers');
+      }
+      
+      errorSpy.mockRestore();
     });
   });
 });

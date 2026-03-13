@@ -35,6 +35,7 @@ import {
   createError
 } from '../types/index.js';
 import { E2EECrypto, EncryptedMessage } from './e2ee-crypto.js';
+import { IdentityManager } from './identity-manager.js';
 import { Logger } from '../utils/logger.js';
 import { validateF2AMessage, validateTaskRequestPayload, validateTaskResponsePayload } from '../utils/validation.js';
 import { MiddlewareManager, Middleware } from '../utils/middleware.js';
@@ -173,6 +174,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private discoveryInterval?: NodeJS.Timeout;
   private e2eeCrypto: E2EECrypto;
   private enableE2EE: boolean = true;
+  private identityManager?: IdentityManager;
   private logger: Logger;
   private middlewareManager: MiddlewareManager;
 
@@ -207,6 +209,14 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   }
 
   /**
+   * 设置 IdentityManager（用于持久化身份）
+   * 必须在 start() 之前调用
+   */
+  setIdentityManager(identityManager: IdentityManager): void {
+    this.identityManager = identityManager;
+  }
+
+  /**
    * 启动 P2P 网络
    */
   async start(): Promise<Result<{ peerId: string; addresses: string[] }>> {
@@ -226,15 +236,28 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         });
       }
 
-      // 注意：不传 privateKey，让 libp2p 自动生成 PeerId
-      this.node = await createLibp2p({
+      // 使用持久化身份或自动生成
+      let libp2pOptions: any = {
         addresses: {
           listen: listenAddresses
         },
         transports: [tcp()],
         connectionEncryption: [noise()],
         services
-      });
+      };
+
+      // 如果提供了 IdentityManager，使用持久化的私钥
+      if (this.identityManager?.isLoaded()) {
+        const privateKey = this.identityManager.getPrivateKey();
+        if (privateKey) {
+          libp2pOptions.privateKey = privateKey;
+          this.logger.info('Using persisted identity', {
+            peerId: this.identityManager.getPeerIdString()?.slice(0, 16)
+          });
+        }
+      }
+
+      this.node = await createLibp2p(libp2pOptions);
 
       // 设置事件监听
       this.setupEventHandlers();
@@ -252,8 +275,16 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       this.agentInfo.peerId = peerId.toString();
       this.agentInfo.multiaddrs = addrs;
 
-      // 初始化 E2EE 加密
-      await this.e2eeCrypto.initialize();
+      // 初始化 E2EE 加密 - 使用持久化的密钥对或生成新的
+      if (this.identityManager?.isLoaded()) {
+        const e2eeKeyPair = this.identityManager.getE2EEKeyPair();
+        if (e2eeKeyPair) {
+          this.e2eeCrypto.initializeWithKeyPair(e2eeKeyPair.privateKey, e2eeKeyPair.publicKey);
+          this.logger.info('Using persisted E2EE key pair');
+        }
+      } else {
+        await this.e2eeCrypto.initialize();
+      }
       this.agentInfo.encryptionPublicKey = this.e2eeCrypto.getPublicKey() || undefined;
       this.logger.info('E2EE encryption enabled', {
         publicKey: this.agentInfo.encryptionPublicKey?.slice(0, 16)

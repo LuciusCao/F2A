@@ -15,6 +15,10 @@ export type ErrorCode =
   // 加密错误
   | 'ENCRYPTION_NOT_READY'
   | 'ENCRYPTION_FAILED'
+  // 身份错误
+  | 'IDENTITY_LOAD_FAILED'
+  | 'IDENTITY_CREATE_FAILED'
+  | 'IDENTITY_DELETE_FAILED'
   // 任务错误
   | 'TASK_NOT_FOUND'
   | 'TASK_REJECTED'

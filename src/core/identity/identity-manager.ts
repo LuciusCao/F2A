@@ -22,17 +22,7 @@ import type {
   EncryptedIdentity 
 } from './types.js';
 import { DEFAULT_DATA_DIR, IDENTITY_FILE } from './types.js';
-
-/**
- * Securely wipe a Uint8Array/Buffer by filling with zeros
- * @param data - The data to wipe (modified in place)
- */
-function secureWipe(data: Uint8Array | null | undefined): void {
-  if (data) {
-    // Both Buffer and Uint8Array have fill(), no need for type check
-    data.fill(0);
-  }
-}
+import { isValidBase64, secureWipe } from '../../utils/crypto-utils.js';
 
 /**
  * Type guard to validate EncryptedIdentity structure
@@ -50,18 +40,6 @@ function isEncryptedIdentity(obj: unknown): obj is EncryptedIdentity {
     typeof record.authTag === 'string' &&
     typeof record.ciphertext === 'string'
   );
-}
-
-/**
- * Validate if a string is valid base64
- * P4 修复：添加 base64 验证函数
- */
-function isValidBase64Field(str: unknown): str is string {
-  if (typeof str !== 'string' || str.length === 0) {
-    return false;
-  }
-  const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
-  return base64Regex.test(str);
 }
 
 /**
@@ -84,6 +62,16 @@ export class IdentityManager {
   private logger: Logger;
   /** P0 修复：并发锁，防止 loadOrCreate 重复调用 */
   private loadPromise: Promise<Result<ExportedIdentity>> | null = null;
+  /** P1-2 修复：exportIdentity 调用计数器，用于频率限制 */
+  private exportCallCount: number = 0;
+  /** P2 修复：滑动窗口 - 记录所有导出调用的时间戳 */
+  private exportTimestamps: number[] = [];
+  /** P2 修复：滑动窗口大小（毫秒）- 1分钟窗口 */
+  private static readonly EXPORT_WINDOW_MS = 60000;
+  /** P2 修复：窗口内最大调用次数 */
+  private static readonly EXPORT_MAX_IN_WINDOW = 5;
+  /** P1-2 修复：exportIdentity 最大调用次数警告阈值 */
+  private static readonly EXPORT_MAX_CALLS_WARN = 10;
 
   constructor(options: IdentityManagerOptions = {}) {
     this.dataDir = options.dataDir || join(homedir(), DEFAULT_DATA_DIR);
@@ -123,7 +111,7 @@ export class IdentityManager {
   async loadOrCreate(): Promise<Result<ExportedIdentity>> {
     // P1 修复：如果已加载，直接返回现有身份
     if (this.isLoaded()) {
-      return success(this.exportIdentity());
+      return success(this.exportIdentityInternal());
     }
 
     // P0 修复：并发保护 - 如果正在加载，等待现有操作完成
@@ -216,7 +204,7 @@ export class IdentityManager {
               createdAt: this.createdAt?.toISOString()
             });
             
-            return success(this.exportIdentity());
+            return success(this.exportIdentityInternal());
           } catch (decryptError) {
             this.logger.error('Failed to decrypt identity with provided password', {
               error: decryptError instanceof Error ? decryptError.message : String(decryptError)
@@ -243,7 +231,7 @@ export class IdentityManager {
         // Warn about plaintext storage
         this.logger.warn('Identity is stored in plaintext. Consider setting a password for encryption.');
         
-        return success(this.exportIdentity());
+        return success(this.exportIdentityInternal());
       } catch (readError: unknown) {
         // File doesn't exist or parse failed, create new identity
         if ((readError as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -262,13 +250,13 @@ export class IdentityManager {
    */
   private async loadPersistedIdentity(persisted: PersistedIdentity): Promise<void> {
     // P4 修复：验证字段是否为有效的 base64
-    if (!isValidBase64Field(persisted.peerId)) {
+    if (!isValidBase64(persisted.peerId)) {
       throw new Error('Invalid persisted identity: peerId is not valid base64');
     }
-    if (!isValidBase64Field(persisted.e2eePrivateKey)) {
+    if (!isValidBase64(persisted.e2eePrivateKey)) {
       throw new Error('Invalid persisted identity: e2eePrivateKey is not valid base64');
     }
-    if (!isValidBase64Field(persisted.e2eePublicKey)) {
+    if (!isValidBase64(persisted.e2eePublicKey)) {
       throw new Error('Invalid persisted identity: e2eePublicKey is not valid base64');
     }
     
@@ -286,7 +274,13 @@ export class IdentityManager {
     // Restore E2EE key pair
     this.e2eePrivateKey = Buffer.from(persisted.e2eePrivateKey, 'base64');
     this.e2eePublicKey = Buffer.from(persisted.e2eePublicKey, 'base64');
-    this.createdAt = new Date(persisted.createdAt);
+    
+    // P1-1 修复：验证 createdAt 日期格式有效性
+    const parsedDate = new Date(persisted.createdAt);
+    if (isNaN(parsedDate.getTime())) {
+      throw new Error('Invalid persisted identity: createdAt is not a valid date format');
+    }
+    this.createdAt = parsedDate;
   }
 
   /**
@@ -315,7 +309,7 @@ export class IdentityManager {
         createdAt: this.createdAt.toISOString()
       });
       
-      return success(this.exportIdentity());
+      return success(this.exportIdentityInternal());
     } catch (error) {
       return failureFromError('IDENTITY_CREATE_FAILED', 'Failed to create new identity', error as Error);
     }
@@ -364,16 +358,85 @@ export class IdentityManager {
   }
 
   /**
+   * Export identity information (internal version, no rate limiting)
+   * 用于内部调用，不触发频率限制和审计日志
+   */
+  private exportIdentityInternal(): ExportedIdentity {
+    if (!this.peerId || !this.privateKey || !this.e2eePublicKey || !this.e2eePrivateKey || !this.createdAt) {
+      throw new Error('Identity not initialized');
+    }
+    
+    return {
+      peerId: this.peerId.toString(),
+      privateKey: Buffer.from(marshalPrivateKey(this.privateKey)).toString('base64'),
+      e2eeKeyPair: {
+        publicKey: Buffer.from(this.e2eePublicKey).toString('base64'),
+        privateKey: Buffer.from(this.e2eePrivateKey).toString('base64')
+      },
+      createdAt: this.createdAt
+    };
+  }
+
+  /**
    * Export identity information
    * 
    * WARNING: This returns sensitive private key material in plaintext.
    * - Do not log or expose the returned data
    * - Clear from memory when no longer needed
    * - Only call when absolutely necessary
+   * 
+   * P1-2 修复：添加调用频率限制和审计日志
+   * P2 修复：实现滑动窗口限制，防止频率限制绕过
    */
   exportIdentity(): ExportedIdentity {
     if (!this.peerId || !this.privateKey || !this.e2eePublicKey || !this.e2eePrivateKey || !this.createdAt) {
       throw new Error('Identity not initialized');
+    }
+    
+    // P2 修复：滑动窗口频率限制
+    const now = Date.now();
+    
+    // 1. 清理过期的时间戳（超过60秒窗口的）
+    this.exportTimestamps = this.exportTimestamps.filter(
+      timestamp => now - timestamp < IdentityManager.EXPORT_WINDOW_MS
+    );
+    
+    // 2. 检查当前窗口内的调用次数
+    if (this.exportTimestamps.length >= IdentityManager.EXPORT_MAX_IN_WINDOW) {
+      const oldestInWindow = this.exportTimestamps[0];
+      const retryAfterMs = IdentityManager.EXPORT_WINDOW_MS - (now - oldestInWindow);
+      const retryAfterSec = Math.ceil(retryAfterMs / 1000);
+      
+      this.logger.warn('SECURITY: exportIdentity rate limit exceeded', {
+        callCountInWindow: this.exportTimestamps.length,
+        maxAllowed: IdentityManager.EXPORT_MAX_IN_WINDOW,
+        retryAfterSeconds: retryAfterSec
+      });
+      
+      throw new Error(
+        `exportIdentity rate limit exceeded. Maximum ${IdentityManager.EXPORT_MAX_IN_WINDOW} calls per minute. ` +
+        `Please try again in ${retryAfterSec} seconds.`
+      );
+    }
+    
+    // 3. 记录本次调用时间戳
+    this.exportTimestamps.push(now);
+    
+    // P1-2 修复：审计日志 - 记录敏感操作
+    this.exportCallCount++;
+    this.logger.warn('SECURITY: exportIdentity called - private key material exported', {
+      peerId: this.peerId.toString().slice(0, 16),
+      callCount: this.exportCallCount,
+      callsInWindow: this.exportTimestamps.length,
+      timestamp: new Date().toISOString()
+    });
+    
+    // P1-2 修复：调用次数警告
+    if (this.exportCallCount >= IdentityManager.EXPORT_MAX_CALLS_WARN) {
+      this.logger.warn('SECURITY: exportIdentity has been called many times', {
+        callCount: this.exportCallCount,
+        warning: 'Frequent exports of private key material may indicate a security issue'
+      });
     }
     
     return {

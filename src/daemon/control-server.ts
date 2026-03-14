@@ -22,14 +22,21 @@ const DEFAULT_ALLOWED_ORIGINS = ['http://localhost'];
 /**
  * P2 修复：生产环境 CORS 配置验证
  * 检查是否在生产环境使用了宽松的 CORS 配置
+ * P2-4 修复：在严格模式下禁止 localhost
  */
 function validateCorsConfig(allowedOrigins: string[]): void {
   const isProduction = process.env.NODE_ENV === 'production';
+  const isStrictMode = process.env.F2A_STRICT_CORS === 'true';
   
-  if (isProduction) {
+  if (isProduction || isStrictMode) {
     // 检查是否使用默认配置
     if (allowedOrigins.length === 1 && allowedOrigins[0] === 'http://localhost') {
       const logger = new Logger({ component: 'ControlServer' });
+      if (isStrictMode) {
+        // P2-4 修复：严格模式下禁止 localhost
+        logger.error('CORS configuration error: localhost origin is not allowed in strict mode!');
+        throw new Error('Localhost CORS origin is not allowed in strict mode (F2A_STRICT_CORS=true). Configure specific allowed origins.');
+      }
       logger.error('CORS configuration warning: Using default localhost origin in production!');
       logger.error('Set F2A_ALLOWED_ORIGINS environment variable or pass allowedOrigins option.');
       logger.error('Example: F2A_ALLOWED_ORIGINS=https://your-domain.com,https://api.your-domain.com');
@@ -45,6 +52,11 @@ function validateCorsConfig(allowedOrigins: string[]): void {
     // 检查是否包含 localhost
     if (allowedOrigins.some(o => o.includes('localhost') || o.includes('127.0.0.1'))) {
       const logger = new Logger({ component: 'ControlServer' });
+      // P2-4 修复：严格模式下禁止 localhost
+      if (isStrictMode) {
+        logger.error('CORS configuration error: localhost/127.0.0.1 origins are not allowed in strict mode!');
+        throw new Error('Localhost/127.0.0.1 CORS origins are not allowed in strict mode (F2A_STRICT_CORS=true). Configure specific allowed origins.');
+      }
       logger.warn('CORS configuration warning: localhost/127.0.0.1 origins in production may be a security risk.');
     }
   }

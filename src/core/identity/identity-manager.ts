@@ -64,10 +64,12 @@ export class IdentityManager {
   private loadPromise: Promise<Result<ExportedIdentity>> | null = null;
   /** P1-2 修复：exportIdentity 调用计数器，用于频率限制 */
   private exportCallCount: number = 0;
-  /** P1-2 修复：exportIdentity 最后调用时间戳 */
-  private lastExportCallTime: number = 0;
-  /** P1-2 修复：exportIdentity 调用频率限制（毫秒） */
-  private static readonly EXPORT_RATE_LIMIT_MS = 1000; // 1 秒间隔
+  /** P2 修复：滑动窗口 - 记录所有导出调用的时间戳 */
+  private exportTimestamps: number[] = [];
+  /** P2 修复：滑动窗口大小（毫秒）- 1分钟窗口 */
+  private static readonly EXPORT_WINDOW_MS = 60000;
+  /** P2 修复：窗口内最大调用次数 */
+  private static readonly EXPORT_MAX_IN_WINDOW = 5;
   /** P1-2 修复：exportIdentity 最大调用次数警告阈值 */
   private static readonly EXPORT_MAX_CALLS_WARN = 10;
 
@@ -384,24 +386,48 @@ export class IdentityManager {
    * - Only call when absolutely necessary
    * 
    * P1-2 修复：添加调用频率限制和审计日志
+   * P2 修复：实现滑动窗口限制，防止频率限制绕过
    */
   exportIdentity(): ExportedIdentity {
     if (!this.peerId || !this.privateKey || !this.e2eePublicKey || !this.e2eePrivateKey || !this.createdAt) {
       throw new Error('Identity not initialized');
     }
     
-    // P1-2 修复：调用频率限制（跳过第一次调用）
+    // P2 修复：滑动窗口频率限制
     const now = Date.now();
-    if (this.lastExportCallTime > 0 && now - this.lastExportCallTime < IdentityManager.EXPORT_RATE_LIMIT_MS) {
-      throw new Error('exportIdentity called too frequently. Please wait before calling again.');
+    
+    // 1. 清理过期的时间戳（超过60秒窗口的）
+    this.exportTimestamps = this.exportTimestamps.filter(
+      timestamp => now - timestamp < IdentityManager.EXPORT_WINDOW_MS
+    );
+    
+    // 2. 检查当前窗口内的调用次数
+    if (this.exportTimestamps.length >= IdentityManager.EXPORT_MAX_IN_WINDOW) {
+      const oldestInWindow = this.exportTimestamps[0];
+      const retryAfterMs = IdentityManager.EXPORT_WINDOW_MS - (now - oldestInWindow);
+      const retryAfterSec = Math.ceil(retryAfterMs / 1000);
+      
+      this.logger.warn('SECURITY: exportIdentity rate limit exceeded', {
+        callCountInWindow: this.exportTimestamps.length,
+        maxAllowed: IdentityManager.EXPORT_MAX_IN_WINDOW,
+        retryAfterSeconds: retryAfterSec
+      });
+      
+      throw new Error(
+        `exportIdentity rate limit exceeded. Maximum ${IdentityManager.EXPORT_MAX_IN_WINDOW} calls per minute. ` +
+        `Please try again in ${retryAfterSec} seconds.`
+      );
     }
+    
+    // 3. 记录本次调用时间戳
+    this.exportTimestamps.push(now);
     
     // P1-2 修复：审计日志 - 记录敏感操作
     this.exportCallCount++;
-    this.lastExportCallTime = now;
     this.logger.warn('SECURITY: exportIdentity called - private key material exported', {
       peerId: this.peerId.toString().slice(0, 16),
       callCount: this.exportCallCount,
+      callsInWindow: this.exportTimestamps.length,
       timestamp: new Date().toISOString()
     });
     

@@ -105,8 +105,8 @@ export interface DiscoverOptions {
 class AsyncLock {
   private locked = false;
   private queue: Array<() => void> = [];
-  /** 默认锁超时时间（毫秒） */
-  private static readonly DEFAULT_TIMEOUT_MS = 30000;
+  /** 默认锁超时时间（毫秒） - P2-1 修复：从 30000ms 改为 10000ms */
+  private static readonly DEFAULT_TIMEOUT_MS = 10000;
 
   /**
    * 获取锁

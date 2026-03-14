@@ -146,13 +146,19 @@ export function loadSignatureConfig(): SignatureConfig | null {
     ? parseInt(process.env.F2A_SIGNATURE_TOLERANCE, 10)
     : undefined;
 
+  // P2-3 修复：parseInt NaN 检查
+  if (tolerance !== undefined && isNaN(tolerance)) {
+    logger.warn('F2A_SIGNATURE_TOLERANCE is not a valid number, using default 300000ms');
+  }
+  const actualTolerance = (tolerance !== undefined && !isNaN(tolerance)) ? tolerance : 300000;
+
   logger.info('Signature verification enabled', { 
-    timestampTolerance: tolerance || 300000 // 默认 5 分钟
+    timestampTolerance: actualTolerance // 默认 5 分钟
   });
 
   return {
     secretKey,
-    timestampTolerance: tolerance
+    timestampTolerance: actualTolerance
   };
 }
 

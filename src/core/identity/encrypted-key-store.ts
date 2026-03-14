@@ -6,19 +6,7 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 import type { PersistedIdentity, EncryptedIdentity } from './types.js';
 import { AES_KEY_SIZE, AES_IV_SIZE, SCRYPT_N, SCRYPT_R, SCRYPT_P, SALT_SIZE } from './types.js';
-
-/**
- * Validate if a string is valid base64
- * P3 修复：添加 base64 格式验证
- */
-function isValidBase64(str: string): boolean {
-  if (typeof str !== 'string' || str.length === 0) {
-    return false;
-  }
-  // Base64 regex: allows A-Z, a-z, 0-9, +, /, and optional = padding
-  const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
-  return base64Regex.test(str);
-}
+import { isValidBase64 } from '../../utils/crypto-utils.js';
 
 /**
  * Encrypt identity data

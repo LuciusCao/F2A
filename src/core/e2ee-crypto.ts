@@ -223,18 +223,16 @@ export class E2EECrypto {
     try {
       const publicKey = Buffer.from(publicKeyBase64, 'base64');
       
-      // P2-3 修复：创建不可变副本（Object.freeze 不能冻结 Buffer）
-      // 使用 slice() 创建新数组，然后冻结
+      // 创建副本（数据已复制，但不能保证不可变）
+      // 注意：Object.freeze 对 TypedArray 视图无效，仅作为语义标记
       const frozenPublicKey = new Uint8Array(publicKey);
-      Object.freeze(frozenPublicKey.buffer);
       this.peerPublicKeys.set(peerId, frozenPublicKey);
 
       // 预计算共享密钥
       if (this.keyPair) {
         const sharedSecret = x25519.getSharedSecret(this.keyPair.privateKey, frozenPublicKey);
-        // P2-3 修复：创建不可变副本
+        // 创建副本
         const frozenSharedSecret = new Uint8Array(sharedSecret);
-        Object.freeze(frozenSharedSecret.buffer);
         this.sharedSecrets.set(peerId, frozenSharedSecret);
         
         // P2-10 修复：初始化 IV 记录集

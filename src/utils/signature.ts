@@ -191,6 +191,7 @@ export function loadSignatureConfigSafe(): {
   success: boolean; 
   config?: SignatureConfig; 
   error?: string;
+  warning?: string;
   isProduction: boolean;
 } {
   const secretKey = process.env.F2A_SIGNATURE_KEY;
@@ -236,6 +237,7 @@ export function loadSignatureConfigSafe(): {
       secretKey,
       timestampTolerance: actualTolerance
     },
-    isProduction
+    isProduction,
+    warning: keyWarning
   };
 }

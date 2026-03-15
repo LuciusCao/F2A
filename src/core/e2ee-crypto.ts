@@ -223,17 +223,16 @@ export class E2EECrypto {
     try {
       const publicKey = Buffer.from(publicKeyBase64, 'base64');
       
-      // 创建副本（数据已复制，但不能保证不可变）
-      // 注意：Object.freeze 对 TypedArray 视图无效，仅作为语义标记
-      const frozenPublicKey = new Uint8Array(publicKey);
-      this.peerPublicKeys.set(peerId, frozenPublicKey);
+      // P3-1 修复：重命名为 Copy 以更准确反映语义（可修改的副本）
+      const publicKeyCopy = new Uint8Array(publicKey);
+      this.peerPublicKeys.set(peerId, publicKeyCopy);
 
       // 预计算共享密钥
       if (this.keyPair) {
-        const sharedSecret = x25519.getSharedSecret(this.keyPair.privateKey, frozenPublicKey);
-        // 创建副本
-        const frozenSharedSecret = new Uint8Array(sharedSecret);
-        this.sharedSecrets.set(peerId, frozenSharedSecret);
+        const sharedSecret = x25519.getSharedSecret(this.keyPair.privateKey, publicKeyCopy);
+        // P3-1 修复：重命名为 Copy 以更准确反映语义
+        const sharedSecretCopy = new Uint8Array(sharedSecret);
+        this.sharedSecrets.set(peerId, sharedSecretCopy);
         
         // P2-10 修复：初始化 IV 记录集
         if (!this.usedIVs.has(peerId)) {

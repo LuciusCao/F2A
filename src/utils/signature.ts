@@ -211,10 +211,12 @@ export function loadSignatureConfigSafe(): {
     };
   }
 
+  // P2-1 修复：使用数组累积警告，避免覆盖
+  const warnings: string[] = [];
+
   // 验证密钥强度
-  let keyWarning: string | undefined;
   if (secretKey.length < 32) {
-    keyWarning = 'F2A_SIGNATURE_KEY is too short. Recommended minimum length is 32 characters.';
+    warnings.push('F2A_SIGNATURE_KEY is too short. Recommended minimum length is 32 characters.');
   }
 
   const tolerance = process.env.F2A_SIGNATURE_TOLERANCE
@@ -225,7 +227,7 @@ export function loadSignatureConfigSafe(): {
   let actualTolerance = 300000; // 默认 5 分钟
   if (tolerance !== undefined) {
     if (isNaN(tolerance)) {
-      keyWarning = 'F2A_SIGNATURE_TOLERANCE is not a valid number, using default 300000ms';
+      warnings.push('F2A_SIGNATURE_TOLERANCE is not a valid number, using default 300000ms.');
     } else {
       actualTolerance = tolerance;
     }
@@ -238,6 +240,6 @@ export function loadSignatureConfigSafe(): {
       timestampTolerance: actualTolerance
     },
     isProduction,
-    warning: keyWarning
+    warning: warnings.length > 0 ? warnings.join(' ') : undefined
   };
 }

@@ -139,11 +139,13 @@ export class E2EECrypto {
     // 清理 IV 记录
     this.usedIVs.delete(peerId);
     
-    // 清理相关的 pendingChallenges
-    const challengeKey = `challenge:${peerId}`;
-    const counterChallengeKey = `counter:${peerId}`;
-    this.pendingChallenges.delete(challengeKey);
-    this.pendingChallenges.delete(counterChallengeKey);
+    // 清理相关的 pendingChallenges - 前缀匹配删除
+    // P2 修复：键名格式为 challenge:${peerId}:${timestamp}:${random}，需要遍历匹配前缀
+    for (const key of this.pendingChallenges.keys()) {
+      if (key.startsWith(`challenge:${peerId}:`) || key.startsWith(`counter:${peerId}:`)) {
+        this.pendingChallenges.delete(key);
+      }
+    }
     
     this.logger.info('Peer unregistered and resources cleaned', { peerId: peerId.slice(0, 16) });
   }

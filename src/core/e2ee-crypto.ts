@@ -4,7 +4,7 @@
  */
 
 import { x25519 } from '@noble/curves/ed25519.js';
-import { randomBytes, createCipheriv, createDecipheriv, createHash, hkdfSync } from 'crypto';
+import { randomBytes, createCipheriv, createDecipheriv, createHash, hkdfSync, timingSafeEqual } from 'crypto';
 import { Logger } from '../utils/logger.js';
 
 // AES-256-GCM 参数
@@ -122,7 +122,11 @@ export class E2EECrypto {
    * @param peerId 对等方标识
    */
   unregisterPeer(peerId: string): void {
-    // 清理共享密钥
+    // P2-2 修复：清理共享密钥前清零内存
+    const sharedSecret = this.sharedSecrets.get(peerId);
+    if (sharedSecret) {
+      sharedSecret.fill(0);
+    }
     this.sharedSecrets.delete(peerId);
     
     // 清理对等方公钥
@@ -252,6 +256,37 @@ export class E2EECrypto {
   }
 
   /**
+   * P1-2 修复：使用指定 IV 执行加密操作
+   * 提取为私有方法，避免 IV 碰撞处理时的代码重复
+   */
+  private encryptWithIV(
+    aesKey: Buffer,
+    iv: Buffer,
+    plaintext: string,
+    aad?: string
+  ): { ciphertext: string; authTag: Buffer; ivBase64: string } {
+    const cipher = createCipheriv('aes-256-gcm', aesKey, iv);
+
+    // 添加 AAD (如果有)
+    if (aad) {
+      cipher.setAAD(Buffer.from(aad, 'utf-8'));
+    }
+
+    // 加密
+    let ciphertext = cipher.update(plaintext, 'utf-8', 'base64');
+    ciphertext += cipher.final('base64');
+
+    // 获取认证标签
+    const authTag = cipher.getAuthTag();
+
+    return {
+      ciphertext,
+      authTag,
+      ivBase64: iv.toString('base64')
+    };
+  }
+
+  /**
    * 加密消息
    */
   encrypt(peerId: string, plaintext: string, aad?: string): EncryptedMessage | null {
@@ -288,26 +323,14 @@ export class E2EECrypto {
           const newIv = randomBytes(AES_IV_SIZE);
           ivSet.add(newIv.toString('base64'));
           
-          // 创建加密器
-          const cipher = createCipheriv('aes-256-gcm', aesKey, newIv);
-
-          // 添加 AAD (如果有)
-          if (aad) {
-            cipher.setAAD(Buffer.from(aad, 'utf-8'));
-          }
-
-          // 加密
-          let ciphertext = cipher.update(plaintext, 'utf-8', 'base64');
-          ciphertext += cipher.final('base64');
-
-          // 获取认证标签
-          const authTag = cipher.getAuthTag();
+          // P1-2 修复：使用提取的方法
+          const result = this.encryptWithIV(aesKey, newIv, plaintext, aad);
 
           return {
             senderPublicKey: this.getPublicKey()!,
-            iv: newIv.toString('base64'),
-            authTag: authTag.toString('base64'),
-            ciphertext,
+            iv: result.ivBase64,
+            authTag: result.authTag.toString('base64'),
+            ciphertext: result.ciphertext,
             aad,
             salt: salt.toString('base64')
           };
@@ -328,26 +351,14 @@ export class E2EECrypto {
         }
       }
 
-      // 创建加密器
-      const cipher = createCipheriv('aes-256-gcm', aesKey, iv);
-
-      // 添加 AAD (如果有)
-      if (aad) {
-        cipher.setAAD(Buffer.from(aad, 'utf-8'));
-      }
-
-      // 加密
-      let ciphertext = cipher.update(plaintext, 'utf-8', 'base64');
-      ciphertext += cipher.final('base64');
-
-      // 获取认证标签
-      const authTag = cipher.getAuthTag();
+      // P1-2 修复：使用提取的方法
+      const result = this.encryptWithIV(aesKey, iv, plaintext, aad);
 
       return {
         senderPublicKey: this.getPublicKey()!,
-        iv: iv.toString('base64'),
-        authTag: authTag.toString('base64'),
-        ciphertext,
+        iv: result.ivBase64,
+        authTag: result.authTag.toString('base64'),
+        ciphertext: result.ciphertext,
         aad,
         salt: salt.toString('base64')
       };
@@ -495,8 +506,8 @@ export class E2EECrypto {
     // 生成随机挑战
     const challenge = randomBytes(32).toString('base64');
     
-    // 存储挑战以便后续验证
-    const challengeKey = `challenge:${peerId}`;
+    // P2-1 修复：使用包含时间戳和随机数的唯一键，避免键名冲突
+    const challengeKey = `challenge:${peerId}:${Date.now()}:${randomBytes(8).toString('hex')}`;
     this.pendingChallenges.set(challengeKey, {
       challenge,
       timestamp: Date.now()
@@ -531,10 +542,9 @@ export class E2EECrypto {
       return null;
     }
 
-    // 验证时间戳防止重放攻击（5分钟有效期）
+    // 验证时间戳防止重放攻击
     const now = Date.now();
-    const maxAge = 5 * 60 * 1000; // 5 分钟
-    if (Math.abs(now - challenge.timestamp) > maxAge) {
+    if (Math.abs(now - challenge.timestamp) > E2EECrypto.CHALLENGE_EXPIRY_MS) {
       this.logger.error('Challenge expired or timestamp mismatch');
       return null;
     }
@@ -549,8 +559,8 @@ export class E2EECrypto {
     // 生成反向挑战
     const counterChallenge = randomBytes(32).toString('base64');
     
-    // 存储反向挑战
-    const counterChallengeKey = `counter:${peerId}`;
+    // P2-1 修复：使用包含时间戳和随机数的唯一键，避免键名冲突
+    const counterChallengeKey = `counter:${peerId}:${now}:${randomBytes(8).toString('hex')}`;
     this.pendingChallenges.set(counterChallengeKey, {
       challenge: counterChallenge,
       timestamp: now
@@ -585,19 +595,21 @@ export class E2EECrypto {
 
     // 验证时间戳
     const now = Date.now();
-    const maxAge = 5 * 60 * 1000; // 5 分钟
-    if (Math.abs(now - response.timestamp) > maxAge) {
+    if (Math.abs(now - response.timestamp) > E2EECrypto.CHALLENGE_EXPIRY_MS) {
       this.logger.error('Response expired or timestamp mismatch');
       return { success: false };
     }
 
-    // 验证挑战响应
+    // P1-1 修复：使用常量时间比较，防止时序攻击
     const expectedResponse = createHash('sha256')
       .update(sharedSecret)
       .update(originalChallenge)
       .digest('base64');
 
-    if (response.challengeResponse !== expectedResponse) {
+    const expectedBuf = Buffer.from(expectedResponse, 'base64');
+    const actualBuf = Buffer.from(response.challengeResponse, 'base64');
+
+    if (expectedBuf.length !== actualBuf.length || !timingSafeEqual(expectedBuf, actualBuf)) {
       this.logger.error('Challenge response verification failed', { peerId });
       return { success: false };
     }
@@ -643,7 +655,11 @@ export class E2EECrypto {
       .update(originalCounterChallenge)
       .digest('base64');
 
-    if (counterChallengeResponse !== expectedResponse) {
+    // P1-1 修复：使用常量时间比较，防止时序攻击
+    const expectedBuf = Buffer.from(expectedResponse, 'base64');
+    const actualBuf = Buffer.from(counterChallengeResponse, 'base64');
+
+    if (expectedBuf.length !== actualBuf.length || !timingSafeEqual(expectedBuf, actualBuf)) {
       this.logger.error('Counter challenge response verification failed', { peerId });
       return false;
     }

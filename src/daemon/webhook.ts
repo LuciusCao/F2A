@@ -4,8 +4,12 @@
 
 import { request, RequestOptions } from 'https';
 import { request as httpRequest } from 'http';
+import { lookup } from 'dns';
+import { promisify } from 'util';
 import { WebhookConfig } from '../types/index.js';
 import { Logger } from '../utils/logger.js';
+
+const dnsLookup = promisify(lookup);
 
 export interface WebhookNotification {
   message: string;
@@ -15,7 +19,17 @@ export interface WebhookNotification {
 }
 
 /**
- * P2-2 修复：验证 URL 是否为内网地址，防止 SSRF 攻击
+ * P2-2 修复：判断字符串是否为 IPv6 地址格式
+ * IPv6 地址只包含十六进制字符和冒号
+ */
+function isIPv6Format(hostname: string): boolean {
+  // IPv6 地址只包含 0-9, a-f, A-F 和冒号
+  // 还可能包含 . 用于 IPv4 映射地址 (::ffff:192.0.2.1)
+  return /^[0-9a-fA-F:.]+$/.test(hostname);
+}
+
+/**
+ * P2-2 修复：验证 IP 是否为内网地址，防止 SSRF 攻击
  * 阻止以下私有地址段：
  * - 127.x.x.x (loopback)
  * - 10.x.x.x (Class A private)
@@ -27,9 +41,16 @@ export interface WebhookNotification {
  * - fe80::/10 (IPv6 link-local)
  */
 function isPrivateIP(hostname: string): boolean {
+  // P1-1 修复：去除 IPv6 地址的方括号
+  // URL.hostname 对 IPv6 地址返回带方括号的格式，如 [::1]
+  let cleanHostname = hostname;
+  if (hostname.startsWith('[') && hostname.endsWith(']')) {
+    cleanHostname = hostname.slice(1, -1);
+  }
+  
   // IPv4 地址检查
   const ipv4Regex = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
-  const match = hostname.match(ipv4Regex);
+  const match = cleanHostname.match(ipv4Regex);
   
   if (match) {
     const octets = [parseInt(match[1], 10), parseInt(match[2], 10), parseInt(match[3], 10), parseInt(match[4], 10)];
@@ -54,17 +75,21 @@ function isPrivateIP(hostname: string): boolean {
   }
   
   // IPv6 地址检查
-  const lowerHostname = hostname.toLowerCase();
+  const lowerHostname = cleanHostname.toLowerCase();
   
   // ::1 (loopback)
   if (lowerHostname === '::1' || lowerHostname === '0:0:0:0:0:0:0:1') return true;
   
-  // fc00::/7 (ULA - Unique Local Address)
-  if (lowerHostname.startsWith('fc') || lowerHostname.startsWith('fd')) return true;
-  
-  // fe80::/10 (link-local)
-  if (lowerHostname.startsWith('fe8') || lowerHostname.startsWith('fe9') || 
-      lowerHostname.startsWith('fea') || lowerHostname.startsWith('feb')) return true;
+  // P2-2 修复：只对纯 IPv6 格式的地址检查 fc/fd 前缀
+  // 避免误拦截 fc2.com 等合法域名
+  if (isIPv6Format(lowerHostname)) {
+    // fc00::/7 (ULA - Unique Local Address)
+    if (lowerHostname.startsWith('fc') || lowerHostname.startsWith('fd')) return true;
+    
+    // fe80::/10 (link-local)
+    if (lowerHostname.startsWith('fe8') || lowerHostname.startsWith('fe9') || 
+        lowerHostname.startsWith('fea') || lowerHostname.startsWith('feb')) return true;
+  }
   
   return false;
 }
@@ -160,8 +185,33 @@ export class WebhookService {
 
   /**
    * 发送 HTTP 请求
+   * P2-1 修复：在请求前验证 DNS 解析后的 IP 地址，防止 DNS 重绑定攻击
    */
-  private sendRequest(payload: string): Promise<void> {
+  private async sendRequest(payload: string): Promise<void> {
+    // P2-1 修复：DNS 重绑定防护 - 在实际请求前验证解析后的 IP
+    try {
+      const url = new URL(this.config.url);
+      const { address } = await dnsLookup(url.hostname);
+      
+      if (isPrivateIP(address)) {
+        throw new Error(`DNS resolved to private IP address ${address}, possible DNS rebinding attack`);
+      }
+      
+      this.logger.debug('DNS resolution validated', { 
+        hostname: url.hostname, 
+        resolvedIP: address 
+      });
+    } catch (error) {
+      // 如果 DNS 解析失败，记录日志但继续尝试（某些合法域名可能解析失败）
+      if (error instanceof Error && error.message.includes('private IP')) {
+        throw error; // 重新抛出私有 IP 错误
+      }
+      this.logger.warn('DNS resolution failed, will proceed with request', {
+        hostname: new URL(this.config.url).hostname,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+    
     return new Promise((resolve, reject) => {
       const isHttps = this.config.url.startsWith('https');
       const client = isHttps ? request : httpRequest;

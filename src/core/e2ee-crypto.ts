@@ -42,6 +42,32 @@ export interface EncryptedMessage {
 }
 
 /**
+ * P1-2 修复：密钥确认挑战
+ */
+export interface KeyConfirmationChallenge {
+  /** 挑战随机数 */
+  challenge: string;
+  /** 发送方标识 */
+  senderId: string;
+  /** 时间戳防止重放 */
+  timestamp: number;
+}
+
+/**
+ * P1-2 修复：密钥确认响应
+ */
+export interface KeyConfirmationResponse {
+  /** 对挑战的响应（用共享密钥加密的挑战数据） */
+  challengeResponse: string;
+  /** 反向挑战随机数 */
+  counterChallenge: string;
+  /** 发送方标识 */
+  senderId: string;
+  /** 时间戳 */
+  timestamp: number;
+}
+
+/**
  * 密钥管理器
  */
 export class E2EECrypto {
@@ -54,6 +80,11 @@ export class E2EECrypto {
   private usedIVs: Map<string, Set<string>> = new Map();
   /** P2-10 修复：IV 重用警告阈值 */
   private static readonly IV_REUSE_WARN_THRESHOLD = 1000;
+  
+  /** P1-2 修复：待处理的密钥确认挑战 */
+  private pendingChallenges: Map<string, { challenge: string; timestamp: number }> = new Map();
+  /** P1-2 修复：已确认的密钥 */
+  private keyConfirmed: Map<string, boolean> = new Map();
 
   constructor() {
     this.logger = new Logger({ component: 'E2EE' });
@@ -371,6 +402,245 @@ export class E2EECrypto {
    */
   getRegisteredPeerCount(): number {
     return this.peerPublicKeys.size;
+  }
+
+  /**
+   * P1-2 修复：生成密钥确认挑战
+   * 在密钥交换后，用于验证双方拥有相同的共享密钥
+   * @param peerId 对等方标识
+   * @returns 挑战数据
+   */
+  generateKeyConfirmationChallenge(peerId: string): KeyConfirmationChallenge | null {
+    if (!this.keyPair) {
+      this.logger.error('Cannot generate challenge: not initialized');
+      return null;
+    }
+
+    const sharedSecret = this.sharedSecrets.get(peerId);
+    if (!sharedSecret) {
+      this.logger.error('Cannot generate challenge: no shared secret for peer', { peerId });
+      return null;
+    }
+
+    // 生成随机挑战
+    const challenge = randomBytes(32).toString('base64');
+    
+    // 存储挑战以便后续验证
+    const challengeKey = `challenge:${peerId}`;
+    this.pendingChallenges.set(challengeKey, {
+      challenge,
+      timestamp: Date.now()
+    });
+
+    return {
+      challenge,
+      senderId: Buffer.from(this.keyPair.publicKey).toString('base64').slice(0, 16),
+      timestamp: Date.now()
+    };
+  }
+
+  /**
+   * P1-2 修复：响应密钥确认挑战
+   * 使用共享密钥加密挑战数据作为证明
+   * @param peerId 对等方标识
+   * @param challenge 收到的挑战
+   * @returns 响应数据和反向挑战
+   */
+  respondToKeyConfirmationChallenge(
+    peerId: string,
+    challenge: KeyConfirmationChallenge
+  ): KeyConfirmationResponse | null {
+    if (!this.keyPair) {
+      this.logger.error('Cannot respond to challenge: not initialized');
+      return null;
+    }
+
+    const sharedSecret = this.sharedSecrets.get(peerId);
+    if (!sharedSecret) {
+      this.logger.error('Cannot respond to challenge: no shared secret for peer', { peerId });
+      return null;
+    }
+
+    // 验证时间戳防止重放攻击（5分钟有效期）
+    const now = Date.now();
+    const maxAge = 5 * 60 * 1000; // 5 分钟
+    if (Math.abs(now - challenge.timestamp) > maxAge) {
+      this.logger.error('Challenge expired or timestamp mismatch');
+      return null;
+    }
+
+    // 使用共享密钥加密挑战数据作为响应
+    // 这证明我们拥有正确的共享密钥
+    const challengeResponse = createHash('sha256')
+      .update(sharedSecret)
+      .update(challenge.challenge)
+      .digest('base64');
+
+    // 生成反向挑战
+    const counterChallenge = randomBytes(32).toString('base64');
+    
+    // 存储反向挑战
+    const counterChallengeKey = `counter:${peerId}`;
+    this.pendingChallenges.set(counterChallengeKey, {
+      challenge: counterChallenge,
+      timestamp: now
+    });
+
+    return {
+      challengeResponse,
+      counterChallenge,
+      senderId: Buffer.from(this.keyPair.publicKey).toString('base64').slice(0, 16),
+      timestamp: now
+    };
+  }
+
+  /**
+   * P1-2 修复：验证密钥确认响应并响应反向挑战
+   * 完成双向密钥确认
+   * @param peerId 对等方标识
+   * @param response 收到的响应
+   * @param originalChallenge 原始挑战数据
+   * @returns 反向挑战的响应，如果验证失败返回 null
+   */
+  verifyKeyConfirmationResponse(
+    peerId: string,
+    response: KeyConfirmationResponse,
+    originalChallenge: string
+  ): { success: boolean; counterChallengeResponse?: string } {
+    const sharedSecret = this.sharedSecrets.get(peerId);
+    if (!sharedSecret) {
+      this.logger.error('Cannot verify response: no shared secret for peer', { peerId });
+      return { success: false };
+    }
+
+    // 验证时间戳
+    const now = Date.now();
+    const maxAge = 5 * 60 * 1000; // 5 分钟
+    if (Math.abs(now - response.timestamp) > maxAge) {
+      this.logger.error('Response expired or timestamp mismatch');
+      return { success: false };
+    }
+
+    // 验证挑战响应
+    const expectedResponse = createHash('sha256')
+      .update(sharedSecret)
+      .update(originalChallenge)
+      .digest('base64');
+
+    if (response.challengeResponse !== expectedResponse) {
+      this.logger.error('Challenge response verification failed', { peerId });
+      return { success: false };
+    }
+
+    // 响应反向挑战
+    const counterChallengeResponse = createHash('sha256')
+      .update(sharedSecret)
+      .update(response.counterChallenge)
+      .digest('base64');
+
+    // 标记密钥确认完成
+    const confirmKey = `confirmed:${peerId}`;
+    this.keyConfirmed.set(confirmKey, true);
+
+    this.logger.info('Key exchange confirmed with peer', { peerId: peerId.slice(0, 16) });
+
+    return { 
+      success: true, 
+      counterChallengeResponse 
+    };
+  }
+
+  /**
+   * P1-2 修复：验证反向挑战的响应
+   * @param peerId 对等方标识
+   * @param counterChallengeResponse 反向挑战的响应
+   * @param originalCounterChallenge 原始反向挑战
+   * @returns 验证结果
+   */
+  verifyCounterChallengeResponse(
+    peerId: string,
+    counterChallengeResponse: string,
+    originalCounterChallenge: string
+  ): boolean {
+    const sharedSecret = this.sharedSecrets.get(peerId);
+    if (!sharedSecret) {
+      this.logger.error('Cannot verify counter challenge: no shared secret for peer', { peerId });
+      return false;
+    }
+
+    const expectedResponse = createHash('sha256')
+      .update(sharedSecret)
+      .update(originalCounterChallenge)
+      .digest('base64');
+
+    if (counterChallengeResponse !== expectedResponse) {
+      this.logger.error('Counter challenge response verification failed', { peerId });
+      return false;
+    }
+
+    // 标记密钥确认完成
+    const confirmKey = `confirmed:${peerId}`;
+    this.keyConfirmed.set(confirmKey, true);
+
+    this.logger.info('Key exchange fully confirmed with peer', { peerId: peerId.slice(0, 16) });
+    return true;
+  }
+
+  /**
+   * P1-2 修复：检查与对等方的密钥是否已确认
+   */
+  isKeyConfirmed(peerId: string): boolean {
+    const confirmKey = `confirmed:${peerId}`;
+    return this.keyConfirmed.get(confirmKey) === true;
+  }
+
+  /**
+   * P1-2 修复：执行完整的双向密钥确认流程
+   * 这是一个便捷方法，封装了完整的确认流程
+   * @param peerId 对等方标识
+   * @param sendChallenge 发送挑战的函数
+   * @param receiveResponse 接收响应的函数
+   * @returns 确认是否成功
+   */
+  async confirmKeyExchange(
+    peerId: string,
+    sendChallenge: (challenge: KeyConfirmationChallenge) => Promise<KeyConfirmationResponse | null>,
+    receiveCounterResponse?: (counterResponse: string) => Promise<boolean>
+  ): Promise<boolean> {
+    // 生成挑战
+    const challenge = this.generateKeyConfirmationChallenge(peerId);
+    if (!challenge) {
+      return false;
+    }
+
+    // 发送挑战并等待响应
+    const response = await sendChallenge(challenge);
+    if (!response) {
+      this.logger.error('No response received for key confirmation challenge', { peerId });
+      return false;
+    }
+
+    // 验证响应
+    const result = this.verifyKeyConfirmationResponse(
+      peerId,
+      response,
+      challenge.challenge
+    );
+
+    if (!result.success || !result.counterChallengeResponse) {
+      return false;
+    }
+
+    // 如果需要验证反向挑战响应
+    if (receiveCounterResponse) {
+      const verified = await receiveCounterResponse(result.counterChallengeResponse);
+      if (!verified) {
+        this.logger.error('Counter challenge response verification failed', { peerId });
+        return false;
+      }
+    }
+
+    return true;
   }
 }
 

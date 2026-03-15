@@ -373,6 +373,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     // P2-4 修复：停止 DISCOVER 消息速率限制器
     this.discoverRateLimiter.stop();
 
+    // P1-1 修复：停止 E2EE 加密模块，清理定时器资源
+    if (this.e2eeCrypto && typeof this.e2eeCrypto.stop === 'function') {
+      this.e2eeCrypto.stop();
+    }
+
     if (this.node) {
       // P1 修复：移除事件监听器，防止内存泄漏
       // 检查 removeEventListener 是否存在（兼容测试 mock）
@@ -826,6 +831,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
         // P2.4 修复：从连接索引中移除
         this.connectedPeers.delete(peerId);
+
+        // P1-2 修复：清理对等方的加密资源
+        this.e2eeCrypto.unregisterPeer(peerId);
 
         // 使用原子操作更新路由表
         const updated = await this.updatePeer(peerId, (peer) => ({

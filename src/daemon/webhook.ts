@@ -210,16 +210,12 @@ export class WebhookService {
         resolvedIP: address 
       });
     } catch (error) {
-      // 如果 DNS 解析失败，记录日志但继续尝试（某些合法域名可能解析失败）
+      // P0-1 修复：DNS 解析失败应拒绝请求，而非回退到原始 hostname
+      // 回退会导致 HTTP 客户端重新进行 DNS 解析，可被绕过
       if (error instanceof Error && error.message.includes('private IP')) {
         throw error; // 重新抛出私有 IP 错误
       }
-      this.logger.warn('DNS resolution failed, will proceed with original hostname', {
-        hostname: url.hostname,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      // DNS 解析失败时使用原始 hostname
-      resolvedAddress = url.hostname;
+      throw new Error(`DNS resolution failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     
     return new Promise((resolve, reject) => {
@@ -229,23 +225,36 @@ export class WebhookService {
       // P2-1 修复：使用解析后的 IP 地址构建请求 URL
       // 保留原始 hostname 作为 Host header（用于 SNI 和虚拟主机）
       let requestUrl: string;
+      // P2-2 修复：Host header 应包含端口（非标准端口时虚拟主机路由需要）
+      const hostHeader = url.port 
+        ? `${url.hostname}:${url.port}` 
+        : url.hostname;
       const options: RequestOptions = {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.config.token}`,
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(payload),
-          'Host': url.hostname  // 设置原始 hostname 作为 Host header
+          'Host': hostHeader  // 设置原始 hostname（含端口）作为 Host header
         },
         timeout: this.config.timeout
       };
 
       if (resolvedAddress !== url.hostname) {
-        // 使用解析后的 IP 地址构建 URL
+        // P2-1 修复：使用解析后的 IP 地址构建 URL，保留端口号
         // IPv6 地址需要用方括号包裹
-        const hostForUrl = isIPv6(resolvedAddress) 
-          ? `[${resolvedAddress}]` 
-          : resolvedAddress;
+        let hostForUrl: string;
+        if (url.port) {
+          // 有显式端口时，使用 IP:端口
+          hostForUrl = isIPv6(resolvedAddress) 
+            ? `[${resolvedAddress}]:${url.port}` 
+            : `${resolvedAddress}:${url.port}`;
+        } else {
+          // 无显式端口时，仅使用 IP（浏览器/Node 会使用默认端口）
+          hostForUrl = isIPv6(resolvedAddress) 
+            ? `[${resolvedAddress}]` 
+            : resolvedAddress;
+        }
         requestUrl = `${url.protocol}//${hostForUrl}${url.pathname}${url.search}`;
       } else {
         requestUrl = this.config.url;

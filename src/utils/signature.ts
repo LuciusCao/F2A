@@ -182,3 +182,64 @@ export function requireSignatureInProduction(): void {
     );
   }
 }
+
+/**
+ * P2-9 修复：安全的签名配置加载
+ * 不抛出异常，而是返回结果对象，让调用方决定如何处理
+ */
+export function loadSignatureConfigSafe(): { 
+  success: boolean; 
+  config?: SignatureConfig; 
+  error?: string;
+  warning?: string;
+  isProduction: boolean;
+} {
+  const secretKey = process.env.F2A_SIGNATURE_KEY;
+  const isProduction = process.env.NODE_ENV === 'production';
+  
+  if (!secretKey) {
+    const errorMessage = 
+      'F2A_SIGNATURE_KEY is not set. ' +
+      (isProduction 
+        ? 'This is required in production environment.' 
+        : 'Signature verification is disabled in development.');
+    
+    return {
+      success: false,
+      error: errorMessage,
+      isProduction
+    };
+  }
+
+  // P2-1 修复：使用数组累积警告，避免覆盖
+  const warnings: string[] = [];
+
+  // 验证密钥强度
+  if (secretKey.length < 32) {
+    warnings.push('F2A_SIGNATURE_KEY is too short. Recommended minimum length is 32 characters.');
+  }
+
+  const tolerance = process.env.F2A_SIGNATURE_TOLERANCE
+    ? parseInt(process.env.F2A_SIGNATURE_TOLERANCE, 10)
+    : undefined;
+
+  // P2-3 修复：parseInt NaN 检查
+  let actualTolerance = 300000; // 默认 5 分钟
+  if (tolerance !== undefined) {
+    if (isNaN(tolerance)) {
+      warnings.push('F2A_SIGNATURE_TOLERANCE is not a valid number, using default 300000ms.');
+    } else {
+      actualTolerance = tolerance;
+    }
+  }
+
+  return {
+    success: true,
+    config: {
+      secretKey,
+      timestampTolerance: actualTolerance
+    },
+    isProduction,
+    warning: warnings.length > 0 ? warnings.join(' ') : undefined
+  };
+}

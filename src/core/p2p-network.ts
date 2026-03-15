@@ -43,6 +43,7 @@ import { Logger } from '../utils/logger.js';
 import { validateF2AMessage, validateTaskRequestPayload, validateTaskResponsePayload } from '../utils/validation.js';
 import { MiddlewareManager, Middleware } from '../utils/middleware.js';
 import { RequestSigner, loadSignatureConfig, SignedMessage } from '../utils/signature.js';
+import { RateLimiter } from '../utils/rate-limiter.js';
 
 // DHT 服务类型定义
 interface DHTService {
@@ -166,6 +167,12 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private trustedPeers: Set<string> = new Set();
   /** 用于保护 peerTable 并发访问的锁 */
   private peerTableLock = new AsyncLock();
+  /** P2-4 修复：DISCOVER 消息速率限制器（每个 peer） */
+  private discoverRateLimiter = new RateLimiter({
+    maxRequests: 10, // 每个 peer 每分钟最多 10 次 DISCOVER 消息
+    windowMs: 60 * 1000,
+    burstMultiplier: 1.2 // 允许轻微突发
+  });
   /** P1 修复：保存事件监听器引用，用于 stop() 中移除 */
   private boundEventHandlers: {
     peerDiscovery: ((evt: CustomEvent<{ id: PeerId; multiaddrs: Multiaddr[] }>) => Promise<void>) | undefined;
@@ -362,6 +369,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       clearInterval(this.discoveryInterval);
       this.discoveryInterval = undefined;
     }
+
+    // P2-4 修复：停止 DISCOVER 消息速率限制器
+    this.discoverRateLimiter.stop();
 
     if (this.node) {
       // P1 修复：移除事件监听器，防止内存泄漏
@@ -1109,8 +1119,17 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
   /**
    * 处理发现消息
+   * P2-4 修复：添加速率限制，防止恶意节点大量发送 DISCOVER 消息
    */
   private async handleDiscoverMessage(message: F2AMessage, peerId: string, shouldRespond: boolean): Promise<void> {
+    // P2-4 修复：检查 DISCOVER 消息速率限制
+    if (!this.discoverRateLimiter.allowRequest(peerId)) {
+      this.logger.warn('DISCOVER message rate limit exceeded, ignoring', {
+        peerId: peerId.slice(0, 16)
+      });
+      return;
+    }
+    
     const payload = message.payload as DiscoverPayload;
     await this.handleDiscover(payload.agentInfo, peerId, shouldRespond);
   }
@@ -1120,7 +1139,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    */
   private async handleCapabilityResponseMessage(message: F2AMessage, peerId: string): Promise<void> {
     const payload = message.payload as CapabilityResponsePayload;
-    this.upsertPeerFromAgentInfo(payload.agentInfo, peerId);
+    // P2-5 修复：upsertPeerFromAgentInfo 现在是 async，需要 await
+    await this.upsertPeerFromAgentInfo(payload.agentInfo, peerId);
   }
 
   /**
@@ -1286,35 +1306,35 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
   /**
    * 将发现到的 Agent 信息更新到 Peer 表
+   * P2-5 修复：改为 async/await 模式，确保锁正确等待
    */
-  private upsertPeerFromAgentInfo(agentInfo: AgentInfo, peerId: string): void {
-    // 使用锁保护，确保线程安全
-    this.peerTableLock.acquire().then(() => {
-      try {
-        // 检查是否需要清理以腾出空间
-        if (this.peerTable.size >= PEER_TABLE_MAX_SIZE && !this.peerTable.has(peerId)) {
-          this.cleanupStalePeersLocked(true);
-        }
-
-        const existing = this.peerTable.get(peerId);
-        if (existing) {
-          existing.agentInfo = agentInfo;
-          existing.lastSeen = Date.now();
-          existing.multiaddrs = agentInfo.multiaddrs.map(ma => multiaddr(ma));
-        } else {
-          this.peerTable.set(peerId, {
-            peerId,
-            agentInfo,
-            multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma)),
-            connected: false,
-            reputation: 50,
-            lastSeen: Date.now()
-          });
-        }
-      } finally {
-        this.peerTableLock.release();
+  private async upsertPeerFromAgentInfo(agentInfo: AgentInfo, peerId: string): Promise<void> {
+    // P2-5 修复：使用 async/await 确保锁正确等待
+    await this.peerTableLock.acquire();
+    try {
+      // 检查是否需要清理以腾出空间
+      if (this.peerTable.size >= PEER_TABLE_MAX_SIZE && !this.peerTable.has(peerId)) {
+        this.cleanupStalePeersLocked(true);
       }
-    });
+
+      const existing = this.peerTable.get(peerId);
+      if (existing) {
+        existing.agentInfo = agentInfo;
+        existing.lastSeen = Date.now();
+        existing.multiaddrs = agentInfo.multiaddrs.map(ma => multiaddr(ma));
+      } else {
+        this.peerTable.set(peerId, {
+          peerId,
+          agentInfo,
+          multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma)),
+          connected: false,
+          reputation: 50,
+          lastSeen: Date.now()
+        });
+      }
+    } finally {
+      this.peerTableLock.release();
+    }
 
     // 注册对等方的加密公钥
     if (agentInfo.encryptionPublicKey) {

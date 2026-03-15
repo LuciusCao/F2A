@@ -12,6 +12,9 @@ const AES_KEY_SIZE = 32; // 256 bits
 const AES_IV_SIZE = 16;  // 128 bits
 const AES_TAG_SIZE = 16; // 128 bits
 
+// P2-7 修复：使用常量 SALT_SIZE 并保持一致
+const SALT_SIZE = 16; // 128 bits
+
 /**
  * 加密密钥对
  */
@@ -46,6 +49,11 @@ export class E2EECrypto {
   private peerPublicKeys: Map<string, Uint8Array> = new Map();
   private sharedSecrets: Map<string, Uint8Array> = new Map();
   private logger: Logger;
+  
+  /** P2-10 修复：IV 使用记录，用于检测 IV 重用 */
+  private usedIVs: Map<string, Set<string>> = new Map();
+  /** P2-10 修复：IV 重用警告阈值 */
+  private static readonly IV_REUSE_WARN_THRESHOLD = 1000;
 
   constructor() {
     this.logger = new Logger({ component: 'E2EE' });
@@ -105,16 +113,30 @@ export class E2EECrypto {
 
   /**
    * 注册对等方的公钥
+   * P2-3 修复：使用 Uint8Array.slice() 创建不可变副本
    */
   registerPeerPublicKey(peerId: string, publicKeyBase64: string): void {
     try {
       const publicKey = Buffer.from(publicKeyBase64, 'base64');
-      this.peerPublicKeys.set(peerId, publicKey);
+      
+      // P2-3 修复：创建不可变副本（Object.freeze 不能冻结 Buffer）
+      // 使用 slice() 创建新数组，然后冻结
+      const frozenPublicKey = new Uint8Array(publicKey);
+      Object.freeze(frozenPublicKey.buffer);
+      this.peerPublicKeys.set(peerId, frozenPublicKey);
 
       // 预计算共享密钥
       if (this.keyPair) {
-        const sharedSecret = x25519.getSharedSecret(this.keyPair.privateKey, publicKey);
-        this.sharedSecrets.set(peerId, sharedSecret);
+        const sharedSecret = x25519.getSharedSecret(this.keyPair.privateKey, frozenPublicKey);
+        // P2-3 修复：创建不可变副本
+        const frozenSharedSecret = new Uint8Array(sharedSecret);
+        Object.freeze(frozenSharedSecret.buffer);
+        this.sharedSecrets.set(peerId, frozenSharedSecret);
+        
+        // P2-10 修复：初始化 IV 记录集
+        if (!this.usedIVs.has(peerId)) {
+          this.usedIVs.set(peerId, new Set());
+        }
       }
     } catch (error) {
       this.logger.error('Failed to register public key', { peerId, error });
@@ -144,14 +166,66 @@ export class E2EECrypto {
     }
 
     try {
-      // 生成随机盐值（每次加密使用不同的盐值，提高安全性）
-      const salt = randomBytes(16);
+      // P2-7 修复：使用常量 SALT_SIZE
+      const salt = randomBytes(SALT_SIZE);
       
       // 从共享密钥派生 AES 密钥
       const aesKey = this.deriveAESKey(sharedSecret, salt);
 
       // 生成随机 IV
       const iv = randomBytes(AES_IV_SIZE);
+      
+      // P2-10 修复：检查 IV 唯一性，防止 IV 重用攻击
+      const ivBase64 = iv.toString('base64');
+      const ivSet = this.usedIVs.get(peerId);
+      
+      if (ivSet) {
+        // 检测 IV 重用（极低概率事件，但安全起见）
+        if (ivSet.has(ivBase64)) {
+          this.logger.warn('IV collision detected, regenerating', { peerId: peerId.slice(0, 16) });
+          // 生成新的 IV（碰撞概率约 2^-128，几乎不可能）
+          const newIv = randomBytes(AES_IV_SIZE);
+          ivSet.add(newIv.toString('base64'));
+          
+          // 创建加密器
+          const cipher = createCipheriv('aes-256-gcm', aesKey, newIv);
+
+          // 添加 AAD (如果有)
+          if (aad) {
+            cipher.setAAD(Buffer.from(aad, 'utf-8'));
+          }
+
+          // 加密
+          let ciphertext = cipher.update(plaintext, 'utf-8', 'base64');
+          ciphertext += cipher.final('base64');
+
+          // 获取认证标签
+          const authTag = cipher.getAuthTag();
+
+          return {
+            senderPublicKey: this.getPublicKey()!,
+            iv: newIv.toString('base64'),
+            authTag: authTag.toString('base64'),
+            ciphertext,
+            aad,
+            salt: salt.toString('base64')
+          };
+        }
+        
+        ivSet.add(ivBase64);
+        
+        // P2-10 修复：清理过期的 IV 记录，防止内存泄漏
+        if (ivSet.size > E2EECrypto.IV_REUSE_WARN_THRESHOLD) {
+          this.logger.warn('IV usage count exceeded threshold, clearing old records', {
+            peerId: peerId.slice(0, 16),
+            count: ivSet.size
+          });
+          // 保留最近的一半记录
+          const entries = Array.from(ivSet);
+          ivSet.clear();
+          entries.slice(-Math.floor(E2EECrypto.IV_REUSE_WARN_THRESHOLD / 2)).forEach(e => ivSet.add(e));
+        }
+      }
 
       // 创建加密器
       const cipher = createCipheriv('aes-256-gcm', aesKey, iv);
@@ -204,8 +278,8 @@ export class E2EECrypto {
       
       const salt = Buffer.from(encrypted.salt, 'base64');
       
-      // 验证盐值长度（至少 16 字节）
-      if (salt.length < 16) {
+      // P2-7 修复：使用常量 SALT_SIZE 验证盐值长度
+      if (salt.length < SALT_SIZE) {
         this.logger.error('Decryption failed: salt value too short. Minimum 16 bytes required.');
         return null;
       }

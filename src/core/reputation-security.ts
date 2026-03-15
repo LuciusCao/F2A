@@ -3,7 +3,7 @@
  * Phase 3: 链式签名、邀请制、挑战机制
  */
 
-import { createHash, createSign, createVerify } from 'crypto';
+import { createHash, createSign, createVerify, randomBytes } from 'crypto';
 import { Logger } from '../utils/logger.js';
 import { ReputationEntry, ReputationManager } from './reputation.js';
 
@@ -53,6 +53,7 @@ export interface InvitationConfig {
 
 /**
  * 挑战记录
+ * P2-6 修复：添加 nonce 和 processed 字段，防止重放攻击
  */
 export interface ChallengeRecord {
   challengerId: string;
@@ -62,6 +63,10 @@ export interface ChallengeRecord {
   stake: number;
   timestamp: number;
   status: 'pending' | 'success' | 'failed';
+  /** P2-6 修复：随机 nonce，防止重放攻击 */
+  nonce: string;
+  /** P2-6 修复：是否已被处理，防止重复处理 */
+  processed: boolean;
 }
 
 /**
@@ -392,6 +397,7 @@ export class ChallengeManager {
 
   /**
    * 提交挑战
+   * P2-6 修复：生成 nonce 并设置 processed 标志，防止重放攻击
    */
   submitChallenge(
     challengerId: string,
@@ -408,6 +414,10 @@ export class ChallengeManager {
       stake,
       timestamp: Date.now(),
       status: 'pending',
+      // P2-6 修复：生成随机 nonce 防止重放
+      nonce: randomBytes(32).toString('hex'),
+      // P2-6 修复：初始化为未处理
+      processed: false
     };
 
     const targetChallenges = this.challenges.get(targetId) || [];
@@ -418,6 +428,7 @@ export class ChallengeManager {
       challengerId: challengerId.slice(0, 16),
       targetId: targetId.slice(0, 16),
       reason,
+      nonce: challenge.nonce.slice(0, 16)
     });
 
     return challenge;
@@ -425,8 +436,18 @@ export class ChallengeManager {
 
   /**
    * 处理挑战
+   * P2-6 修复：检查 processed 标志，防止重复处理
    */
   processChallenge(challenge: ChallengeRecord): ChallengeResult {
+    // P2-6 修复：检查是否已被处理
+    if (challenge.processed) {
+      this.logger.warn('Challenge already processed, rejecting', {
+        targetId: challenge.targetId.slice(0, 16),
+        nonce: challenge.nonce.slice(0, 16)
+      });
+      return { success: false, reward: 0, reason: 'Challenge already processed' };
+    }
+    
     const targetId = challenge.targetId;
 
     // 1. 验证事件链
@@ -434,6 +455,9 @@ export class ChallengeManager {
       const chainValid = this.chainManager.verifyChain(targetId);
       
       if (!chainValid) {
+        // 标记为已处理
+        challenge.processed = true;
+        
         // 挑战成功
         this.reputationManager.recordFailure(
           targetId,
@@ -458,6 +482,9 @@ export class ChallengeManager {
       const collusionScore = this.detectCollusion(targetId);
       
       if (collusionScore > 0.8) {
+        // 标记为已处理
+        challenge.processed = true;
+        
         // 合谋检测成功
         this.reputationManager.recordFailure(
           targetId,
@@ -483,6 +510,9 @@ export class ChallengeManager {
       const claimedScore = this.reputationManager.getReputation(targetId).score;
       
       if (Math.abs(calculatedScore - claimedScore) > 10) {
+        // 标记为已处理
+        challenge.processed = true;
+        
         // 分数不一致
         this.reputationManager.recordFailure(
           targetId,
@@ -500,6 +530,9 @@ export class ChallengeManager {
         return { success: true, reward: challenge.stake * 1.5, reason: 'Score manipulation detected' };
       }
     }
+
+    // 标记为已处理（挑战失败的情况）
+    challenge.processed = true;
 
     // 挑战失败
     this.reputationManager.recordReviewPenalty(

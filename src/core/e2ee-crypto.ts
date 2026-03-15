@@ -85,9 +85,82 @@ export class E2EECrypto {
   private pendingChallenges: Map<string, { challenge: string; timestamp: number }> = new Map();
   /** P1-2 修复：已确认的密钥 */
   private keyConfirmed: Map<string, boolean> = new Map();
+  
+  /** P1-1 修复：挑战清理定时器 */
+  private challengeCleanupTimer: ReturnType<typeof setInterval> | null = null;
+  /** P1-1 修复：挑战过期时间（5分钟） */
+  private static readonly CHALLENGE_EXPIRY_MS = 5 * 60 * 1000;
+  /** P1-1 修复：清理间隔（每分钟） */
+  private static readonly CHALLENGE_CLEANUP_INTERVAL_MS = 60 * 1000;
 
   constructor() {
     this.logger = new Logger({ component: 'E2EE' });
+    this.startChallengeCleanup();
+  }
+
+  /**
+   * P1-1 修复：启动挑战清理定时器
+   */
+  private startChallengeCleanup(): void {
+    this.challengeCleanupTimer = setInterval(() => {
+      const now = Date.now();
+      let cleaned = 0;
+      for (const [key, challenge] of this.pendingChallenges) {
+        if (now - challenge.timestamp > E2EECrypto.CHALLENGE_EXPIRY_MS) {
+          this.pendingChallenges.delete(key);
+          cleaned++;
+        }
+      }
+      if (cleaned > 0) {
+        this.logger.debug('Cleaned expired challenges', { count: cleaned });
+      }
+    }, E2EECrypto.CHALLENGE_CLEANUP_INTERVAL_MS);
+  }
+
+  /**
+   * P1-2 修复：注销对等方，清理所有相关资源
+   * @param peerId 对等方标识
+   */
+  unregisterPeer(peerId: string): void {
+    // 清理共享密钥
+    this.sharedSecrets.delete(peerId);
+    
+    // 清理对等方公钥
+    this.peerPublicKeys.delete(peerId);
+    
+    // 清理密钥确认状态
+    const confirmKey = `confirmed:${peerId}`;
+    this.keyConfirmed.delete(confirmKey);
+    
+    // 清理 IV 记录
+    this.usedIVs.delete(peerId);
+    
+    // 清理相关的 pendingChallenges
+    const challengeKey = `challenge:${peerId}`;
+    const counterChallengeKey = `counter:${peerId}`;
+    this.pendingChallenges.delete(challengeKey);
+    this.pendingChallenges.delete(counterChallengeKey);
+    
+    this.logger.info('Peer unregistered and resources cleaned', { peerId: peerId.slice(0, 16) });
+  }
+
+  /**
+   * P1-1 修复：停止清理定时器，释放资源
+   */
+  stop(): void {
+    if (this.challengeCleanupTimer) {
+      clearInterval(this.challengeCleanupTimer);
+      this.challengeCleanupTimer = null;
+    }
+    
+    // 清理所有资源
+    this.pendingChallenges.clear();
+    this.keyConfirmed.clear();
+    this.usedIVs.clear();
+    this.sharedSecrets.clear();
+    this.peerPublicKeys.clear();
+    
+    this.logger.info('E2EECrypto stopped and all resources cleaned');
   }
 
   /**

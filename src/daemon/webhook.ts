@@ -5,6 +5,7 @@
 import { request, RequestOptions } from 'https';
 import { request as httpRequest } from 'http';
 import { lookup } from 'dns';
+import { isIPv6 } from 'net';
 import { promisify } from 'util';
 import { WebhookConfig } from '../types/index.js';
 import { Logger } from '../utils/logger.js';
@@ -20,12 +21,14 @@ export interface WebhookNotification {
 
 /**
  * P2-2 修复：判断字符串是否为 IPv6 地址格式
- * IPv6 地址只包含十六进制字符和冒号
+ * 使用 Node.js 标准库进行验证，避免正则匹配无效字符串
  */
 function isIPv6Format(hostname: string): boolean {
-  // IPv6 地址只包含 0-9, a-f, A-F 和冒号
-  // 还可能包含 . 用于 IPv4 映射地址 (::ffff:192.0.2.1)
-  return /^[0-9a-fA-F:.]+$/.test(hostname);
+  // 去除方括号后检查
+  const cleanHostname = hostname.startsWith('[') && hostname.endsWith(']')
+    ? hostname.slice(1, -1)
+    : hostname;
+  return isIPv6(cleanHostname);
 }
 
 /**
@@ -186,16 +189,21 @@ export class WebhookService {
   /**
    * 发送 HTTP 请求
    * P2-1 修复：在请求前验证 DNS 解析后的 IP 地址，防止 DNS 重绑定攻击
+   * P2-1 修复：使用解析后的 IP 地址发送请求，避免 TOCTOU 漏洞
    */
   private async sendRequest(payload: string): Promise<void> {
-    // P2-1 修复：DNS 重绑定防护 - 在实际请求前验证解析后的 IP
+    const url = new URL(this.config.url);
+    
+    // P2-1 修复：DNS 重绑定防护 - 解析并验证 IP 地址
+    let resolvedAddress: string;
     try {
-      const url = new URL(this.config.url);
       const { address } = await dnsLookup(url.hostname);
       
       if (isPrivateIP(address)) {
         throw new Error(`DNS resolved to private IP address ${address}, possible DNS rebinding attack`);
       }
+      
+      resolvedAddress = address;
       
       this.logger.debug('DNS resolution validated', { 
         hostname: url.hostname, 
@@ -206,27 +214,44 @@ export class WebhookService {
       if (error instanceof Error && error.message.includes('private IP')) {
         throw error; // 重新抛出私有 IP 错误
       }
-      this.logger.warn('DNS resolution failed, will proceed with request', {
-        hostname: new URL(this.config.url).hostname,
+      this.logger.warn('DNS resolution failed, will proceed with original hostname', {
+        hostname: url.hostname,
         error: error instanceof Error ? error.message : String(error)
       });
+      // DNS 解析失败时使用原始 hostname
+      resolvedAddress = url.hostname;
     }
     
     return new Promise((resolve, reject) => {
       const isHttps = this.config.url.startsWith('https');
       const client = isHttps ? request : httpRequest;
 
+      // P2-1 修复：使用解析后的 IP 地址构建请求 URL
+      // 保留原始 hostname 作为 Host header（用于 SNI 和虚拟主机）
+      let requestUrl: string;
       const options: RequestOptions = {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.config.token}`,
           'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(payload)
+          'Content-Length': Buffer.byteLength(payload),
+          'Host': url.hostname  // 设置原始 hostname 作为 Host header
         },
         timeout: this.config.timeout
       };
 
-      const req = client(this.config.url, options, (res) => {
+      if (resolvedAddress !== url.hostname) {
+        // 使用解析后的 IP 地址构建 URL
+        // IPv6 地址需要用方括号包裹
+        const hostForUrl = isIPv6(resolvedAddress) 
+          ? `[${resolvedAddress}]` 
+          : resolvedAddress;
+        requestUrl = `${url.protocol}//${hostForUrl}${url.pathname}${url.search}`;
+      } else {
+        requestUrl = this.config.url;
+      }
+
+      const req = client(requestUrl, options, (res) => {
         if (res.statusCode === 200 || res.statusCode === 202) {
           resolve();
         } else {

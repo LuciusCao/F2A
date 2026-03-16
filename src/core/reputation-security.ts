@@ -638,6 +638,17 @@ export class ChallengeManager {
     }
     return all;
   }
+
+  /**
+   * R2-5 修复：清理资源，防止内存泄漏
+   */
+  stop(): void {
+    // 清理已使用的 nonce 集合
+    this.usedNonces.clear();
+    // 清理挑战记录
+    this.challenges.clear();
+    this.logger.info('ChallengeManager stopped and resources cleaned');
+  }
 }
 
 // 默认导出

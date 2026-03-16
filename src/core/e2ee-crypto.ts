@@ -4,7 +4,7 @@
  */
 
 import { x25519 } from '@noble/curves/ed25519.js';
-import { randomBytes, createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync } from 'crypto';
+import { randomBytes, createCipheriv, createDecipheriv, createHmac, hkdfSync } from 'crypto';
 import { Logger } from '../utils/logger.js';
 
 // AES-256-GCM 参数
@@ -153,11 +153,18 @@ export class E2EECrypto implements Disposable {
   /**
    * P1-1 修复：停止清理定时器，释放资源
    * P1-4 修复：清理共享密钥前先零填充
+   * R2-1 修复：零填充 privateKey，最敏感的密钥材料
    */
   stop(): void {
     if (this.challengeCleanupTimer) {
       clearInterval(this.challengeCleanupTimer);
       this.challengeCleanupTimer = null;
+    }
+    
+    // R2-1 修复：零填充 privateKey，这是最敏感的密钥材料
+    if (this.keyPair?.privateKey) {
+      this.keyPair.privateKey.fill(0);
+      this.keyPair = null;
     }
     
     // P1-4 修复：零填充所有共享密钥
@@ -552,6 +559,10 @@ export class E2EECrypto implements Disposable {
 
     // 验证时间戳防止重放攻击（5分钟有效期）
     // P1-3 修复：拒绝未来时间戳，只允许过去的时间戳
+    // R2-3 说明：5分钟 tolerance 对于分布式系统是合理的，考虑：
+    // - 时钟同步偏差（NTP 通常 < 100ms，极端情况可达秒级）
+    // - 消息传输延迟（跨区域可达秒级）
+    // - 系统处理延迟
     const now = Date.now();
     const maxAge = 5 * 60 * 1000; // 5 分钟
     if (challenge.timestamp > now + maxAge || challenge.timestamp < now - maxAge) {

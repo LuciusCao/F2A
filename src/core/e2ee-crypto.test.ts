@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { E2EECrypto } from './e2ee-crypto.js';
 import { x25519 } from '@noble/curves/ed25519.js';
 
@@ -11,6 +11,16 @@ describe('E2EECrypto', () => {
     cryptoB = new E2EECrypto();
     await cryptoA.initialize();
     await cryptoB.initialize();
+  });
+
+  // R2-2 修复：清理资源，防止定时器泄漏
+  afterEach(() => {
+    if (cryptoA) {
+      cryptoA.stop();
+    }
+    if (cryptoB) {
+      cryptoB.stop();
+    }
   });
 
   describe('initialization', () => {

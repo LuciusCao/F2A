@@ -119,10 +119,15 @@ export class E2EECrypto {
 
   /**
    * P1-2 修复：注销对等方，清理所有相关资源
+   * P1-4 修复：删除共享密钥前先零填充
    * @param peerId 对等方标识
    */
   unregisterPeer(peerId: string): void {
-    // 清理共享密钥
+    // P1-4 修复：清理共享密钥前先零填充
+    const sharedSecret = this.sharedSecrets.get(peerId);
+    if (sharedSecret) {
+      sharedSecret.fill(0);
+    }
     this.sharedSecrets.delete(peerId);
     
     // 清理对等方公钥
@@ -146,11 +151,17 @@ export class E2EECrypto {
 
   /**
    * P1-1 修复：停止清理定时器，释放资源
+   * P1-4 修复：清理共享密钥前先零填充
    */
   stop(): void {
     if (this.challengeCleanupTimer) {
       clearInterval(this.challengeCleanupTimer);
       this.challengeCleanupTimer = null;
+    }
+    
+    // P1-4 修复：零填充所有共享密钥
+    for (const secret of this.sharedSecrets.values()) {
+      secret.fill(0);
     }
     
     // 清理所有资源

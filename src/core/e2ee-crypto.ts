@@ -532,10 +532,11 @@ export class E2EECrypto {
     }
 
     // 验证时间戳防止重放攻击（5分钟有效期）
+    // P1-3 修复：拒绝未来时间戳，只允许过去的时间戳
     const now = Date.now();
     const maxAge = 5 * 60 * 1000; // 5 分钟
-    if (Math.abs(now - challenge.timestamp) > maxAge) {
-      this.logger.error('Challenge expired or timestamp mismatch');
+    if (challenge.timestamp > now + maxAge || challenge.timestamp < now - maxAge) {
+      this.logger.error('Challenge timestamp invalid: future timestamp or expired');
       return null;
     }
 
@@ -584,10 +585,11 @@ export class E2EECrypto {
     }
 
     // 验证时间戳
+    // P1-3 修复：拒绝未来时间戳，只允许过去的时间戳
     const now = Date.now();
     const maxAge = 5 * 60 * 1000; // 5 分钟
-    if (Math.abs(now - response.timestamp) > maxAge) {
-      this.logger.error('Response expired or timestamp mismatch');
+    if (response.timestamp > now + maxAge || response.timestamp < now - maxAge) {
+      this.logger.error('Response timestamp invalid: future timestamp or expired');
       return { success: false };
     }
 

@@ -2,7 +2,7 @@
  * 信誉安全机制测试
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   ChainSignatureManager,
   InvitationManager,
@@ -296,6 +296,13 @@ describe('ChallengeManager', () => {
     reputationManager = new ReputationManager();
     chainManager = new ChainSignatureManager();
     challengeManager = new ChallengeManager(reputationManager, chainManager);
+  });
+
+  // R2-5 修复：清理资源，防止内存泄漏
+  afterEach(() => {
+    if (challengeManager) {
+      challengeManager.stop();
+    }
   });
 
   describe('提交挑战', () => {

@@ -401,11 +401,13 @@ describe('SDK Integration - 真实业务场景', () => {
   describe('场景 2.9: 挑战管理业务流程', () => {
     it('应该能创建挑战管理器', () => {
       const reputationManager = new ReputationManager();
-      const challengeManager = new ChallengeManager({
-        reputationManager,
-      });
-
-      expect(challengeManager).toBeInstanceOf(ChallengeManager);
+      const chainManager = new ChainSignatureManager();
+      const challengeManager = new ChallengeManager(reputationManager, chainManager);
+      try {
+        expect(challengeManager).toBeInstanceOf(ChallengeManager);
+      } finally {
+        challengeManager.stop();
+      }
     });
   });
 

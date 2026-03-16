@@ -384,6 +384,8 @@ export class ChallengeManager {
   private reputationManager: ReputationManager;
   private chainManager: ChainSignatureManager;
   private challenges: Map<string, ChallengeRecord[]> = new Map();
+  /** P2-3 修复：已使用的 nonce 集合，防止跨实例重放攻击 */
+  private usedNonces: Set<string> = new Set();
   private logger: Logger;
 
   constructor(
@@ -436,6 +438,8 @@ export class ChallengeManager {
 
   /**
    * 处理挑战
+   * P1-1 修复：每个 reason 分支验证失败后明确返回，避免继续执行
+   * P2-3 修复：检查 nonce 是否已被使用，防止重放攻击
    * P2-6 修复：检查 processed 标志，防止重复处理
    */
   processChallenge(challenge: ChallengeRecord): ChallengeResult {
@@ -448,6 +452,15 @@ export class ChallengeManager {
       return { success: false, reward: 0, reason: 'Challenge already processed' };
     }
     
+    // P2-3 修复：检查 nonce 是否已被使用
+    if (this.usedNonces.has(challenge.nonce)) {
+      this.logger.warn('Challenge nonce already used, possible replay attack', {
+        targetId: challenge.targetId.slice(0, 16),
+        nonce: challenge.nonce.slice(0, 16)
+      });
+      return { success: false, reward: 0, reason: 'Challenge nonce already used' };
+    }
+    
     const targetId = challenge.targetId;
 
     // 1. 验证事件链
@@ -457,6 +470,8 @@ export class ChallengeManager {
       if (!chainValid) {
         // 标记为已处理
         challenge.processed = true;
+        // P2-3 修复：记录已使用的 nonce
+        this.usedNonces.add(challenge.nonce);
         
         // 挑战成功
         this.reputationManager.recordFailure(
@@ -475,6 +490,17 @@ export class ChallengeManager {
         challenge.status = 'success';
         return { success: true, reward: challenge.stake * 2, reason: 'Invalid chain detected' };
       }
+      
+      // P1-1 修复：验证失败（链有效），证据不足，直接返回
+      challenge.processed = true;
+      this.usedNonces.add(challenge.nonce);
+      this.reputationManager.recordReviewPenalty(
+        challenge.challengerId,
+        -challenge.stake * 0.5,
+        'No evidence to support challenge'
+      );
+      challenge.status = 'failed';
+      return { success: false, reward: 0, reason: 'No evidence to support challenge' };
     }
 
     // 2. 检测合谋
@@ -484,6 +510,8 @@ export class ChallengeManager {
       if (collusionScore > 0.8) {
         // 标记为已处理
         challenge.processed = true;
+        // P2-3 修复：记录已使用的 nonce
+        this.usedNonces.add(challenge.nonce);
         
         // 合谋检测成功
         this.reputationManager.recordFailure(
@@ -501,6 +529,17 @@ export class ChallengeManager {
         challenge.status = 'success';
         return { success: true, reward: challenge.stake * 1.5, reason: 'Collusion detected' };
       }
+      
+      // P1-1 修复：验证失败（合谋分数不够），证据不足，直接返回
+      challenge.processed = true;
+      this.usedNonces.add(challenge.nonce);
+      this.reputationManager.recordReviewPenalty(
+        challenge.challengerId,
+        -challenge.stake * 0.5,
+        'No evidence to support challenge'
+      );
+      challenge.status = 'failed';
+      return { success: false, reward: 0, reason: 'No evidence to support challenge' };
     }
 
     // 3. 分数操纵检测
@@ -512,6 +551,8 @@ export class ChallengeManager {
       if (Math.abs(calculatedScore - claimedScore) > 10) {
         // 标记为已处理
         challenge.processed = true;
+        // P2-3 修复：记录已使用的 nonce
+        this.usedNonces.add(challenge.nonce);
         
         // 分数不一致
         this.reputationManager.recordFailure(
@@ -529,20 +570,32 @@ export class ChallengeManager {
         challenge.status = 'success';
         return { success: true, reward: challenge.stake * 1.5, reason: 'Score manipulation detected' };
       }
+      
+      // P1-1 修复：验证失败（分数一致），证据不足，直接返回
+      challenge.processed = true;
+      this.usedNonces.add(challenge.nonce);
+      this.reputationManager.recordReviewPenalty(
+        challenge.challengerId,
+        -challenge.stake * 0.5,
+        'No evidence to support challenge'
+      );
+      challenge.status = 'failed';
+      return { success: false, reward: 0, reason: 'No evidence to support challenge' };
     }
 
-    // 标记为已处理（挑战失败的情况）
+    // 标记为已处理（未知 reason 类型）
     challenge.processed = true;
+    this.usedNonces.add(challenge.nonce);
 
     // 挑战失败
     this.reputationManager.recordReviewPenalty(
       challenge.challengerId,
       -challenge.stake * 0.5,
-      'Failed challenge'
+      'Invalid challenge reason'
     );
 
     challenge.status = 'failed';
-    return { success: false, reward: 0, reason: 'Challenge failed' };
+    return { success: false, reward: 0, reason: 'Invalid challenge reason' };
   }
 
   /**

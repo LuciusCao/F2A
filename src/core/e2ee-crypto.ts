@@ -69,8 +69,9 @@ export interface KeyConfirmationResponse {
 
 /**
  * 密钥管理器
+ * P2-1 修复：实现 Disposable 接口
  */
-export class E2EECrypto {
+export class E2EECrypto implements Disposable {
   private keyPair: EncryptionKeyPair | null = null;
   private peerPublicKeys: Map<string, Uint8Array> = new Map();
   private sharedSecrets: Map<string, Uint8Array> = new Map();
@@ -172,6 +173,13 @@ export class E2EECrypto {
     this.peerPublicKeys.clear();
     
     this.logger.info('E2EECrypto stopped and all resources cleaned');
+  }
+
+  /**
+   * P2-1 修复：实现 Disposable 接口
+   */
+  [Symbol.dispose](): void {
+    this.stop();
   }
 
   /**

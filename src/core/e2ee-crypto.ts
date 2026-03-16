@@ -4,7 +4,7 @@
  */
 
 import { x25519 } from '@noble/curves/ed25519.js';
-import { randomBytes, createCipheriv, createDecipheriv, createHash, hkdfSync } from 'crypto';
+import { randomBytes, createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync } from 'crypto';
 import { Logger } from '../utils/logger.js';
 
 // AES-256-GCM 参数
@@ -553,8 +553,8 @@ export class E2EECrypto {
 
     // 使用共享密钥加密挑战数据作为响应
     // 这证明我们拥有正确的共享密钥
-    const challengeResponse = createHash('sha256')
-      .update(sharedSecret)
+    // P1-5 修复：使用 HMAC 而非 Hash，防止长度扩展攻击
+    const challengeResponse = createHmac('sha256', sharedSecret)
       .update(challenge.challenge)
       .digest('base64');
 
@@ -605,8 +605,8 @@ export class E2EECrypto {
     }
 
     // 验证挑战响应
-    const expectedResponse = createHash('sha256')
-      .update(sharedSecret)
+    // P1-5 修复：使用 HMAC 而非 Hash，防止长度扩展攻击
+    const expectedResponse = createHmac('sha256', sharedSecret)
       .update(originalChallenge)
       .digest('base64');
 
@@ -616,8 +616,8 @@ export class E2EECrypto {
     }
 
     // 响应反向挑战
-    const counterChallengeResponse = createHash('sha256')
-      .update(sharedSecret)
+    // P1-5 修复：使用 HMAC 而非 Hash
+    const counterChallengeResponse = createHmac('sha256', sharedSecret)
       .update(response.counterChallenge)
       .digest('base64');
 
@@ -635,6 +635,7 @@ export class E2EECrypto {
 
   /**
    * P1-2 修复：验证反向挑战的响应
+   * P1-5 修复：使用 HMAC 而非 Hash
    * @param peerId 对等方标识
    * @param counterChallengeResponse 反向挑战的响应
    * @param originalCounterChallenge 原始反向挑战
@@ -651,8 +652,8 @@ export class E2EECrypto {
       return false;
     }
 
-    const expectedResponse = createHash('sha256')
-      .update(sharedSecret)
+    // P1-5 修复：使用 HMAC 而非 Hash
+    const expectedResponse = createHmac('sha256', sharedSecret)
       .update(originalCounterChallenge)
       .digest('base64');
 

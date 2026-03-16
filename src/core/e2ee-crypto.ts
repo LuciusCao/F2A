@@ -677,40 +677,48 @@ export class E2EECrypto {
     sendChallenge: (challenge: KeyConfirmationChallenge) => Promise<KeyConfirmationResponse | null>,
     receiveCounterResponse?: (counterResponse: string) => Promise<boolean>
   ): Promise<boolean> {
-    // 生成挑战
-    const challenge = this.generateKeyConfirmationChallenge(peerId);
-    if (!challenge) {
-      return false;
-    }
-
-    // 发送挑战并等待响应
-    const response = await sendChallenge(challenge);
-    if (!response) {
-      this.logger.error('No response received for key confirmation challenge', { peerId });
-      return false;
-    }
-
-    // 验证响应
-    const result = this.verifyKeyConfirmationResponse(
-      peerId,
-      response,
-      challenge.challenge
-    );
-
-    if (!result.success || !result.counterChallengeResponse) {
-      return false;
-    }
-
-    // 如果需要验证反向挑战响应
-    if (receiveCounterResponse) {
-      const verified = await receiveCounterResponse(result.counterChallengeResponse);
-      if (!verified) {
-        this.logger.error('Counter challenge response verification failed', { peerId });
+    try {
+      // 生成挑战
+      const challenge = this.generateKeyConfirmationChallenge(peerId);
+      if (!challenge) {
         return false;
       }
-    }
 
-    return true;
+      // 发送挑战并等待响应
+      const response = await sendChallenge(challenge);
+      if (!response) {
+        this.logger.error('No response received for key confirmation challenge', { peerId });
+        return false;
+      }
+
+      // 验证响应
+      const result = this.verifyKeyConfirmationResponse(
+        peerId,
+        response,
+        challenge.challenge
+      );
+
+      if (!result.success || !result.counterChallengeResponse) {
+        return false;
+      }
+
+      // 如果需要验证反向挑战响应
+      if (receiveCounterResponse) {
+        const verified = await receiveCounterResponse(result.counterChallengeResponse);
+        if (!verified) {
+          this.logger.error('Counter challenge response verification failed', { peerId });
+          return false;
+        }
+      }
+
+      return true;
+    } catch (error) {
+      this.logger.error('Key exchange confirmation failed with exception', {
+        peerId: peerId.slice(0, 16),
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return false;
+    }
   }
 }
 

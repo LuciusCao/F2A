@@ -22,17 +22,78 @@ export interface WebhookNotification {
 /**
  * P2-2 修复：判断字符串是否为 IPv6 地址格式
  * 使用 Node.js 标准库进行验证，避免正则匹配无效字符串
+ * P2-3 修复：处理特殊 IPv6 地址如 ::（未指定地址）
  */
 function isIPv6Format(hostname: string): boolean {
   // 去除方括号后检查
   const cleanHostname = hostname.startsWith('[') && hostname.endsWith(']')
     ? hostname.slice(1, -1)
     : hostname;
+  
+  // P2-3 修复：特殊处理 :: (未指定地址)
+  if (cleanHostname === '::') {
+    return true;
+  }
+  
   return isIPv6(cleanHostname);
 }
 
 /**
+ * P2-2 修复：检查 IPv4 地址是否为私有地址
+ * 拆分为独立函数以提高可读性
+ */
+function isPrivateIPv4(octets: number[]): boolean {
+  // 127.x.x.x (loopback)
+  if (octets[0] === 127) return true;
+  
+  // 10.x.x.x (Class A private)
+  if (octets[0] === 10) return true;
+  
+  // 192.168.x.x (Class C private)
+  if (octets[0] === 192 && octets[1] === 168) return true;
+  
+  // 172.16.x.x - 172.31.x.x (Class B private)
+  if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) return true;
+  
+  // 169.254.x.x (link-local)
+  if (octets[0] === 169 && octets[1] === 254) return true;
+  
+  // 0.0.0.0 (all interfaces)
+  if (octets[0] === 0 && octets[1] === 0 && octets[2] === 0 && octets[3] === 0) return true;
+  
+  return false;
+}
+
+/**
+ * P2-2 修复：检查 IPv6 地址是否为私有地址
+ * 拆分为独立函数以提高可读性
+ */
+function isPrivateIPv6(hostname: string): boolean {
+  const lowerHostname = hostname.toLowerCase();
+  
+  // :: (未指定地址) - P2-3 修复
+  if (lowerHostname === '::' || lowerHostname === '0:0:0:0:0:0:0:0') return true;
+  
+  // ::1 (loopback)
+  if (lowerHostname === '::1' || lowerHostname === '0:0:0:0:0:0:0:1') return true;
+  
+  // P2-2 修复：只对纯 IPv6 格式的地址检查 fc/fd 前缀
+  // 避免误拦截 fc2.com 等合法域名
+  if (isIPv6Format(lowerHostname)) {
+    // fc00::/7 (ULA - Unique Local Address)
+    if (lowerHostname.startsWith('fc') || lowerHostname.startsWith('fd')) return true;
+    
+    // fe80::/10 (link-local)
+    if (lowerHostname.startsWith('fe8') || lowerHostname.startsWith('fe9') || 
+        lowerHostname.startsWith('fea') || lowerHostname.startsWith('feb')) return true;
+  }
+  
+  return false;
+}
+
+/**
  * P2-2 修复：验证 IP 是否为内网地址，防止 SSRF 攻击
+ * 重构为调用 isPrivateIPv4() 和 isPrivateIPv6() 辅助函数
  * 阻止以下私有地址段：
  * - 127.x.x.x (loopback)
  * - 10.x.x.x (Class A private)
@@ -57,44 +118,11 @@ function isPrivateIP(hostname: string): boolean {
   
   if (match) {
     const octets = [parseInt(match[1], 10), parseInt(match[2], 10), parseInt(match[3], 10), parseInt(match[4], 10)];
-    
-    // 127.x.x.x (loopback)
-    if (octets[0] === 127) return true;
-    
-    // 10.x.x.x (Class A private)
-    if (octets[0] === 10) return true;
-    
-    // 192.168.x.x (Class C private)
-    if (octets[0] === 192 && octets[1] === 168) return true;
-    
-    // 172.16.x.x - 172.31.x.x (Class B private)
-    if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) return true;
-    
-    // 169.254.x.x (link-local)
-    if (octets[0] === 169 && octets[1] === 254) return true;
-    
-    // 0.0.0.0 (all interfaces)
-    if (octets[0] === 0 && octets[1] === 0 && octets[2] === 0 && octets[3] === 0) return true;
+    return isPrivateIPv4(octets);
   }
   
   // IPv6 地址检查
-  const lowerHostname = cleanHostname.toLowerCase();
-  
-  // ::1 (loopback)
-  if (lowerHostname === '::1' || lowerHostname === '0:0:0:0:0:0:0:1') return true;
-  
-  // P2-2 修复：只对纯 IPv6 格式的地址检查 fc/fd 前缀
-  // 避免误拦截 fc2.com 等合法域名
-  if (isIPv6Format(lowerHostname)) {
-    // fc00::/7 (ULA - Unique Local Address)
-    if (lowerHostname.startsWith('fc') || lowerHostname.startsWith('fd')) return true;
-    
-    // fe80::/10 (link-local)
-    if (lowerHostname.startsWith('fe8') || lowerHostname.startsWith('fe9') || 
-        lowerHostname.startsWith('fea') || lowerHostname.startsWith('feb')) return true;
-  }
-  
-  return false;
+  return isPrivateIPv6(cleanHostname);
 }
 
 /**

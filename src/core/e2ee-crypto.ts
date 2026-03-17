@@ -285,21 +285,19 @@ export class E2EECrypto implements Disposable {
    * @returns 唯一的 IV，如果无法生成则抛出错误
    */
   private generateUniqueIV(peerId: string): Buffer {
+    // 确保 ivSet 存在
     let ivSet = this.usedIVs.get(peerId);
+    if (!ivSet) {
+      ivSet = new Set<string>();
+      this.usedIVs.set(peerId, ivSet);
+    }
+    
     const maxAttempts = 10;
     
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const iv = randomBytes(AES_IV_SIZE);
-      
-      // P2-2 修复：如果 ivSet 不存在，创建它并记录 IV
-      if (!ivSet) {
-        ivSet = new Set<string>();
-        this.usedIVs.set(peerId, ivSet);
-        ivSet.add(iv.toString('base64'));
-        return iv;
-      }
-      
       const ivBase64 = iv.toString('base64');
+      
       if (!ivSet.has(ivBase64)) {
         // IV 唯一，记录并返回
         ivSet.add(ivBase64);

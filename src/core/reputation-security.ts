@@ -97,13 +97,6 @@ const DEFAULT_INVITATION_CONFIG: InvitationConfig = {
 export class ChainSignatureManager {
   private eventChains: Map<string, SignedReputationEvent[]> = new Map();
   private logger: Logger;
-  
-  /** P2-3 修复：事件链最大长度，防止内存无限增长 */
-  private static readonly MAX_CHAIN_LENGTH = 1000;
-  /** P2-3 修复：清理阈值（达到此长度时触发清理） */
-  private static readonly CLEANUP_THRESHOLD = 800;
-  /** P2-3 修复：清理后保留的事件数量 */
-  private static readonly KEEP_AFTER_CLEANUP = 500;
 
   constructor() {
     this.logger = new Logger({ component: 'ChainSignature' });
@@ -140,35 +133,7 @@ export class ChainSignatureManager {
 
     chain.push(event);
     this.eventChains.set(event.peerId, chain);
-    
-    // P2-3 修复：检查并清理过长的事件链，防止内存无限增长
-    if (chain.length > ChainSignatureManager.CLEANUP_THRESHOLD) {
-      this.cleanupChain(event.peerId, chain);
-    }
-    
     return true;
-  }
-  
-  /**
-   * P2-3 修复：清理过长的事件链
-   * 保留最近的事件，删除旧事件
-   */
-  private cleanupChain(peerId: string, chain: SignedReputationEvent[]): void {
-    const removeCount = chain.length - ChainSignatureManager.KEEP_AFTER_CLEANUP;
-    if (removeCount > 0) {
-      // 保留最近的事件
-      const newChain = chain.slice(-ChainSignatureManager.KEEP_AFTER_CLEANUP);
-      // 更新第一个保留事件的 prevHash 为 'genesis'，因为我们删除了它之前的历史
-      if (newChain.length > 0) {
-        newChain[0] = { ...newChain[0], prevHash: 'genesis' };
-      }
-      this.eventChains.set(peerId, newChain);
-      this.logger.info('Cleaned up event chain', {
-        peerId: peerId.slice(0, 16),
-        removedCount: removeCount,
-        remainingCount: newChain.length
-      });
-    }
   }
 
   /**
@@ -422,15 +387,6 @@ export class ChallengeManager {
   /** P2-3 修复：已使用的 nonce 集合，防止跨实例重放攻击 */
   private usedNonces: Set<string> = new Set();
   private logger: Logger;
-  
-  /** P0-2 修复：usedNonces 清理定时器 */
-  private nonceCleanupTimer: ReturnType<typeof setInterval> | null = null;
-  /** P0-2 修复：nonce 过期时间（24小时） */
-  private static readonly NONCE_EXPIRY_MS = 24 * 60 * 60 * 1000;
-  /** P0-2 修复：nonce 记录时间戳（用于清理过期 nonce） */
-  private nonceTimestamps: Map<string, number> = new Map();
-  /** P0-2 修复：usedNonces 最大容量（防止内存无限增长） */
-  private static readonly MAX_USED_NONCES = 10000;
 
   constructor(
     reputationManager: ReputationManager,
@@ -439,51 +395,6 @@ export class ChallengeManager {
     this.reputationManager = reputationManager;
     this.chainManager = chainManager;
     this.logger = new Logger({ component: 'ChallengeManager' });
-    
-    // P0-2 修复：启动 nonce 清理定时器（每小时清理一次）
-    this.startNonceCleanup();
-  }
-  
-  /**
-   * P0-2 修复：启动 nonce 清理定时器
-   */
-  private startNonceCleanup(): void {
-    this.nonceCleanupTimer = setInterval(() => {
-      this.cleanupExpiredNonces();
-    }, 60 * 60 * 1000); // 每小时清理一次
-  }
-  
-  /**
-   * P0-2 修复：清理过期的 nonce
-   */
-  private cleanupExpiredNonces(): void {
-    const now = Date.now();
-    let cleaned = 0;
-    
-    for (const [nonce, timestamp] of this.nonceTimestamps) {
-      if (now - timestamp > ChallengeManager.NONCE_EXPIRY_MS) {
-        this.usedNonces.delete(nonce);
-        this.nonceTimestamps.delete(nonce);
-        cleaned++;
-      }
-    }
-    
-    // 如果超过最大容量，删除最旧的一半
-    if (this.usedNonces.size > ChallengeManager.MAX_USED_NONCES) {
-      const entries = Array.from(this.nonceTimestamps.entries())
-        .sort((a, b) => a[1] - b[1]);
-      const toRemove = entries.slice(0, Math.floor(entries.length / 2));
-      
-      for (const [nonce] of toRemove) {
-        this.usedNonces.delete(nonce);
-        this.nonceTimestamps.delete(nonce);
-        cleaned++;
-      }
-    }
-    
-    if (cleaned > 0) {
-      this.logger.debug('Cleaned expired nonces', { count: cleaned, remaining: this.usedNonces.size });
-    }
   }
 
   /**
@@ -530,19 +441,8 @@ export class ChallengeManager {
    * P1-1 修复：每个 reason 分支验证失败后明确返回，避免继续执行
    * P2-3 修复：检查 nonce 是否已被使用，防止重放攻击
    * P2-6 修复：检查 processed 标志，防止重复处理
-   * P1-2 修复：原子性地检查并设置 processed 标志和 nonce，防止竞态条件
    */
   processChallenge(challenge: ChallengeRecord): ChallengeResult {
-    // P1-2 修复：原子性地检查并设置，防止竞态条件
-    // 先检查 nonce（更严格的检查）
-    if (this.usedNonces.has(challenge.nonce)) {
-      this.logger.warn('Challenge nonce already used, possible replay attack', {
-        targetId: challenge.targetId.slice(0, 16),
-        nonce: challenge.nonce.slice(0, 16)
-      });
-      return { success: false, reward: 0, reason: 'Challenge nonce already used' };
-    }
-    
     // P2-6 修复：检查是否已被处理
     if (challenge.processed) {
       this.logger.warn('Challenge already processed, rejecting', {
@@ -552,11 +452,14 @@ export class ChallengeManager {
       return { success: false, reward: 0, reason: 'Challenge already processed' };
     }
     
-    // P1-2 修复：立即标记为已处理并记录 nonce，防止并发处理
-    // 这确保了即使有并发调用，也只会处理一次
-    challenge.processed = true;
-    this.usedNonces.add(challenge.nonce);
-    this.nonceTimestamps.set(challenge.nonce, Date.now());
+    // P2-3 修复：检查 nonce 是否已被使用
+    if (this.usedNonces.has(challenge.nonce)) {
+      this.logger.warn('Challenge nonce already used, possible replay attack', {
+        targetId: challenge.targetId.slice(0, 16),
+        nonce: challenge.nonce.slice(0, 16)
+      });
+      return { success: false, reward: 0, reason: 'Challenge nonce already used' };
+    }
     
     const targetId = challenge.targetId;
 
@@ -565,7 +468,10 @@ export class ChallengeManager {
       const chainValid = this.chainManager.verifyChain(targetId);
       
       if (!chainValid) {
-        // P1-2 修复：processed 和 nonce 已在开头设置
+        // 标记为已处理
+        challenge.processed = true;
+        // P2-3 修复：记录已使用的 nonce
+        this.usedNonces.add(challenge.nonce);
         
         // 挑战成功
         this.reputationManager.recordFailure(
@@ -586,6 +492,8 @@ export class ChallengeManager {
       }
       
       // P1-1 修复：验证失败（链有效），证据不足，直接返回
+      challenge.processed = true;
+      this.usedNonces.add(challenge.nonce);
       this.reputationManager.recordReviewPenalty(
         challenge.challengerId,
         -challenge.stake * 0.5,
@@ -600,7 +508,10 @@ export class ChallengeManager {
       const collusionScore = this.detectCollusion(targetId);
       
       if (collusionScore > 0.8) {
-        // P1-2 修复：processed 和 nonce 已在开头设置
+        // 标记为已处理
+        challenge.processed = true;
+        // P2-3 修复：记录已使用的 nonce
+        this.usedNonces.add(challenge.nonce);
         
         // 合谋检测成功
         this.reputationManager.recordFailure(
@@ -620,6 +531,8 @@ export class ChallengeManager {
       }
       
       // P1-1 修复：验证失败（合谋分数不够），证据不足，直接返回
+      challenge.processed = true;
+      this.usedNonces.add(challenge.nonce);
       this.reputationManager.recordReviewPenalty(
         challenge.challengerId,
         -challenge.stake * 0.5,
@@ -636,7 +549,10 @@ export class ChallengeManager {
       const claimedScore = this.reputationManager.getReputation(targetId).score;
       
       if (Math.abs(calculatedScore - claimedScore) > 10) {
-        // P1-2 修复：processed 和 nonce 已在开头设置
+        // 标记为已处理
+        challenge.processed = true;
+        // P2-3 修复：记录已使用的 nonce
+        this.usedNonces.add(challenge.nonce);
         
         // 分数不一致
         this.reputationManager.recordFailure(
@@ -656,6 +572,8 @@ export class ChallengeManager {
       }
       
       // P1-1 修复：验证失败（分数一致），证据不足，直接返回
+      challenge.processed = true;
+      this.usedNonces.add(challenge.nonce);
       this.reputationManager.recordReviewPenalty(
         challenge.challengerId,
         -challenge.stake * 0.5,
@@ -665,7 +583,9 @@ export class ChallengeManager {
       return { success: false, reward: 0, reason: 'No evidence to support challenge' };
     }
 
-    // P1-2 修复：processed 和 nonce 已在开头设置
+    // 标记为已处理（未知 reason 类型）
+    challenge.processed = true;
+    this.usedNonces.add(challenge.nonce);
 
     // 挑战失败
     this.reputationManager.recordReviewPenalty(
@@ -721,18 +641,10 @@ export class ChallengeManager {
 
   /**
    * R2-5 修复：清理资源，防止内存泄漏
-   * P0-2 修复：清理 nonce 清理定时器和 nonceTimestamps
    */
   stop(): void {
-    // P0-2 修复：停止 nonce 清理定时器
-    if (this.nonceCleanupTimer) {
-      clearInterval(this.nonceCleanupTimer);
-      this.nonceCleanupTimer = null;
-    }
     // 清理已使用的 nonce 集合
     this.usedNonces.clear();
-    // P0-2 修复：清理 nonce 时间戳记录
-    this.nonceTimestamps.clear();
     // 清理挑战记录
     this.challenges.clear();
     this.logger.info('ChallengeManager stopped and resources cleaned');

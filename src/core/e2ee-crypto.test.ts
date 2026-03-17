@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { E2EECrypto } from './e2ee-crypto.js';
 import { x25519 } from '@noble/curves/ed25519.js';
 
@@ -11,6 +11,16 @@ describe('E2EECrypto', () => {
     cryptoB = new E2EECrypto();
     await cryptoA.initialize();
     await cryptoB.initialize();
+  });
+
+  // R2-2 修复：清理资源，防止定时器泄漏
+  afterEach(() => {
+    if (cryptoA) {
+      cryptoA.stop();
+    }
+    if (cryptoB) {
+      cryptoB.stop();
+    }
   });
 
   describe('initialization', () => {
@@ -35,63 +45,81 @@ describe('E2EECrypto', () => {
 
       // Create new instance and import
       const cryptoC = new E2EECrypto();
-      const privateKey = Buffer.from(exported!.privateKey, 'base64');
-      const publicKey = Buffer.from(exported!.publicKey, 'base64');
-      cryptoC.initializeWithKeyPair(privateKey, publicKey);
-      
-      expect(cryptoC.getPublicKey()).toBe(exported!.publicKey);
+      try {
+        const privateKey = Buffer.from(exported!.privateKey, 'base64');
+        const publicKey = Buffer.from(exported!.publicKey, 'base64');
+        cryptoC.initializeWithKeyPair(privateKey, publicKey);
+        
+        expect(cryptoC.getPublicKey()).toBe(exported!.publicKey);
+      } finally {
+        cryptoC.stop();
+      }
     });
 
     describe('initializeWithKeyPair validation (P1-2)', () => {
       it('should throw error for invalid private key length', () => {
         const crypto = new E2EECrypto();
-        const invalidPrivateKey = new Uint8Array(16); // 只16字节，应该是32字节
-        const publicKey = new Uint8Array(32);
-        
-        expect(() => {
-          crypto.initializeWithKeyPair(invalidPrivateKey, publicKey);
-        }).toThrow('Invalid private key length: expected 32 bytes, got 16');
+        try {
+          const invalidPrivateKey = new Uint8Array(16); // 只16字节，应该是32字节
+          const publicKey = new Uint8Array(32);
+          
+          expect(() => {
+            crypto.initializeWithKeyPair(invalidPrivateKey, publicKey);
+          }).toThrow('Invalid private key length: expected 32 bytes, got 16');
+        } finally {
+          crypto.stop();
+        }
       });
 
       it('should throw error for invalid public key length', () => {
         const crypto = new E2EECrypto();
-        const privateKey = new Uint8Array(32);
-        const invalidPublicKey = new Uint8Array(16); // 只16字节，应该是32字节
-        
-        expect(() => {
-          crypto.initializeWithKeyPair(privateKey, invalidPublicKey);
-        }).toThrow('Invalid public key length: expected 32 bytes, got 16');
+        try {
+          const privateKey = new Uint8Array(32);
+          const invalidPublicKey = new Uint8Array(16); // 只16字节，应该是32字节
+          
+          expect(() => {
+            crypto.initializeWithKeyPair(privateKey, invalidPublicKey);
+          }).toThrow('Invalid public key length: expected 32 bytes, got 16');
+        } finally {
+          crypto.stop();
+        }
       });
 
       it('should throw error when public key does not match private key', () => {
         const crypto = new E2EECrypto();
-        
-        // 生成一个有效的密钥对
-        const validPrivate = x25519.utils.randomSecretKey();
-        const validPublic = x25519.getPublicKey(validPrivate);
-        
-        // 使用另一个随机公钥
-        const otherPrivate = x25519.utils.randomSecretKey();
-        const otherPublic = x25519.getPublicKey(otherPrivate);
-        
-        expect(() => {
-          crypto.initializeWithKeyPair(validPrivate, otherPublic);
-        }).toThrow('Public key does not match the private key');
+        try {
+          // 生成一个有效的密钥对
+          const validPrivate = x25519.utils.randomSecretKey();
+          const validPublic = x25519.getPublicKey(validPrivate);
+          
+          // 使用另一个随机公钥
+          const otherPrivate = x25519.utils.randomSecretKey();
+          const otherPublic = x25519.getPublicKey(otherPrivate);
+          
+          expect(() => {
+            crypto.initializeWithKeyPair(validPrivate, otherPublic);
+          }).toThrow('Public key does not match the private key');
+        } finally {
+          crypto.stop();
+        }
       });
 
       it('should accept valid key pair', () => {
         const crypto = new E2EECrypto();
-        
-        // 生成有效的密钥对
-        const privateKey = x25519.utils.randomSecretKey();
-        const publicKey = x25519.getPublicKey(privateKey);
-        
-        // 应该不抛出异常
-        expect(() => {
-          crypto.initializeWithKeyPair(privateKey, publicKey);
-        }).not.toThrow();
-        
-        expect(crypto.getPublicKey()).toBe(Buffer.from(publicKey).toString('base64'));
+        try {
+          // 生成有效的密钥对
+          const privateKey = x25519.utils.randomSecretKey();
+          const publicKey = x25519.getPublicKey(privateKey);
+          
+          // 应该不抛出异常
+          expect(() => {
+            crypto.initializeWithKeyPair(privateKey, publicKey);
+          }).not.toThrow();
+          
+          expect(crypto.getPublicKey()).toBe(Buffer.from(publicKey).toString('base64'));
+        } finally {
+          crypto.stop();
+        }
       });
     });
   });
@@ -155,11 +183,15 @@ describe('E2EECrypto', () => {
 
     it('should return null when encrypting to unknown peer', async () => {
       const cryptoC = new E2EECrypto();
-      await cryptoC.initialize();
-      // Don't register any peer keys
-      
-      const result = cryptoC.encrypt('unknown-peer', 'test');
-      expect(result).toBeNull();
+      try {
+        await cryptoC.initialize();
+        // Don't register any peer keys
+        
+        const result = cryptoC.encrypt('unknown-peer', 'test');
+        expect(result).toBeNull();
+      } finally {
+        cryptoC.stop();
+      }
     });
   });
 

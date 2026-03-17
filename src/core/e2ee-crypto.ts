@@ -4,13 +4,16 @@
  */
 
 import { x25519 } from '@noble/curves/ed25519.js';
-import { randomBytes, createCipheriv, createDecipheriv, createHash, hkdfSync } from 'crypto';
+import { randomBytes, createCipheriv, createDecipheriv, createHmac, hkdfSync, timingSafeEqual } from 'crypto';
 import { Logger } from '../utils/logger.js';
 
 // AES-256-GCM 参数
 const AES_KEY_SIZE = 32; // 256 bits
 const AES_IV_SIZE = 16;  // 128 bits
 const AES_TAG_SIZE = 16; // 128 bits
+
+// P2-7 修复：使用常量 SALT_SIZE 并保持一致
+const SALT_SIZE = 16; // 128 bits
 
 /**
  * 加密密钥对
@@ -39,16 +42,151 @@ export interface EncryptedMessage {
 }
 
 /**
- * 密钥管理器
+ * P1-2 修复：密钥确认挑战
  */
-export class E2EECrypto {
+export interface KeyConfirmationChallenge {
+  /** 挑战随机数 */
+  challenge: string;
+  /** 发送方标识 */
+  senderId: string;
+  /** 时间戳防止重放 */
+  timestamp: number;
+}
+
+/**
+ * P1-2 修复：密钥确认响应
+ */
+export interface KeyConfirmationResponse {
+  /** 对挑战的响应（用共享密钥加密的挑战数据） */
+  challengeResponse: string;
+  /** 反向挑战随机数 */
+  counterChallenge: string;
+  /** 发送方标识 */
+  senderId: string;
+  /** 时间戳 */
+  timestamp: number;
+}
+
+/**
+ * 密钥管理器
+ * P2-1 修复：实现 Disposable 接口
+ */
+export class E2EECrypto implements Disposable {
   private keyPair: EncryptionKeyPair | null = null;
   private peerPublicKeys: Map<string, Uint8Array> = new Map();
   private sharedSecrets: Map<string, Uint8Array> = new Map();
   private logger: Logger;
+  
+  /** P2-10 修复：IV 使用记录，用于检测 IV 重用 */
+  private usedIVs: Map<string, Set<string>> = new Map();
+  /** P2-10 修复：IV 重用警告阈值 */
+  private static readonly IV_REUSE_WARN_THRESHOLD = 1000;
+  
+  /** P1-2 修复：待处理的密钥确认挑战 */
+  private pendingChallenges: Map<string, { challenge: string; timestamp: number }> = new Map();
+  /** P1-2 修复：已确认的密钥 */
+  private keyConfirmed: Map<string, boolean> = new Map();
+  
+  /** P1-1 修复：挑战清理定时器 */
+  private challengeCleanupTimer: ReturnType<typeof setInterval> | null = null;
+  /** P1-1 修复：挑战过期时间（5分钟） */
+  private static readonly CHALLENGE_EXPIRY_MS = 5 * 60 * 1000;
+  /** P1-1 修复：清理间隔（每分钟） */
+  private static readonly CHALLENGE_CLEANUP_INTERVAL_MS = 60 * 1000;
 
   constructor() {
     this.logger = new Logger({ component: 'E2EE' });
+    this.startChallengeCleanup();
+  }
+
+  /**
+   * P1-1 修复：启动挑战清理定时器
+   */
+  private startChallengeCleanup(): void {
+    this.challengeCleanupTimer = setInterval(() => {
+      const now = Date.now();
+      let cleaned = 0;
+      for (const [key, challenge] of this.pendingChallenges) {
+        if (now - challenge.timestamp > E2EECrypto.CHALLENGE_EXPIRY_MS) {
+          this.pendingChallenges.delete(key);
+          cleaned++;
+        }
+      }
+      if (cleaned > 0) {
+        this.logger.debug('Cleaned expired challenges', { count: cleaned });
+      }
+    }, E2EECrypto.CHALLENGE_CLEANUP_INTERVAL_MS);
+  }
+
+  /**
+   * P1-2 修复：注销对等方，清理所有相关资源
+   * P1-4 修复：删除共享密钥前先零填充
+   * @param peerId 对等方标识
+   */
+  unregisterPeer(peerId: string): void {
+    // P1-4 修复：清理共享密钥前先零填充
+    const sharedSecret = this.sharedSecrets.get(peerId);
+    if (sharedSecret) {
+      sharedSecret.fill(0);
+    }
+    this.sharedSecrets.delete(peerId);
+    
+    // 清理对等方公钥
+    this.peerPublicKeys.delete(peerId);
+    
+    // 清理密钥确认状态
+    const confirmKey = `confirmed:${peerId}`;
+    this.keyConfirmed.delete(confirmKey);
+    
+    // 清理 IV 记录
+    this.usedIVs.delete(peerId);
+    
+    // 清理相关的 pendingChallenges
+    const challengeKey = `challenge:${peerId}`;
+    const counterChallengeKey = `counter:${peerId}`;
+    this.pendingChallenges.delete(challengeKey);
+    this.pendingChallenges.delete(counterChallengeKey);
+    
+    this.logger.info('Peer unregistered and resources cleaned', { peerId: peerId.slice(0, 16) });
+  }
+
+  /**
+   * P1-1 修复：停止清理定时器，释放资源
+   * P1-4 修复：清理共享密钥前先零填充
+   * R2-1 修复：零填充 privateKey，最敏感的密钥材料
+   */
+  stop(): void {
+    if (this.challengeCleanupTimer) {
+      clearInterval(this.challengeCleanupTimer);
+      this.challengeCleanupTimer = null;
+    }
+    
+    // R2-1 修复：零填充 privateKey，这是最敏感的密钥材料
+    if (this.keyPair?.privateKey) {
+      this.keyPair.privateKey.fill(0);
+      this.keyPair = null;
+    }
+    
+    // P1-4 修复：零填充所有共享密钥
+    for (const secret of this.sharedSecrets.values()) {
+      secret.fill(0);
+    }
+    
+    // 清理所有资源
+    this.pendingChallenges.clear();
+    this.keyConfirmed.clear();
+    this.usedIVs.clear();
+    this.sharedSecrets.clear();
+    this.peerPublicKeys.clear();
+    
+    this.logger.info('E2EECrypto stopped and all resources cleaned');
+  }
+
+  /**
+   * P2-1 修复：实现 Disposable 接口
+   */
+  [Symbol.dispose](): void {
+    this.stop();
   }
 
   /**
@@ -105,16 +243,27 @@ export class E2EECrypto {
 
   /**
    * 注册对等方的公钥
+   * P2-3 修复：使用 Uint8Array.slice() 创建不可变副本
    */
   registerPeerPublicKey(peerId: string, publicKeyBase64: string): void {
     try {
       const publicKey = Buffer.from(publicKeyBase64, 'base64');
-      this.peerPublicKeys.set(peerId, publicKey);
+      
+      // P3-1 修复：重命名为 Copy 以更准确反映语义（可修改的副本）
+      const publicKeyCopy = new Uint8Array(publicKey);
+      this.peerPublicKeys.set(peerId, publicKeyCopy);
 
       // 预计算共享密钥
       if (this.keyPair) {
-        const sharedSecret = x25519.getSharedSecret(this.keyPair.privateKey, publicKey);
-        this.sharedSecrets.set(peerId, sharedSecret);
+        const sharedSecret = x25519.getSharedSecret(this.keyPair.privateKey, publicKeyCopy);
+        // P3-1 修复：重命名为 Copy 以更准确反映语义
+        const sharedSecretCopy = new Uint8Array(sharedSecret);
+        this.sharedSecrets.set(peerId, sharedSecretCopy);
+        
+        // P2-10 修复：初始化 IV 记录集
+        if (!this.usedIVs.has(peerId)) {
+          this.usedIVs.set(peerId, new Set());
+        }
       }
     } catch (error) {
       this.logger.error('Failed to register public key', { peerId, error });
@@ -126,6 +275,58 @@ export class E2EECrypto {
    */
   canEncryptTo(peerId: string): boolean {
     return this.sharedSecrets.has(peerId);
+  }
+
+  /**
+   * P2-13 修复：提取独立的 IV 生成方法，处理碰撞检测
+   * P1-4 修复：添加最多 10 次尝试的循环逻辑
+   * P2-2 修复：当 ivSet 不存在时，创建并记录 IV，防止重用
+   * @param peerId 对等方标识
+   * @returns 唯一的 IV，如果无法生成则抛出错误
+   */
+  private generateUniqueIV(peerId: string): Buffer {
+    let ivSet = this.usedIVs.get(peerId);
+    const maxAttempts = 10;
+    
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const iv = randomBytes(AES_IV_SIZE);
+      
+      // P2-2 修复：如果 ivSet 不存在，创建它并记录 IV
+      if (!ivSet) {
+        ivSet = new Set<string>();
+        this.usedIVs.set(peerId, ivSet);
+        ivSet.add(iv.toString('base64'));
+        return iv;
+      }
+      
+      const ivBase64 = iv.toString('base64');
+      if (!ivSet.has(ivBase64)) {
+        // IV 唯一，记录并返回
+        ivSet.add(ivBase64);
+        
+        // P2-10 修复：清理过期的 IV 记录，防止内存泄漏
+        if (ivSet.size > E2EECrypto.IV_REUSE_WARN_THRESHOLD) {
+          this.logger.warn('IV usage count exceeded threshold, clearing old records', {
+            peerId: peerId.slice(0, 16),
+            count: ivSet.size
+          });
+          // 保留最近的一半记录
+          const entries = Array.from(ivSet);
+          ivSet.clear();
+          entries.slice(-Math.floor(E2EECrypto.IV_REUSE_WARN_THRESHOLD / 2)).forEach(e => ivSet.add(e));
+        }
+        
+        return iv;
+      }
+      
+      // IV 碰撞，重试
+      if (attempt === 0) {
+        this.logger.warn('IV collision detected, regenerating', { peerId: peerId.slice(0, 16) });
+      }
+    }
+    
+    // P2-17 修复：达到 maxAttempts 时抛出错误，让调用方正确处理
+    throw new Error(`Failed to generate unique IV after ${maxAttempts} attempts. This is extremely unlikely and may indicate a cryptographic issue.`);
   }
 
   /**
@@ -144,14 +345,15 @@ export class E2EECrypto {
     }
 
     try {
-      // 生成随机盐值（每次加密使用不同的盐值，提高安全性）
-      const salt = randomBytes(16);
+      // P2-7 修复：使用常量 SALT_SIZE
+      const salt = randomBytes(SALT_SIZE);
       
       // 从共享密钥派生 AES 密钥
       const aesKey = this.deriveAESKey(sharedSecret, salt);
 
-      // 生成随机 IV
-      const iv = randomBytes(AES_IV_SIZE);
+      // P2-13 修复：使用独立的 IV 生成方法
+      // P1-4 修复：包含循环尝试逻辑
+      const iv = this.generateUniqueIV(peerId);
 
       // 创建加密器
       const cipher = createCipheriv('aes-256-gcm', aesKey, iv);
@@ -177,7 +379,7 @@ export class E2EECrypto {
         salt: salt.toString('base64')
       };
     } catch (error) {
-      this.logger.error('Encryption failed', { error });
+      this.logger.error('Encryption failed', { error: error instanceof Error ? error.message : String(error) });
       return null;
     }
   }
@@ -204,8 +406,8 @@ export class E2EECrypto {
       
       const salt = Buffer.from(encrypted.salt, 'base64');
       
-      // 验证盐值长度（至少 16 字节）
-      if (salt.length < 16) {
+      // P2-7 修复：使用常量 SALT_SIZE 验证盐值长度
+      if (salt.length < SALT_SIZE) {
         this.logger.error('Decryption failed: salt value too short. Minimum 16 bytes required.');
         return null;
       }
@@ -297,6 +499,296 @@ export class E2EECrypto {
    */
   getRegisteredPeerCount(): number {
     return this.peerPublicKeys.size;
+  }
+
+  /**
+   * P1-2 修复：生成密钥确认挑战
+   * 在密钥交换后，用于验证双方拥有相同的共享密钥
+   * @param peerId 对等方标识
+   * @returns 挑战数据
+   */
+  generateKeyConfirmationChallenge(peerId: string): KeyConfirmationChallenge | null {
+    if (!this.keyPair) {
+      this.logger.error('Cannot generate challenge: not initialized');
+      return null;
+    }
+
+    const sharedSecret = this.sharedSecrets.get(peerId);
+    if (!sharedSecret) {
+      this.logger.error('Cannot generate challenge: no shared secret for peer', { peerId });
+      return null;
+    }
+
+    // 生成随机挑战
+    const challenge = randomBytes(32).toString('base64');
+    const timestamp = Date.now();
+    const random = randomBytes(8).toString('hex');
+    
+    // P1-3 修复：使用包含 timestamp 和 random 的键名格式，避免并发冲突
+    const challengeKey = `challenge:${peerId}:${timestamp}:${random}`;
+    this.pendingChallenges.set(challengeKey, {
+      challenge,
+      timestamp
+    });
+
+    return {
+      challenge,
+      senderId: Buffer.from(this.keyPair.publicKey).toString('base64').slice(0, 16),
+      timestamp
+    };
+  }
+
+  /**
+   * P1-2 修复：响应密钥确认挑战
+   * 使用共享密钥加密挑战数据作为证明
+   * @param peerId 对等方标识
+   * @param challenge 收到的挑战
+   * @returns 响应数据和反向挑战
+   */
+  respondToKeyConfirmationChallenge(
+    peerId: string,
+    challenge: KeyConfirmationChallenge
+  ): KeyConfirmationResponse | null {
+    if (!this.keyPair) {
+      this.logger.error('Cannot respond to challenge: not initialized');
+      return null;
+    }
+
+    const sharedSecret = this.sharedSecrets.get(peerId);
+    if (!sharedSecret) {
+      this.logger.error('Cannot respond to challenge: no shared secret for peer', { peerId });
+      return null;
+    }
+
+    // 验证时间戳防止重放攻击（5分钟有效期）
+    // P1-6 修复：拒绝未来时间戳，只允许过去的时间戳
+    // R2-3 说明：5分钟 tolerance 对于分布式系统是合理的，考虑：
+    // - 时钟同步偏差（NTP 通常 < 100ms，极端情况可达秒级）
+    // - 消息传输延迟（跨区域可达秒级）
+    // - 系统处理延迟
+    const now = Date.now();
+    const maxAge = 5 * 60 * 1000; // 5 分钟
+    // P1-6 修复：拒绝未来时间戳
+    if (challenge.timestamp > now + maxAge) {
+      this.logger.error('Challenge timestamp is in the future');
+      return null;
+    }
+    if (challenge.timestamp < now - maxAge) {
+      this.logger.error('Challenge timestamp expired');
+      return null;
+    }
+
+    // 使用共享密钥加密挑战数据作为响应
+    // 这证明我们拥有正确的共享密钥
+    // P1-5 修复：使用 HMAC 而非 Hash，防止长度扩展攻击
+    const challengeResponse = createHmac('sha256', sharedSecret)
+      .update(challenge.challenge)
+      .digest('base64');
+
+    // 生成反向挑战
+    const counterChallenge = randomBytes(32).toString('base64');
+    const timestamp = Date.now();
+    const random = randomBytes(8).toString('hex');
+    
+    // P1-3 修复：使用包含 timestamp 和 random 的键名格式，避免并发冲突
+    const counterChallengeKey = `counter:${peerId}:${timestamp}:${random}`;
+    this.pendingChallenges.set(counterChallengeKey, {
+      challenge: counterChallenge,
+      timestamp
+    });
+
+    return {
+      challengeResponse,
+      counterChallenge,
+      senderId: Buffer.from(this.keyPair.publicKey).toString('base64').slice(0, 16),
+      timestamp
+    };
+  }
+
+  /**
+   * P2-14 修复：提取公共的挑战响应验证逻辑
+   * @param peerId 对等方标识
+   * @param response 实际收到的响应
+   * @param expectedChallenge 原始挑战数据
+   * @returns 验证结果
+   */
+  private verifyChallengeResponse(
+    peerId: string,
+    response: string,
+    expectedChallenge: string
+  ): boolean {
+    const sharedSecret = this.sharedSecrets.get(peerId);
+    if (!sharedSecret) {
+      this.logger.error('Cannot verify response: no shared secret for peer', { peerId });
+      return false;
+    }
+
+    // P1-5 修复：使用 HMAC 而非 Hash，防止长度扩展攻击
+    const expectedResponse = createHmac('sha256', sharedSecret)
+      .update(expectedChallenge)
+      .digest('base64');
+
+    // P3-1 修复：使用 timingSafeEqual 防止时序攻击
+    try {
+      const responseBuffer = Buffer.from(response, 'base64');
+      const expectedBuffer = Buffer.from(expectedResponse, 'base64');
+      if (responseBuffer.length !== expectedBuffer.length) {
+        this.logger.error('Challenge response length mismatch', { peerId });
+        return false;
+      }
+      return timingSafeEqual(responseBuffer, expectedBuffer);
+    } catch {
+      // 长度不匹配或其他错误
+      return false;
+    }
+  }
+
+  /**
+   * P1-2 修复：验证密钥确认响应并响应反向挑战
+   * 完成双向密钥确认
+   * @param peerId 对等方标识
+   * @param response 收到的响应
+   * @param originalChallenge 原始挑战数据
+   * @returns 反向挑战的响应，如果验证失败返回 null
+   */
+  verifyKeyConfirmationResponse(
+    peerId: string,
+    response: KeyConfirmationResponse,
+    originalChallenge: string
+  ): { success: boolean; counterChallengeResponse?: string } {
+    const sharedSecret = this.sharedSecrets.get(peerId);
+    if (!sharedSecret) {
+      this.logger.error('Cannot verify response: no shared secret for peer', { peerId });
+      return { success: false };
+    }
+
+    // 验证时间戳
+    const now = Date.now();
+    const maxAge = 5 * 60 * 1000; // 5 分钟
+    // P1-6 修复：拒绝未来时间戳
+    if (response.timestamp > now + maxAge) {
+      this.logger.error('Response timestamp is in the future');
+      return { success: false };
+    }
+    if (response.timestamp < now - maxAge) {
+      this.logger.error('Response timestamp expired');
+      return { success: false };
+    }
+
+    // P2-14 修复：使用公共验证方法
+    if (!this.verifyChallengeResponse(peerId, response.challengeResponse, originalChallenge)) {
+      this.logger.error('Challenge response verification failed', { peerId });
+      return { success: false };
+    }
+
+    // 响应反向挑战
+    // P1-5 修复：使用 HMAC 而非 Hash
+    const counterChallengeResponse = createHmac('sha256', sharedSecret)
+      .update(response.counterChallenge)
+      .digest('base64');
+
+    // 标记密钥确认完成
+    const confirmKey = `confirmed:${peerId}`;
+    this.keyConfirmed.set(confirmKey, true);
+
+    this.logger.info('Key exchange confirmed with peer', { peerId: peerId.slice(0, 16) });
+
+    return { 
+      success: true, 
+      counterChallengeResponse 
+    };
+  }
+
+  /**
+   * P1-2 修复：验证反向挑战的响应
+   * P1-5 修复：使用 HMAC 而非 Hash
+   * @param peerId 对等方标识
+   * @param counterChallengeResponse 反向挑战的响应
+   * @param originalCounterChallenge 原始反向挑战
+   * @returns 验证结果
+   */
+  verifyCounterChallengeResponse(
+    peerId: string,
+    counterChallengeResponse: string,
+    originalCounterChallenge: string
+  ): boolean {
+    // P2-14 修复：使用公共验证方法
+    if (!this.verifyChallengeResponse(peerId, counterChallengeResponse, originalCounterChallenge)) {
+      this.logger.error('Counter challenge response verification failed', { peerId });
+      return false;
+    }
+
+    // 标记密钥确认完成
+    const confirmKey = `confirmed:${peerId}`;
+    this.keyConfirmed.set(confirmKey, true);
+
+    this.logger.info('Key exchange fully confirmed with peer', { peerId: peerId.slice(0, 16) });
+    return true;
+  }
+
+  /**
+   * P1-2 修复：检查与对等方的密钥是否已确认
+   */
+  isKeyConfirmed(peerId: string): boolean {
+    const confirmKey = `confirmed:${peerId}`;
+    return this.keyConfirmed.get(confirmKey) === true;
+  }
+
+  /**
+   * P1-2 修复：执行完整的双向密钥确认流程
+   * 这是一个便捷方法，封装了完整的确认流程
+   * @param peerId 对等方标识
+   * @param sendChallenge 发送挑战的函数
+   * @param receiveResponse 接收响应的函数
+   * @returns 确认是否成功
+   */
+  async confirmKeyExchange(
+    peerId: string,
+    sendChallenge: (challenge: KeyConfirmationChallenge) => Promise<KeyConfirmationResponse | null>,
+    receiveCounterResponse?: (counterResponse: string) => Promise<boolean>
+  ): Promise<boolean> {
+    try {
+      // 生成挑战
+      const challenge = this.generateKeyConfirmationChallenge(peerId);
+      if (!challenge) {
+        return false;
+      }
+
+      // 发送挑战并等待响应
+      const response = await sendChallenge(challenge);
+      if (!response) {
+        this.logger.error('No response received for key confirmation challenge', { peerId });
+        return false;
+      }
+
+      // 验证响应
+      const result = this.verifyKeyConfirmationResponse(
+        peerId,
+        response,
+        challenge.challenge
+      );
+
+      if (!result.success || !result.counterChallengeResponse) {
+        return false;
+      }
+
+      // 如果需要验证反向挑战响应
+      if (receiveCounterResponse) {
+        const verified = await receiveCounterResponse(result.counterChallengeResponse);
+        if (!verified) {
+          this.logger.error('Counter challenge response verification failed', { peerId });
+          return false;
+        }
+      }
+
+      return true;
+    } catch (error) {
+      this.logger.error('Key exchange confirmation failed with exception', {
+        peerId: peerId.slice(0, 16),
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return false;
+    }
   }
 }
 

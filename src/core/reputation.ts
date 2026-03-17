@@ -181,6 +181,11 @@ export class ReputationManager implements Disposable {
   private pendingSave: boolean = false;
   /** P2-2 修复：初始化错误状态 */
   private initError: Error | null = null;
+  /** P2-1 修复：降级模式警告标志，防止日志泛滥 */
+  private degradedWarned: boolean = false;
+  /** P2-2 修复：重试计数器和退避策略 */
+  private saveRetryCount: number = 0;
+  private static readonly MAX_SAVE_RETRIES: number = 3;
 
   constructor(config: Partial<ReputationConfig> = {}, storage?: ReputationStorage) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -219,7 +224,7 @@ export class ReputationManager implements Disposable {
   }
 
   /**
-   * P2-1/P2-3 修复：检查初始化状态
+   * P2-1 修复：检查初始化状态
    * 在关键公共方法开始时调用，确保系统已初始化
    * 如果存在初始化错误，会记录警告但不会阻止操作（降级模式）
    */
@@ -227,10 +232,12 @@ export class ReputationManager implements Disposable {
     if (!this.isReadyFlag) {
       throw new Error('ReputationManager not initialized. Call ready() and await it before using this method.');
     }
-    // P2-1 修复：检查初始化错误，警告用户可能处于降级模式
-    if (this.initError) {
+    // P2-1 修复：只在首次时记录降级模式警告，防止日志泛滥
+    // P3-2 修复：处理 initError.message 可能为空的情况
+    if (this.initError && !this.degradedWarned) {
+      this.degradedWarned = true;
       this.logger.warn('Operating in degraded mode due to initialization error', {
-        error: this.initError.message
+        error: this.initError.message || 'unknown error'
       });
     }
   }
@@ -248,6 +255,14 @@ export class ReputationManager implements Disposable {
    */
   get isReady(): boolean {
     return this.isReadyFlag;
+  }
+
+  /**
+   * P3-1 修复：暴露降级状态
+   * 当初始化失败时返回 true，外部可用于监控或告警
+   */
+  get degraded(): boolean {
+    return this.initError !== null;
   }
 
   /**
@@ -279,6 +294,7 @@ export class ReputationManager implements Disposable {
   /**
    * P1-2 修复：保存数据到存储
    * P2-1/P2-3 修复：添加并发保护，使用队列确保不丢失更新
+   * P2-2 修复：添加重试计数器和最大重试次数限制
    */
   private async savePersistedData(): Promise<void> {
     if (!this.storage) return;
@@ -302,11 +318,22 @@ export class ReputationManager implements Disposable {
           lastDecayTime: this.lastDecayTime
         };
         await this.storage.save(data);
+        // P2-2 修复：保存成功后重置重试计数器
+        this.saveRetryCount = 0;
       }
     } catch (error) {
       this.logger.warn('Failed to save reputation data', { error });
-      // P2-3 修复：保存失败时重新设置 pendingSave 确保后续重试
-      this.pendingSave = true;
+      // P2-2 修复：保存失败时检查重试次数，超过最大次数则放弃
+      this.saveRetryCount++;
+      if (this.saveRetryCount <= ReputationManager.MAX_SAVE_RETRIES) {
+        // P2-2 修复：重新设置 pendingSave 触发重试
+        this.pendingSave = true;
+        this.logger.warn(`Save failed, will retry (attempt ${this.saveRetryCount}/${ReputationManager.MAX_SAVE_RETRIES})`);
+      } else {
+        // P2-2 修复：超过最大重试次数，记录错误并放弃
+        this.logger.error(`Save failed after ${ReputationManager.MAX_SAVE_RETRIES} retries, giving up`, { error });
+        this.saveRetryCount = 0; // 重置以便下次保存时重新开始
+      }
     } finally {
       this.saveInProgress = false;
     }

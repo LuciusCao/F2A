@@ -457,4 +457,68 @@ describe('IdentityManager', () => {
       expect(result.error.code).toBe('IDENTITY_CORRUPTED');
     });
   });
+
+  // P1-4 修复：添加 exportIdentity 频率限制测试
+  describe('exportIdentity rate limiting', () => {
+    it('should allow up to 5 exports per minute', async () => {
+      const manager = new IdentityManager({ dataDir: tempDir });
+      await manager.loadOrCreate();
+      
+      // 5 次调用应该成功
+      for (let i = 0; i < 5; i++) {
+        const exported = manager.exportIdentity();
+        expect(exported.peerId).toBeDefined();
+      }
+    });
+
+    it('should throw error when rate limit exceeded', async () => {
+      const manager = new IdentityManager({ dataDir: tempDir });
+      await manager.loadOrCreate();
+      
+      // 先调用 5 次（达到限制）
+      for (let i = 0; i < 5; i++) {
+        manager.exportIdentity();
+      }
+      
+      // 第 6 次应该抛出错误
+      expect(() => manager.exportIdentity()).toThrow('rate limit exceeded');
+    });
+
+    it('should reset rate limit after window expires', async () => {
+      const manager = new IdentityManager({ dataDir: tempDir });
+      await manager.loadOrCreate();
+      
+      // 调用 3 次
+      for (let i = 0; i < 3; i++) {
+        manager.exportIdentity();
+      }
+      
+      // 模拟时间流逝（通过直接操作内部时间戳数组）
+      // 注意：这是测试私有实现的技巧，生产代码不应该这样使用
+      const now = Date.now();
+      const managerAny = manager as any;
+      // 将所有时间戳设置为 61 秒前（超出窗口）
+      managerAny.exportTimestamps = managerAny.exportTimestamps.map(
+        (ts: number) => ts - 61000
+      );
+      
+      // 现在应该可以再次调用
+      const exported = manager.exportIdentity();
+      expect(exported.peerId).toBeDefined();
+    });
+
+    it('should track call count for security audit', async () => {
+      const manager = new IdentityManager({ dataDir: tempDir });
+      await manager.loadOrCreate();
+      
+      // 调用 3 次
+      for (let i = 0; i < 3; i++) {
+        manager.exportIdentity();
+      }
+      
+      // 验证内部计数器（通过反射访问私有属性）
+      const managerAny = manager as any;
+      expect(managerAny.exportCallCount).toBe(3);
+    });
+  });
 });

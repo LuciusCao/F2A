@@ -82,12 +82,12 @@ function isPrivateIPv4(octets: number[]): boolean {
 }
 
 /**
- * P2-8 修复：解析 IPv4 映射的 IPv6 地址 (::ffff:x.x.x.x)
+ * P2-8 修复：解析 IPv4 映射的 IPv6 地址 (::ffff:x.x.x.x 或 ::ffff:xxxx:xxxx)
  * @returns IPv4 八位组数组，如果不是 IPv4 映射地址则返回 null
  */
 function parseIPv4MappedIPv6(hostname: string): number[] | null {
   const lower = hostname.toLowerCase();
-  // IPv4-mapped IPv6: ::ffff:x.x.x.x 或 0:0:0:0:0:ffff:x.x.x.x
+  // IPv4-mapped IPv6: ::ffff:x.x.x.x 或 0:0:0:0:0:ffff:x.x.x.x (点分十进制)
   const mappedMatch = lower.match(/^(?:0:){0,5}:ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (mappedMatch) {
     return [
@@ -97,6 +97,20 @@ function parseIPv4MappedIPv6(hostname: string): number[] | null {
       parseInt(mappedMatch[4], 10)
     ];
   }
+  
+  // IPv4-mapped IPv6 十六进制格式: ::ffff:xxxx:xxxx (URL 解析器会将 ::ffff:127.0.0.1 转为 ::ffff:7f00:1)
+  const hexMatch = lower.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (hexMatch) {
+    const high = hexMatch[1].padStart(4, '0');
+    const low = hexMatch[2].padStart(4, '0');
+    return [
+      parseInt(high.slice(0, 2), 16),
+      parseInt(high.slice(2, 4), 16),
+      parseInt(low.slice(0, 2), 16),
+      parseInt(low.slice(2, 4), 16)
+    ];
+  }
+  
   return null;
 }
 

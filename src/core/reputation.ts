@@ -56,9 +56,18 @@ export interface ReputationConfig {
 // 持久化接口
 // ============================================================================
 
+/**
+ * 持久化数据结构
+ * P0-1/P1-1 修复：扩展接口支持 lastDecayTime
+ */
+export interface ReputationPersistedData {
+  entries: Record<string, ReputationEntry>;
+  lastDecayTime: number;
+}
+
 export interface ReputationStorage {
-  save(entries: Map<string, ReputationEntry>): Promise<void>;
-  load(): Promise<Map<string, ReputationEntry>>;
+  save(data: ReputationPersistedData): Promise<void>;
+  load(): Promise<ReputationPersistedData | null>;
 }
 
 // ============================================================================
@@ -168,8 +177,11 @@ export class ReputationManager implements Disposable {
     this.logger = new Logger({ component: 'Reputation' });
     this.storage = storage;
     
-    // P1-7 修复：初始化时加载持久化的数据
-    this.loadPersistedData();
+    // P0-1 修复：异步加载持久化数据（fire-and-forget，不阻塞构造函数）
+    // 数据会在后台加载，如果失败则使用默认值
+    this.loadPersistedData().catch(err => {
+      this.logger.warn('Failed to load persisted data during initialization', { err });
+    });
     
     // 启动衰减定时器
     if (this.config.decayRate > 0) {
@@ -178,13 +190,13 @@ export class ReputationManager implements Disposable {
   }
 
   /**
-   * P1-7 修复：从存储加载持久化数据
+   * P0-1/P1-1 修复：从存储加载持久化数据（改为 async）
    */
-  private loadPersistedData(): void {
+  private async loadPersistedData(): Promise<void> {
     if (!this.storage) return;
     
     try {
-      const data = this.storage.load();
+      const data = await this.storage.load();
       if (data) {
         if (data.entries) {
           for (const [peerId, entry] of Object.entries(data.entries)) {
@@ -198,6 +210,23 @@ export class ReputationManager implements Disposable {
       }
     } catch (error) {
       this.logger.warn('Failed to load persisted reputation data', { error });
+    }
+  }
+  
+  /**
+   * P1-2 修复：保存数据到存储
+   */
+  private async savePersistedData(): Promise<void> {
+    if (!this.storage) return;
+    
+    try {
+      const data: ReputationPersistedData = {
+        entries: Object.fromEntries(this.entries),
+        lastDecayTime: this.lastDecayTime
+      };
+      await this.storage.save(data);
+    } catch (error) {
+      this.logger.warn('Failed to save reputation data', { error });
     }
   }
 
@@ -247,6 +276,12 @@ export class ReputationManager implements Disposable {
         entry.lastUpdated = Date.now();
       }
     }
+    
+    // P1-2 修复：更新衰减时间并保存
+    this.lastDecayTime = Date.now();
+    this.savePersistedData().catch(err => {
+      this.logger.warn('Failed to save after decay', { err });
+    });
     
     this.logger.debug('Applied reputation decay', { 
       decayRate: this.config.decayRate,
@@ -352,6 +387,11 @@ export class ReputationManager implements Disposable {
       entry.history = entry.history.slice(-this.config.maxHistory);
     }
 
+    // P1-2 修复：保存数据
+    this.savePersistedData().catch(err => {
+      this.logger.warn('Failed to save after recordSuccess', { err });
+    });
+
     this.logger.info('Reputation updated', {
       peerId: peerId.slice(0, 16),
       delta,
@@ -388,6 +428,11 @@ export class ReputationManager implements Disposable {
     if (entry.history.length > this.config.maxHistory) {
       entry.history = entry.history.slice(-this.config.maxHistory);
     }
+
+    // P1-2 修复：保存数据
+    this.savePersistedData().catch(err => {
+      this.logger.warn('Failed to save after recordFailure', { err });
+    });
 
     this.logger.warn('Reputation decreased', {
       peerId: peerId.slice(0, 16),
@@ -426,6 +471,11 @@ export class ReputationManager implements Disposable {
       entry.history = entry.history.slice(-this.config.maxHistory);
     }
 
+    // P1-2 修复：保存数据
+    this.savePersistedData().catch(err => {
+      this.logger.warn('Failed to save after recordRejection', { err });
+    });
+
     this.logger.info('Reputation updated (rejection)', {
       peerId: peerId.slice(0, 16),
       delta,
@@ -456,6 +506,11 @@ export class ReputationManager implements Disposable {
     if (entry.history.length > this.config.maxHistory) {
       entry.history = entry.history.slice(-this.config.maxHistory);
     }
+
+    // P1-2 修复：保存数据
+    this.savePersistedData().catch(err => {
+      this.logger.warn('Failed to save after recordReviewReward', { err });
+    });
 
     this.logger.info('Review reward', {
       peerId: peerId.slice(0, 16),
@@ -489,6 +544,11 @@ export class ReputationManager implements Disposable {
     if (entry.history.length > this.config.maxHistory) {
       entry.history = entry.history.slice(-this.config.maxHistory);
     }
+
+    // P1-2 修复：保存数据
+    this.savePersistedData().catch(err => {
+      this.logger.warn('Failed to save after recordReviewPenalty', { err });
+    });
 
     this.logger.warn('Review penalty', {
       peerId: peerId.slice(0, 16),
@@ -562,6 +622,11 @@ export class ReputationManager implements Disposable {
     if (entry.history.length > this.config.maxHistory) {
       entry.history = entry.history.slice(-this.config.maxHistory);
     }
+
+    // P1-2 修复：保存数据
+    this.savePersistedData().catch(err => {
+      this.logger.warn('Failed to save after setInitialScore', { err });
+    });
 
     this.logger.info('Initial score set', {
       peerId: peerId.slice(0, 16),

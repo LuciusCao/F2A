@@ -281,6 +281,7 @@ export class E2EECrypto implements Disposable {
    * P2-13 修复：提取独立的 IV 生成方法，处理碰撞检测
    * P1-4 修复：添加最多 10 次尝试的循环逻辑
    * P2-2 修复：当 ivSet 不存在时，创建并记录 IV，防止重用
+   * P2-1 修复：确保 ivSet 非空断言正确
    * @param peerId 对等方标识
    * @returns 唯一的 IV，如果无法生成则抛出错误
    */
@@ -299,31 +300,33 @@ export class E2EECrypto implements Disposable {
         return iv;
       }
       
+      // P2-1 修复：在此处 ivSet 已确保非空（通过上面的 guard）
+      const ivSetNonNull = ivSet; // TypeScript 类型收窄
       const ivBase64 = iv.toString('base64');
-      if (!ivSet.has(ivBase64)) {
+      if (!ivSetNonNull.has(ivBase64)) {
         // IV 唯一，记录并返回
-        ivSet.add(ivBase64);
+        ivSetNonNull.add(ivBase64);
         
         // P2-10 修复：清理过期的 IV 记录，防止内存泄漏
         // P1-5 修复：改进清理逻辑，避免 IV 重用风险
-        if (ivSet.size > E2EECrypto.IV_REUSE_WARN_THRESHOLD) {
+        if (ivSetNonNull.size > E2EECrypto.IV_REUSE_WARN_THRESHOLD) {
           this.logger.warn('IV usage count exceeded threshold, performing safe cleanup', {
             peerId: peerId.slice(0, 16),
-            count: ivSet.size
+            count: ivSetNonNull.size
           });
           // P1-5 修复：保留最近的 IV 记录，但记录已清理的 IV 数量
           // 由于 IV 是 128 位随机数，碰撞概率极低（2^-128）
           // 安全的做法是保留最近的 IV，防止在短时间内重用
-          const entries = Array.from(ivSet);
+          const entries = Array.from(ivSetNonNull);
           const keepCount = Math.floor(E2EECrypto.IV_REUSE_WARN_THRESHOLD / 2);
           // 保留最近的 IV（最新的在数组末尾）
           const toKeep = entries.slice(-keepCount);
-          ivSet.clear();
-          toKeep.forEach(e => ivSet.add(e));
+          ivSetNonNull.clear();
+          toKeep.forEach(e => ivSetNonNull.add(e));
           this.logger.info('IV cleanup completed', {
             peerId: peerId.slice(0, 16),
             removed: entries.length - keepCount,
-            remaining: ivSet.size
+            remaining: ivSetNonNull.size
           });
         }
         

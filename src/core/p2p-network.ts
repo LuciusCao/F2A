@@ -1412,6 +1412,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
   /**
    * 连接引导节点
+   * 支持指纹验证，防止中间人攻击
    */
   private async connectToBootstrapPeers(peers: string[]): Promise<void> {
     if (!this.node) return;
@@ -1419,10 +1420,53 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     for (const addr of peers) {
       try {
         const ma = multiaddr(addr);
-        await this.node.dial(ma);
-        this.logger.info('Connected to bootstrap', { addr });
+        
+        // 连接引导节点
+        const conn = await this.node.dial(ma);
+        const remotePeerId = conn.remotePeer.toString();
+        
+        // 指纹验证
+        const expectedFingerprint = this.config.bootstrapPeerFingerprints?.[addr] 
+          || this.config.bootstrapPeerFingerprints?.[remotePeerId];
+        
+        if (expectedFingerprint && remotePeerId !== expectedFingerprint) {
+          // 指纹不匹配，记录错误并断开连接
+          this.logger.error('Bootstrap peer fingerprint mismatch', {
+            addr,
+            expected: expectedFingerprint,
+            actual: remotePeerId
+          });
+          
+          // 断开连接
+          try {
+            await this.node.hangUp(ma);
+          } catch (hangUpError) {
+            this.logger.warn('Failed to hang up after fingerprint mismatch', {
+              addr,
+              error: hangUpError instanceof Error ? hangUpError.message : String(hangUpError)
+            });
+          }
+          continue;
+        }
+        
+        if (!expectedFingerprint) {
+          // 未配置指纹，记录警告但不阻止连接
+          this.logger.warn('Bootstrap peer connected without fingerprint verification', {
+            addr,
+            peerId: remotePeerId
+          });
+        } else {
+          // 指纹验证成功
+          this.logger.info('Bootstrap peer verified', { 
+            addr, 
+            peerId: remotePeerId 
+          });
+        }
       } catch (error) {
-        this.logger.warn('Failed to connect to bootstrap', { addr });
+        this.logger.warn('Failed to connect to bootstrap', { 
+          addr,
+          error: error instanceof Error ? error.message : String(error)
+        });
       }
     }
   }

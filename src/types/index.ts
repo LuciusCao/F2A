@@ -68,6 +68,8 @@ export interface P2PNetworkConfig {
   listenAddresses?: string[];
   /** 引导节点列表 */
   bootstrapPeers?: string[];
+  /** 引导节点指纹映射 - key为multiaddr或peerId，value为预期的PeerID */
+  bootstrapPeerFingerprints?: Record<string, string>;
   /** 信任的 Peer 白名单（不会被清理） */
   trustedPeers?: string[];
   /** 是否启用 MDNS 本地发现 */

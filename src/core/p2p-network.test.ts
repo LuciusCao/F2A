@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { P2PNetwork } from './p2p-network.js';
 import { AgentInfo } from '../types/index.js';
+import { multiaddr } from '@multiformats/multiaddr';
 
 /**
  * AsyncLock 单元测试
@@ -567,6 +568,230 @@ describe('P2PNetwork', () => {
 
       const peers = (network as any).peerTable;
       expect(peers.size).toBeLessThanOrEqual(maxCount);
+    });
+  });
+
+  describe('引导节点指纹验证', () => {
+    it('应该验证正确的指纹并记录成功', async () => {
+      const expectedPeerId = '12D3KooWValidFingerprint';
+      const bootstrapAddr = `/ip4/127.0.0.1/tcp/9001/p2p/${expectedPeerId}`;
+      
+      const network = new P2PNetwork(mockAgentInfo, {
+        bootstrapPeers: [bootstrapAddr],
+        bootstrapPeerFingerprints: {
+          [bootstrapAddr]: expectedPeerId
+        }
+      });
+
+      // Mock node
+      const mockNode = {
+        dial: vi.fn().mockResolvedValue({
+          remotePeer: {
+            toString: () => expectedPeerId
+          }
+        }),
+        hangUp: vi.fn().mockResolvedValue(undefined)
+      };
+      (network as any).node = mockNode;
+
+      const infoSpy = vi.spyOn((network as any).logger, 'info');
+      const warnSpy = vi.spyOn((network as any).logger, 'warn');
+      const errorSpy = vi.spyOn((network as any).logger, 'error');
+
+      await (network as any).connectToBootstrapPeers([bootstrapAddr]);
+
+      // 验证连接成功
+      expect(mockNode.dial).toHaveBeenCalled();
+      // 验证没有断开连接
+      expect(mockNode.hangUp).not.toHaveBeenCalled();
+      // 验证记录了成功日志
+      expect(infoSpy).toHaveBeenCalledWith('Bootstrap peer verified', {
+        addr: bootstrapAddr,
+        peerId: expectedPeerId
+      });
+      // 验证没有错误或警告
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+
+    it('应该拒绝错误指纹并断开连接', async () => {
+      const expectedPeerId = '12D3KooWExpectedPeerId';
+      const actualPeerId = '12D3KooWActualPeerId'; // 不同的 PeerID
+      const bootstrapAddr = `/ip4/127.0.0.1/tcp/9001/p2p/${expectedPeerId}`;
+      
+      const network = new P2PNetwork(mockAgentInfo, {
+        bootstrapPeers: [bootstrapAddr],
+        bootstrapPeerFingerprints: {
+          [bootstrapAddr]: expectedPeerId
+        }
+      });
+
+      // Mock node - 返回不同的 PeerID
+      const mockNode = {
+        dial: vi.fn().mockResolvedValue({
+          remotePeer: {
+            toString: () => actualPeerId
+          }
+        }),
+        hangUp: vi.fn().mockResolvedValue(undefined)
+      };
+      (network as any).node = mockNode;
+
+      const errorSpy = vi.spyOn((network as any).logger, 'error');
+      const infoSpy = vi.spyOn((network as any).logger, 'info');
+
+      await (network as any).connectToBootstrapPeers([bootstrapAddr]);
+
+      // 验证记录了错误日志
+      expect(errorSpy).toHaveBeenCalledWith('Bootstrap peer fingerprint mismatch', {
+        addr: bootstrapAddr,
+        expected: expectedPeerId,
+        actual: actualPeerId
+      });
+      // 验证断开了连接
+      expect(mockNode.hangUp).toHaveBeenCalled();
+      // 验证没有记录成功日志
+      expect(infoSpy).not.toHaveBeenCalledWith('Bootstrap peer verified', expect.anything());
+    });
+
+    it('应该在缺失指纹时记录警告但允许连接', async () => {
+      const peerId = '12D3KooWNoFingerprint';
+      const bootstrapAddr = `/ip4/127.0.0.1/tcp/9001/p2p/${peerId}`;
+      
+      const network = new P2PNetwork(mockAgentInfo, {
+        bootstrapPeers: [bootstrapAddr]
+        // 没有 bootstrapPeerFingerprints
+      });
+
+      // Mock node
+      const mockNode = {
+        dial: vi.fn().mockResolvedValue({
+          remotePeer: {
+            toString: () => peerId
+          }
+        }),
+        hangUp: vi.fn().mockResolvedValue(undefined)
+      };
+      (network as any).node = mockNode;
+
+      const warnSpy = vi.spyOn((network as any).logger, 'warn');
+      const errorSpy = vi.spyOn((network as any).logger, 'error');
+
+      await (network as any).connectToBootstrapPeers([bootstrapAddr]);
+
+      // 验证记录了警告日志
+      expect(warnSpy).toHaveBeenCalledWith('Bootstrap peer connected without fingerprint verification', {
+        addr: bootstrapAddr,
+        peerId: peerId
+      });
+      // 验证没有断开连接
+      expect(mockNode.hangUp).not.toHaveBeenCalled();
+      // 验证没有错误
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+
+    it('应该支持通过 PeerID 查找指纹', async () => {
+      const peerId = '12D3KooWPeerIdLookup';
+      const bootstrapAddr = `/ip4/127.0.0.1/tcp/9001/p2p/${peerId}`;
+      
+      const network = new P2PNetwork(mockAgentInfo, {
+        bootstrapPeers: [bootstrapAddr],
+        bootstrapPeerFingerprints: {
+          [peerId]: peerId  // 使用 PeerID 作为 key
+        }
+      });
+
+      // Mock node
+      const mockNode = {
+        dial: vi.fn().mockResolvedValue({
+          remotePeer: {
+            toString: () => peerId
+          }
+        }),
+        hangUp: vi.fn().mockResolvedValue(undefined)
+      };
+      (network as any).node = mockNode;
+
+      const infoSpy = vi.spyOn((network as any).logger, 'info');
+
+      await (network as any).connectToBootstrapPeers([bootstrapAddr]);
+
+      // 验证指纹验证成功（通过 PeerID 查找）
+      expect(infoSpy).toHaveBeenCalledWith('Bootstrap peer verified', {
+        addr: bootstrapAddr,
+        peerId: peerId
+      });
+    });
+
+    it('应该处理多个引导节点的部分指纹验证', async () => {
+      const verifiedPeerId = '12D3KooWVerified';
+      const unverifiedPeerId = '12D3KooWUnverified';
+      
+      const verifiedAddr = `/ip4/127.0.0.1/tcp/9001/p2p/${verifiedPeerId}`;
+      const unverifiedAddr = `/ip4/127.0.0.1/tcp/9002/p2p/${unverifiedPeerId}`;
+      
+      const network = new P2PNetwork(mockAgentInfo, {
+        bootstrapPeers: [verifiedAddr, unverifiedAddr],
+        bootstrapPeerFingerprints: {
+          [verifiedAddr]: verifiedPeerId  // 只验证第一个
+        }
+      });
+
+      // Mock node
+      const mockNode = {
+        dial: vi.fn()
+          .mockResolvedValueOnce({
+            remotePeer: { toString: () => verifiedPeerId }
+          })
+          .mockResolvedValueOnce({
+            remotePeer: { toString: () => unverifiedPeerId }
+          }),
+        hangUp: vi.fn().mockResolvedValue(undefined)
+      };
+      (network as any).node = mockNode;
+
+      const infoSpy = vi.spyOn((network as any).logger, 'info');
+      const warnSpy = vi.spyOn((network as any).logger, 'warn');
+
+      await (network as any).connectToBootstrapPeers([verifiedAddr, unverifiedAddr]);
+
+      // 验证第一个节点验证成功
+      expect(infoSpy).toHaveBeenCalledWith('Bootstrap peer verified', {
+        addr: verifiedAddr,
+        peerId: verifiedPeerId
+      });
+      // 验证第二个节点有警告（未配置指纹）
+      expect(warnSpy).toHaveBeenCalledWith('Bootstrap peer connected without fingerprint verification', {
+        addr: unverifiedAddr,
+        peerId: unverifiedPeerId
+      });
+    });
+
+    it('应该处理连接失败的情况', async () => {
+      const bootstrapAddr = '/ip4/127.0.0.1/tcp/9001/p2p/12D3KooWFailed';
+      
+      const network = new P2PNetwork(mockAgentInfo, {
+        bootstrapPeers: [bootstrapAddr],
+        bootstrapPeerFingerprints: {
+          [bootstrapAddr]: '12D3KooWFailed'
+        }
+      });
+
+      // Mock node - 连接失败
+      const mockNode = {
+        dial: vi.fn().mockRejectedValue(new Error('Connection refused')),
+        hangUp: vi.fn().mockResolvedValue(undefined)
+      };
+      (network as any).node = mockNode;
+
+      const warnSpy = vi.spyOn((network as any).logger, 'warn');
+
+      await (network as any).connectToBootstrapPeers([bootstrapAddr]);
+
+      // 验证记录了警告日志
+      expect(warnSpy).toHaveBeenCalledWith('Failed to connect to bootstrap', {
+        addr: bootstrapAddr,
+        error: 'Connection refused'
+      });
     });
   });
 });

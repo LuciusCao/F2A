@@ -133,6 +133,8 @@ const RequiredConfigSchema = z.object({
       (peers) => peers.every((peer) => validateMultiaddr(peer).valid),
       { message: 'Invalid bootstrap peer format. Expected multiaddr: /ip4|ip6|dns*/<host>/p2p/<peer-id>' }
     ),
+    /** 引导节点指纹映射 - key为multiaddr，value为预期的PeerID */
+    bootstrapPeerFingerprints: z.record(z.string(), z.string()).optional(),
   }),
   /** 是否自动启动 */
   autoStart: z.boolean().default(false),
@@ -225,6 +227,7 @@ export function getDefaultConfig(): F2AConfig {
     agentName: 'my-agent',
     network: {
       bootstrapPeers: [],
+      bootstrapPeerFingerprints: {},
     },
     autoStart: false,
     controlPort: 9001,

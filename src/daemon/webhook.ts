@@ -41,6 +41,8 @@ function isIPv6Format(hostname: string): boolean {
 /**
  * P2-2 修复：检查 IPv4 地址是否为私有地址
  * 拆分为独立函数以提高可读性
+ * P2-7 修复：添加 CGNAT 地址检测 (100.64.0.0/10)
+ * P2-10 修复：添加文档/测试网络地址检测
  */
 function isPrivateIPv4(octets: number[]): boolean {
   // 127.x.x.x (loopback)
@@ -61,12 +63,103 @@ function isPrivateIPv4(octets: number[]): boolean {
   // 0.0.0.0 (all interfaces)
   if (octets[0] === 0 && octets[1] === 0 && octets[2] === 0 && octets[3] === 0) return true;
   
+  // P2-7 修复：100.64.0.0/10 (CGNAT - RFC 6598)
+  // 运营商级 NAT 地址，不应从公网访问
+  if (octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127) return true;
+  
+  // P2-10 修复：文档/测试网络地址
+  // 192.0.2.0/24 (TEST-NET-1 - RFC 5737)
+  if (octets[0] === 192 && octets[1] === 0 && octets[2] === 2) return true;
+  // 198.51.100.0/24 (TEST-NET-2 - RFC 5737)
+  if (octets[0] === 198 && octets[1] === 51 && octets[2] === 100) return true;
+  // 203.0.113.0/24 (TEST-NET-3 - RFC 5737)
+  if (octets[0] === 203 && octets[1] === 0 && octets[2] === 113) return true;
+  
+  // P2-10 修复：192.0.0.0/24 (IETF Protocol Assignments - RFC 6890)
+  if (octets[0] === 192 && octets[1] === 0 && octets[2] === 0) return true;
+  
   return false;
 }
 
 /**
- * P2-2 修复：检查 IPv6 地址是否为私有地址
- * 拆分为独立函数以提高可读性
+ * P2-8 修复：解析 IPv4 映射的 IPv6 地址 (::ffff:x.x.x.x)
+ * @returns IPv4 八位组数组，如果不是 IPv4 映射地址则返回 null
+ */
+function parseIPv4MappedIPv6(hostname: string): number[] | null {
+  const lower = hostname.toLowerCase();
+  // IPv4-mapped IPv6: ::ffff:x.x.x.x 或 0:0:0:0:0:ffff:x.x.x.x
+  const mappedMatch = lower.match(/^(?:0:){0,5}:ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (mappedMatch) {
+    return [
+      parseInt(mappedMatch[1], 10),
+      parseInt(mappedMatch[2], 10),
+      parseInt(mappedMatch[3], 10),
+      parseInt(mappedMatch[4], 10)
+    ];
+  }
+  return null;
+}
+
+/**
+ * P2-9 修复：解析 IPv4 兼容的 IPv6 地址 (::xxxx:xxxx 或 ::x.x.x.x)
+ * @returns IPv4 八位组数组，如果不是 IPv4 兼容地址则返回 null
+ */
+function parseIPv4CompatibleIPv6(hostname: string): number[] | null {
+  const lower = hostname.toLowerCase();
+  // IPv4-compatible IPv6: ::x.x.x.x (已弃用但仍需检测)
+  const compatMatch = lower.match(/^(?:0:){0,6}(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (compatMatch) {
+    return [
+      parseInt(compatMatch[1], 10),
+      parseInt(compatMatch[2], 10),
+      parseInt(compatMatch[3], 10),
+      parseInt(compatMatch[4], 10)
+    ];
+  }
+  
+  // IPv4-compatible IPv6: ::xxxx:xxxx 格式 (如 ::7f00:1 表示 127.0.0.1)
+  const hexMatch = lower.match(/^(?:0:){0,6}([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (hexMatch) {
+    const high = hexMatch[1].padStart(4, '0');
+    const low = hexMatch[2].padStart(4, '0');
+    return [
+      parseInt(high.slice(0, 2), 16),
+      parseInt(high.slice(2, 4), 16),
+      parseInt(low.slice(0, 2), 16),
+      parseInt(low.slice(2, 4), 16)
+    ];
+  }
+  
+  return null;
+}
+
+/**
+ * P2-11 修复：检查 NAT64 地址 (64:ff9b::/96)
+ */
+function isNAT64Address(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  // NAT64: 64:ff9b::/96 (RFC 6146)
+  if (lower.startsWith('64:ff9b:')) return true;
+  // 也检查完整格式
+  if (lower.match(/^64:ff9b:(?:0:){0,5}/)) return true;
+  return false;
+}
+
+/**
+ * P2-11 修复：检查 Teredo 地址 (2001::/32)
+ */
+function isTeredoAddress(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  // Teredo: 2001::/32 (RFC 4380)
+  if (lower.startsWith('2001:') && lower.split(':')[1] === '') return true;
+  // 检查 2001:0000: 格式
+  if (lower.match(/^2001:0{0,4}:/)) return true;
+  return false;
+}
+
+/**
+ * P2-12 修复：重构后的 IPv6 私有地址检测
+ * 拆分为多个子函数以提高可读性
  */
 function isPrivateIPv6(hostname: string): boolean {
   const lowerHostname = hostname.toLowerCase();
@@ -76,6 +169,24 @@ function isPrivateIPv6(hostname: string): boolean {
   
   // ::1 (loopback)
   if (lowerHostname === '::1' || lowerHostname === '0:0:0:0:0:0:0:1') return true;
+  
+  // P2-8 修复：检查 IPv4 映射的 IPv6 地址 (::ffff:x.x.x.x)
+  const mappedIPv4 = parseIPv4MappedIPv6(lowerHostname);
+  if (mappedIPv4) {
+    return isPrivateIPv4(mappedIPv4);
+  }
+  
+  // P2-9 修复：检查 IPv4 兼容的 IPv6 地址 (::xxxx:xxxx)
+  const compatibleIPv4 = parseIPv4CompatibleIPv6(lowerHostname);
+  if (compatibleIPv4) {
+    return isPrivateIPv4(compatibleIPv4);
+  }
+  
+  // P2-11 修复：检查 NAT64 地址 (64:ff9b::/96)
+  if (isNAT64Address(lowerHostname)) return true;
+  
+  // P2-11 修复：检查 Teredo 地址 (2001::/32)
+  if (isTeredoAddress(lowerHostname)) return true;
   
   // P2-2 修复：只对纯 IPv6 格式的地址检查 fc/fd 前缀
   // 避免误拦截 fc2.com 等合法域名

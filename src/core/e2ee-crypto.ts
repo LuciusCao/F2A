@@ -4,7 +4,7 @@
  */
 
 import { x25519 } from '@noble/curves/ed25519.js';
-import { randomBytes, createCipheriv, createDecipheriv, createHmac, hkdfSync } from 'crypto';
+import { randomBytes, createCipheriv, createDecipheriv, createHmac, hkdfSync, timingSafeEqual } from 'crypto';
 import { Logger } from '../utils/logger.js';
 
 // AES-256-GCM 参数
@@ -278,6 +278,54 @@ export class E2EECrypto implements Disposable {
   }
 
   /**
+   * P2-13 修复：提取独立的 IV 生成方法，处理碰撞检测
+   * P1-4 修复：添加最多 10 次尝试的循环逻辑
+   * @param peerId 对等方标识
+   * @returns 唯一的 IV，如果无法生成则抛出错误
+   */
+  private generateUniqueIV(peerId: string): Buffer {
+    const ivSet = this.usedIVs.get(peerId);
+    const maxAttempts = 10;
+    
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const iv = randomBytes(AES_IV_SIZE);
+      
+      if (!ivSet) {
+        // 没有 IV 记录集，直接返回
+        return iv;
+      }
+      
+      const ivBase64 = iv.toString('base64');
+      if (!ivSet.has(ivBase64)) {
+        // IV 唯一，返回
+        ivSet.add(ivBase64);
+        
+        // P2-10 修复：清理过期的 IV 记录，防止内存泄漏
+        if (ivSet.size > E2EECrypto.IV_REUSE_WARN_THRESHOLD) {
+          this.logger.warn('IV usage count exceeded threshold, clearing old records', {
+            peerId: peerId.slice(0, 16),
+            count: ivSet.size
+          });
+          // 保留最近的一半记录
+          const entries = Array.from(ivSet);
+          ivSet.clear();
+          entries.slice(-Math.floor(E2EECrypto.IV_REUSE_WARN_THRESHOLD / 2)).forEach(e => ivSet.add(e));
+        }
+        
+        return iv;
+      }
+      
+      // IV 碰撞，重试
+      if (attempt === 0) {
+        this.logger.warn('IV collision detected, regenerating', { peerId: peerId.slice(0, 16) });
+      }
+    }
+    
+    // P2-17 修复：达到 maxAttempts 时抛出错误，让调用方正确处理
+    throw new Error(`Failed to generate unique IV after ${maxAttempts} attempts. This is extremely unlikely and may indicate a cryptographic issue.`);
+  }
+
+  /**
    * 加密消息
    */
   encrypt(peerId: string, plaintext: string, aad?: string): EncryptedMessage | null {
@@ -299,60 +347,9 @@ export class E2EECrypto implements Disposable {
       // 从共享密钥派生 AES 密钥
       const aesKey = this.deriveAESKey(sharedSecret, salt);
 
-      // 生成随机 IV
-      const iv = randomBytes(AES_IV_SIZE);
-      
-      // P2-10 修复：检查 IV 唯一性，防止 IV 重用攻击
-      const ivBase64 = iv.toString('base64');
-      const ivSet = this.usedIVs.get(peerId);
-      
-      if (ivSet) {
-        // 检测 IV 重用（极低概率事件，但安全起见）
-        if (ivSet.has(ivBase64)) {
-          this.logger.warn('IV collision detected, regenerating', { peerId: peerId.slice(0, 16) });
-          // 生成新的 IV（碰撞概率约 2^-128，几乎不可能）
-          const newIv = randomBytes(AES_IV_SIZE);
-          ivSet.add(newIv.toString('base64'));
-          
-          // 创建加密器
-          const cipher = createCipheriv('aes-256-gcm', aesKey, newIv);
-
-          // 添加 AAD (如果有)
-          if (aad) {
-            cipher.setAAD(Buffer.from(aad, 'utf-8'));
-          }
-
-          // 加密
-          let ciphertext = cipher.update(plaintext, 'utf-8', 'base64');
-          ciphertext += cipher.final('base64');
-
-          // 获取认证标签
-          const authTag = cipher.getAuthTag();
-
-          return {
-            senderPublicKey: this.getPublicKey()!,
-            iv: newIv.toString('base64'),
-            authTag: authTag.toString('base64'),
-            ciphertext,
-            aad,
-            salt: salt.toString('base64')
-          };
-        }
-        
-        ivSet.add(ivBase64);
-        
-        // P2-10 修复：清理过期的 IV 记录，防止内存泄漏
-        if (ivSet.size > E2EECrypto.IV_REUSE_WARN_THRESHOLD) {
-          this.logger.warn('IV usage count exceeded threshold, clearing old records', {
-            peerId: peerId.slice(0, 16),
-            count: ivSet.size
-          });
-          // 保留最近的一半记录
-          const entries = Array.from(ivSet);
-          ivSet.clear();
-          entries.slice(-Math.floor(E2EECrypto.IV_REUSE_WARN_THRESHOLD / 2)).forEach(e => ivSet.add(e));
-        }
-      }
+      // P2-13 修复：使用独立的 IV 生成方法
+      // P1-4 修复：包含循环尝试逻辑
+      const iv = this.generateUniqueIV(peerId);
 
       // 创建加密器
       const cipher = createCipheriv('aes-256-gcm', aesKey, iv);
@@ -378,7 +375,7 @@ export class E2EECrypto implements Disposable {
         salt: salt.toString('base64')
       };
     } catch (error) {
-      this.logger.error('Encryption failed', { error });
+      this.logger.error('Encryption failed', { error: error instanceof Error ? error.message : String(error) });
       return null;
     }
   }
@@ -520,18 +517,20 @@ export class E2EECrypto implements Disposable {
 
     // 生成随机挑战
     const challenge = randomBytes(32).toString('base64');
+    const timestamp = Date.now();
+    const random = randomBytes(8).toString('hex');
     
-    // 存储挑战以便后续验证
-    const challengeKey = `challenge:${peerId}`;
+    // P1-3 修复：使用包含 timestamp 和 random 的键名格式，避免并发冲突
+    const challengeKey = `challenge:${peerId}:${timestamp}:${random}`;
     this.pendingChallenges.set(challengeKey, {
       challenge,
-      timestamp: Date.now()
+      timestamp
     });
 
     return {
       challenge,
       senderId: Buffer.from(this.keyPair.publicKey).toString('base64').slice(0, 16),
-      timestamp: Date.now()
+      timestamp
     };
   }
 
@@ -558,15 +557,20 @@ export class E2EECrypto implements Disposable {
     }
 
     // 验证时间戳防止重放攻击（5分钟有效期）
-    // P1-3 修复：拒绝未来时间戳，只允许过去的时间戳
+    // P1-6 修复：拒绝未来时间戳，只允许过去的时间戳
     // R2-3 说明：5分钟 tolerance 对于分布式系统是合理的，考虑：
     // - 时钟同步偏差（NTP 通常 < 100ms，极端情况可达秒级）
     // - 消息传输延迟（跨区域可达秒级）
     // - 系统处理延迟
     const now = Date.now();
     const maxAge = 5 * 60 * 1000; // 5 分钟
-    if (challenge.timestamp > now + maxAge || challenge.timestamp < now - maxAge) {
-      this.logger.error('Challenge timestamp invalid: future timestamp or expired');
+    // P1-6 修复：拒绝未来时间戳
+    if (challenge.timestamp > now + maxAge) {
+      this.logger.error('Challenge timestamp is in the future');
+      return null;
+    }
+    if (challenge.timestamp < now - maxAge) {
+      this.logger.error('Challenge timestamp expired');
       return null;
     }
 
@@ -579,20 +583,60 @@ export class E2EECrypto implements Disposable {
 
     // 生成反向挑战
     const counterChallenge = randomBytes(32).toString('base64');
+    const timestamp = Date.now();
+    const random = randomBytes(8).toString('hex');
     
-    // 存储反向挑战
-    const counterChallengeKey = `counter:${peerId}`;
+    // P1-3 修复：使用包含 timestamp 和 random 的键名格式，避免并发冲突
+    const counterChallengeKey = `counter:${peerId}:${timestamp}:${random}`;
     this.pendingChallenges.set(counterChallengeKey, {
       challenge: counterChallenge,
-      timestamp: now
+      timestamp
     });
 
     return {
       challengeResponse,
       counterChallenge,
       senderId: Buffer.from(this.keyPair.publicKey).toString('base64').slice(0, 16),
-      timestamp: now
+      timestamp
     };
+  }
+
+  /**
+   * P2-14 修复：提取公共的挑战响应验证逻辑
+   * @param peerId 对等方标识
+   * @param response 实际收到的响应
+   * @param expectedChallenge 原始挑战数据
+   * @returns 验证结果
+   */
+  private verifyChallengeResponse(
+    peerId: string,
+    response: string,
+    expectedChallenge: string
+  ): boolean {
+    const sharedSecret = this.sharedSecrets.get(peerId);
+    if (!sharedSecret) {
+      this.logger.error('Cannot verify response: no shared secret for peer', { peerId });
+      return false;
+    }
+
+    // P1-5 修复：使用 HMAC 而非 Hash，防止长度扩展攻击
+    const expectedResponse = createHmac('sha256', sharedSecret)
+      .update(expectedChallenge)
+      .digest('base64');
+
+    // P3-1 修复：使用 timingSafeEqual 防止时序攻击
+    try {
+      const responseBuffer = Buffer.from(response, 'base64');
+      const expectedBuffer = Buffer.from(expectedResponse, 'base64');
+      if (responseBuffer.length !== expectedBuffer.length) {
+        this.logger.error('Challenge response length mismatch', { peerId });
+        return false;
+      }
+      return timingSafeEqual(responseBuffer, expectedBuffer);
+    } catch {
+      // 长度不匹配或其他错误
+      return false;
+    }
   }
 
   /**
@@ -615,21 +659,20 @@ export class E2EECrypto implements Disposable {
     }
 
     // 验证时间戳
-    // P1-3 修复：拒绝未来时间戳，只允许过去的时间戳
     const now = Date.now();
     const maxAge = 5 * 60 * 1000; // 5 分钟
-    if (response.timestamp > now + maxAge || response.timestamp < now - maxAge) {
-      this.logger.error('Response timestamp invalid: future timestamp or expired');
+    // P1-6 修复：拒绝未来时间戳
+    if (response.timestamp > now + maxAge) {
+      this.logger.error('Response timestamp is in the future');
+      return { success: false };
+    }
+    if (response.timestamp < now - maxAge) {
+      this.logger.error('Response timestamp expired');
       return { success: false };
     }
 
-    // 验证挑战响应
-    // P1-5 修复：使用 HMAC 而非 Hash，防止长度扩展攻击
-    const expectedResponse = createHmac('sha256', sharedSecret)
-      .update(originalChallenge)
-      .digest('base64');
-
-    if (response.challengeResponse !== expectedResponse) {
+    // P2-14 修复：使用公共验证方法
+    if (!this.verifyChallengeResponse(peerId, response.challengeResponse, originalChallenge)) {
       this.logger.error('Challenge response verification failed', { peerId });
       return { success: false };
     }
@@ -665,18 +708,8 @@ export class E2EECrypto implements Disposable {
     counterChallengeResponse: string,
     originalCounterChallenge: string
   ): boolean {
-    const sharedSecret = this.sharedSecrets.get(peerId);
-    if (!sharedSecret) {
-      this.logger.error('Cannot verify counter challenge: no shared secret for peer', { peerId });
-      return false;
-    }
-
-    // P1-5 修复：使用 HMAC 而非 Hash
-    const expectedResponse = createHmac('sha256', sharedSecret)
-      .update(originalCounterChallenge)
-      .digest('base64');
-
-    if (counterChallengeResponse !== expectedResponse) {
+    // P2-14 修复：使用公共验证方法
+    if (!this.verifyChallengeResponse(peerId, counterChallengeResponse, originalCounterChallenge)) {
       this.logger.error('Counter challenge response verification failed', { peerId });
       return false;
     }

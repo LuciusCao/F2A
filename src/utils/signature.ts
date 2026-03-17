@@ -25,17 +25,62 @@ export interface SignedMessage {
 }
 
 /**
+ * P1-2 修复：Nonce 记录，用于重放防护
+ */
+interface NonceRecord {
+  timestamp: number;
+}
+
+/**
  * 请求签名验证器
  */
 export class RequestSigner {
   private secretKey: string;
   private timestampTolerance: number;
   private logger: Logger;
+  /** P1-2 修复：已使用的 nonce 缓存，防止重放攻击 */
+  private usedNonces: Map<string, NonceRecord> = new Map();
+  /** P1-2 修复：nonce 清理定时器 */
+  private nonceCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(config: SignatureConfig) {
     this.secretKey = config.secretKey;
     this.timestampTolerance = config.timestampTolerance || 5 * 60 * 1000; // 5 分钟
     this.logger = new Logger({ component: 'RequestSigner' });
+    // P1-2 修复：启动 nonce 清理定时器
+    this.startNonceCleanup();
+  }
+
+  /**
+   * P1-2 修复：启动 nonce 清理定时器
+   */
+  private startNonceCleanup(): void {
+    // 每分钟清理一次过期的 nonce
+    this.nonceCleanupTimer = setInterval(() => {
+      const now = Date.now();
+      const expiryTime = this.timestampTolerance * 2; // 保留两倍容忍时间
+      let cleaned = 0;
+      for (const [nonce, record] of this.usedNonces) {
+        if (now - record.timestamp > expiryTime) {
+          this.usedNonces.delete(nonce);
+          cleaned++;
+        }
+      }
+      if (cleaned > 0) {
+        this.logger.debug('Cleaned expired nonces', { count: cleaned });
+      }
+    }, 60 * 1000);
+  }
+
+  /**
+   * P1-2 修复：停止清理定时器，释放资源
+   */
+  stop(): void {
+    if (this.nonceCleanupTimer) {
+      clearInterval(this.nonceCleanupTimer);
+      this.nonceCleanupTimer = null;
+    }
+    this.usedNonces.clear();
   }
 
   /**
@@ -62,18 +107,37 @@ export class RequestSigner {
    * @returns 验证结果
    */
   verify(message: SignedMessage): { valid: boolean; error?: string } {
-    // 1. 检查时间戳
     const now = Date.now();
-    const timeDiff = Math.abs(now - message.timestamp);
-    if (timeDiff > this.timestampTolerance) {
+    
+    // P1-1 修复：单独拒绝未来时间戳
+    // 未来时间戳可能是时钟不同步或恶意攻击
+    if (message.timestamp > now + this.timestampTolerance) {
+      this.logger.warn('Signature timestamp is in the future', {
+        timestamp: message.timestamp,
+        now,
+        diff: message.timestamp - now
+      });
+      return { valid: false, error: 'Timestamp is in the future' };
+    }
+    
+    // 检查时间戳是否过期
+    if (message.timestamp < now - this.timestampTolerance) {
       this.logger.warn('Signature timestamp expired', {
         timestamp: message.timestamp,
-        diff: timeDiff
+        diff: now - message.timestamp
       });
       return { valid: false, error: 'Timestamp expired' };
     }
 
-    // 2. 验证签名
+    // P1-2 修复：检查 nonce 是否已被使用（重放防护）
+    if (this.usedNonces.has(message.nonce)) {
+      this.logger.warn('Nonce already used, possible replay attack', {
+        nonce: message.nonce.slice(0, 16)
+      });
+      return { valid: false, error: 'Nonce already used' };
+    }
+
+    // 验证签名
     const expectedSignature = this.generateSignature(
       message.payload,
       message.timestamp,
@@ -84,6 +148,9 @@ export class RequestSigner {
       this.logger.warn('Invalid signature');
       return { valid: false, error: 'Invalid signature' };
     }
+
+    // P1-2 修复：记录已使用的 nonce
+    this.usedNonces.set(message.nonce, { timestamp: now });
 
     return { valid: true };
   }

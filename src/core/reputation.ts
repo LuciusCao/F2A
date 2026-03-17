@@ -183,9 +183,11 @@ export class ReputationManager implements Disposable {
   private initError: Error | null = null;
   /** P2-1 修复：降级模式警告标志，防止日志泛滥 */
   private degradedWarned: boolean = false;
-  /** P2-2 修复：重试计数器和退避策略 */
+  /** P2-2 修复：重试计数器（注意：无退避策略，仅计数） */
   private saveRetryCount: number = 0;
   private static readonly MAX_SAVE_RETRIES: number = 3;
+  /** P2-3 修复：保存放弃标志，超过最大重试次数后标记，防止无限重试 */
+  private saveAbandoned: boolean = false;
 
   constructor(config: Partial<ReputationConfig> = {}, storage?: ReputationStorage) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -260,6 +262,7 @@ export class ReputationManager implements Disposable {
   /**
    * P3-1 修复：暴露降级状态
    * 当初始化失败时返回 true，外部可用于监控或告警
+   * @returns {boolean} 如果系统处于降级模式（初始化失败）则返回 true，否则返回 false
    */
   get degraded(): boolean {
     return this.initError !== null;
@@ -295,9 +298,19 @@ export class ReputationManager implements Disposable {
    * P1-2 修复：保存数据到存储
    * P2-1/P2-3 修复：添加并发保护，使用队列确保不丢失更新
    * P2-2 修复：添加重试计数器和最大重试次数限制
+   * 
+   * P1-1 修复说明：重试机制依赖后续操作触发。
+   * 当保存失败时，设置 pendingSave = true，下次调用 savePersistedData() 时会重试。
+   * 这是一种"惰性重试"设计，避免引入定时器复杂性，同时确保数据最终一致性。
    */
   private async savePersistedData(): Promise<void> {
     if (!this.storage) return;
+    
+    // P2-3 修复：如果已放弃保存，跳过（除非是新的保存请求）
+    if (this.saveAbandoned) {
+      this.logger.debug('Save abandoned due to previous failures, skipping');
+      return;
+    }
     
     // P2-1 修复：标记有待保存的更新
     this.pendingSave = true;
@@ -318,8 +331,9 @@ export class ReputationManager implements Disposable {
           lastDecayTime: this.lastDecayTime
         };
         await this.storage.save(data);
-        // P2-2 修复：保存成功后重置重试计数器
+        // P2-2 修复：保存成功后重置重试计数器和放弃标志
         this.saveRetryCount = 0;
+        this.saveAbandoned = false;
       }
     } catch (error) {
       this.logger.warn('Failed to save reputation data', { error });
@@ -327,12 +341,15 @@ export class ReputationManager implements Disposable {
       this.saveRetryCount++;
       if (this.saveRetryCount <= ReputationManager.MAX_SAVE_RETRIES) {
         // P2-2 修复：重新设置 pendingSave 触发重试
+        // P1-1 修复：重试依赖后续操作触发，非自动定时重试
         this.pendingSave = true;
-        this.logger.warn(`Save failed, will retry (attempt ${this.saveRetryCount}/${ReputationManager.MAX_SAVE_RETRIES})`);
+        this.logger.warn(`Save failed, retry pending on next operation (attempt ${this.saveRetryCount}/${ReputationManager.MAX_SAVE_RETRIES})`);
       } else {
-        // P2-2 修复：超过最大重试次数，记录错误并放弃
-        this.logger.error(`Save failed after ${ReputationManager.MAX_SAVE_RETRIES} retries, giving up`, { error });
-        this.saveRetryCount = 0; // 重置以便下次保存时重新开始
+        // P3-1 修复：准确描述尝试次数（初始 + 3 次重试 = 4 次）
+        this.logger.error(`Save failed after ${ReputationManager.MAX_SAVE_RETRIES + 1} attempts, giving up`, { error });
+        // P2-3 修复：设置放弃标志，防止后续无限重试
+        this.saveAbandoned = true;
+        this.saveRetryCount = 0;
       }
     } finally {
       this.saveInProgress = false;

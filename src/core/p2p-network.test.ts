@@ -12,7 +12,8 @@ describe('AsyncLock', () => {
   class TestAsyncLock {
     private locked = false;
     private queue: Array<() => void> = [];
-    private static readonly DEFAULT_TIMEOUT_MS = 30000;
+    /** P0-1 修复：统一使用 10000ms 作为默认超时 */
+    private static readonly DEFAULT_TIMEOUT_MS = 10000;
 
     async acquire(timeoutMs: number = TestAsyncLock.DEFAULT_TIMEOUT_MS): Promise<void> {
       if (!this.locked) {

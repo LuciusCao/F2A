@@ -306,9 +306,13 @@ describe('ChallengeManager', () => {
   });
 
   // R2-5 修复：清理资源，防止内存泄漏
+  // P1-1 修复：ReputationManager 也需要清理
   afterEach(() => {
     if (challengeManager) {
       challengeManager.stop();
+    }
+    if (reputationManager) {
+      reputationManager.stop();
     }
   });
 

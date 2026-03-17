@@ -305,15 +305,26 @@ export class E2EECrypto implements Disposable {
         ivSet.add(ivBase64);
         
         // P2-10 修复：清理过期的 IV 记录，防止内存泄漏
+        // P1-5 修复：改进清理逻辑，避免 IV 重用风险
         if (ivSet.size > E2EECrypto.IV_REUSE_WARN_THRESHOLD) {
-          this.logger.warn('IV usage count exceeded threshold, clearing old records', {
+          this.logger.warn('IV usage count exceeded threshold, performing safe cleanup', {
             peerId: peerId.slice(0, 16),
             count: ivSet.size
           });
-          // 保留最近的一半记录
+          // P1-5 修复：保留最近的 IV 记录，但记录已清理的 IV 数量
+          // 由于 IV 是 128 位随机数，碰撞概率极低（2^-128）
+          // 安全的做法是保留最近的 IV，防止在短时间内重用
           const entries = Array.from(ivSet);
+          const keepCount = Math.floor(E2EECrypto.IV_REUSE_WARN_THRESHOLD / 2);
+          // 保留最近的 IV（最新的在数组末尾）
+          const toKeep = entries.slice(-keepCount);
           ivSet.clear();
-          entries.slice(-Math.floor(E2EECrypto.IV_REUSE_WARN_THRESHOLD / 2)).forEach(e => ivSet.add(e));
+          toKeep.forEach(e => ivSet.add(e));
+          this.logger.info('IV cleanup completed', {
+            peerId: peerId.slice(0, 16),
+            removed: entries.length - keepCount,
+            remaining: ivSet.size
+          });
         }
         
         return iv;

@@ -87,8 +87,10 @@ function isPrivateIPv4(octets: number[]): boolean {
  */
 function parseIPv4MappedIPv6(hostname: string): number[] | null {
   const lower = hostname.toLowerCase();
-  // IPv4-mapped IPv6: ::ffff:x.x.x.x 或 0:0:0:0:0:ffff:x.x.x.x
-  const mappedMatch = lower.match(/^(?:0:){0,5}:ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  
+  // IPv4-mapped IPv6: ::ffff:x.x.x.x (compressed) 或 0:0:0:0:0:ffff:x.x.x.x (full)
+  // 支持压缩格式 ::ffff: 和完整格式 0:0:0:0:0:ffff:
+  const mappedMatch = lower.match(/^(?:(?:0:){0,5}|:):ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (mappedMatch) {
     return [
       parseInt(mappedMatch[1], 10),
@@ -97,6 +99,23 @@ function parseIPv4MappedIPv6(hostname: string): number[] | null {
       parseInt(mappedMatch[4], 10)
     ];
   }
+  
+  // P2-8 修复：URL 解析器会将 ::ffff:127.0.0.1 规范化为 ::ffff:7f00:1
+  // 需要处理这种十六进制格式
+  // 例如 ::ffff:7f00:1 -> 127.0.0.1 (7f=127, 00=0, 01=1)
+  const hexMatch = lower.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (hexMatch) {
+    const part1 = parseInt(hexMatch[1], 16);
+    const part2 = parseInt(hexMatch[2], 16);
+    // 从两个 16 位部分提取 IPv4 八位组
+    return [
+      (part1 >> 8) & 0xff,
+      part1 & 0xff,
+      (part2 >> 8) & 0xff,
+      part2 & 0xff
+    ];
+  }
+  
   return null;
 }
 
@@ -349,12 +368,14 @@ export class WebhookService {
         resolvedIP: address 
       });
     } catch (error) {
-      // P0-1 修复：DNS 解析失败应拒绝请求，而非回退到原始 hostname
-      // 回退会导致 HTTP 客户端重新进行 DNS 解析，可被绕过
+      // P0-3 修复：DNS 解析失败应拒绝请求，而非回退到原始 hostname
+      // P0-3 修复：统一错误消息，不暴露内部网络配置信息
       if (error instanceof Error && error.message.includes('private IP')) {
-        throw error; // 重新抛出私有 IP 错误
+        // 重新抛出私有 IP 错误，但使用通用消息
+        throw new Error('Webhook URL validation failed for security reasons');
       }
-      throw new Error(`DNS resolution failed: ${error instanceof Error ? error.message : String(error)}`);
+      // P0-3 修复：DNS 解析失败使用通用错误消息，不暴露内部细节
+      throw new Error('Failed to resolve webhook URL. Please verify the URL is accessible and try again.');
     }
     
     return new Promise((resolve, reject) => {

@@ -111,7 +111,7 @@ class AsyncLock {
 
   /**
    * 获取锁
-   * @param timeoutMs 超时时间（毫秒），默认 30 秒
+   * @param timeoutMs 超时时间（毫秒），默认 10 秒
    * @throws Error 如果超时未能获取锁
    */
   async acquire(timeoutMs: number = AsyncLock.DEFAULT_TIMEOUT_MS): Promise<void> {

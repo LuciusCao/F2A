@@ -158,14 +158,46 @@ export class ReputationManager implements Disposable {
   private logger: Logger;
   private decayTimer?: NodeJS.Timeout;
   private disposed: boolean = false;
+  /** P1-7 修复：存储接口 */
+  private storage?: ReputationStorage;
+  /** P1-7 修复：上次衰减时间，用于持久化 */
+  private lastDecayTime: number = 0;
 
-  constructor(config: Partial<ReputationConfig> = {}) {
+  constructor(config: Partial<ReputationConfig> = {}, storage?: ReputationStorage) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.logger = new Logger({ component: 'Reputation' });
+    this.storage = storage;
+    
+    // P1-7 修复：初始化时加载持久化的数据
+    this.loadPersistedData();
     
     // 启动衰减定时器
     if (this.config.decayRate > 0) {
       this.startDecayTimer();
+    }
+  }
+
+  /**
+   * P1-7 修复：从存储加载持久化数据
+   */
+  private loadPersistedData(): void {
+    if (!this.storage) return;
+    
+    try {
+      const data = this.storage.load();
+      if (data) {
+        if (data.entries) {
+          for (const [peerId, entry] of Object.entries(data.entries)) {
+            this.entries.set(peerId, entry as ReputationEntry);
+          }
+        }
+        this.lastDecayTime = data.lastDecayTime || 0;
+        this.logger.info('Loaded persisted reputation data', {
+          entriesCount: this.entries.size
+        });
+      }
+    } catch (error) {
+      this.logger.warn('Failed to load persisted reputation data', { error });
     }
   }
 

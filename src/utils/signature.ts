@@ -33,8 +33,9 @@ interface NonceRecord {
 
 /**
  * 请求签名验证器
+ * P2-1 修复：实现 Disposable 接口，防止资源泄漏
  */
-export class RequestSigner {
+export class RequestSigner implements Disposable {
   private secretKey: string;
   private timestampTolerance: number;
   private logger: Logger;
@@ -74,13 +75,29 @@ export class RequestSigner {
 
   /**
    * P1-2 修复：停止清理定时器，释放资源
+   * P3-1 修复：重命名为 dispose() 以符合 Disposable 接口
    */
-  stop(): void {
+  dispose(): void {
     if (this.nonceCleanupTimer) {
       clearInterval(this.nonceCleanupTimer);
       this.nonceCleanupTimer = null;
     }
     this.usedNonces.clear();
+  }
+
+  /**
+   * P3-1 修复：实现 Disposable 接口
+   */
+  [Symbol.dispose](): void {
+    this.dispose();
+  }
+
+  /**
+   * P3-1 修复：保留 stop() 作为 dispose() 的别名，保持向后兼容
+   * @deprecated 使用 dispose() 代替
+   */
+  stop(): void {
+    this.dispose();
   }
 
   /**

@@ -280,24 +280,28 @@ export class E2EECrypto implements Disposable {
   /**
    * P2-13 修复：提取独立的 IV 生成方法，处理碰撞检测
    * P1-4 修复：添加最多 10 次尝试的循环逻辑
+   * P2-2 修复：当 ivSet 不存在时，创建并记录 IV，防止重用
    * @param peerId 对等方标识
    * @returns 唯一的 IV，如果无法生成则抛出错误
    */
   private generateUniqueIV(peerId: string): Buffer {
-    const ivSet = this.usedIVs.get(peerId);
+    let ivSet = this.usedIVs.get(peerId);
     const maxAttempts = 10;
     
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const iv = randomBytes(AES_IV_SIZE);
       
+      // P2-2 修复：如果 ivSet 不存在，创建它并记录 IV
       if (!ivSet) {
-        // 没有 IV 记录集，直接返回
+        ivSet = new Set<string>();
+        this.usedIVs.set(peerId, ivSet);
+        ivSet.add(iv.toString('base64'));
         return iv;
       }
       
       const ivBase64 = iv.toString('base64');
       if (!ivSet.has(ivBase64)) {
-        // IV 唯一，返回
+        // IV 唯一，记录并返回
         ivSet.add(ivBase64);
         
         // P2-10 修复：清理过期的 IV 记录，防止内存泄漏

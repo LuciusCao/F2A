@@ -281,11 +281,34 @@ export class ReputationManager implements Disposable {
    * P1-1 修复：重置保存状态
    * 允许外部在 saveAbandoned 为 true 时手动恢复保存功能
    * 重置后，后续保存操作将重新尝试重试逻辑
+   * 
+   * P3-2 并发安全说明：
+   * - 此方法不是线程安全的，不应在保存操作进行中调用
+   * - 如果 saveInProgress 为 true，调用会被忽略（P1-1 修复）
+   * - 如果 disposed 为 true，调用会被忽略（P2-3 修复）
    */
   resetSaveState(): void {
+    // P2-3 修复：检查 disposed 状态
+    if (this.disposed) {
+      return;
+    }
+    
+    // P1-1 修复：检查保存是否正在进行，避免竞态条件
+    if (this.saveInProgress) {
+      return;
+    }
+    
+    // P2-2 修复：仅在状态实际改变时才记录日志
+    const wasAbandoned = this._saveAbandoned;
+    const hadRetries = this.saveRetryCount > 0;
+    
     this._saveAbandoned = false;
     this.saveRetryCount = 0;
-    this.logger.info('Save state reset, subsequent saves will be attempted');
+    
+    // P2-2 修复：只有在状态确实需要重置时才记录日志
+    if (wasAbandoned || hadRetries) {
+      this.logger.info('Save state reset, subsequent saves will be attempted');
+    }
   }
 
   /**
@@ -322,6 +345,14 @@ export class ReputationManager implements Disposable {
    * P1-1 修复说明：重试机制依赖后续操作触发。
    * 当保存失败时，设置 pendingSave = true，下次调用 savePersistedData() 时会重试。
    * 这是一种"惰性重试"设计，避免引入定时器复杂性，同时确保数据最终一致性。
+   * 
+   * P3-2 并发安全说明：
+   * - 此方法使用 saveInProgress 标志防止并发保存
+   * - 多次并发调用会被序列化，pendingSave 标志确保不会丢失更新
+   * - 调用者不需要加锁，但应了解：
+   *   1. 首次调用会立即开始保存
+   *   2. 后续调用（保存进行中）会设置 pendingSave，等待当前保存完成后重试
+   *   3. 所有更新都会最终被持久化，但可能不是立即的
    */
   private async savePersistedData(): Promise<void> {
     if (!this.storage) return;

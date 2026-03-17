@@ -127,6 +127,14 @@ function showSummary(config: F2AConfig): void {
   console.log(`${color('DHT:', 'cyan')}              ${config.enableDHT ? '启用' : '禁用'}`);
   console.log(`${color('日志级别:', 'cyan')}       ${config.logLevel}`);
   console.log(`${color('引导节点:', 'cyan')}       ${config.network.bootstrapPeers.length > 0 ? config.network.bootstrapPeers.join(', ') : '无'}`);
+  
+  // 显示指纹验证配置
+  const fingerprints = config.network.bootstrapPeerFingerprints || {};
+  const fingerprintCount = Object.keys(fingerprints).length;
+  if (config.network.bootstrapPeers.length > 0) {
+    console.log(`${color('指纹验证:', 'cyan')}       ${fingerprintCount > 0 ? `已配置 ${fingerprintCount} 个节点` : '未配置'}`);
+  }
+  
   console.log('');
   console.log(`${color('配置文件:', 'cyan')}       ${getConfigPath()}`);
   console.log('');
@@ -276,6 +284,7 @@ export async function initConfig(): Promise<void> {
   const configureBootstrap = await confirm(rl, '是否配置引导节点？（用于连接远程网络）', false);
   
   let bootstrapPeers: string[] = existingConfig.network?.bootstrapPeers || [];
+  let bootstrapPeerFingerprints: Record<string, string> = existingConfig.network?.bootstrapPeerFingerprints || {};
   
   if (configureBootstrap) {
     console.log('');
@@ -308,6 +317,38 @@ export async function initConfig(): Promise<void> {
         console.log(color(`  Added ${validPeers.length} valid bootstrap peer(s)`, 'green'));
       }
     }
+    
+    // 配置指纹验证
+    if (bootstrapPeers.length > 0) {
+      console.log('');
+      const configureFingerprints = await confirm(rl, '是否配置引导节点指纹验证？（推荐，防止中间人攻击）', false);
+      
+      if (configureFingerprints) {
+        console.log('');
+        console.log('指纹验证可以防止中间人攻击。');
+        console.log('请输入每个引导节点的预期 PeerID（从引导节点管理员处获取）。');
+        console.log('留空跳过该节点的验证。');
+        console.log('');
+        
+        for (const peer of bootstrapPeers) {
+          // 从 multiaddr 提取默认 PeerID
+          const existingFingerprint = bootstrapPeerFingerprints[peer] || '';
+          const fingerprint = await question(rl, `  ${peer.slice(0, 50)}...`, existingFingerprint);
+          
+          if (fingerprint) {
+            bootstrapPeerFingerprints[peer] = fingerprint;
+          } else {
+            // 用户留空，删除之前可能存在的指纹配置
+            delete bootstrapPeerFingerprints[peer];
+          }
+        }
+        
+        const configuredCount = Object.keys(bootstrapPeerFingerprints).length;
+        if (configuredCount > 0) {
+          console.log(color(`  Configured fingerprints for ${configuredCount} peer(s)`, 'green'));
+        }
+      }
+    }
   }
   
   // ============================================
@@ -317,6 +358,9 @@ export async function initConfig(): Promise<void> {
     agentName,
     network: {
       bootstrapPeers,
+      bootstrapPeerFingerprints: Object.keys(bootstrapPeerFingerprints).length > 0 
+        ? bootstrapPeerFingerprints 
+        : undefined,
     },
     autoStart,
     controlPort: advancedConfig.controlPort,

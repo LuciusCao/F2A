@@ -90,7 +90,8 @@ f2a peers
 {
   "agentName": "my-agent",
   "network": {
-    "bootstrapPeers": []
+    "bootstrapPeers": [],
+    "bootstrapPeerFingerprints": {}
   },
   "autoStart": false
 }
@@ -103,6 +104,13 @@ f2a peers
 | **必需** | agentName, network, autoStart | 必须配置 |
 | **进阶** | controlPort, p2pPort, enableMDNS, enableDHT, logLevel | 可选 |
 | **专家** | security, rateLimit, dataDir | 极少需要 |
+
+**network 配置详解：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `bootstrapPeers` | `string[]` | 引导节点列表（multiaddr 格式） |
+| `bootstrapPeerFingerprints` | `Record<string, string>` | 引导节点指纹映射，key 为 multiaddr，value 为预期 PeerID |
 
 ---
 
@@ -184,7 +192,55 @@ export NODE_ENV=production
 f2a daemon
 ```
 
-### 2.5 验证运行
+### 2.5 引导节点指纹验证
+
+为了防止中间人攻击，F2A 支持引导节点公钥指纹验证。当连接到引导节点时，会验证远程节点的 PeerID 是否与预期一致。
+
+**配置示例：**
+
+```json
+{
+  "agentName": "my-agent",
+  "network": {
+    "bootstrapPeers": [
+      "/ip4/1.2.3.4/tcp/9000/p2p/12D3KooWExample"
+    ],
+    "bootstrapPeerFingerprints": {
+      "/ip4/1.2.3.4/tcp/9000/p2p/12D3KooWExample": "12D3KooWExample"
+    }
+  }
+}
+```
+
+**指纹验证行为：**
+
+| 场景 | 行为 |
+|------|------|
+| 指纹匹配 | 连接成功，记录验证成功日志 |
+| 指纹不匹配 | 断开连接，记录错误日志 |
+| 未配置指纹 | 连接成功，记录警告日志（推荐配置） |
+
+**获取引导节点指纹：**
+
+引导节点的 PeerID 可以从节点管理员处获取，或者通过以下方式查看：
+
+```bash
+# 在引导节点上运行
+f2a status
+
+# 输出示例
+# PeerID: 12D3KooWExample...
+```
+
+**交互式配置：**
+
+运行 `f2a init` 时，配置引导节点后会询问是否配置指纹验证：
+
+```
+? 是否配置引导节点指纹验证？（推荐，防止中间人攻击） (y/N)
+```
+
+### 2.6 验证运行
 
 ```bash
 # 查看节点状态

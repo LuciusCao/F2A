@@ -187,23 +187,30 @@ export class ReputationManager implements Disposable {
     this.logger = new Logger({ component: 'Reputation' });
     this.storage = storage;
     
-    // P1-2/P2-1 修复：保存初始化 Promise，允许外部等待初始化完成
-    this.initPromise = this.loadPersistedData().then(() => {
+    // P1-1 修复：如果没有 storage，同步设置 isReadyFlag = true
+    if (!storage) {
       this.isReadyFlag = true;
-      // P2-2 修复：如果有初始化错误，记录但不阻止启动
-      if (this.initError) {
-        this.logger.warn('ReputationManager initialized with load error, using defaults', { 
-          error: this.initError.message 
-        });
-      } else {
-        this.logger.info('ReputationManager initialized');
-      }
-    }).catch(error => {
-      this.logger.warn('Failed to load persisted data during initialization', { error });
-      // P2-2 修复：记录错误但不抛出，允许使用默认值
-      this.initError = error instanceof Error ? error : new Error(String(error));
-      this.isReadyFlag = true;
-    });
+      this.initPromise = Promise.resolve();
+      this.logger.info('ReputationManager initialized (no storage)');
+    } else {
+      // P1-2/P2-1 修复：保存初始化 Promise，允许外部等待初始化完成
+      this.initPromise = this.loadPersistedData().then(() => {
+        this.isReadyFlag = true;
+        // P2-1 修复：如果有初始化错误，记录但不阻止启动
+        if (this.initError) {
+          this.logger.warn('ReputationManager initialized with load error, using defaults', { 
+            error: this.initError.message 
+          });
+        } else {
+          this.logger.info('ReputationManager initialized');
+        }
+      }).catch(error => {
+        this.logger.warn('Failed to load persisted data during initialization', { error });
+        // P2-1 修复：记录错误但不抛出，允许使用默认值
+        this.initError = error instanceof Error ? error : new Error(String(error));
+        this.isReadyFlag = true;
+      });
+    }
     
     // 启动衰减定时器
     if (this.config.decayRate > 0) {
@@ -212,12 +219,19 @@ export class ReputationManager implements Disposable {
   }
 
   /**
-   * P2-3 修复：检查初始化状态
+   * P2-1/P2-3 修复：检查初始化状态
    * 在关键公共方法开始时调用，确保系统已初始化
+   * 如果存在初始化错误，会记录警告但不会阻止操作（降级模式）
    */
   private checkReady(): void {
     if (!this.isReadyFlag) {
       throw new Error('ReputationManager not initialized. Call ready() and await it before using this method.');
+    }
+    // P2-1 修复：检查初始化错误，警告用户可能处于降级模式
+    if (this.initError) {
+      this.logger.warn('Operating in degraded mode due to initialization error', {
+        error: this.initError.message
+      });
     }
   }
 
@@ -291,6 +305,8 @@ export class ReputationManager implements Disposable {
       }
     } catch (error) {
       this.logger.warn('Failed to save reputation data', { error });
+      // P2-3 修复：保存失败时重新设置 pendingSave 确保后续重试
+      this.pendingSave = true;
     } finally {
       this.saveInProgress = false;
     }
@@ -389,6 +405,9 @@ export class ReputationManager implements Disposable {
    * @returns 节点的信誉条目，包含分数、等级和历史记录
    */
   getReputation(peerId: string): ReputationEntry {
+    // P2-2 修复：检查初始化状态，保持与其他公共方法一致
+    this.checkReady();
+    
     if (!this.entries.has(peerId)) {
       this.entries.set(peerId, this.createInitialEntry(peerId));
     }

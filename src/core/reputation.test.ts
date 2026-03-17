@@ -242,6 +242,25 @@ describe('ReputationManager', () => {
       expect(entry.score).toBeCloseTo(75, 1);
     });
   });
+
+  describe('saveAbandoned 和 resetSaveState', () => {
+    it('should expose saveAbandoned as false initially', () => {
+      expect(manager.saveAbandoned).toBe(false);
+    });
+
+    it('should remain false after successful operations', () => {
+      manager.recordSuccess('peer-1', 'task-1');
+      expect(manager.saveAbandoned).toBe(false);
+      
+      manager.recordFailure('peer-2', 'task-2', 'test');
+      expect(manager.saveAbandoned).toBe(false);
+    });
+
+    it('should reset saveRetryCount when resetSaveState is called', () => {
+      manager.resetSaveState();
+      expect(manager.saveAbandoned).toBe(false);
+    });
+  });
 });
 
 describe('REPUTATION_TIERS', () => {

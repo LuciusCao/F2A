@@ -187,7 +187,7 @@ export class ReputationManager implements Disposable {
   private saveRetryCount: number = 0;
   private static readonly MAX_SAVE_RETRIES: number = 3;
   /** P2-3 修复：保存放弃标志，超过最大重试次数后标记，防止无限重试 */
-  private saveAbandoned: boolean = false;
+  private _saveAbandoned: boolean = false;
 
   constructor(config: Partial<ReputationConfig> = {}, storage?: ReputationStorage) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -269,6 +269,26 @@ export class ReputationManager implements Disposable {
   }
 
   /**
+   * P1-1 修复：暴露保存放弃状态
+   * 当保存重试次数超过最大限制时返回 true，外部可用于监控或手动恢复
+   * @returns {boolean} 如果保存已被放弃则返回 true，否则返回 false
+   */
+  get saveAbandoned(): boolean {
+    return this._saveAbandoned;
+  }
+
+  /**
+   * P1-1 修复：重置保存状态
+   * 允许外部在 saveAbandoned 为 true 时手动恢复保存功能
+   * 重置后，后续保存操作将重新尝试重试逻辑
+   */
+  resetSaveState(): void {
+    this._saveAbandoned = false;
+    this.saveRetryCount = 0;
+    this.logger.info('Save state reset, subsequent saves will be attempted');
+  }
+
+  /**
    * P0-1/P1-1 修复：从存储加载持久化数据（改为 async）
    */
   private async loadPersistedData(): Promise<void> {
@@ -306,9 +326,10 @@ export class ReputationManager implements Disposable {
   private async savePersistedData(): Promise<void> {
     if (!this.storage) return;
     
-    // P2-3 修复：如果已放弃保存，跳过（除非是新的保存请求）
-    if (this.saveAbandoned) {
-      this.logger.debug('Save abandoned due to previous failures, skipping');
+    // P2-3 修复：如果已放弃保存，跳过后续所有保存操作
+    if (this._saveAbandoned) {
+      // P3-1 修复：使用 warn 级别，因为数据正在丢失
+      this.logger.warn('Save abandoned due to previous failures, skipping');
       return;
     }
     
@@ -333,7 +354,7 @@ export class ReputationManager implements Disposable {
         await this.storage.save(data);
         // P2-2 修复：保存成功后重置重试计数器和放弃标志
         this.saveRetryCount = 0;
-        this.saveAbandoned = false;
+        this._saveAbandoned = false;
       }
     } catch (error) {
       this.logger.warn('Failed to save reputation data', { error });
@@ -348,7 +369,7 @@ export class ReputationManager implements Disposable {
         // P3-1 修复：准确描述尝试次数（初始 + 3 次重试 = 4 次）
         this.logger.error(`Save failed after ${ReputationManager.MAX_SAVE_RETRIES + 1} attempts, giving up`, { error });
         // P2-3 修复：设置放弃标志，防止后续无限重试
-        this.saveAbandoned = true;
+        this._saveAbandoned = true;
         this.saveRetryCount = 0;
       }
     } finally {
@@ -359,6 +380,10 @@ export class ReputationManager implements Disposable {
   /**
    * P1-2/P1-3 修复：Fire-and-forget 保存（重命名以明确语义）
    * 用于 stop() 时确保数据保存
+   * 
+   * P2-3 修复设计说明：此方法故意不检查 saveAbandoned 标志。
+   * 原因：stop() 是最后一次保存机会，即使之前保存失败过，
+   * 在停止时也应该尽力保存数据，因为这是系统关闭前的最后机会。
    */
   private savePersistedDataFireAndForget(): void {
     if (!this.storage) return;

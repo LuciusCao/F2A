@@ -775,10 +775,10 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       // 保留 webhookPush 配置（修复：之前丢失导致 webhook 推送被禁用）
       webhookPush: config.webhookPush as { enabled?: boolean; url: string; token: string; timeout?: number } | undefined,
       reputation: {
-        enabled: ((config.reputation as Record<string, unknown>)?.enabled as boolean) ?? true,
-        initialScore: ((config.reputation as Record<string, unknown>)?.initialScore as number) || 50,
-        minScoreForService: ((config.reputation as Record<string, unknown>)?.minScoreForService as number) || 20,
-        decayRate: ((config.reputation as Record<string, unknown>)?.decayRate as number) || 0.01
+        enabled: ((config.reputation as Record<string, unknown>)?.enabled as boolean) ?? INTERNAL_REPUTATION_CONFIG.enabled,
+        initialScore: ((config.reputation as Record<string, unknown>)?.initialScore as number) || INTERNAL_REPUTATION_CONFIG.initialScore,
+        minScoreForService: ((config.reputation as Record<string, unknown>)?.minScoreForService as number) || INTERNAL_REPUTATION_CONFIG.minScoreForService,
+        decayRate: ((config.reputation as Record<string, unknown>)?.decayRate as number) || INTERNAL_REPUTATION_CONFIG.decayRate
       },
       security: {
         requireConfirmation: ((config.security as Record<string, unknown>)?.requireConfirmation as boolean) ?? false,

@@ -18,6 +18,8 @@ export { E2EECrypto, defaultE2EECrypto } from './core/e2ee-crypto.js';
 // 信誉系统 (Phase 1-4)
 export { ReputationManager, REPUTATION_TIERS } from './core/reputation.js';
 export type { 
+  IReputationManager,
+  IReputationEntry,
   ReputationEntry, 
   ReputationEvent, 
   ReputationLevel,

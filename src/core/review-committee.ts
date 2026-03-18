@@ -4,7 +4,7 @@
  */
 
 import { Logger } from '../utils/logger.js';
-import { ReputationManager } from './reputation.js';
+import type { IReputationManager, ReputationEntry } from './reputation.js';
 
 // ============================================================================
 // 类型定义
@@ -99,12 +99,12 @@ const DEFAULT_COMMITTEE_CONFIG: ReviewCommitteeConfig = {
 
 export class ReviewCommittee {
   private config: ReviewCommitteeConfig;
-  private reputationManager: ReputationManager;
+  private reputationManager: IReputationManager;
   private pendingReviews: Map<string, PendingReview> = new Map();
   private logger: Logger;
 
   constructor(
-    reputationManager: ReputationManager,
+    reputationManager: IReputationManager,
     config: Partial<ReviewCommitteeConfig> = {}
   ) {
     this.reputationManager = reputationManager;

@@ -26,7 +26,7 @@ describe('F2AOpenClawAdapter 业务逻辑', () => {
       expect(mergedConfig.dataDir).toBe('./f2a-data');
       expect(mergedConfig.maxQueuedTasks).toBe(100);
       expect(mergedConfig.reputation.enabled).toBe(true);
-      expect(mergedConfig.reputation.initialScore).toBe(50);
+      expect(mergedConfig.reputation.initialScore).toBe(30);
       expect(mergedConfig.security.requireConfirmation).toBe(false);
     });
 
@@ -221,29 +221,29 @@ describe('ReputationSystem 业务逻辑', () => {
 
   describe('信誉计算', () => {
     it('新 peer 应该获得初始信誉分', () => {
-      const config = { enabled: true, initialScore: 50, minScoreForService: 20, decayRate: 0.01 };
+      const config = { enabled: true, initialScore: 30, minScoreForService: 20, decayRate: 0.01 };
       const reputation = new ReputationSystem(config, testDir);
       
       const rep = reputation.getReputation('new-peer');
-      expect(rep.score).toBe(50);
+      expect(rep.score).toBe(30);
       expect(rep.successfulTasks).toBe(0);
       expect(rep.failedTasks).toBe(0);
     });
 
     it('成功任务应该增加信誉分', () => {
-      const config = { enabled: true, initialScore: 50, minScoreForService: 20, decayRate: 0.01 };
+      const config = { enabled: true, initialScore: 30, minScoreForService: 20, decayRate: 0.01 };
       const reputation = new ReputationSystem(config, testDir);
       
       reputation.recordSuccess('peer-1', 'task-1', 100);
       const rep = reputation.getReputation('peer-1');
       
-      expect(rep.score).toBeGreaterThan(50);
+      expect(rep.score).toBeGreaterThan(30);
       expect(rep.successfulTasks).toBe(1);
       expect(rep.avgResponseTime).toBe(100);
     });
 
     it('多次成功任务应该累计', () => {
-      const config = { enabled: true, initialScore: 50, minScoreForService: 20, decayRate: 0.01 };
+      const config = { enabled: true, initialScore: 30, minScoreForService: 20, decayRate: 0.01 };
       const reputation = new ReputationSystem(config, testDir);
       
       reputation.recordSuccess('peer-1', 'task-1', 100);
@@ -256,18 +256,18 @@ describe('ReputationSystem 业务逻辑', () => {
     });
 
     it('失败任务应该降低信誉分', () => {
-      const config = { enabled: true, initialScore: 50, minScoreForService: 20, decayRate: 0.01 };
+      const config = { enabled: true, initialScore: 30, minScoreForService: 20, decayRate: 0.01 };
       const reputation = new ReputationSystem(config, testDir);
       
       reputation.recordFailure('peer-1', 'task-1', 'Error');
       const rep = reputation.getReputation('peer-1');
       
-      expect(rep.score).toBeLessThan(50);
+      expect(rep.score).toBeLessThan(30);
       expect(rep.failedTasks).toBe(1);
     });
 
     it('信誉低于阈值应该被拒绝服务', () => {
-      const config = { enabled: true, initialScore: 50, minScoreForService: 20, decayRate: 0.01 };
+      const config = { enabled: true, initialScore: 30, minScoreForService: 20, decayRate: 0.01 };
       const reputation = new ReputationSystem(config, testDir);
       
       // 多次失败降低信誉
@@ -279,30 +279,30 @@ describe('ReputationSystem 业务逻辑', () => {
     });
 
     it('信誉高于阈值应该被允许服务', () => {
-      const config = { enabled: true, initialScore: 50, minScoreForService: 20, decayRate: 0.01 };
+      const config = { enabled: true, initialScore: 30, minScoreForService: 20, decayRate: 0.01 };
       const reputation = new ReputationSystem(config, testDir);
       
+      // 需要至少 2 次成功才能达到 minScoreForService (50)
+      // 30 + 10 + 10 = 50
       reputation.recordSuccess('good-peer', 'task-1', 100);
+      reputation.recordSuccess('good-peer', 'task-2', 100);
       
       expect(reputation.isAllowed('good-peer')).toBe(true);
     });
 
-    it('禁用信誉系统时应该允许所有 peer', () => {
-      const config = { enabled: false, initialScore: 50, minScoreForService: 20, decayRate: 0.01 };
+    it('信誉系统强制启用，配置中的 enabled 不生效', () => {
+      const config = { enabled: false, initialScore: 30, minScoreForService: 20, decayRate: 0.01 };
       const reputation = new ReputationSystem(config, testDir);
       
-      // 即使多次失败也应该允许
-      for (let i = 0; i < 20; i++) {
-        reputation.recordFailure('any-peer', `task-${i}`, 'Error');
-      }
-      
-      expect(reputation.isAllowed('any-peer')).toBe(true);
+      // INTERNAL_REPUTATION_CONFIG.enabled 强制为 true，所以即使传入 enabled: false 也会检查信誉
+      // 新 peer 分数为 30，低于 minScoreForService (50)，所以不允许
+      expect(reputation.isAllowed('any-peer')).toBe(false);
     });
   });
 
   describe('历史记录', () => {
     it('应该记录成功任务历史', () => {
-      const config = { enabled: true, initialScore: 50, minScoreForService: 20, decayRate: 0.01 };
+      const config = { enabled: true, initialScore: 30, minScoreForService: 20, decayRate: 0.01 };
       const reputation = new ReputationSystem(config, testDir);
       
       reputation.recordSuccess('peer-1', 'task-1', 100);
@@ -314,7 +314,7 @@ describe('ReputationSystem 业务逻辑', () => {
     });
 
     it('应该记录失败任务历史', () => {
-      const config = { enabled: true, initialScore: 50, minScoreForService: 20, decayRate: 0.01 };
+      const config = { enabled: true, initialScore: 30, minScoreForService: 20, decayRate: 0.01 };
       const reputation = new ReputationSystem(config, testDir);
       
       reputation.recordFailure('peer-1', 'task-1', 'Timeout');
@@ -326,7 +326,7 @@ describe('ReputationSystem 业务逻辑', () => {
     });
 
     it('应该限制历史记录数量', () => {
-      const config = { enabled: true, initialScore: 50, minScoreForService: 20, decayRate: 0.01 };
+      const config = { enabled: true, initialScore: 30, minScoreForService: 20, decayRate: 0.01 };
       const reputation = new ReputationSystem(config, testDir);
       
       // 添加超过 100 条记录
@@ -341,7 +341,7 @@ describe('ReputationSystem 业务逻辑', () => {
 
   describe('高信誉节点', () => {
     it('应该返回信誉高于阈值的节点', () => {
-      const config = { enabled: true, initialScore: 50, minScoreForService: 20, decayRate: 0.01 };
+      const config = { enabled: true, initialScore: 30, minScoreForService: 20, decayRate: 0.01 };
       const reputation = new ReputationSystem(config, testDir);
       
       // peer-1: 高信誉
@@ -351,7 +351,7 @@ describe('ReputationSystem 业务逻辑', () => {
       // peer-2: 低信誉
       reputation.recordFailure('peer-2', 'task-1', 'Error');
       
-      const highRepNodes = reputation.getHighReputationNodes(55);
+      const highRepNodes = reputation.getHighReputationNodes(35);
       const peerIds = highRepNodes.map(n => n.peerId);
       
       expect(peerIds).toContain('peer-1');

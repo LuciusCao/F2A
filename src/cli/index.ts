@@ -47,7 +47,14 @@ function getControlToken(): string {
   return '';
 }
 
-const CONTROL_TOKEN = getControlToken();
+// 惰性获取 token，避免模块加载时立即验证（init/config 命令不需要 token）
+let _controlToken: string | undefined;
+function getControlTokenLazy(): string {
+  if (!_controlToken) {
+    _controlToken = getControlToken();
+  }
+  return _controlToken;
+}
 
 interface Args {
   command: string;
@@ -185,7 +192,7 @@ async function sendCommand(action: string, params?: Record<string, unknown>): Pr
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(payload),
-        'X-F2A-Token': CONTROL_TOKEN
+        'X-F2A-Token': getControlTokenLazy()
       }
     };
 

@@ -77,23 +77,24 @@ describe('CLI Index', () => {
   describe('getControlToken', () => {
     it('should use environment variable token', async () => {
       process.env.F2A_CONTROL_TOKEN = 'env-token';
-      
+
       vi.resetModules();
       // Just verify env is set correctly
       expect(process.env.F2A_CONTROL_TOKEN).toBe('env-token');
     });
 
-    it('should read token from file when env not set', async () => {
+    it('should lazily read token from file when env not set', async () => {
       delete process.env.F2A_CONTROL_TOKEN;
-      
+
       mockExistsSync.mockReturnValue(true);
       mockReadFileSync.mockReturnValue('file-token');
-      
+
       vi.resetModules();
-      // Import will trigger the token reading
+      // Import module - token is now lazy-loaded, so no immediate check
       await import('./index');
-      
-      expect(mockExistsSync).toHaveBeenCalled();
+
+      // Token check should not happen on import (lazy loading behavior)
+      expect(mockExistsSync).not.toHaveBeenCalled();
     });
   });
 });

@@ -246,25 +246,51 @@ describe('CLI Daemon Commands', () => {
   });
 
   describe('isDaemonRunning', () => {
-    it('should return false when PID file does not exist', () => {
+    it('should return false when PID file does not exist and port is free', async () => {
       (existsSync as any).mockReturnValue(false);
       
-      const running = isDaemonRunning();
+      // Mock port available
+      const mockServer = {
+        once: vi.fn((event: string, callback: Function) => {
+          if (event === 'listening') {
+            setTimeout(() => callback(), 0);
+          }
+        }),
+        listen: vi.fn(),
+        close: vi.fn((callback) => callback && callback()),
+      };
+      const { createServer } = await import('net');
+      (createServer as any).mockReturnValue(mockServer);
+      
+      const running = await isDaemonRunning();
       
       expect(running).toBe(false);
       expect(existsSync).toHaveBeenCalledWith(PID_FILE);
     });
 
-    it('should return false when PID file contains invalid content', () => {
+    it('should return false when PID file contains invalid content', async () => {
       (existsSync as any).mockReturnValue(true);
       (readFileSync as any).mockReturnValue('invalid');
       
-      const running = isDaemonRunning();
+      // Mock port available
+      const mockServer = {
+        once: vi.fn((event: string, callback: Function) => {
+          if (event === 'listening') {
+            setTimeout(() => callback(), 0);
+          }
+        }),
+        listen: vi.fn(),
+        close: vi.fn((callback) => callback && callback()),
+      };
+      const { createServer } = await import('net');
+      (createServer as any).mockReturnValue(mockServer);
+      
+      const running = await isDaemonRunning();
       
       expect(running).toBe(false);
     });
 
-    it('should return false when process is not running', () => {
+    it('should return false when process is not running and port is free', async () => {
       (existsSync as any).mockReturnValue(true);
       (readFileSync as any).mockReturnValue('12345');
       
@@ -276,13 +302,26 @@ describe('CLI Daemon Commands', () => {
         throw err;
       });
       
-      const running = isDaemonRunning();
+      // Mock port available
+      const mockServer = {
+        once: vi.fn((event: string, callback: Function) => {
+          if (event === 'listening') {
+            setTimeout(() => callback(), 0);
+          }
+        }),
+        listen: vi.fn(),
+        close: vi.fn((callback) => callback && callback()),
+      };
+      const { createServer } = await import('net');
+      (createServer as any).mockReturnValue(mockServer);
+      
+      const running = await isDaemonRunning();
       
       expect(running).toBe(false);
       (process as any).kill = originalKill;
     });
 
-    it('should return true when process is running', () => {
+    it('should return true when process is running', async () => {
       (existsSync as any).mockReturnValue(true);
       (readFileSync as any).mockReturnValue('12345');
       
@@ -290,10 +329,33 @@ describe('CLI Daemon Commands', () => {
       const originalKill = process.kill;
       (process as any).kill = vi.fn(() => true);
       
-      const running = isDaemonRunning();
+      const running = await isDaemonRunning();
       
       expect(running).toBe(true);
       (process as any).kill = originalKill;
+    });
+
+    it('should return true when PID file missing but port is in use', async () => {
+      (existsSync as any).mockReturnValue(false);
+      
+      // Mock port in use
+      const mockServer = {
+        once: vi.fn((event: string, callback: Function) => {
+          if (event === 'error') {
+            const err = new Error('EADDRINUSE') as NodeJS.ErrnoException;
+            err.code = 'EADDRINUSE';
+            setTimeout(() => callback(err), 0);
+          }
+        }),
+        listen: vi.fn(),
+        close: vi.fn(),
+      };
+      const { createServer } = await import('net');
+      (createServer as any).mockReturnValue(mockServer);
+      
+      const running = await isDaemonRunning();
+      
+      expect(running).toBe(true);
     });
   });
 
@@ -374,7 +436,7 @@ describe('CLI Daemon Commands', () => {
       (process as any).kill = originalKill;
     });
 
-    it('should exit if port is already in use', async () => {
+    it('should exit if port is already in use (detected via isDaemonRunning)', async () => {
       (existsSync as any).mockReturnValue(false);
       
       // Mock net.createServer for port check - port in use
@@ -401,7 +463,8 @@ describe('CLI Daemon Commands', () => {
       
       await expect(startForeground()).rejects.toThrow('exit');
       
-      expect(consoleSpy).toHaveBeenCalledWith('[F2A] 端口 9001 已被占用');
+      // Now isDaemonRunning detects port in use and reports daemon already running
+      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Daemon 已经在运行中');
       
       consoleSpy.mockRestore();
       exitSpy.mockRestore();
@@ -433,7 +496,7 @@ describe('CLI Daemon Commands', () => {
       (process as any).kill = originalKill;
     });
 
-    it('should exit if port is already in use', async () => {
+    it('should exit if port is already in use (detected via isDaemonRunning)', async () => {
       (existsSync as any).mockReturnValue(false);
       
       // Mock net.createServer for port check - port in use
@@ -460,7 +523,8 @@ describe('CLI Daemon Commands', () => {
       
       await expect(startBackground()).rejects.toThrow('exit');
       
-      expect(consoleSpy).toHaveBeenCalledWith('[F2A] 端口 9001 已被占用');
+      // Now isDaemonRunning detects port in use and reports daemon already running
+      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Daemon 已经在运行中');
       
       consoleSpy.mockRestore();
       exitSpy.mockRestore();

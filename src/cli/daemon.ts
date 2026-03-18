@@ -10,6 +10,7 @@ import { homedir } from 'os';
 import { request, RequestOptions } from 'http';
 import { createServer } from 'net';
 import { fileURLToPath } from 'url';
+import { loadConfig } from './config.js';
 
 const F2A_DIR = join(homedir(), '.f2a');
 const PID_FILE = join(F2A_DIR, 'daemon.pid');
@@ -170,8 +171,22 @@ export function rotateLogIfNeeded(): void {
 
 /**
  * 检查 daemon 是否在运行
+ * 优先检查 PID 文件，如果 PID 文件丢失但端口被占用，也认为是运行中
  */
-export function isDaemonRunning(): boolean {
+export async function isDaemonRunning(): Promise<boolean> {
+  const pid = readDaemonPid();
+  if (pid !== null && isProcessRunning(pid)) {
+    return true;
+  }
+  
+  // PID 文件丢失或进程不存在，检查端口是否被占用
+  const controlPort = getControlPort();
+  const portInUse = await checkPortInUse(controlPort);
+  return portInUse;
+}
+
+// 同步版本用于向后兼容（不检查端口）
+export function isDaemonRunningSync(): boolean {
   const pid = readDaemonPid();
   if (pid === null) {
     return false;
@@ -206,7 +221,7 @@ export async function startForeground(): Promise<void> {
   const controlPort = getControlPort();
   
   // 检查是否已有 daemon 在运行
-  if (isDaemonRunning()) {
+  if (await isDaemonRunning()) {
     console.error('[F2A] Daemon 已经在运行中');
     console.error('[F2A] 使用 "f2a daemon stop" 停止后再启动');
     process.exit(1);
@@ -230,16 +245,20 @@ export async function startForeground(): Promise<void> {
   // 动态导入 daemon 模块并启动
   const { F2ADaemon } = await import('../daemon/index.js');
   
+  // 读取配置获取 agentName 作为 displayName
+  const config = loadConfig();
+  
   // 解析引导节点
   const bootstrapPeers = process.env.BOOTSTRAP_PEERS 
     ? process.env.BOOTSTRAP_PEERS.split(',').filter(Boolean)
-    : undefined;
+    : config.network.bootstrapPeers;
 
   // P2P 端口
-  const p2pPort = parseInt(process.env.F2A_P2P_PORT || '0');
+  const p2pPort = parseInt(process.env.F2A_P2P_PORT || '0') || config.p2pPort;
 
   const daemon = new F2ADaemon({
     controlPort,
+    displayName: config.agentName,
     network: {
       listenPort: p2pPort,
       bootstrapPeers,
@@ -279,7 +298,7 @@ export async function startBackground(): Promise<void> {
   const controlPort = getControlPort();
   
   // 检查是否已有 daemon 在运行
-  if (isDaemonRunning()) {
+  if (await isDaemonRunning()) {
     console.error('[F2A] Daemon 已经在运行中');
     const status = getDaemonStatus();
     if (status.pid) {
@@ -317,10 +336,25 @@ export async function startBackground(): Promise<void> {
     process.exit(1);
   }
 
+  // 读取配置获取 agentName
+  const config = loadConfig();
+
   // 构建环境变量
   const env = { ...process.env };
   if (!env.F2A_CONTROL_PORT) {
     env.F2A_CONTROL_PORT = controlPort.toString();
+  }
+  // 传递 agentName 作为 displayName
+  if (!env.F2A_AGENT_NAME) {
+    env.F2A_AGENT_NAME = config.agentName;
+  }
+  // 传递引导节点
+  if (!env.BOOTSTRAP_PEERS && config.network.bootstrapPeers.length > 0) {
+    env.BOOTSTRAP_PEERS = config.network.bootstrapPeers.join(',');
+  }
+  // 传递 P2P 端口
+  if (!env.F2A_P2P_PORT && config.p2pPort !== 0) {
+    env.F2A_P2P_PORT = config.p2pPort.toString();
   }
 
   // 获取文件锁（防止竞态条件）
@@ -506,11 +540,14 @@ export async function showStatus(): Promise<void> {
   const status = getDaemonStatus();
   const port = getControlPort();
   
+  // 检查端口是否被占用（处理 PID 文件丢失的情况）
+  const portInUse = await checkPortInUse(port);
+  
   console.log('F2A Daemon 状态:');
-  console.log(`  运行中: ${status.running ? '是' : '否'}`);
   console.log(`  控制端口: ${port}`);
   
   if (status.running && status.pid) {
+    console.log(`  运行中: 是`);
     console.log(`  PID: ${status.pid}`);
     console.log(`  日志文件: ${LOG_FILE}`);
     
@@ -523,7 +560,24 @@ export async function showStatus(): Promise<void> {
     } catch {
       // 忽略错误
     }
+  } else if (portInUse) {
+    // PID 文件丢失但端口被占用
+    console.log(`  运行中: 是 (PID 文件丢失)`);
+    console.log(`  警告: 检测到端口 ${port} 被占用，但 PID 文件不存在`);
+    console.log(`  可能原因: 系统重启或 PID 文件被删除`);
+    console.log(`  建议: 手动恢复 PID 文件或重启 daemon`);
+    
+    // 尝试获取更多信息
+    try {
+      const info = await fetchDaemonInfo(port);
+      if (info) {
+        console.log(`  Peer ID: ${info.peerId?.slice(0, 16)}...`);
+      }
+    } catch {
+      // 忽略错误
+    }
   } else {
+    console.log(`  运行中: 否`);
     console.log('  使用 "f2a daemon" 启动 daemon');
   }
 }

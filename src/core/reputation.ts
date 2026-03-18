@@ -11,6 +11,34 @@ import { Logger } from '../utils/logger.js';
 
 export type ReputationLevel = 'restricted' | 'novice' | 'participant' | 'contributor' | 'core';
 
+/**
+ * 信誉管理器接口
+ * 定义 ReviewCommittee 所需的最小方法集
+ */
+export interface IReputationManager {
+  /** 检查节点是否具有指定权限 */
+  hasPermission(peerId: string, permission: 'publish' | 'execute' | 'review'): boolean;
+  /** 获取高信誉节点 */
+  getHighReputationNodes(minScore: number): IReputationEntry[];
+  /** 获取所有信誉记录 */
+  getAllReputations(): IReputationEntry[];
+  /** 记录评审惩罚 */
+  recordReviewPenalty(peerId: string, delta: number, reason?: string): void;
+  /** 记录评审奖励 */
+  recordReviewReward(peerId: string, delta: number): void;
+}
+
+/**
+ * 基础信誉条目接口
+ * 定义 IReputationManager 方法返回值的最小字段集
+ */
+export interface IReputationEntry {
+  /** 节点 ID */
+  peerId: string;
+  /** 信誉分数 */
+  score: number;
+}
+
 export interface ReputationTier {
   min: number;
   max: number;
@@ -161,7 +189,7 @@ const DEFAULT_CONFIG: ReputationConfig = {
 // 信誉管理器
 // ============================================================================
 
-export class ReputationManager implements Disposable {
+export class ReputationManager implements Disposable, IReputationManager {
   private config: ReputationConfig;
   private entries: Map<string, ReputationEntry> = new Map();
   private logger: Logger;

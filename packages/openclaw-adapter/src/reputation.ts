@@ -5,6 +5,7 @@
 
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import type { IReputationManager, IReputationEntry } from '@f2a/network';
 import type { 
   ReputationEntry, 
   ReputationEvent, 
@@ -165,10 +166,10 @@ export class ReputationSystem {
    * 检查是否允许服务
    */
   isAllowed(peerId: string): boolean {
-    if (!this.config.enabled) return true;
+    if (!INTERNAL_REPUTATION_CONFIG.enabled) return true;
     
     const entry = this.getReputation(peerId);
-    return entry.score >= this.config.minScoreForService;
+    return entry.score >= INTERNAL_REPUTATION_CONFIG.minScoreForService;
   }
 
   /**
@@ -288,7 +289,7 @@ export class ReputationSystem {
   private createDefaultEntry(peerId: string): ReputationEntry {
     return {
       peerId,
-      score: this.config.initialScore,
+      score: INTERNAL_REPUTATION_CONFIG.initialScore,
       successfulTasks: 0,
       failedTasks: 0,
       totalTasks: 0,
@@ -452,11 +453,11 @@ export class ReputationSystem {
 /**
  * ReputationManager 适配器
  * 
- * 将 ReputationSystem 包装为 ReviewCommittee 所需的 ReputationManager 接口。
- * 用于解决 ReviewCommittee (src/core/) 依赖 ReputationManager 类型，
+ * 将 ReputationSystem 包装为 ReviewCommittee 所需的 IReputationManager 接口。
+ * 用于解决 ReviewCommittee (src/core/) 依赖 IReputationManager 接口，
  * 而 adapter 使用的是 ReputationSystem 的问题。
  */
-export class ReputationManagerAdapter {
+export class ReputationManagerAdapter implements IReputationManager {
   private reputationSystem: ReputationSystem;
 
   constructor(reputationSystem: ReputationSystem) {
@@ -473,14 +474,14 @@ export class ReputationManagerAdapter {
   /**
    * 获取高信誉节点
    */
-  getHighReputationNodes(minScore: number): ReputationEntry[] {
+  getHighReputationNodes(minScore: number): IReputationEntry[] {
     return this.reputationSystem.getHighReputationNodes(minScore);
   }
 
   /**
    * 获取所有信誉记录
    */
-  getAllReputations(): ReputationEntry[] {
+  getAllReputations(): IReputationEntry[] {
     return this.reputationSystem.getAllReputations();
   }
 

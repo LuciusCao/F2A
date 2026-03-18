@@ -22,6 +22,7 @@ import type {
   SkillTag,
   ReputationMetrics,
 } from '../types/capability-quant.js';
+import type { AgentCapability } from '../types/index.js';
 
 import { DEFAULT_CAPABILITY_WEIGHTS, DEFAULT_UPDATE_STRATEGY } from '../types/capability-quant.js';
 

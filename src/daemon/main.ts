@@ -15,6 +15,7 @@ const p2pPort = parseInt(process.env.F2A_P2P_PORT || '0');
 
 const daemon = new F2ADaemon({
   controlPort: parseInt(process.env.F2A_CONTROL_PORT || '9001'),
+  displayName: process.env.F2A_AGENT_NAME,
   network: {
     listenPort: p2pPort,
     bootstrapPeers,

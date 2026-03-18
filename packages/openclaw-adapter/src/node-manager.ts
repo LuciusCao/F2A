@@ -155,7 +155,7 @@ export class F2ANodeManager {
    * 启动 F2A Node
    */
   async start(): Promise<Result<void>> {
-    const daemonPath = join(this.config.nodePath, 'dist/daemon/index.js');
+    const daemonPath = join(this.config.nodePath, 'dist/daemon/main.js');
 
     if (!existsSync(daemonPath)) {
       return {
@@ -177,7 +177,7 @@ export class F2ANodeManager {
           F2A_CONTROL_TOKEN: this.config.controlToken,
           F2A_P2P_PORT: String(this.config.p2pPort),
           F2A_ENABLE_MDNS: String(this.config.enableMDNS),
-          F2A_BOOTSTRAP_PEERS: JSON.stringify(this.config.bootstrapPeers)
+          BOOTSTRAP_PEERS: this.config.bootstrapPeers?.join(',') || ''
         },
         detached: true,
         stdio: ['ignore', 'pipe', 'pipe']

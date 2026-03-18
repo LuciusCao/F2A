@@ -261,8 +261,8 @@ describe('F2A 端到端集成测试', () => {
       const reputationSystem = new ReputationSystem(
         {
           enabled: true,
-          initialScore: 50,
-          minScoreForService: 20,
+          initialScore: 30,
+          minScoreForService: 20, // 注意：isAllowed 使用 INTERNAL_REPUTATION_CONFIG.minScoreForService (50)
           decayRate: 0.01,
         },
         TEST_DATA_DIR
@@ -270,19 +270,23 @@ describe('F2A 端到端集成测试', () => {
 
       const peerId = 'peer-test-success';
 
-      // 初始信誉检查
+      // 初始信誉检查 (30 < 50，所以不允许)
       let rep = reputationSystem.getReputation(peerId);
-      expect(rep.score).toBe(50);
-      expect(reputationSystem.isAllowed(peerId)).toBe(true);
+      expect(rep.score).toBe(30);
+      expect(reputationSystem.isAllowed(peerId)).toBe(false);
 
-      // 模拟任务成功
+      // 模拟任务成功，分数增加
       reputationSystem.recordSuccess(peerId, 'task-1', 1000);
       reputationSystem.recordSuccess(peerId, 'task-2', 800);
 
       rep = reputationSystem.getReputation(peerId);
-      expect(rep.score).toBeGreaterThan(50);
+      expect(rep.score).toBeGreaterThan(30);
       expect(rep.successfulTasks).toBe(2);
       expect(rep.avgResponseTime).toBeGreaterThan(0);
+      
+      // 分数达到 50+ 后允许服务
+      expect(rep.score).toBeGreaterThanOrEqual(50);
+      expect(reputationSystem.isAllowed(peerId)).toBe(true);
 
       // 多次失败降低信誉
       for (let i = 0; i < 5; i++) {
@@ -290,7 +294,7 @@ describe('F2A 端到端集成测试', () => {
       }
 
       rep = reputationSystem.getReputation(peerId);
-      // 50 + 10 + 10 - 20*5 = 50 + 20 - 100 = -30 -> 0
+      // 30 + 10 + 10 - 20*5 = 30 + 20 - 100 = -50 -> 0
       expect(rep.score).toBe(0);
       expect(reputationSystem.isAllowed(peerId)).toBe(false);
 
@@ -306,7 +310,7 @@ describe('F2A 端到端集成测试', () => {
         const reputationSystem = new ReputationSystem(
           {
             enabled: true,
-            initialScore: 50,
+            initialScore: 30,
             minScoreForService: 20,
             decayRate: 0.01,
           },
@@ -322,7 +326,7 @@ describe('F2A 端到端集成测试', () => {
         const reputationSystem = new ReputationSystem(
           {
             enabled: true,
-            initialScore: 50,
+            initialScore: 30,
             minScoreForService: 20,
             decayRate: 0.01,
           },
@@ -330,7 +334,7 @@ describe('F2A 端到端集成测试', () => {
         );
 
         const rep = reputationSystem.getReputation(peerId);
-        expect(rep.score).toBeGreaterThan(50);
+        expect(rep.score).toBeGreaterThan(30);
         expect(rep.successfulTasks).toBe(1);
       }
     });

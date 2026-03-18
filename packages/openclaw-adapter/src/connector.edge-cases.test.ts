@@ -459,8 +459,8 @@ describe('F2AOpenClawAdapter - 高价值边缘情况', () => {
       });
 
       expect(config.reputation.enabled).toBe(false);
-      expect(config.reputation.initialScore).toBe(50); // 默认值
-      expect(config.reputation.minScoreForService).toBe(20); // 默认值
+      expect(config.reputation.initialScore).toBe(30); // 默认值
+      expect(config.reputation.minScoreForService).toBe(50); // 默认值
     });
   });
 

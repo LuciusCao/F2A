@@ -44,7 +44,7 @@ describe('ReputationSystem', () => {
     it('should return default reputation for new peer', () => {
       const rep = system.getReputation('peer-1');
       expect(rep.peerId).toBe('peer-1');
-      expect(rep.score).toBe(50);
+      expect(rep.score).toBe(30); // INTERNAL_REPUTATION_CONFIG.initialScore = 30
       expect(rep.totalTasks).toBe(0);
     });
 
@@ -59,7 +59,7 @@ describe('ReputationSystem', () => {
     it('should increase score on success', () => {
       system.recordSuccess('peer-1', 'task-1', 100);
       const rep = system.getReputation('peer-1');
-      expect(rep.score).toBe(60);
+      expect(rep.score).toBe(40); // 30 + 10 = 40
       expect(rep.successfulTasks).toBe(1);
       expect(rep.totalTasks).toBe(1);
     });
@@ -85,15 +85,15 @@ describe('ReputationSystem', () => {
     it('should decrease score on failure', () => {
       system.recordFailure('peer-1', 'task-1', 'timeout');
       const rep = system.getReputation('peer-1');
-      expect(rep.score).toBe(30);
+      expect(rep.score).toBe(10); // 30 - 20 = 10
       expect(rep.failedTasks).toBe(1);
     });
 
     it('should not go below 0', () => {
       system.recordFailure('peer-1', 'task-1');
       system.recordFailure('peer-1', 'task-2');
-      system.recordFailure('peer-1', 'task-3');
       const rep = system.getReputation('peer-1');
+      // 30 - 20 - 20 = -10, but clamped to 0
       expect(rep.score).toBe(0);
     });
   });
@@ -102,7 +102,7 @@ describe('ReputationSystem', () => {
     it('should decrease score on rejection', () => {
       system.recordRejection('peer-1', 'task-1', 'busy');
       const rep = system.getReputation('peer-1');
-      expect(rep.score).toBe(45);
+      expect(rep.score).toBe(25); // 30 - 5 = 25
     });
   });
 
@@ -117,10 +117,10 @@ describe('ReputationSystem', () => {
     it('should return false for disallowed peer when enabled', () => {
       // Create a system with enabled reputation check
       // enabled: true - 启用信誉检查，低于 minScoreForService 的节点将被拒绝
-      // minScoreForService: 35 - 服务最低信誉门槛（默认50分，失败一次扣20分，所以30分会低于35）
+      // minScoreForService: 50 - 服务最低信誉门槛
       const strictConfig = { ...mockConfig, enabled: true, minScoreForService: 35 };
       const strictSystem = new ReputationSystem(strictConfig, './test-data');
-      strictSystem.recordFailure('peer-1', 'task-1'); // score goes from 50 to 30
+      strictSystem.recordFailure('peer-1', 'task-1'); // score goes from 30 to 10
       expect(strictSystem.isAllowed('peer-1')).toBe(false);
     });
   });
@@ -133,9 +133,9 @@ describe('ReputationSystem', () => {
       
       const allReps = system.getAllReputations();
       expect(allReps[0].peerId).toBe('peer-a');
-      expect(allReps[0].score).toBe(70);
+      expect(allReps[0].score).toBe(50); // 30 + 10 + 10 = 50
       expect(allReps[1].peerId).toBe('peer-b');
-      expect(allReps[1].score).toBe(60);
+      expect(allReps[1].score).toBe(40); // 30 + 10 = 40
     });
 
     it('should limit results when specified', () => {

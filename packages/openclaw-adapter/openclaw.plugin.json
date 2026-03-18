@@ -1,5 +1,5 @@
 {
-  "id": "f2a-openclaw-adapter",
+  "id": "openclaw-adapter",
   "name": "F2A OpenClaw Adapter",
   "description": "OpenClaw adapter for F2A P2P Agent network",
   "version": "0.2.0",

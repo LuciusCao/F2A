@@ -154,7 +154,9 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     if (this.config.autoStart) {
       const result = await this.nodeManager.ensureRunning();
       if (!result.success) {
-        throw new Error(`F2A Node 启动失败: ${result.error}`);
+        const errorObj = result.error as { code?: string; message?: string } | undefined;
+        const errorMsg = errorObj?.message || JSON.stringify(result.error);
+        throw new Error(`F2A Node 启动失败: ${errorMsg}`);
       }
     }
 

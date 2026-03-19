@@ -338,6 +338,98 @@ export class CapabilityManager extends EventEmitter<CapabilityManagerEvents> {
     
     return all.sort((a, b) => b.scores.overallScore - a.scores.overallScore);
   }
+
+  /**
+   * 选择最佳节点执行任务
+   * 
+   * 综合考虑：能力评分、负载因子、信誉度
+   * 
+   * @param requiredCapability 需要的能力名称（可选，用于匹配技能）
+   * @param excludePeerIds 排除的节点 ID 列表
+   * @returns 最佳节点 ID，如果没有可用节点返回 null
+   */
+  selectBestPeer(requiredCapability?: string, excludePeerIds: string[] = []): string | null {
+    const candidates = this.getAllPeerCapabilities()
+      .filter(quant => !excludePeerIds.includes(quant.peerId))
+      .filter(quant => !this.isOverloaded(quant.peerId));
+    
+    if (candidates.length === 0) {
+      return null;
+    }
+    
+    // 计算综合评分
+    const scored = candidates.map(quant => {
+      const loadFactor = this.calculateLoadFactor(quant.peerId);
+      const capabilityScore = quant.scores.overallScore;
+      const reputationScore = quant.scores.dimensionScores.reputation;
+      
+      // 综合评分 = 能力评分 * 负载因子 * 0.5 + 信誉评分 * 0.5
+      const compositeScore = 
+        capabilityScore * loadFactor * 0.5 + 
+        reputationScore * 0.5;
+      
+      return {
+        peerId: quant.peerId,
+        score: compositeScore,
+      };
+    });
+    
+    // 按评分降序排序
+    scored.sort((a, b) => b.score - a.score);
+    
+    return scored[0]?.peerId ?? null;
+  }
+
+  /**
+   * 按能力匹配度选择最佳节点
+   * 
+   * @param capabilityName 需要的能力名称
+   * @param excludePeerIds 排除的节点 ID 列表
+   * @returns 最佳节点 ID
+   */
+  selectBestPeerForCapability(capabilityName: string, excludePeerIds: string[] = []): string | null {
+    // 筛选有能力且未过载的节点
+    const candidates = this.getAllPeerCapabilities()
+      .filter(quant => !excludePeerIds.includes(quant.peerId))
+      .filter(quant => !this.isOverloaded(quant.peerId))
+      .filter(quant => {
+        // 检查是否有对应技能
+        const hasSkill = quant.metrics.skills.some(
+          skill => skill.name.toLowerCase().includes(capabilityName.toLowerCase())
+        );
+        // 或者检查基础能力
+        const hasCapability = quant.baseCapabilities.some(
+          cap => cap.name.toLowerCase().includes(capabilityName.toLowerCase())
+        );
+        return hasSkill || hasCapability;
+      });
+    
+    if (candidates.length === 0) {
+      return null;
+    }
+    
+    // 按综合评分排序
+    const scored = candidates.map(quant => {
+      const loadFactor = this.calculateLoadFactor(quant.peerId);
+      const skillScore = quant.scores.dimensionScores.skill;
+      const reputationScore = quant.scores.dimensionScores.reputation;
+      
+      // 对于特定能力任务，技能评分权重更高
+      const compositeScore = 
+        skillScore * loadFactor * 0.5 + 
+        reputationScore * 0.3 +
+        quant.scores.overallScore * 0.2;
+      
+      return {
+        peerId: quant.peerId,
+        score: compositeScore,
+      };
+    });
+    
+    scored.sort((a, b) => b.score - a.score);
+    
+    return scored[0]?.peerId ?? null;
+  }
   
   // ============================================================================
   // 负载管理

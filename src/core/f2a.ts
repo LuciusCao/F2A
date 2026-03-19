@@ -11,6 +11,7 @@ import { fileURLToPath } from 'url';
 import { readFileSync } from 'fs';
 import { P2PNetwork } from './p2p-network.js';
 import { IdentityManager } from './identity/index.js';
+import { CapabilityManager } from './capability-manager.js';
 import { Logger } from '../utils/logger.js';
 import { Middleware } from '../utils/middleware.js';
 import { validateAgentCapability, validateTaskDelegateOptions } from '../utils/validation.js';
@@ -89,18 +90,21 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   private registeredCapabilities: Map<string, RegisteredCapability> = new Map();
   private logger: Logger;
   private identityManager?: IdentityManager;
+  private capabilityManager?: CapabilityManager;
 
   private constructor(
     agentInfo: AgentInfo,
     p2pNetwork: P2PNetwork,
     options: Required<F2AOptions>,
-    identityManager?: IdentityManager
+    identityManager?: IdentityManager,
+    capabilityManager?: CapabilityManager
   ) {
     super();
     this._agentInfo = agentInfo;
     this.p2pNetwork = p2pNetwork;
     this.options = options;
     this.identityManager = identityManager;
+    this.capabilityManager = capabilityManager;
     
     // 初始化 logger，默认启用文件日志到 dataDir
     const dataDir = options.dataDir || join(homedir(), '.f2a');
@@ -178,8 +182,14 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     // 注入 IdentityManager（使用持久化的私钥）
     p2pNetwork.setIdentityManager(identityManager);
 
+    // 创建 CapabilityManager（智能调度）
+    const capabilityManager = new CapabilityManager({
+      peerId: identityManager.getPeerIdString() || '',
+      baseCapabilities: [],
+    });
+
     // 创建实例
-    const f2a = new F2A(agentInfo, p2pNetwork, mergedOptions, identityManager);
+    const f2a = new F2A(agentInfo, p2pNetwork, mergedOptions, identityManager, capabilityManager);
 
     return f2a;
   }
@@ -430,8 +440,25 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
         );
       }
     } else {
-      // 串行发送，取第一个成功的
-      for (const agent of agents) {
+      // 串行发送，优先发送给最佳节点
+      // 使用 CapabilityManager 进行智能调度（如果可用）
+      let sortedAgents = agents;
+      if (this.capabilityManager) {
+        const bestPeerId = this.capabilityManager.selectBestPeerForCapability(options.capability);
+        if (bestPeerId) {
+          // 将最佳节点排在第一位
+          sortedAgents = [
+            agents.find(a => a.peerId === bestPeerId)!,
+            ...agents.filter(a => a.peerId !== bestPeerId)
+          ].filter(Boolean);
+          this.logger.info('Using smart scheduling', {
+            bestPeer: bestPeerId.slice(0, 16),
+            capability: options.capability
+          });
+        }
+      }
+      
+      for (const agent of sortedAgents) {
         const startTime = Date.now();
         const result = await this.p2pNetwork.sendTaskRequest(
           agent.peerId,

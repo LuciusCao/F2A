@@ -454,7 +454,20 @@ async function sendCommand(action: string, params?: Record<string, unknown>): Pr
           }
           resolve();
         } catch {
-          console.log(data);
+          // JSON 解析失败时，尝试过滤敏感信息后输出
+          try {
+            // 尝试解析为对象进行过滤
+            const parsed = JSON.parse(data);
+            const sanitized = sanitizeResponse(parsed);
+            console.log(JSON.stringify(sanitized, null, 2));
+          } catch {
+            // 如果不是有效的 JSON，直接输出原始数据（但限制长度）
+            const maxLength = 1000;
+            const truncated = data.length > maxLength 
+              ? data.slice(0, maxLength) + '... [truncated]' 
+              : data;
+            console.log(truncated);
+          }
           resolve();
         }
       });

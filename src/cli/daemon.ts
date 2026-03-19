@@ -528,6 +528,58 @@ export async function stopDaemon(): Promise<void> {
 }
 
 /**
+ * 重启后台 daemon
+ * 先停止再启动，保持原有配置
+ */
+export async function restartDaemon(): Promise<void> {
+  console.log('[F2A] 正在重启 daemon...');
+  
+  // 检查当前状态
+  const status = getDaemonStatus();
+  
+  if (status.running) {
+    console.log('[F2A] 停止当前 daemon...');
+    await stopDaemon();
+    
+    // 等待一小段时间确保端口释放
+    console.log('[F2A] 等待资源释放...');
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  } else {
+    console.log('[F2A] 当前没有运行中的 daemon');
+  }
+  
+  // 检查端口是否仍被占用
+  const controlPort = getControlPort();
+  const portInUse = await checkPortInUse(controlPort);
+  
+  if (portInUse) {
+    console.warn(`[F2A] 警告: 端口 ${controlPort} 仍被占用`);
+    console.warn('[F2A] 等待更长时间...');
+    
+    // 最多等待 10 秒
+    let attempts = 0;
+    const maxAttempts = 20;
+    
+    while (portInUse && attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      attempts++;
+    }
+    
+    if (await checkPortInUse(controlPort)) {
+      console.error(`[F2A] 错误: 端口 ${controlPort} 仍被占用，无法启动`);
+      console.error('[F2A] 请手动检查并释放端口');
+      process.exit(1);
+    }
+  }
+  
+  // 启动 daemon
+  console.log('[F2A] 启动 daemon...');
+  await startBackground();
+  
+  console.log('[F2A] Daemon 重启完成');
+}
+
+/**
  * 显示 daemon 状态
  */
 export async function showStatus(): Promise<void> {

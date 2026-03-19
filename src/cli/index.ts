@@ -11,6 +11,7 @@ import {
   startForeground,
   startBackground,
   stopDaemon,
+  restartDaemon,
   showStatus,
   getDaemonStatus,
 } from './daemon.js';
@@ -267,6 +268,7 @@ Subcommands:
   f2a daemon -d        后台启动 daemon
   f2a daemon --detach  后台启动 daemon
   f2a daemon stop      停止后台 daemon
+  f2a daemon restart   重启后台 daemon
   f2a daemon status    查看 daemon 状态
 
 Options:
@@ -276,6 +278,7 @@ Examples:
   f2a daemon           # 前台启动（用于调试）
   f2a daemon -d        # 后台启动
   f2a daemon stop      # 停止后台 daemon
+  f2a daemon restart   # 重启后台 daemon
   f2a daemon status    # 查看 daemon 状态
 `);
       break;
@@ -627,6 +630,10 @@ async function handleDaemonCommand(args: Args): Promise<void> {
       await stopDaemon();
       break;
 
+    case 'restart':
+      await restartDaemon();
+      break;
+
     case 'status':
       await showStatus();
       break;
@@ -644,7 +651,7 @@ async function handleDaemonCommand(args: Args): Promise<void> {
 
     default:
       console.error(`[F2A] Unknown daemon subcommand: ${args.subcommand}`);
-      console.error('Usage: f2a daemon [stop|status|-d|--detach]');
+      console.error('Usage: f2a daemon [stop|restart|status|-d|--detach]');
       process.exit(1);
   }
 }

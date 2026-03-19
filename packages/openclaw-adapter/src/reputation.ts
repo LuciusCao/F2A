@@ -368,6 +368,11 @@ export class ReputationSystem {
         this.doSave();
       }
     }, this.debounceConfig.delayMs);
+    
+    // 防止定时器阻止进程退出
+    if (this.saveTimer.unref) {
+      this.saveTimer.unref();
+    }
   }
   
   /**

@@ -90,6 +90,8 @@ export class WebhookServer {
       
       this.server.listen(this.port, () => {
         logger.info('服务器启动在端口 %d', this.port);
+        // 允许进程在只有这个服务器时退出（用于 CLI 命令如 gateway status）
+        this.server?.unref();
         resolve();
       });
 

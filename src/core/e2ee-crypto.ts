@@ -116,6 +116,11 @@ export class E2EECrypto implements Disposable {
         this.logger.debug('Cleaned expired challenges', { count: cleaned });
       }
     }, E2EECrypto.CHALLENGE_CLEANUP_INTERVAL_MS);
+    
+    // 防止定时器阻止进程退出（用于 CLI 命令如 openclaw gateway status）
+    if (this.challengeCleanupTimer?.unref) {
+      this.challengeCleanupTimer.unref();
+    }
   }
 
   /**

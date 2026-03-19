@@ -21,7 +21,29 @@ vi.mock('./p2p-network', () => ({
     getDHTPeerCount: vi.fn().mockReturnValue(0),
     isDHTEnabled: vi.fn().mockReturnValue(false),
     on: vi.fn(),
-    getPeerId: vi.fn().mockReturnValue('test-peer-id')
+    getPeerId: vi.fn().mockReturnValue('test-peer-id'),
+    setIdentityManager: vi.fn()
+  }))
+}));
+
+// Mock IdentityManager
+vi.mock('./identity/index.js', () => ({
+  IdentityManager: vi.fn().mockImplementation(() => ({
+    loadOrCreate: vi.fn().mockResolvedValue({ 
+      success: true, 
+      data: { 
+        peerId: 'test-peer-id',
+        privateKey: 'dGVzdC1wcml2YXRlLWtleQ==',
+        e2eeKeyPair: { 
+          publicKey: 'dGVzdC1wdWJsaWM=', 
+          privateKey: 'dGVzdC1wcml2YXRl' 
+        },
+        createdAt: new Date()
+      }
+    }),
+    getPeerIdString: vi.fn().mockReturnValue('test-peer-id'),
+    getPrivateKey: vi.fn().mockReturnValue({ bytes: new Uint8Array(32) }),
+    isLoaded: vi.fn().mockReturnValue(true)
   }))
 }));
 

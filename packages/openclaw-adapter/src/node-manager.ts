@@ -9,6 +9,7 @@ import { join } from 'path';
 import { promisify } from 'util';
 import type { F2ANodeConfig, Result } from './types.js';
 import { nodeLogger as logger } from './logger.js';
+import { getErrorMessage } from '@f2a/network';
 
 const sleep = promisify(setTimeout);
 
@@ -100,7 +101,7 @@ export class F2ANodeManager {
           }, 3000);
         } catch (killError) {
           // 无法终止，可能是权限问题
-          logger.warn('无法终止孤儿进程: pid=%d, error=%s', pid, killError);
+          logger.warn('无法终止孤儿进程: pid=%d, error=%s', pid, getErrorMessage(killError));
         }
       } catch {
         // 进程不存在，只删除 PID 文件
@@ -110,7 +111,7 @@ export class F2ANodeManager {
       unlinkSync(this.pidFilePath);
       logger.info('孤儿进程清理完成');
     } catch (error) {
-      logger.warn('清理孤儿进程失败: error=%s', error);
+      logger.warn('清理孤儿进程失败: error=%s', getErrorMessage(error));
     }
   }
 
@@ -122,7 +123,7 @@ export class F2ANodeManager {
       writeFileSync(this.pidFilePath, String(pid), { mode: 0o644 });
       logger.info('PID 文件已保存: path=%s', this.pidFilePath);
     } catch (error) {
-      logger.warn('保存 PID 文件失败: error=%s', error);
+      logger.warn('保存 PID 文件失败: error=%s', getErrorMessage(error));
     }
   }
 
@@ -135,7 +136,7 @@ export class F2ANodeManager {
         unlinkSync(this.pidFilePath);
       }
     } catch (error) {
-      logger.warn('删除 PID 文件失败: error=%s', error);
+      logger.warn('删除 PID 文件失败: error=%s', getErrorMessage(error));
     }
   }
 
@@ -197,7 +198,7 @@ export class F2ANodeManager {
       });
 
       this.process.on('error', (err) => {
-        logger.error('Node 进程错误: error=%s', err);
+        logger.error('Node 进程错误: error=%s', getErrorMessage(err));
         this.removePidFile();
       });
 
@@ -411,7 +412,7 @@ export class F2ANodeManager {
           await sleep(cooldownMs);
           await this.start();
         } catch (error) {
-          logger.error('重启失败: error=%s', error);
+          logger.error('重启失败: error=%s', getErrorMessage(error));
         } finally {
           this.isRestarting = false;
         }

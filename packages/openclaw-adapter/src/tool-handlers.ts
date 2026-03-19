@@ -242,7 +242,7 @@ ${agents.map((a: AgentInfo, i: number) => {
       const latency = Date.now() - start;
 
       return {
-        agent: agent.displayName,
+        agent: agent.displayName || agent.peerId,
         peerId: agent.peerId,
         success: result.success,
         result: result.data,
@@ -254,11 +254,11 @@ ${agents.map((a: AgentInfo, i: number) => {
     const results = await Promise.allSettled(promises);
     const settled = results.map((r, i) => 
       r.status === 'fulfilled' ? r.value : { 
-        agent: agents[i].displayName, 
+        agent: agents[i].displayName ?? agents[i].peerId, 
         success: false, 
         error: String(r.reason) 
       }
-    );
+    ) as BroadcastResult[];
 
     const successful = settled.filter(r => r.success);
     const minResponses = params.min_responses || 1;
@@ -368,6 +368,9 @@ ${peers.map((p: any) => {
         if (!config.security) {
           config.security = { requireConfirmation: false, whitelist: [], blacklist: [], maxTasksPerMinute: 10 };
         }
+        if (!config.security.blacklist) {
+          config.security.blacklist = [];
+        }
         config.security.blacklist.push(params.peer_id);
         return { content: `🚫 已屏蔽 ${params.peer_id.slice(0, 20)}...` };
       }
@@ -379,7 +382,7 @@ ${peers.map((p: any) => {
         if (!config.security) {
           config.security = { requireConfirmation: false, whitelist: [], blacklist: [], maxTasksPerMinute: 10 };
         }
-        config.security.blacklist = config.security.blacklist.filter(
+        config.security.blacklist = (config.security.blacklist || []).filter(
           (id: string) => id !== params.peer_id
         );
         return { content: `✅ 已解除屏蔽 ${params.peer_id.slice(0, 20)}...` };
@@ -587,7 +590,7 @@ ${tasks.map(t => {
     // 模糊匹配
     const fuzzy = agents.find((a: AgentInfo) => 
       a.peerId.startsWith(agentRef) ||
-      a.displayName.toLowerCase().includes(agentRef.toLowerCase())
+      (a.displayName?.toLowerCase().includes(agentRef.toLowerCase()) ?? false)
     );
 
     return fuzzy || null;
@@ -861,7 +864,7 @@ ${result.reviews.map((r, i) => {
       // 精确匹配或模糊匹配
       targetAgent = agents.find((a: AgentInfo) => 
         a.displayName === params.agent_name ||
-        a.displayName.toLowerCase().includes(params.agent_name!.toLowerCase())
+        (a.displayName?.toLowerCase().includes(params.agent_name!.toLowerCase()) ?? false)
       );
     }
 

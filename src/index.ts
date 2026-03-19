@@ -78,8 +78,34 @@ export {
   createMessageTypeFilterMiddleware 
 } from './utils/middleware.js';
 export type { Middleware, MiddlewareContext, MiddlewareResult } from './utils/middleware.js';
+export { 
+  ensureError,
+  getErrorMessage,
+  toF2AError,
+  toF2AErrorFromUnknown
+} from './utils/error-utils.js';
 
 // 类型定义
 export * from './types/index.js';
+
+// 显式导出核心配置类型（从配置中心导入）
+export type { 
+  SecurityConfig, 
+  SecurityLevel, 
+  RateLimitConfig, 
+  F2AOptions, 
+  LogLevel,
+  P2PNetworkConfig,
+  WebhookConfig,
+  TaskDelegateOptions,
+} from './config/types.js';
+
+// 导出默认配置值
+export {
+  DEFAULT_P2P_NETWORK_CONFIG,
+  DEFAULT_SECURITY_CONFIG,
+  DEFAULT_LOG_LEVEL,
+  DEFAULT_F2A_OPTIONS,
+} from './config/defaults.js';
 
 // 版本号已在文件顶部从 package.json 导出

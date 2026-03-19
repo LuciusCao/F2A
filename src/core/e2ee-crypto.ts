@@ -6,6 +6,7 @@
 import { x25519 } from '@noble/curves/ed25519.js';
 import { randomBytes, createCipheriv, createDecipheriv, createHmac, hkdfSync, timingSafeEqual } from 'crypto';
 import { Logger } from '../utils/logger.js';
+import { getErrorMessage } from '../utils/error-utils.js';
 
 // AES-256-GCM 参数
 const AES_KEY_SIZE = 32; // 256 bits
@@ -228,8 +229,7 @@ export class E2EECrypto implements Disposable {
         throw new Error('Public key does not match the private key. The key pair is invalid.');
       }
     } catch (error) {
-      // 如果派生失败，可能是无效的私钥
-      throw new Error(`Invalid key pair: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`Invalid key pair: ${getErrorMessage(error)}`);
     }
     
     this.keyPair = { privateKey, publicKey };
@@ -382,13 +382,14 @@ export class E2EECrypto implements Disposable {
         salt: salt.toString('base64')
       };
     } catch (error) {
-      this.logger.error('Encryption failed', { error: error instanceof Error ? error.message : String(error) });
+      this.logger.error('Encryption failed', { error: getErrorMessage(error) });
       return null;
     }
   }
 
   /**
    * 解密消息
+   * P1-3 修复：添加 base64 解码验证和错误处理
    */
   decrypt(encrypted: EncryptedMessage): string | null {
     if (!this.keyPair) {
@@ -397,8 +398,23 @@ export class E2EECrypto implements Disposable {
     }
 
     try {
-      // 使用发送方公钥计算共享密钥
+      // P1-3 修复：验证 base64 字符串格式
+      const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+      
+      // 验证并解码发送方公钥
+      if (!encrypted.senderPublicKey || !base64Regex.test(encrypted.senderPublicKey)) {
+        this.logger.error('Decryption failed: invalid senderPublicKey format');
+        return null;
+      }
       const senderPublicKey = Buffer.from(encrypted.senderPublicKey, 'base64');
+      if (senderPublicKey.length !== 32) {
+        this.logger.error('Decryption failed: invalid senderPublicKey length', {
+          expected: 32,
+          actual: senderPublicKey.length
+        });
+        return null;
+      }
+      
       const sharedSecret = x25519.getSharedSecret(this.keyPair.privateKey, senderPublicKey);
       
       // P2 修复：强制要求盐值，不使用硬编码默认值
@@ -407,6 +423,11 @@ export class E2EECrypto implements Disposable {
         return null;
       }
       
+      // P1-3 修复：验证盐值 base64 格式
+      if (!base64Regex.test(encrypted.salt)) {
+        this.logger.error('Decryption failed: invalid salt format');
+        return null;
+      }
       const salt = Buffer.from(encrypted.salt, 'base64');
       
       // P2-7 修复：使用常量 SALT_SIZE 验证盐值长度
@@ -417,9 +438,32 @@ export class E2EECrypto implements Disposable {
       
       const aesKey = this.deriveAESKey(sharedSecret, salt);
 
-      // 解码参数
+      // P1-3 修复：验证并解码 IV 和 authTag
+      if (!encrypted.iv || !base64Regex.test(encrypted.iv)) {
+        this.logger.error('Decryption failed: invalid IV format');
+        return null;
+      }
       const iv = Buffer.from(encrypted.iv, 'base64');
+      if (iv.length !== AES_IV_SIZE) {
+        this.logger.error('Decryption failed: invalid IV length', {
+          expected: AES_IV_SIZE,
+          actual: iv.length
+        });
+        return null;
+      }
+      
+      if (!encrypted.authTag || !base64Regex.test(encrypted.authTag)) {
+        this.logger.error('Decryption failed: invalid authTag format');
+        return null;
+      }
       const authTag = Buffer.from(encrypted.authTag, 'base64');
+      if (authTag.length !== AES_TAG_SIZE) {
+        this.logger.error('Decryption failed: invalid authTag length', {
+          expected: AES_TAG_SIZE,
+          actual: authTag.length
+        });
+        return null;
+      }
 
       // 创建解密器
       const decipher = createDecipheriv('aes-256-gcm', aesKey, iv);
@@ -428,6 +472,12 @@ export class E2EECrypto implements Disposable {
       // 添加 AAD (如果有)
       if (encrypted.aad) {
         decipher.setAAD(Buffer.from(encrypted.aad, 'utf-8'));
+      }
+
+      // P1-3 修复：验证 ciphertext 存在
+      if (!encrypted.ciphertext) {
+        this.logger.error('Decryption failed: missing ciphertext');
+        return null;
       }
 
       // 解密
@@ -788,7 +838,7 @@ export class E2EECrypto implements Disposable {
     } catch (error) {
       this.logger.error('Key exchange confirmation failed with exception', {
         peerId: peerId.slice(0, 16),
-        error: error instanceof Error ? error.message : String(error)
+        error: getErrorMessage(error)
       });
       return false;
     }

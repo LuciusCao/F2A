@@ -5,12 +5,15 @@
 
 import { EventEmitter } from 'eventemitter3';
 import { randomUUID } from 'crypto';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
+import { fileURLToPath } from 'url';
+import { readFileSync } from 'fs';
 import { P2PNetwork } from './p2p-network.js';
 import { Logger } from '../utils/logger.js';
 import { Middleware } from '../utils/middleware.js';
 import { validateAgentCapability, validateTaskDelegateOptions } from '../utils/validation.js';
+import { getErrorMessage } from '../utils/error-utils.js';
 import {
   F2AOptions,
   F2AEvents,
@@ -30,8 +33,18 @@ import {
   failureFromError
 } from '../types/index.js';
 
-// 版本号
-const F2A_VERSION = '1.0.0';
+// P1-1 修复：从 package.json 读取版本号
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const packageJsonPath = join(__dirname, '../../package.json');
+
+let F2A_VERSION = '0.0.0';
+try {
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
+  F2A_VERSION = packageJson.version || '0.0.0';
+} catch {
+  // 如果无法读取 package.json，使用默认值
+}
 const PROTOCOL_VERSION = 'f2a/1.0';
 
 export interface F2AInstance {
@@ -583,14 +596,15 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       } catch (error) {
         this.logger.error('Task execution failed', {
           taskId: request.taskId,
-          error: error instanceof Error ? error.message : String(error)
+          fromPeerId: fromPeerId.slice(0, 16),
+          error: getErrorMessage(error)
         });
         await this.p2pNetwork.sendTaskResponse(
           fromPeerId,
           request.taskId,
           'error',
           undefined,
-          error instanceof Error ? error.message : String(error)
+          getErrorMessage(error)
         );
       }
     }

@@ -29,7 +29,7 @@ describe('CLI Commands', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    (process.exit as any).mockReset();
+    (process.exit as any).mockClear();
     process.env.F2A_CONTROL_PORT = '9001';
     process.env.F2A_CONTROL_TOKEN = 'test-token';
   });

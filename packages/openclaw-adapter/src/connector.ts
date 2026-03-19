@@ -996,7 +996,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     // 模糊匹配
     const fuzzy = agents.find((a: AgentInfo) => 
       a.peerId.startsWith(agentRef) ||
-      a.displayName.toLowerCase().includes(agentRef.toLowerCase())
+      (a.displayName?.toLowerCase().includes(agentRef.toLowerCase()) ?? false)
     );
 
     return fuzzy || null;

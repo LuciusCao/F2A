@@ -13,6 +13,7 @@ import type {
 } from './types.js';
 import { Result, failure, success, createError } from './types.js';
 import { nodeLogger as logger } from './logger.js';
+import { ensureError, getErrorMessage } from '@f2a/network';
 
 /** 默认请求超时（毫秒） */
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -148,7 +149,7 @@ export class F2ANetworkClient {
         
         // 检查是否可重试
         if (this.isRetryableError(error) && attempt < this.maxRetries) {
-          lastError = error instanceof Error ? error : new Error(String(error));
+          lastError = ensureError(error);
           const delayMs = this.calculateDelay(attempt);
           logger.info(`Retrying request to ${path} after ${delayMs}ms (attempt ${attempt + 1}/${this.maxRetries})`);
           clearTimeout(timeoutId);
@@ -157,8 +158,8 @@ export class F2ANetworkClient {
         }
         
         // P1 修复：确保返回有意义的错误信息
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        lastError = error instanceof Error ? error : new Error(errorMessage);
+        const errorMessage = getErrorMessage(error);
+        lastError = ensureError(error);
         
         return failure(createError(
           'CONNECTION_FAILED',

@@ -44,6 +44,7 @@ import { validateF2AMessage, validateTaskRequestPayload, validateTaskResponsePay
 import { MiddlewareManager, Middleware } from '../utils/middleware.js';
 import { RequestSigner, loadSignatureConfig, SignedMessage } from '../utils/signature.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
+import { getErrorMessage } from '../utils/error-utils.js';
 
 // DHT 服务类型定义
 interface DHTService {
@@ -106,8 +107,8 @@ export interface DiscoverOptions {
 class AsyncLock {
   private locked = false;
   private queue: Array<() => void> = [];
-  /** 默认锁超时时间（毫秒） - P2-1 修复：从 30000ms 改为 10000ms */
-  private static readonly DEFAULT_TIMEOUT_MS = 10000;
+  /** 默认锁超时时间（毫秒） - P1-6 修复：从 10000ms 改为 30000ms */
+  private static readonly DEFAULT_TIMEOUT_MS = 30000;
 
   /**
    * 获取锁
@@ -172,6 +173,12 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     maxRequests: 10, // 每个 peer 每分钟最多 10 次 DISCOVER 消息
     windowMs: 60 * 1000,
     burstMultiplier: 1.2 // 允许轻微突发
+  });
+  /** P0-2 修复：DECRYPT_FAILED 消息速率限制器（每个 peer） */
+  private decryptFailedRateLimiter = new RateLimiter({
+    maxRequests: 5, // 每个 peer 每分钟最多 5 次 DECRYPT_FAILED 消息
+    windowMs: 60 * 1000,
+    burstMultiplier: 1.0 // 不允许突发，严格限制
   });
   /** P1 修复：保存事件监听器引用，用于 stop() 中移除 */
   private boundEventHandlers: {
@@ -372,6 +379,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
     // P2-4 修复：停止 DISCOVER 消息速率限制器
     this.discoverRateLimiter.stop();
+    // P0-2 修复：停止 DECRYPT_FAILED 消息速率限制器
+    this.decryptFailedRateLimiter.stop();
 
     // P1-1 修复：停止 E2EE 加密模块，清理定时器资源
     if (this.e2eeCrypto && typeof this.e2eeCrypto.stop === 'function') {
@@ -759,7 +768,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         await this.initiateDiscovery(peerId, evt.detail.multiaddrs);
       } catch (error) {
         this.logger.error('Error in peer:discovery handler', {
-          error: error instanceof Error ? error.message : String(error)
+          error: getErrorMessage(error)
         });
       }
     };
@@ -815,7 +824,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         this.connectedPeers.add(peerId);
       } catch (error) {
         this.logger.error('Error in peer:connect handler', {
-          error: error instanceof Error ? error.message : String(error)
+          error: getErrorMessage(error)
         });
       }
     };
@@ -848,7 +857,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         }
       } catch (error) {
         this.logger.error('Error in peer:disconnect handler', {
-          error: error instanceof Error ? error.message : String(error)
+          error: getErrorMessage(error)
         });
       }
     };
@@ -934,7 +943,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       // 连接失败不应阻止发现流程，记录警告即可
       this.logger.warn('Failed to connect/send DISCOVER to mDNS peer', {
         peerId: peerId.slice(0, 16),
-        error: connectError instanceof Error ? connectError.message : String(connectError)
+        error: getErrorMessage(connectError)
       });
     }
   }
@@ -1176,8 +1185,17 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
   /**
    * 处理解密失败通知消息
+   * P0-2 修复：添加速率限制，防止攻击者触发大量解密失败
    */
   private async handleDecryptFailedMessage(message: F2AMessage, peerId: string): Promise<void> {
+    // P0-2 修复：检查 DECRYPT_FAILED 消息速率限制
+    if (!this.decryptFailedRateLimiter.allowRequest(peerId)) {
+      this.logger.warn('DECRYPT_FAILED message rate limit exceeded, ignoring', {
+        peerId: peerId.slice(0, 16)
+      });
+      return;
+    }
+    
     const { originalMessageId, error, message: errorMsg } = message.payload as {
       originalMessageId: string;
       error: string;
@@ -1377,26 +1395,31 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
   /**
    * 处理任务响应
+   * P0-1 修复：使用原子删除操作避免竞态条件
+   * Map.delete() 是原子操作，只有第一个成功删除的调用才能处理响应
    */
   private handleTaskResponse(payload: TaskResponsePayload): void {
+    // P0-1 修复：先检查 resolved 标志（快速路径，避免不必要的删除尝试）
     const pending = this.pendingTasks.get(payload.taskId);
     if (!pending) {
       this.logger.warn('Received response for unknown task', { taskId: payload.taskId });
       return;
     }
-
-    // P1 修复：使用原子操作避免竞态条件
-    // 先检查 resolved 标志，再决定是否处理
-    // 这确保即使多个响应并发到达，也只有一个能成功处理
+    
+    // 快速检查：如果已处理，直接返回
     if (pending.resolved) {
       this.logger.warn('Task already resolved, ignoring duplicate response', { taskId: payload.taskId });
       return;
     }
     
-    // 标记为已处理，防止并发响应重复处理
+    // P0-1 修复：设置 resolved 标志，然后尝试删除
+    // 关键：先设置标志，再删除，这样即使有并发：
+    // - 第一个设置 resolved=true 并删除成功
+    // - 第二个看到 resolved=true（上面的检查）或 get 返回 undefined
     pending.resolved = true;
 
-    // 从 Map 中移除
+    // 从 Map 中移除（原子操作）
+    // 即使多个响应并发到达，只有一个能成功删除
     this.pendingTasks.delete(payload.taskId);
 
     // 清理资源
@@ -1443,7 +1466,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           } catch (hangUpError) {
             this.logger.warn('Failed to hang up after fingerprint mismatch', {
               addr,
-              error: hangUpError instanceof Error ? hangUpError.message : String(hangUpError)
+              error: getErrorMessage(hangUpError)
             });
           }
           continue;
@@ -1465,7 +1488,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       } catch (error) {
         this.logger.warn('Failed to connect to bootstrap', { 
           addr,
-          error: error instanceof Error ? error.message : String(error)
+          error: getErrorMessage(error)
         });
       }
     }

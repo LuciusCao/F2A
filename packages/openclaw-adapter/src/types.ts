@@ -10,8 +10,11 @@
 // 统一 Result 类型（从核心库 re-export）
 // ============================================================================
 
+// 导入 SecurityConfig 供本地使用
+import type { SecurityConfig } from '@f2a/network';
+
 // 重新导出核心 Result 类型，确保整个项目使用统一的错误处理模式
-export type { Result, F2AError, ErrorCode } from '@f2a/network';
+export type { Result, F2AError, ErrorCode, SecurityConfig } from '@f2a/network';
 export { success, failure, failureFromError, createError } from '@f2a/network';
 
 // ============================================================================
@@ -183,39 +186,10 @@ export const INTERNAL_REPUTATION_CONFIG = {
   minScoreForReview: 40,            // 评审最低信誉
 } as const;
 
-export interface SecurityConfig {
-  requireConfirmation: boolean;
-  whitelist: string[];
-  blacklist: string[];
-  maxTasksPerMinute: number;
-}
-
-export interface AgentInfo {
-  peerId: string;
-  displayName: string;
-  agentType: string;
-  version: string;
-  capabilities: AgentCapability[];
-  multiaddrs: string[];
-  lastSeen: number;
-  reputation?: number;
-}
-
-export interface AgentCapability {
-  name: string;
-  description: string;
-  tools?: string[];
-  parameters?: Record<string, ParameterSchema>;
-}
-
-export interface PeerInfo {
-  peerId: string;
-  agentInfo?: AgentInfo;
-  multiaddrs: string[];
-  connected: boolean;
-  reputation: number;
-  lastSeen: number;
-}
+// ============================================================================
+// F2A 核心类型（从 @f2a/network 重新导出，避免重复定义）
+// ============================================================================
+export type { AgentInfo, AgentCapability, PeerInfo } from '@f2a/network';
 
 // Task Types
 export interface TaskRequest {

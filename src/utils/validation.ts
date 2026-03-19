@@ -39,6 +39,8 @@ export const P2PNetworkConfigSchema = z.object({
   listenPort: z.number().int().min(0).max(65535).optional(),
   listenAddresses: z.array(z.string()).optional(),
   bootstrapPeers: z.array(z.string()).optional(),
+  bootstrapPeerFingerprints: z.record(z.string(), z.string()).optional(),
+  trustedPeers: z.array(z.string()).optional(),
   enableMDNS: z.boolean().optional(),
   enableDHT: z.boolean().optional(),
   dhtServerMode: z.boolean().optional()

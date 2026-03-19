@@ -289,8 +289,10 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       // 如果提供了 IdentityManager，使用持久化的私钥
       if (this.identityManager?.isLoaded()) {
         const privateKey = this.identityManager.getPrivateKey();
-        if (privateKey) {
+        const peerId = this.identityManager.getPeerId();
+        if (privateKey && peerId) {
           libp2pOptions.privateKey = privateKey;
+          libp2pOptions.peerId = peerId;
           this.logger.info('Using persisted identity', {
             peerId: this.identityManager.getPeerIdString()?.slice(0, 16)
           });

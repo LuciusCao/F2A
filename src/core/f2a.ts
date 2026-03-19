@@ -10,6 +10,7 @@ import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { readFileSync } from 'fs';
 import { P2PNetwork } from './p2p-network.js';
+import { IdentityManager } from './identity/index.js';
 import { Logger } from '../utils/logger.js';
 import { Middleware } from '../utils/middleware.js';
 import { validateAgentCapability, validateTaskDelegateOptions } from '../utils/validation.js';
@@ -87,16 +88,19 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   private running: boolean = false;
   private registeredCapabilities: Map<string, RegisteredCapability> = new Map();
   private logger: Logger;
+  private identityManager?: IdentityManager;
 
   private constructor(
     agentInfo: AgentInfo,
     p2pNetwork: P2PNetwork,
-    options: Required<F2AOptions>
+    options: Required<F2AOptions>,
+    identityManager?: IdentityManager
   ) {
     super();
     this._agentInfo = agentInfo;
     this.p2pNetwork = p2pNetwork;
     this.options = options;
+    this.identityManager = identityManager;
     
     // 初始化 logger，默认启用文件日志到 dataDir
     const dataDir = options.dataDir || join(homedir(), '.f2a');
@@ -159,11 +163,23 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       multiaddrs: []
     };
 
+    // 创建 IdentityManager 并加载身份
+    const dataDir = mergedOptions.dataDir;
+    const identityManager = new IdentityManager({ dataDir });
+    const identityResult = await identityManager.loadOrCreate();
+    
+    if (!identityResult.success) {
+      throw new Error(`Failed to load or create identity: ${JSON.stringify(identityResult.error)}`);
+    }
+
     // 创建 P2P 网络
     const p2pNetwork = new P2PNetwork(agentInfo, mergedOptions.network);
+    
+    // 注入 IdentityManager（使用持久化的私钥）
+    p2pNetwork.setIdentityManager(identityManager);
 
     // 创建实例
-    const f2a = new F2A(agentInfo, p2pNetwork, mergedOptions);
+    const f2a = new F2A(agentInfo, p2pNetwork, mergedOptions, identityManager);
 
     return f2a;
   }

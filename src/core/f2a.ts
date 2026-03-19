@@ -12,6 +12,7 @@ import { readFileSync } from 'fs';
 import { P2PNetwork } from './p2p-network.js';
 import { IdentityManager } from './identity/index.js';
 import { CapabilityManager } from './capability-manager.js';
+import { SkillExchangeManager } from './skill-exchange-manager.js';
 import { Logger } from '../utils/logger.js';
 import { Middleware } from '../utils/middleware.js';
 import { validateAgentCapability, validateTaskDelegateOptions } from '../utils/validation.js';
@@ -91,6 +92,7 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   private logger: Logger;
   private identityManager?: IdentityManager;
   private capabilityManager?: CapabilityManager;
+  private skillExchangeManager?: SkillExchangeManager;
 
   private constructor(
     agentInfo: AgentInfo,

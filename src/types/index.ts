@@ -95,7 +95,14 @@ export type F2AMessageType =
   | 'TASK_DELEGATE' // 任务转委托
   | 'DECRYPT_FAILED' // 解密失败通知
   | 'PING'          // 心跳
-  | 'PONG';         // 心跳响应
+  | 'PONG'          // 心跳响应
+  // 技能交换
+  | 'SKILL_ANNOUNCE'      // 技能公告
+  | 'SKILL_QUERY'         // 技能查询
+  | 'SKILL_QUERY_RESPONSE' // 技能查询响应
+  | 'SKILL_INVOKE'        // 技能调用
+  | 'SKILL_INVOKE_RESPONSE' // 技能调用响应
+  | 'SKILL_RESULT';       // 技能执行结果
 
 export interface F2AMessage {
   /** 消息ID */
@@ -279,3 +286,4 @@ export * from './result.js';
 // ============================================================================
 
 export * from './capability-quant.js';
+export * from './skill-exchange.js';

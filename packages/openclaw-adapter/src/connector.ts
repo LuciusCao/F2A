@@ -150,6 +150,31 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
 
     // 处理器使用 getter 延迟初始化，无需在此显式创建
 
+    // 注册自动清理处理器，确保 CLI 命令能正常退出
+    // 使用 once 而非 on，确保只执行一次
+    const autoCleanup = () => {
+      // 同步关闭资源（不使用 await，因为 beforeExit 不支持异步）
+      if (this.pollTimer) {
+        clearInterval(this.pollTimer);
+        this.pollTimer = undefined;
+      }
+      if (this.webhookServer) {
+        try {
+          // stop() 是异步的，但我们可以直接关闭底层服务器
+          (this.webhookServer as any).server?.close();
+        } catch {}
+      }
+      if (this.taskQueue) {
+        try {
+          this.taskQueue.close();
+        } catch {}
+      }
+    };
+    
+    process.once('beforeExit', autoCleanup);
+    process.once('SIGINT', autoCleanup);
+    process.once('SIGTERM', autoCleanup);
+
     // 检测能力（基于配置，不依赖 OpenClaw 会话）
     this.capabilities = this.capabilityDetector.getDefaultCapabilities();
     if (this.config.capabilities?.length) {

@@ -21,6 +21,8 @@
  * - 核心配置（本模块）：P2P网络、安全、日志、Webhook
  * - 模块配置：各模块保持自己的配置（ReputationConfig 等）
  * - 适配器配置：OpenClaw 适配器专用配置
+ * 
+ * P2-2 修复：移除对 ../types/index.js 的依赖，避免循环导入
  */
 
 // ============================================================================
@@ -87,60 +89,12 @@ export {
 // 向后兼容重导出
 // ============================================================================
 
-// 从旧位置重导出，确保现有代码无需修改
-// 注意：这些导出将在未来版本中移除，请迁移到新的导入路径
+// P2-2 修复：移除对 ../types/index.js 的依赖，直接从具体文件导入
+// 这样可以避免循环依赖：config/index.ts -> types/index.ts -> config/types.ts
 
-// 事件类型（从 types/index.ts 移动）
-export type {
-  PeerDiscoveredEvent,
-  PeerConnectedEvent,
-  PeerDisconnectedEvent,
-  TaskRequestEvent,
-  TaskResponseEvent,
-  NetworkStartedEvent,
-  F2AEvents,
-  F2AEventEmitter,
-} from '../types/index.js';
-
-// Agent 相关类型
-export type {
-  AgentCapability,
-  AgentInfo,
-  PeerInfo,
-} from '../types/index.js';
-
-// 消息类型
-export type {
-  F2AMessageType,
-  F2AMessage,
-  DiscoverPayload,
-  CapabilityQueryPayload,
-  CapabilityResponsePayload,
-  TaskRequestPayload,
-  TaskResponsePayload,
-} from '../types/index.js';
-
-// 结果类型
+// 结果类型 - 直接从 result.ts 导入，不经过 types/index.ts
 export type { Result, F2AError, ErrorCode } from '../types/result.js';
 export { success, failure, failureFromError, createError } from '../types/result.js';
-
-// 能力量化类型
-export type {
-  AgentCapabilityQuant,
-  CapabilityMetrics,
-  CapabilityScore,
-  CapabilityVector,
-  CapabilityDimension,
-  CapabilityUpdateEvent,
-  CapabilityWeights,
-  UpdateStrategy,
-  LoadInfo,
-  ComputationMetrics,
-  StorageMetrics,
-  NetworkMetrics,
-  SkillTag,
-  ReputationMetrics,
-} from '../types/capability-quant.js';
 
 // ============================================================================
 // 配置验证工具

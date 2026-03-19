@@ -25,9 +25,9 @@ export const ParameterSchemaSchema = z.object({
 });
 
 export const AgentCapabilitySchema = z.object({
-  name: z.string().min(1).max(64).regex(/^[a-z0-9-]+$/),
-  description: z.string().min(1).max(256),
-  tools: z.array(z.string()).max(32),
+  name: z.string().trim().min(1).max(64).regex(/^[a-z0-9-]+$/),
+  description: z.string().trim().min(1).max(256),
+  tools: z.array(z.string().trim().min(1)).max(32),
   parameters: z.record(ParameterSchemaSchema).optional()
 });
 
@@ -60,7 +60,7 @@ export const SecurityConfigSchema = z.object({
 });
 
 export const F2AOptionsSchema = z.object({
-  displayName: z.string().min(1).max(64).optional(),
+  displayName: z.string().trim().min(1).max(64).optional(),
   agentType: z.enum(['openclaw', 'claude-code', 'codex', 'custom']).optional(),
   network: P2PNetworkConfigSchema.optional(),
   security: SecurityConfigSchema.optional(),
@@ -73,8 +73,8 @@ export const F2AOptionsSchema = z.object({
 // ============================================================================
 
 export const TaskDelegateOptionsSchema = z.object({
-  capability: z.string().min(1).max(64),
-  description: z.string().min(1).max(1024),
+  capability: z.string().trim().min(1).max(64),
+  description: z.string().trim().min(1).max(1024),
   parameters: z.record(z.unknown()).optional(),
   timeout: z.number().int().min(1000).max(300000).optional(), // 1s - 5min
   parallel: z.boolean().optional(),
@@ -85,6 +85,7 @@ export const TaskDelegateOptionsSchema = z.object({
 // 消息协议 Schema
 // ============================================================================
 
+// P2-3 修复：添加 DECRYPT_FAILED 消息类型
 export const F2AMessageTypeSchema = z.enum([
   'DISCOVER',
   'DISCOVER_RESP',
@@ -93,6 +94,7 @@ export const F2AMessageTypeSchema = z.enum([
   'TASK_REQUEST',
   'TASK_RESPONSE',
   'TASK_DELEGATE',
+  'DECRYPT_FAILED',
   'PING',
   'PONG'
 ]);

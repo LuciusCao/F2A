@@ -54,6 +54,11 @@ typings/
 # TypeScript cache
 *.tsbuildinfo
 
+# P2-1 修复：禁止提交 src 目录下的编译产物
+src/**/*.js
+src/**/*.d.ts
+!src/**/*.d.ts.map
+
 # Optional npm cache directory
 .npm/
 

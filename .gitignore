@@ -139,3 +139,7 @@ temp/
 
 # Test temporary directories
 test-tmp-persistence-*
+
+# F2A runtime data
+f2a-data/
+test-tmp-*/

@@ -4,7 +4,7 @@
  */
 
 import { request, RequestOptions } from 'http';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import {
@@ -49,9 +49,41 @@ function getControlToken(): string {
 
 // 惰性获取 token，避免模块加载时立即验证（init/config 命令不需要 token）
 let _controlToken: string | undefined;
+let _tokenFileMtime: number | undefined;
+
+/**
+ * 获取 token 文件修改时间
+ */
+function getTokenFileMtime(): number | undefined {
+  const tokenPath = join(homedir(), '.f2a', 'control-token');
+  if (existsSync(tokenPath)) {
+    try {
+      const stats = statSync(tokenPath);
+      return stats.mtimeMs;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * 检查 token 文件是否已修改
+ */
+function hasTokenFileChanged(): boolean {
+  const currentMtime = getTokenFileMtime();
+  return currentMtime !== _tokenFileMtime;
+}
+
 function getControlTokenLazy(): string {
-  if (!_controlToken) {
+  // 如果 token 文件已修改，强制重新加载
+  if (_controlToken !== undefined && hasTokenFileChanged()) {
+    _controlToken = undefined;
+  }
+  
+  if (_controlToken === undefined) {
     _controlToken = getControlToken();
+    _tokenFileMtime = getTokenFileMtime();
   }
   return _controlToken;
 }
@@ -64,6 +96,8 @@ interface Args {
   reason?: string;
   detach?: boolean;
   helpTarget?: string;
+  configKey?: string;
+  configValue?: string;
 }
 
 /**
@@ -124,7 +158,22 @@ function parseArgs(): Args {
   // 解析 detach 标志
   const detach = args.includes('-d') || args.includes('--detach');
 
-  return { command, subcommand, idOrIndex, capability, reason, detach };
+  // 解析 config 子命令的参数
+  let configKey: string | undefined;
+  let configValue: string | undefined;
+  if (command === 'config' && subcommand) {
+    // config get <key>
+    if (subcommand === 'get' && args[2]) {
+      configKey = args[2];
+    }
+    // config set <key> <value>
+    if (subcommand === 'set' && args[2]) {
+      configKey = args[2];
+      configValue = args[3];
+    }
+  }
+
+  return { command, subcommand, idOrIndex, capability, reason, detach, configKey, configValue };
 }
 
 /**
@@ -327,6 +376,41 @@ function showDeprecatedInit(): void {
 }
 
 /**
+ * 敏感字段列表
+ */
+const SENSITIVE_FIELDS = ['token', 'password', 'secret', 'key', 'credential', 'auth'];
+
+/**
+ * 过滤响应中的敏感信息
+ */
+function sanitizeResponse(response: Record<string, unknown>): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {};
+  
+  for (const [key, value] of Object.entries(response)) {
+    // 检查 key 是否包含敏感字段
+    const isSensitive = SENSITIVE_FIELDS.some(field => 
+      key.toLowerCase().includes(field.toLowerCase())
+    );
+    
+    if (isSensitive && typeof value === 'string') {
+      // 隐藏敏感值，只显示前4位和后4位
+      if (value.length > 8) {
+        sanitized[key] = `${value.slice(0, 4)}...${value.slice(-4)}`;
+      } else {
+        sanitized[key] = '***';
+      }
+    } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      // 递归处理嵌套对象
+      sanitized[key] = sanitizeResponse(value as Record<string, unknown>);
+    } else {
+      sanitized[key] = value;
+    }
+  }
+  
+  return sanitized;
+}
+
+/**
  * 发送控制命令到 F2A Daemon
  * @param action - 命令动作
  * @param params - 命令参数（可选）
@@ -356,12 +440,16 @@ async function sendCommand(action: string, params?: Record<string, unknown>): Pr
         try {
           const response = JSON.parse(data);
           if (response.success) {
-            console.log(JSON.stringify(response, null, 2));
+            // 过滤敏感信息后输出
+            const sanitizedResponse = sanitizeResponse(response);
+            console.log(JSON.stringify(sanitizedResponse, null, 2));
           } else {
             if (res.statusCode === 401) {
               console.error('❌ Authentication failed. Please check your F2A_CONTROL_TOKEN.');
             } else {
-              console.error('Error:', response.error);
+              // 错误响应也过滤敏感信息
+              const sanitizedError = sanitizeResponse(response);
+              console.error('Error:', sanitizedError.error || sanitizedError);
             }
           }
           resolve();
@@ -465,9 +553,6 @@ async function main(): Promise<void> {
  */
 async function handleConfigCommand(args: Args): Promise<void> {
   const subcommand = args.subcommand;
-  // 获取命令行参数中 config 之后的所有参数
-  const configIndex = process.argv.indexOf('config');
-  const remainingArgs = configIndex >= 0 ? process.argv.slice(configIndex + 1) : [];
   
   switch (subcommand) {
     case 'list':
@@ -478,7 +563,7 @@ async function handleConfigCommand(args: Args): Promise<void> {
 
     case 'get':
       {
-        const key = remainingArgs[1];
+        const key = args.configKey;
         if (!key) {
           console.error('[F2A] Error: Configuration key is required');
           console.error('Usage: f2a config get <key>');
@@ -490,8 +575,8 @@ async function handleConfigCommand(args: Args): Promise<void> {
 
     case 'set':
       {
-        const key = remainingArgs[1];
-        const value = remainingArgs[2];
+        const key = args.configKey;
+        const value = args.configValue;
         if (!key || value === undefined) {
           console.error('[F2A] Error: Both key and value are required');
           console.error('Usage: f2a config set <key> <value>');

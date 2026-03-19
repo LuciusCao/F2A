@@ -68,6 +68,10 @@ export interface P2PNetworkConfig {
   listenAddresses?: string[];
   /** 引导节点列表 */
   bootstrapPeers?: string[];
+  /** 引导节点指纹映射 - key为multiaddr或peerId，value为预期的PeerID */
+  bootstrapPeerFingerprints?: Record<string, string>;
+  /** 信任的 Peer 白名单（不会被清理） */
+  trustedPeers?: string[];
   /** 是否启用 MDNS 本地发现 */
   enableMDNS?: boolean;
   /** 是否启用 DHT (默认 true) */
@@ -339,3 +343,10 @@ export interface RegisteredCapability extends AgentCapability {
 // ============================================================================
 
 export * from './result.js';
+
+// ============================================================================
+// 能力量化类型 (Phase 2)
+// 从 capability-quant.ts 重新导出
+// ============================================================================
+
+export * from './capability-quant.js';

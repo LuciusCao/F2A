@@ -16,6 +16,30 @@ import { webhookLogger as logger } from './logger.js';
 /** 默认请求体大小限制 (64KB) - 元数据交换足够，防止 DoS */
 const DEFAULT_MAX_BODY_SIZE = 64 * 1024;
 
+/** 默认允许的 CORS 来源 */
+const DEFAULT_ALLOWED_ORIGINS = ['http://localhost'];
+
+/**
+ * P2 修复：生产环境 CORS 配置验证
+ */
+function validateCorsConfig(allowedOrigins: string[]): void {
+  const isProduction = process.env.NODE_ENV === 'production';
+  
+  if (isProduction) {
+    // 检查是否使用默认配置
+    if (allowedOrigins.length === 1 && allowedOrigins[0] === 'http://localhost') {
+      logger.error('CORS configuration warning: Using default localhost origin in production!');
+      logger.error('Set F2A_WEBHOOK_ALLOWED_ORIGINS environment variable or pass allowedOrigins option.');
+    }
+    
+    // 检查是否包含通配符
+    if (allowedOrigins.includes('*')) {
+      logger.error('CORS configuration error: Wildcard origin (*) is not allowed in production!');
+      throw new Error('Wildcard CORS origin is not allowed in production. Configure specific allowed origins.');
+    }
+  }
+}
+
 export interface WebhookHandler {
   onDiscover(payload: DiscoverWebhookPayload): Promise<{
     capabilities: AgentCapability[];
@@ -49,8 +73,12 @@ export class WebhookServer {
     this.port = port;
     this.handler = handler;
     this.maxBodySize = options?.maxBodySize || DEFAULT_MAX_BODY_SIZE;
-    // 默认只允许 localhost
-    this.allowedOrigins = options?.allowedOrigins ?? ['http://localhost'];
+    // P2 修复：支持从环境变量读取 CORS 配置
+    const envOrigins = process.env.F2A_WEBHOOK_ALLOWED_ORIGINS?.split(',').map(o => o.trim()).filter(Boolean);
+    this.allowedOrigins = options?.allowedOrigins ?? envOrigins ?? DEFAULT_ALLOWED_ORIGINS;
+    
+    // P2 修复：生产环境强制验证 CORS 配置
+    validateCorsConfig(this.allowedOrigins);
   }
 
   /**
@@ -62,6 +90,8 @@ export class WebhookServer {
       
       this.server.listen(this.port, () => {
         logger.info('服务器启动在端口 %d', this.port);
+        // 允许进程在只有这个服务器时退出（用于 CLI 命令如 gateway status）
+        this.server?.unref();
         resolve();
       });
 

@@ -4,6 +4,9 @@
  */
 
 import { EventEmitter } from 'eventemitter3';
+import { randomUUID } from 'crypto';
+import { join } from 'path';
+import { homedir } from 'os';
 import { P2PNetwork } from './p2p-network.js';
 import { Logger } from '../utils/logger.js';
 import { Middleware } from '../utils/middleware.js';
@@ -81,7 +84,16 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     this._agentInfo = agentInfo;
     this.p2pNetwork = p2pNetwork;
     this.options = options;
-    this.logger = new Logger({ level: options.logLevel, component: 'F2A' });
+    
+    // 初始化 logger，默认启用文件日志到 dataDir
+    const dataDir = options.dataDir || join(homedir(), '.f2a');
+    this.logger = new Logger({ 
+      level: options.logLevel, 
+      component: 'F2A',
+      enableConsole: true,
+      enableFile: true,
+      filePath: join(dataDir, 'f2a.log')
+    });
 
     this.bindEvents();
   }
@@ -193,18 +205,22 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
 
   /**
    * 注册能力
+   * P3.3 修复：返回 Result 类型，统一错误处理
    */
   registerCapability(
     capability: AgentCapability,
     handler: (params: Record<string, unknown>) => Promise<unknown>
-  ): void {
+  ): Result<void> {
     // 验证能力定义
     const validation = validateAgentCapability(capability);
     if (!validation.success) {
       this.logger.error('Invalid capability definition', {
         errors: validation.error.errors
       });
-      throw new Error(`Invalid capability: ${validation.error.errors.map(e => e.message).join(', ')}`);
+      return failureFromError(
+        'INVALID_PARAMS',
+        `Invalid capability: ${validation.error.errors.map(e => e.message).join(', ')}`
+      );
     }
 
     this.registeredCapabilities.set(capability.name, {
@@ -216,6 +232,8 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     this.updateAgentCapabilities();
 
     this.logger.info('Registered capability', { name: capability.name });
+    
+    return success(undefined);
   }
 
   /**
@@ -286,7 +304,8 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       );
     }
 
-    const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // P3.1 修复：使用 randomUUID() 替代 Math.random()
+    const taskId = `task-${randomUUID()}`;
 
     this.logger.info('Delegating task', {
       taskId,

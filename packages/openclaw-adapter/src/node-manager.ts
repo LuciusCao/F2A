@@ -155,7 +155,7 @@ export class F2ANodeManager {
    * 启动 F2A Node
    */
   async start(): Promise<Result<void>> {
-    const daemonPath = join(this.config.nodePath, 'dist/daemon/index.js');
+    const daemonPath = join(this.config.nodePath, 'dist/daemon/main.js');
 
     if (!existsSync(daemonPath)) {
       return {
@@ -177,7 +177,7 @@ export class F2ANodeManager {
           F2A_CONTROL_TOKEN: this.config.controlToken,
           F2A_P2P_PORT: String(this.config.p2pPort),
           F2A_ENABLE_MDNS: String(this.config.enableMDNS),
-          F2A_BOOTSTRAP_PEERS: JSON.stringify(this.config.bootstrapPeers)
+          BOOTSTRAP_PEERS: this.config.bootstrapPeers?.join(',') || ''
         },
         detached: true,
         stdio: ['ignore', 'pipe', 'pipe']
@@ -291,11 +291,18 @@ export class F2ANodeManager {
    */
   async isRunning(): Promise<boolean> {
     try {
+      // 添加超时，避免阻塞 Gateway 启动
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 秒超时
+      
       const response = await fetch(`http://localhost:${this.config.controlPort}/health`, {
         headers: {
           'Authorization': `Bearer ${this.config.controlToken}`
-        }
+        },
+        signal: controller.signal
       });
+      
+      clearTimeout(timeoutId);
       return response.ok;
     } catch {
       return false;
@@ -410,6 +417,11 @@ export class F2ANodeManager {
         }
       }
     }, 30000); // 每 30 秒检查一次
+    
+    // 防止定时器阻止进程退出
+    if (this.healthCheckInterval.unref) {
+      this.healthCheckInterval.unref();
+    }
   }
 
   /**

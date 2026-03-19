@@ -1,6 +1,6 @@
 {
   "name": "@f2a/network",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "Friend-to-Agent P2P networking protocol for OpenClaw Agents",
   "type": "module",
   "main": "dist/index.js",
@@ -53,6 +53,7 @@
     "@libp2p/crypto": "^4.0.0",
     "@libp2p/interface": "^1.0.0",
     "@libp2p/kad-dht": "^16.1.4",
+    "@libp2p/mdns": "^12.0.13",
     "@libp2p/peer-id": "^4.0.0",
     "@libp2p/tcp": "^9.0.0",
     "@multiformats/multiaddr": "^12.0.0",

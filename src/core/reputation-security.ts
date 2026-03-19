@@ -3,7 +3,7 @@
  * Phase 3: 链式签名、邀请制、挑战机制
  */
 
-import { createHash, createSign, createVerify } from 'crypto';
+import { createHash, createSign, createVerify, randomBytes } from 'crypto';
 import { Logger } from '../utils/logger.js';
 import { ReputationEntry, ReputationManager } from './reputation.js';
 
@@ -53,6 +53,7 @@ export interface InvitationConfig {
 
 /**
  * 挑战记录
+ * P2-6 修复：添加 nonce 和 processed 字段，防止重放攻击
  */
 export interface ChallengeRecord {
   challengerId: string;
@@ -62,6 +63,10 @@ export interface ChallengeRecord {
   stake: number;
   timestamp: number;
   status: 'pending' | 'success' | 'failed';
+  /** P2-6 修复：随机 nonce，防止重放攻击 */
+  nonce: string;
+  /** P2-6 修复：是否已被处理，防止重复处理 */
+  processed: boolean;
 }
 
 /**
@@ -379,6 +384,8 @@ export class ChallengeManager {
   private reputationManager: ReputationManager;
   private chainManager: ChainSignatureManager;
   private challenges: Map<string, ChallengeRecord[]> = new Map();
+  /** P2-3 修复：已使用的 nonce 集合，防止跨实例重放攻击 */
+  private usedNonces: Set<string> = new Set();
   private logger: Logger;
 
   constructor(
@@ -392,6 +399,7 @@ export class ChallengeManager {
 
   /**
    * 提交挑战
+   * P2-6 修复：生成 nonce 并设置 processed 标志，防止重放攻击
    */
   submitChallenge(
     challengerId: string,
@@ -408,6 +416,10 @@ export class ChallengeManager {
       stake,
       timestamp: Date.now(),
       status: 'pending',
+      // P2-6 修复：生成随机 nonce 防止重放
+      nonce: randomBytes(32).toString('hex'),
+      // P2-6 修复：初始化为未处理
+      processed: false
     };
 
     const targetChallenges = this.challenges.get(targetId) || [];
@@ -418,6 +430,7 @@ export class ChallengeManager {
       challengerId: challengerId.slice(0, 16),
       targetId: targetId.slice(0, 16),
       reason,
+      nonce: challenge.nonce.slice(0, 16)
     });
 
     return challenge;
@@ -425,8 +438,29 @@ export class ChallengeManager {
 
   /**
    * 处理挑战
+   * P1-1 修复：每个 reason 分支验证失败后明确返回，避免继续执行
+   * P2-3 修复：检查 nonce 是否已被使用，防止重放攻击
+   * P2-6 修复：检查 processed 标志，防止重复处理
    */
   processChallenge(challenge: ChallengeRecord): ChallengeResult {
+    // P2-6 修复：检查是否已被处理
+    if (challenge.processed) {
+      this.logger.warn('Challenge already processed, rejecting', {
+        targetId: challenge.targetId.slice(0, 16),
+        nonce: challenge.nonce.slice(0, 16)
+      });
+      return { success: false, reward: 0, reason: 'Challenge already processed' };
+    }
+    
+    // P2-3 修复：检查 nonce 是否已被使用
+    if (this.usedNonces.has(challenge.nonce)) {
+      this.logger.warn('Challenge nonce already used, possible replay attack', {
+        targetId: challenge.targetId.slice(0, 16),
+        nonce: challenge.nonce.slice(0, 16)
+      });
+      return { success: false, reward: 0, reason: 'Challenge nonce already used' };
+    }
+    
     const targetId = challenge.targetId;
 
     // 1. 验证事件链
@@ -434,6 +468,11 @@ export class ChallengeManager {
       const chainValid = this.chainManager.verifyChain(targetId);
       
       if (!chainValid) {
+        // 标记为已处理
+        challenge.processed = true;
+        // P2-3 修复：记录已使用的 nonce
+        this.usedNonces.add(challenge.nonce);
+        
         // 挑战成功
         this.reputationManager.recordFailure(
           targetId,
@@ -451,6 +490,17 @@ export class ChallengeManager {
         challenge.status = 'success';
         return { success: true, reward: challenge.stake * 2, reason: 'Invalid chain detected' };
       }
+      
+      // P1-1 修复：验证失败（链有效），证据不足，直接返回
+      challenge.processed = true;
+      this.usedNonces.add(challenge.nonce);
+      this.reputationManager.recordReviewPenalty(
+        challenge.challengerId,
+        -challenge.stake * 0.5,
+        'No evidence to support challenge'
+      );
+      challenge.status = 'failed';
+      return { success: false, reward: 0, reason: 'No evidence to support challenge' };
     }
 
     // 2. 检测合谋
@@ -458,6 +508,11 @@ export class ChallengeManager {
       const collusionScore = this.detectCollusion(targetId);
       
       if (collusionScore > 0.8) {
+        // 标记为已处理
+        challenge.processed = true;
+        // P2-3 修复：记录已使用的 nonce
+        this.usedNonces.add(challenge.nonce);
+        
         // 合谋检测成功
         this.reputationManager.recordFailure(
           targetId,
@@ -474,6 +529,17 @@ export class ChallengeManager {
         challenge.status = 'success';
         return { success: true, reward: challenge.stake * 1.5, reason: 'Collusion detected' };
       }
+      
+      // P1-1 修复：验证失败（合谋分数不够），证据不足，直接返回
+      challenge.processed = true;
+      this.usedNonces.add(challenge.nonce);
+      this.reputationManager.recordReviewPenalty(
+        challenge.challengerId,
+        -challenge.stake * 0.5,
+        'No evidence to support challenge'
+      );
+      challenge.status = 'failed';
+      return { success: false, reward: 0, reason: 'No evidence to support challenge' };
     }
 
     // 3. 分数操纵检测
@@ -483,6 +549,11 @@ export class ChallengeManager {
       const claimedScore = this.reputationManager.getReputation(targetId).score;
       
       if (Math.abs(calculatedScore - claimedScore) > 10) {
+        // 标记为已处理
+        challenge.processed = true;
+        // P2-3 修复：记录已使用的 nonce
+        this.usedNonces.add(challenge.nonce);
+        
         // 分数不一致
         this.reputationManager.recordFailure(
           targetId,
@@ -499,17 +570,32 @@ export class ChallengeManager {
         challenge.status = 'success';
         return { success: true, reward: challenge.stake * 1.5, reason: 'Score manipulation detected' };
       }
+      
+      // P1-1 修复：验证失败（分数一致），证据不足，直接返回
+      challenge.processed = true;
+      this.usedNonces.add(challenge.nonce);
+      this.reputationManager.recordReviewPenalty(
+        challenge.challengerId,
+        -challenge.stake * 0.5,
+        'No evidence to support challenge'
+      );
+      challenge.status = 'failed';
+      return { success: false, reward: 0, reason: 'No evidence to support challenge' };
     }
+
+    // 标记为已处理（未知 reason 类型）
+    challenge.processed = true;
+    this.usedNonces.add(challenge.nonce);
 
     // 挑战失败
     this.reputationManager.recordReviewPenalty(
       challenge.challengerId,
       -challenge.stake * 0.5,
-      'Failed challenge'
+      'Invalid challenge reason'
     );
 
     challenge.status = 'failed';
-    return { success: false, reward: 0, reason: 'Challenge failed' };
+    return { success: false, reward: 0, reason: 'Invalid challenge reason' };
   }
 
   /**
@@ -551,6 +637,17 @@ export class ChallengeManager {
       all.push(...challenges.filter(c => c.status === 'pending'));
     }
     return all;
+  }
+
+  /**
+   * R2-5 修复：清理资源，防止内存泄漏
+   */
+  stop(): void {
+    // 清理已使用的 nonce 集合
+    this.usedNonces.clear();
+    // 清理挑战记录
+    this.challenges.clear();
+    this.logger.info('ChallengeManager stopped and resources cleaned');
   }
 }
 

@@ -276,7 +276,7 @@ describe('网络故障恢复集成测试', () => {
         const reputationSystem = new ReputationSystem(
           {
             enabled: true,
-            initialScore: 50,
+            initialScore: 30,
             minScoreForService: 20,
             decayRate: 0.01,
           },
@@ -297,7 +297,7 @@ describe('网络故障恢复集成测试', () => {
         const reputationSystem = new ReputationSystem(
           {
             enabled: true,
-            initialScore: 50,
+            initialScore: 30,
             minScoreForService: 20,
             decayRate: 0.01,
           },
@@ -306,8 +306,8 @@ describe('网络故障恢复集成测试', () => {
 
         const rep = reputationSystem.getReputation(peerId);
 
-        // 50 + 10*3 - 20 = 60
-        expect(rep.score).toBe(60);
+        // 30 + 10*3 - 20 = 40
+        expect(rep.score).toBe(40);
         expect(rep.successfulTasks).toBe(3);
         expect(rep.failedTasks).toBe(1);
         expect(rep.history).toHaveLength(4);
@@ -318,7 +318,7 @@ describe('网络故障恢复集成测试', () => {
       const reputationSystem = new ReputationSystem(
         {
           enabled: true,
-          initialScore: 50,
+          initialScore: 30,
           minScoreForService: 20,
           decayRate: 0.01,
         },

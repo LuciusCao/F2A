@@ -5,12 +5,14 @@
 
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import type { IReputationManager, IReputationEntry } from '@f2a/network';
 import type { 
   ReputationEntry, 
   ReputationEvent, 
   ReputationConfig,
   TaskResponse 
 } from './types.js';
+import { INTERNAL_REPUTATION_CONFIG } from './types.js';
 import { pluginLogger as logger } from './logger.js';
 
 /** 防抖保存配置 */
@@ -164,10 +166,91 @@ export class ReputationSystem {
    * 检查是否允许服务
    */
   isAllowed(peerId: string): boolean {
-    if (!this.config.enabled) return true;
+    if (!INTERNAL_REPUTATION_CONFIG.enabled) return true;
     
     const entry = this.getReputation(peerId);
-    return entry.score >= this.config.minScoreForService;
+    return entry.score >= INTERNAL_REPUTATION_CONFIG.minScoreForService;
+  }
+
+  /**
+   * 检查节点是否具有指定权限
+   * 基于信誉分数判断权限等级
+   * 
+   * 权限等级：
+   * - restricted (0-20): 仅可执行
+   * - novice (20-40): 可发布、可执行
+   * - participant (40-60): 可发布、可执行、可评审
+   * - contributor (60-80): 可发布、可执行、可评审，发布优先级更高
+   * - core (80-100): 可发布、可执行、可评审，最高发布优先级
+   * 
+   * @param peerId - 节点的唯一标识符
+   * @param permission - 要检查的权限类型：'publish'（发布）、'execute'（执行）、'review'（评审）
+   * @returns 如果节点具有该权限则返回 true，否则返回 false
+   */
+  hasPermission(peerId: string, permission: 'publish' | 'execute' | 'review'): boolean {
+    const entry = this.getReputation(peerId);
+    const score = entry.score;
+    
+    // 根据分数确定权限
+    switch (permission) {
+      case 'publish':
+        // 20分以上可发布
+        return score >= 20;
+      case 'execute':
+        // 所有节点都可以执行
+        return true;
+      case 'review':
+        // 40分以上可评审
+        return score >= 40;
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * 记录评审奖励
+   * 当节点完成评审任务时调用，会提高信誉分数
+   * @param peerId - 节点的唯一标识符
+   * @param delta - 分数变化量，默认为 3
+   */
+  recordReviewReward(peerId: string, delta: number = INTERNAL_REPUTATION_CONFIG.reviewReward): void {
+    const entry = this.getReputation(peerId);
+    
+    entry.score = Math.min(100, entry.score + delta);
+    entry.lastInteraction = Date.now();
+    
+    entry.history.push({
+      type: 'review_reward',
+      delta,
+      timestamp: Date.now()
+    });
+
+    this.trimHistory(entry);
+    this.save();
+  }
+
+  /**
+   * 记录评审惩罚
+   * 当节点提供低质量评审或违规时调用，会降低信誉分数
+   * @param peerId - 节点的唯一标识符
+   * @param delta - 分数变化量，默认为 -5
+   * @param reason - 可选的惩罚原因描述
+   */
+  recordReviewPenalty(peerId: string, delta: number = -INTERNAL_REPUTATION_CONFIG.reviewPenalty, reason?: string): void {
+    const entry = this.getReputation(peerId);
+    
+    entry.score = Math.max(0, entry.score + delta);
+    entry.lastInteraction = Date.now();
+    
+    entry.history.push({
+      type: 'review_penalty',
+      delta,
+      timestamp: Date.now(),
+      reason
+    });
+
+    this.trimHistory(entry);
+    this.save();
   }
 
   /**
@@ -206,7 +289,7 @@ export class ReputationSystem {
   private createDefaultEntry(peerId: string): ReputationEntry {
     return {
       peerId,
-      score: this.config.initialScore,
+      score: INTERNAL_REPUTATION_CONFIG.initialScore,
       successfulTasks: 0,
       failedTasks: 0,
       totalTasks: 0,
@@ -285,6 +368,11 @@ export class ReputationSystem {
         this.doSave();
       }
     }, this.debounceConfig.delayMs);
+    
+    // 防止定时器阻止进程退出
+    if (this.saveTimer.unref) {
+      this.saveTimer.unref();
+    }
   }
   
   /**
@@ -364,5 +452,55 @@ export class ReputationSystem {
         // 忽略清理错误
       }
     }
+  }
+}
+
+/**
+ * ReputationManager 适配器
+ * 
+ * 将 ReputationSystem 包装为 ReviewCommittee 所需的 IReputationManager 接口。
+ * 用于解决 ReviewCommittee (src/core/) 依赖 IReputationManager 接口，
+ * 而 adapter 使用的是 ReputationSystem 的问题。
+ */
+export class ReputationManagerAdapter implements IReputationManager {
+  private reputationSystem: ReputationSystem;
+
+  constructor(reputationSystem: ReputationSystem) {
+    this.reputationSystem = reputationSystem;
+  }
+
+  /**
+   * 检查节点是否具有指定权限
+   */
+  hasPermission(peerId: string, permission: 'publish' | 'execute' | 'review'): boolean {
+    return this.reputationSystem.hasPermission(peerId, permission);
+  }
+
+  /**
+   * 获取高信誉节点
+   */
+  getHighReputationNodes(minScore: number): IReputationEntry[] {
+    return this.reputationSystem.getHighReputationNodes(minScore);
+  }
+
+  /**
+   * 获取所有信誉记录
+   */
+  getAllReputations(): IReputationEntry[] {
+    return this.reputationSystem.getAllReputations();
+  }
+
+  /**
+   * 记录评审惩罚
+   */
+  recordReviewPenalty(peerId: string, delta: number, reason?: string): void {
+    this.reputationSystem.recordReviewPenalty(peerId, delta, reason);
+  }
+
+  /**
+   * 记录评审奖励
+   */
+  recordReviewReward(peerId: string, delta: number): void {
+    this.reputationSystem.recordReviewReward(peerId, delta);
   }
 }

@@ -77,12 +77,16 @@ export class RateLimiter implements Disposable {
     
     this.disposed = true;
     
+    // 清理定时器
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = undefined;
     }
+    
+    // 清空存储，防止内存泄漏
     this.store.clear();
-    this.logger.info('Rate limiter stopped');
+    
+    this.logger.info('Rate limiter stopped and resources cleaned up');
   }
 
   /**

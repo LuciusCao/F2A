@@ -11,6 +11,34 @@ import { Logger } from '../utils/logger.js';
 
 export type ReputationLevel = 'restricted' | 'novice' | 'participant' | 'contributor' | 'core';
 
+/**
+ * 信誉管理器接口
+ * 定义 ReviewCommittee 所需的最小方法集
+ */
+export interface IReputationManager {
+  /** 检查节点是否具有指定权限 */
+  hasPermission(peerId: string, permission: 'publish' | 'execute' | 'review'): boolean;
+  /** 获取高信誉节点 */
+  getHighReputationNodes(minScore: number): IReputationEntry[];
+  /** 获取所有信誉记录 */
+  getAllReputations(): IReputationEntry[];
+  /** 记录评审惩罚 */
+  recordReviewPenalty(peerId: string, delta: number, reason?: string): void;
+  /** 记录评审奖励 */
+  recordReviewReward(peerId: string, delta: number): void;
+}
+
+/**
+ * 基础信誉条目接口
+ * 定义 IReputationManager 方法返回值的最小字段集
+ */
+export interface IReputationEntry {
+  /** 节点 ID */
+  peerId: string;
+  /** 信誉分数 */
+  score: number;
+}
+
 export interface ReputationTier {
   min: number;
   max: number;
@@ -56,9 +84,18 @@ export interface ReputationConfig {
 // 持久化接口
 // ============================================================================
 
+/**
+ * 持久化数据结构
+ * P0-1/P1-1 修复：扩展接口支持 lastDecayTime
+ */
+export interface ReputationPersistedData {
+  entries: Record<string, ReputationEntry>;
+  lastDecayTime: number;
+}
+
 export interface ReputationStorage {
-  save(entries: Map<string, ReputationEntry>): Promise<void>;
-  load(): Promise<Map<string, ReputationEntry>>;
+  save(data: ReputationPersistedData): Promise<void>;
+  load(): Promise<ReputationPersistedData | null>;
 }
 
 // ============================================================================
@@ -152,20 +189,276 @@ const DEFAULT_CONFIG: ReputationConfig = {
 // 信誉管理器
 // ============================================================================
 
-export class ReputationManager implements Disposable {
+export class ReputationManager implements Disposable, IReputationManager {
   private config: ReputationConfig;
   private entries: Map<string, ReputationEntry> = new Map();
   private logger: Logger;
   private decayTimer?: NodeJS.Timeout;
   private disposed: boolean = false;
+  /** P1-7 修复：存储接口 */
+  private storage?: ReputationStorage;
+  /** P1-7 修复：上次衰减时间，用于持久化 */
+  private lastDecayTime: number = 0;
+  /** P1-2/P2-1 修复：初始化 Promise，用于等待异步加载完成 */
+  private initPromise: Promise<void>;
+  /** P2-1 修复：初始化状态标志 */
+  private isReadyFlag: boolean = false;
+  /** P2-3 修复：保存进行中标志，防止并发保存 */
+  private saveInProgress: boolean = false;
+  /** P2-1 修复：有待保存的更新标志 */
+  private pendingSave: boolean = false;
+  /** P2-2 修复：初始化错误状态 */
+  private initError: Error | null = null;
+  /** P2-1 修复：降级模式警告标志，防止日志泛滥 */
+  private degradedWarned: boolean = false;
+  /** P2-2 修复：重试计数器（注意：无退避策略，仅计数） */
+  private saveRetryCount: number = 0;
+  private static readonly MAX_SAVE_RETRIES: number = 3;
+  /** P2-3 修复：保存放弃标志，超过最大重试次数后标记，防止无限重试 */
+  private _saveAbandoned: boolean = false;
 
-  constructor(config: Partial<ReputationConfig> = {}) {
+  constructor(config: Partial<ReputationConfig> = {}, storage?: ReputationStorage) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.logger = new Logger({ component: 'Reputation' });
+    this.storage = storage;
+    
+    // P1-1 修复：如果没有 storage，同步设置 isReadyFlag = true
+    if (!storage) {
+      this.isReadyFlag = true;
+      this.initPromise = Promise.resolve();
+      this.logger.info('ReputationManager initialized (no storage)');
+    } else {
+      // P1-2/P2-1 修复：保存初始化 Promise，允许外部等待初始化完成
+      this.initPromise = this.loadPersistedData().then(() => {
+        this.isReadyFlag = true;
+        // P2-1 修复：如果有初始化错误，记录但不阻止启动
+        if (this.initError) {
+          this.logger.warn('ReputationManager initialized with load error, using defaults', { 
+            error: this.initError.message 
+          });
+        } else {
+          this.logger.info('ReputationManager initialized');
+        }
+      }).catch(error => {
+        this.logger.warn('Failed to load persisted data during initialization', { error });
+        // P2-1 修复：记录错误但不抛出，允许使用默认值
+        this.initError = error instanceof Error ? error : new Error(String(error));
+        this.isReadyFlag = true;
+      });
+    }
     
     // 启动衰减定时器
     if (this.config.decayRate > 0) {
       this.startDecayTimer();
+    }
+  }
+
+  /**
+   * P2-1 修复：检查初始化状态
+   * 在关键公共方法开始时调用，确保系统已初始化
+   * 如果存在初始化错误，会记录警告但不会阻止操作（降级模式）
+   */
+  private checkReady(): void {
+    if (!this.isReadyFlag) {
+      throw new Error('ReputationManager not initialized. Call ready() and await it before using this method.');
+    }
+    // P2-1 修复：只在首次时记录降级模式警告，防止日志泛滥
+    // P3-2 修复：处理 initError.message 可能为空的情况
+    if (this.initError && !this.degradedWarned) {
+      this.degradedWarned = true;
+      this.logger.warn('Operating in degraded mode due to initialization error', {
+        error: this.initError.message || 'unknown error'
+      });
+    }
+  }
+
+  /**
+   * P1-2/P2-1 修复：等待初始化完成
+   * 调用者应使用 await manager.ready() 确保数据加载完成后再调用其他方法
+   */
+  async ready(): Promise<void> {
+    await this.initPromise;
+  }
+
+  /**
+   * P2-1 修复：检查是否已初始化完成
+   */
+  get isReady(): boolean {
+    return this.isReadyFlag;
+  }
+
+  /**
+   * P3-1 修复：暴露降级状态
+   * 当初始化失败时返回 true，外部可用于监控或告警
+   * @returns {boolean} 如果系统处于降级模式（初始化失败）则返回 true，否则返回 false
+   */
+  get degraded(): boolean {
+    return this.initError !== null;
+  }
+
+  /**
+   * P1-1 修复：暴露保存放弃状态
+   * 当保存重试次数超过最大限制时返回 true，外部可用于监控或手动恢复
+   * @returns {boolean} 如果保存已被放弃则返回 true，否则返回 false
+   */
+  get saveAbandoned(): boolean {
+    return this._saveAbandoned;
+  }
+
+  /**
+   * P1-1 修复：重置保存状态
+   * 允许外部在 saveAbandoned 为 true 时手动恢复保存功能
+   * 重置后，后续保存操作将重新尝试重试逻辑
+   * 
+   * P3-2 并发安全说明：
+   * - 此方法不是线程安全的，不应在保存操作进行中调用
+   * - 如果 saveInProgress 为 true，调用会被忽略（P1-1 修复）
+   * - 如果 disposed 为 true，调用会被忽略（P2-3 修复）
+   */
+  resetSaveState(): void {
+    // P2-3 修复：检查 disposed 状态
+    if (this.disposed) {
+      return;
+    }
+    
+    // P1-1 修复：检查保存是否正在进行，避免竞态条件
+    if (this.saveInProgress) {
+      return;
+    }
+    
+    // P2-2 修复：仅在状态实际改变时才记录日志
+    const wasAbandoned = this._saveAbandoned;
+    const hadRetries = this.saveRetryCount > 0;
+    
+    this._saveAbandoned = false;
+    this.saveRetryCount = 0;
+    
+    // P2-2 修复：只有在状态确实需要重置时才记录日志
+    if (wasAbandoned || hadRetries) {
+      this.logger.info('Save state reset, subsequent saves will be attempted');
+    }
+  }
+
+  /**
+   * P0-1/P1-1 修复：从存储加载持久化数据（改为 async）
+   */
+  private async loadPersistedData(): Promise<void> {
+    if (!this.storage) return;
+    
+    try {
+      const data = await this.storage.load();
+      if (data) {
+        if (data.entries) {
+          for (const [peerId, entry] of Object.entries(data.entries)) {
+            this.entries.set(peerId, entry as ReputationEntry);
+          }
+        }
+        this.lastDecayTime = data.lastDecayTime || 0;
+        this.logger.info('Loaded persisted reputation data', {
+          entriesCount: this.entries.size
+        });
+      }
+    } catch (error) {
+      this.logger.warn('Failed to load persisted reputation data', { error });
+      // P2-2 修复：加载失败时设置错误状态
+      this.initError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+  
+  /**
+   * P1-2 修复：保存数据到存储
+   * P2-1/P2-3 修复：添加并发保护，使用队列确保不丢失更新
+   * P2-2 修复：添加重试计数器和最大重试次数限制
+   * 
+   * P1-1 修复说明：重试机制依赖后续操作触发。
+   * 当保存失败时，设置 pendingSave = true，下次调用 savePersistedData() 时会重试。
+   * 这是一种"惰性重试"设计，避免引入定时器复杂性，同时确保数据最终一致性。
+   * 
+   * P3-2 并发安全说明：
+   * - 此方法使用 saveInProgress 标志防止并发保存
+   * - 多次并发调用会被序列化，pendingSave 标志确保不会丢失更新
+   * - 调用者不需要加锁，但应了解：
+   *   1. 首次调用会立即开始保存
+   *   2. 后续调用（保存进行中）会设置 pendingSave，等待当前保存完成后重试
+   *   3. 所有更新都会最终被持久化，但可能不是立即的
+   */
+  private async savePersistedData(): Promise<void> {
+    if (!this.storage) return;
+    
+    // P2-3 修复：如果已放弃保存，跳过后续所有保存操作
+    if (this._saveAbandoned) {
+      // P3-1 修复：使用 warn 级别，因为数据正在丢失
+      this.logger.warn('Save abandoned due to previous failures, skipping');
+      return;
+    }
+    
+    // P2-1 修复：标记有待保存的更新
+    this.pendingSave = true;
+    
+    // P2-3 修复：防止并发保存
+    if (this.saveInProgress) {
+      this.logger.debug('Save already in progress, will save after current save completes');
+      return;
+    }
+    
+    this.saveInProgress = true;
+    try {
+      // P2-1 修复：循环保存直到没有待处理的更新
+      while (this.pendingSave) {
+        this.pendingSave = false;
+        const data: ReputationPersistedData = {
+          entries: Object.fromEntries(this.entries),
+          lastDecayTime: this.lastDecayTime
+        };
+        await this.storage.save(data);
+        // P2-2 修复：保存成功后重置重试计数器和放弃标志
+        this.saveRetryCount = 0;
+        this._saveAbandoned = false;
+      }
+    } catch (error) {
+      this.logger.warn('Failed to save reputation data', { error });
+      // P2-2 修复：保存失败时检查重试次数，超过最大次数则放弃
+      this.saveRetryCount++;
+      if (this.saveRetryCount <= ReputationManager.MAX_SAVE_RETRIES) {
+        // P2-2 修复：重新设置 pendingSave 触发重试
+        // P1-1 修复：重试依赖后续操作触发，非自动定时重试
+        this.pendingSave = true;
+        this.logger.warn(`Save failed, retry pending on next operation (attempt ${this.saveRetryCount}/${ReputationManager.MAX_SAVE_RETRIES})`);
+      } else {
+        // P3-1 修复：准确描述尝试次数（初始 + 3 次重试 = 4 次）
+        this.logger.error(`Save failed after ${ReputationManager.MAX_SAVE_RETRIES + 1} attempts, giving up`, { error });
+        // P2-3 修复：设置放弃标志，防止后续无限重试
+        this._saveAbandoned = true;
+        this.saveRetryCount = 0;
+      }
+    } finally {
+      this.saveInProgress = false;
+    }
+  }
+
+  /**
+   * P1-2/P1-3 修复：Fire-and-forget 保存（重命名以明确语义）
+   * 用于 stop() 时确保数据保存
+   * 
+   * P2-3 修复设计说明：此方法故意不检查 saveAbandoned 标志。
+   * 原因：stop() 是最后一次保存机会，即使之前保存失败过，
+   * 在停止时也应该尽力保存数据，因为这是系统关闭前的最后机会。
+   */
+  private savePersistedDataFireAndForget(): void {
+    if (!this.storage) return;
+    
+    try {
+      const data: ReputationPersistedData = {
+        entries: Object.fromEntries(this.entries),
+        lastDecayTime: this.lastDecayTime
+      };
+      // 注意：这是 fire-and-forget 调用，不等待 Promise 完成
+      // 在 stop 场景下，我们尽力而为
+      this.storage.save(data).catch(error => {
+        this.logger.warn('Failed to save reputation data on stop', { error });
+      });
+    } catch (error) {
+      this.logger.warn('Failed to save reputation data on stop', { error });
     }
   }
 
@@ -178,6 +471,7 @@ export class ReputationManager implements Disposable {
 
   /**
    * 停止定时器和清理资源
+   * P1-1/P1-2 修复：停止时始终保存数据，不跳过
    */
   stop(): void {
     if (this.disposed) return;
@@ -187,6 +481,10 @@ export class ReputationManager implements Disposable {
       clearInterval(this.decayTimer);
       this.decayTimer = undefined;
     }
+
+    // P1-1/P1-2 修复：停止时保存数据（移除 saveInProgress 检查）
+    // 使用重命名后的方法以明确语义
+    this.savePersistedDataFireAndForget();
   }
 
   /**
@@ -216,6 +514,12 @@ export class ReputationManager implements Disposable {
       }
     }
     
+    // P1-2 修复：更新衰减时间并保存
+    this.lastDecayTime = Date.now();
+    this.savePersistedData().catch(error => {
+      this.logger.warn('Failed to save after decay', { error });
+    });
+    
     this.logger.debug('Applied reputation decay', { 
       decayRate: this.config.decayRate,
       entriesAffected: this.entries.size 
@@ -229,6 +533,9 @@ export class ReputationManager implements Disposable {
    * @returns 节点的信誉条目，包含分数、等级和历史记录
    */
   getReputation(peerId: string): ReputationEntry {
+    // P2-2 修复：检查初始化状态，保持与其他公共方法一致
+    this.checkReady();
+    
     if (!this.entries.has(peerId)) {
       this.entries.set(peerId, this.createInitialEntry(peerId));
     }
@@ -278,6 +585,9 @@ export class ReputationManager implements Disposable {
    * @param latency 响应延迟（毫秒），可选，用于未来优化
    */
   recordSuccess(peerId: string, taskId: string, delta: number = 10, latency?: number): void {
+    // P2-3 修复：检查初始化状态
+    this.checkReady();
+    
     // 验证 latency 参数
     if (latency !== undefined) {
       if (typeof latency !== 'number' || !Number.isFinite(latency)) {
@@ -320,6 +630,11 @@ export class ReputationManager implements Disposable {
       entry.history = entry.history.slice(-this.config.maxHistory);
     }
 
+    // P1-2 修复：保存数据
+    this.savePersistedData().catch(error => {
+      this.logger.warn('Failed to save after recordSuccess', { error });
+    });
+
     this.logger.info('Reputation updated', {
       peerId: peerId.slice(0, 16),
       delta,
@@ -338,6 +653,9 @@ export class ReputationManager implements Disposable {
    * @param delta - 分数变化量，默认为 -20
    */
   recordFailure(peerId: string, taskId: string, reason?: string, delta: number = -20): void {
+    // P2-3 修复：检查初始化状态
+    this.checkReady();
+    
     const entry = this.getReputation(peerId);
     const newScore = this.updateScoreEWMA(entry.score, delta);
 
@@ -357,6 +675,11 @@ export class ReputationManager implements Disposable {
       entry.history = entry.history.slice(-this.config.maxHistory);
     }
 
+    // P1-2 修复：保存数据
+    this.savePersistedData().catch(error => {
+      this.logger.warn('Failed to save after recordFailure', { error });
+    });
+
     this.logger.warn('Reputation decreased', {
       peerId: peerId.slice(0, 16),
       delta,
@@ -375,6 +698,9 @@ export class ReputationManager implements Disposable {
    * @param delta - 分数变化量，默认为 -5
    */
   recordRejection(peerId: string, taskId: string, reason?: string, delta: number = -5): void {
+    // P2-3 修复：检查初始化状态
+    this.checkReady();
+    
     const entry = this.getReputation(peerId);
     const newScore = this.updateScoreEWMA(entry.score, delta);
 
@@ -394,6 +720,11 @@ export class ReputationManager implements Disposable {
       entry.history = entry.history.slice(-this.config.maxHistory);
     }
 
+    // P1-2 修复：保存数据
+    this.savePersistedData().catch(error => {
+      this.logger.warn('Failed to save after recordRejection', { error });
+    });
+
     this.logger.info('Reputation updated (rejection)', {
       peerId: peerId.slice(0, 16),
       delta,
@@ -408,6 +739,9 @@ export class ReputationManager implements Disposable {
    * @param delta - 分数变化量，默认为 3
    */
   recordReviewReward(peerId: string, delta: number = 3): void {
+    // P2-3 修复：检查初始化状态
+    this.checkReady();
+    
     const entry = this.getReputation(peerId);
     const newScore = this.updateScoreEWMA(entry.score, delta);
 
@@ -425,6 +759,11 @@ export class ReputationManager implements Disposable {
       entry.history = entry.history.slice(-this.config.maxHistory);
     }
 
+    // P1-2 修复：保存数据
+    this.savePersistedData().catch(error => {
+      this.logger.warn('Failed to save after recordReviewReward', { error });
+    });
+
     this.logger.info('Review reward', {
       peerId: peerId.slice(0, 16),
       delta,
@@ -440,6 +779,9 @@ export class ReputationManager implements Disposable {
    * @param reason - 可选的惩罚原因描述
    */
   recordReviewPenalty(peerId: string, delta: number = -5, reason?: string): void {
+    // P2-3 修复：检查初始化状态
+    this.checkReady();
+    
     const entry = this.getReputation(peerId);
     const newScore = this.updateScoreEWMA(entry.score, delta);
 
@@ -457,6 +799,11 @@ export class ReputationManager implements Disposable {
     if (entry.history.length > this.config.maxHistory) {
       entry.history = entry.history.slice(-this.config.maxHistory);
     }
+
+    // P1-2 修复：保存数据
+    this.savePersistedData().catch(error => {
+      this.logger.warn('Failed to save after recordReviewPenalty', { error });
+    });
 
     this.logger.warn('Review penalty', {
       peerId: peerId.slice(0, 16),
@@ -514,6 +861,9 @@ export class ReputationManager implements Disposable {
    * @param score - 要设置的分数 (0-100)，会自动限制在有效范围内
    */
   setInitialScore(peerId: string, score: number): void {
+    // P2-3 修复：检查初始化状态
+    this.checkReady();
+    
     const entry = this.getReputation(peerId);
     const clampedScore = Math.max(this.config.minScore, Math.min(this.config.maxScore, score));
     entry.score = clampedScore;
@@ -530,6 +880,11 @@ export class ReputationManager implements Disposable {
     if (entry.history.length > this.config.maxHistory) {
       entry.history = entry.history.slice(-this.config.maxHistory);
     }
+
+    // P1-2 修复：保存数据
+    this.savePersistedData().catch(error => {
+      this.logger.warn('Failed to save after setInitialScore', { error });
+    });
 
     this.logger.info('Initial score set', {
       peerId: peerId.slice(0, 16),

@@ -151,6 +151,7 @@ export class Logger {
 
   /**
    * 调度重连
+   * 使用指数退避策略：delay = baseDelay * 2^(attempt-1)，最大不超过 30 秒
    */
   private scheduleReconnect(): void {
     if (this.isReconnecting) return;
@@ -165,7 +166,13 @@ export class Logger {
       return;
     }
 
-    console.log(`[Logger] Attempting to reconnect file stream (attempt ${this.retryCount}/${this.maxRetries})...`);
+    // 计算指数退避延迟：1s, 2s, 4s, 8s, 16s... 最大 30s
+    const exponentialDelay = Math.min(
+      this.retryDelayMs * Math.pow(2, this.retryCount - 1),
+      30000  // 最大 30 秒
+    );
+
+    console.log(`[Logger] Attempting to reconnect file stream (attempt ${this.retryCount}/${this.maxRetries}), delay: ${exponentialDelay}ms`);
     
     // 关闭旧流
     if (this.fileStream) {
@@ -179,7 +186,7 @@ export class Logger {
     setTimeout(() => {
       this.isReconnecting = false;
       this.initFileStream();
-    }, this.retryDelayMs * this.retryCount); // 指数退避
+    }, exponentialDelay);
   }
 
   /**
@@ -216,7 +223,9 @@ export class Logger {
       } else {
         // 开发环境：人类可读
         const { level, msg, timestamp, component, ...meta } = entry;
-        const prefix = `[${timestamp.split('T')[1].split('.')[0]}] [${component}] [${level}]`;
+        const timestampStr = typeof timestamp === 'string' ? timestamp : String(timestamp);
+        const timePart = timestampStr.includes('T') ? timestampStr.split('T')[1].split('.')[0] : timestampStr;
+        const prefix = `[${timePart}] [${component}] [${level}]`;
 
         if (Object.keys(meta).length > 0) {
           // 结构化输出（开发环境可读格式）

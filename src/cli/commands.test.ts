@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// Mock process.exit to prevent tests from exiting
+process.exit = vi.fn() as any;
+
+// 在导入模块前设置环境变量
+process.env.F2A_CONTROL_TOKEN = 'test-token';
+process.env.F2A_CONTROL_PORT = '9001';
+
 import { listPending, confirm, reject } from './commands.js';
 import { request, RequestOptions } from 'http';
 
@@ -21,6 +29,7 @@ describe('CLI Commands', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    (process.exit as any).mockReset();
     process.env.F2A_CONTROL_PORT = '9001';
     process.env.F2A_CONTROL_TOKEN = 'test-token';
   });

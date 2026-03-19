@@ -6,6 +6,8 @@
 import { F2A } from '../core/f2a.js';
 import { ControlServer } from './control-server.js';
 import { F2AOptions, WebhookConfig } from '../types/index.js';
+import { join } from 'path';
+import { homedir } from 'os';
 
 export interface DaemonOptions extends F2AOptions {
   webhook?: WebhookConfig;
@@ -21,6 +23,7 @@ export class F2ADaemon {
   constructor(options: DaemonOptions = {}) {
     this.options = {
       controlPort: 9001,
+      dataDir: join(homedir(), '.f2a'),
       ...options
     };
   }
@@ -48,7 +51,9 @@ export class F2ADaemon {
     }
 
     // 启动控制服务器
-    this.controlServer = new ControlServer(this.f2a, this.options.controlPort!);
+    this.controlServer = new ControlServer(this.f2a, this.options.controlPort!, undefined, {
+      dataDir: this.options.dataDir,
+    });
     await this.controlServer.start();
 
     this.running = true;

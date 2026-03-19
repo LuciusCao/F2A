@@ -4,75 +4,191 @@
 
 ---
 
-## 目录
-
-1. [运行 F2A 节点](#1-运行-f2a-节点) - 把机器变成一个 P2P 节点
-2. [OpenClaw 插件](#2-openclaw-插件) - 在 OpenClaw 里使用 F2A
-3. [开发指南](#3-开发指南) - 基于 F2A 开发
+> **⚠️ 实验性质项目**
+> 
+> 本项目是由 **Agent 自主完成** 的实验性质项目。代码生成、架构设计、测试编写等均由 AI Agent 协作完成。仅供学习和研究目的使用，不建议直接用于生产环境。
+>
+> 项目展示了 AI Agent 在复杂软件工程任务中的能力边界和协作模式。
 
 ---
 
-## 1. 运行 F2A 节点
+**🚀 [5 分钟快速开始](./QUICKSTART.md)**
 
-### 1.1 安装
+---
+
+## 目录
+
+1. [快速开始](#1-快速开始) - 一键安装和配置
+2. [运行 F2A 节点](#2-运行-f2a-节点) - 把机器变成一个 P2P 节点
+3. [OpenClaw 插件](#3-openclaw-插件) - 在 OpenClaw 里使用 F2A
+4. [开发指南](#4-开发指南) - 基于 F2A 开发
+
+---
+
+## 1. 快速开始
+
+### 1.1 选择安装方式
+
+**方式一：NPM 全局安装**
+
+适用场景：
+- 已有 Node.js 18+ 环境
+- 快速安装，无需额外依赖
+- 适合本地测试和体验
 
 ```bash
-# 克隆仓库
-git clone https://github.com/LuciusCao/F2A.git
-cd F2A
-
-# 安装依赖
-npm install
-
-# 构建
-npm run build
+npm install -g @f2a/network
 ```
 
-或者通过 NPM 安装：
+**方式二：一键安装脚本**
+
+适用场景：
+- 无 Node.js 环境（脚本自动安装 Node.js）
+- 生产服务器部署（支持 systemd 服务）
+- 系统级安装（/usr/local/bin）
 
 ```bash
-# 安装 F2A 网络
-npm install -g @f2a/network
+curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bash -s -- --global
+```
 
-# 查看节点状态
+**两种方式对比：**
+
+| 特性 | NPM 安装 | install.sh |
+|------|----------|------------|
+| 需要 Node.js | ✅ 是（18+） | ❌ 否（自动安装） |
+| 安装速度 | ⚡ 快 | 🐢 较慢 |
+| 系统服务 | ❌ 无 | ✅ systemd 支持 |
+| 安装位置 | npm global | /usr/local |
+| 推荐场景 | 已有 Node.js | 生产部署/无 Node.js |
+
+### 1.2 配置向导
+
+安装后运行交互式配置向导：
+
+```bash
+f2a init
+```
+
+只需回答 3 个必需问题即可完成基本配置：
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| agentName | Agent 名称（网络中显示） | 用户名-主机名 |
+| network.bootstrapPeers | 引导节点列表 | 空（本地网络） |
+| autoStart | 是否自动启动 | false |
+
+### 1.3 启动 F2A
+
+```bash
+# 后台启动
+f2a daemon -d
+
+# 查看状态
 f2a status
 
 # 查看已连接节点
 f2a peers
-
-# 发现网络中的 Agents
-f2a discover
 ```
 
-### 1.2 启动节点
+### 1.4 配置文件
+
+配置文件位于 `~/.f2a/config.json`：
+
+```json
+{
+  "agentName": "my-agent",
+  "network": {
+    "bootstrapPeers": [],
+    "bootstrapPeerFingerprints": {}
+  },
+  "autoStart": false
+}
+```
+
+**分层配置说明：**
+
+| 层级 | 配置项 | 必需性 |
+|------|--------|--------|
+| **必需** | agentName, network, autoStart | 必须配置 |
+| **进阶** | controlPort, p2pPort, enableMDNS, enableDHT, logLevel | 可选 |
+| **专家** | security, rateLimit, dataDir | 极少需要 |
+
+**network 配置详解：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `bootstrapPeers` | `string[]` | 引导节点列表（multiaddr 格式） |
+| `bootstrapPeerFingerprints` | `Record<string, string>` | 引导节点指纹映射，key 为 multiaddr，value 为预期 PeerID |
+
+---
+
+## 2. 运行 F2A 节点
+
+### 2.1 安装
+
+```bash
+# 方式一：一键安装（推荐）
+curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bash -s -- --global
+
+# 方式二：源码安装
+git clone https://github.com/LuciusCao/F2A.git
+cd F2A
+npm install
+npm run build
+
+# 方式三：NPM 全局安装
+npm install -g @f2a/network
+```
+
+### 2.2 配置
+
+```bash
+# 交互式配置向导
+f2a init
+
+# 查看当前配置
+f2a config
+```
+
+### 2.3 启动节点
 
 **方式一：Daemon 模式（推荐）**
 
 ```bash
-# 启动后台服务
-node dist/daemon/index.js
+# 后台启动 daemon
+f2a daemon -d
+
+# 前台启动（用于调试）
+f2a daemon
+
+# 查看 daemon 状态
+f2a daemon status
+
+# 停止 daemon
+f2a daemon stop
 ```
 
 **方式二：CLI 模式**
 
 ```bash
 # 查看状态
-node dist/cli/index.js status
+f2a status
 
 # 查看已连接节点
-node dist/cli/index.js peers
+f2a peers
 ```
 
-### 1.3 配置
+### 2.4 环境变量
 
-通过环境变量配置：
+通过环境变量可以覆盖配置文件：
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `F2A_CONTROL_PORT` | 9001 | HTTP 控制端口 |
 | `F2A_CONTROL_TOKEN` | 自动生成 | 认证 Token（生产环境必须设置） |
-| `F2A_P2P_PORT` | 9000 | P2P 网络端口 |
+| `F2A_P2P_PORT` | 0 | P2P 网络端口（0=随机分配） |
 | `F2A_SIGNATURE_KEY` | - | 请求签名密钥（可选） |
+| `F2A_HEALTH_TIMEOUT` | 15000 | Daemon 启动健康检查超时（毫秒） |
 
 **生产环境配置示例：**
 
@@ -81,10 +197,58 @@ export F2A_CONTROL_TOKEN=$(openssl rand -hex 32)
 export F2A_SIGNATURE_KEY=$(openssl rand -hex 32)
 export NODE_ENV=production
 
-node dist/daemon/index.js
+f2a daemon
 ```
 
-### 1.4 验证运行
+### 2.5 引导节点指纹验证
+
+为了防止中间人攻击，F2A 支持引导节点公钥指纹验证。当连接到引导节点时，会验证远程节点的 PeerID 是否与预期一致。
+
+**配置示例：**
+
+```json
+{
+  "agentName": "my-agent",
+  "network": {
+    "bootstrapPeers": [
+      "/ip4/1.2.3.4/tcp/9000/p2p/12D3KooWExample"
+    ],
+    "bootstrapPeerFingerprints": {
+      "/ip4/1.2.3.4/tcp/9000/p2p/12D3KooWExample": "12D3KooWExample"
+    }
+  }
+}
+```
+
+**指纹验证行为：**
+
+| 场景 | 行为 |
+|------|------|
+| 指纹匹配 | 连接成功，记录验证成功日志 |
+| 指纹不匹配 | 断开连接，记录错误日志 |
+| 未配置指纹 | 连接成功，记录警告日志（推荐配置） |
+
+**获取引导节点指纹：**
+
+引导节点的 PeerID 可以从节点管理员处获取，或者通过以下方式查看：
+
+```bash
+# 在引导节点上运行
+f2a status
+
+# 输出示例
+# PeerID: 12D3KooWExample...
+```
+
+**交互式配置：**
+
+运行 `f2a init` 时，配置引导节点后会询问是否配置指纹验证：
+
+```
+? 是否配置引导节点指纹验证？（推荐，防止中间人攻击） (y/N)
+```
+
+### 2.6 验证运行
 
 ```bash
 # 查看节点状态
@@ -94,9 +258,9 @@ curl http://localhost:9001/status \
 
 ---
 
-## 2. OpenClaw 插件
+## 3. OpenClaw 插件
 
-### 2.1 安装插件
+### 3.1 安装插件
 
 ```bash
 # 通过 OpenClaw 安装
@@ -124,42 +288,47 @@ npm install -g @f2a/openclaw-adapter
 }
 ```
 
-### 2.2 配置详解
+### 3.2 配置详解
+
+**基础配置：**
+
+```json
+{
+  "agentName": "显示名称",        // 在网络中显示的名称
+  "autoStart": true,             // 自动启动 F2A daemon
+  "p2pPort": 9000,               // P2P 网络端口
+  "enableMDNS": true             // 启用本地网络自动发现
+}
+```
+
+**完整配置（可选）：**
 
 ```json
 {
   "agentName": "显示名称",
-  "f2aPath": "F2A项目路径（可选）",
   "autoStart": true,
-  "webhookPort": 9002,
-  "controlPort": 9001,
-  "controlToken": "可选，不设置则自动生成",
+  "controlPort": 9001,           // HTTP 控制端口
   "p2pPort": 9000,
+  "webhookPort": 9002,           // Webhook 接收端口
   "enableMDNS": true,
-  "bootstrapPeers": [],
-  "capabilities": [],
-  "dataDir": "./f2a-data",
+  "bootstrapPeers": [],          // 引导节点（用于连接远程节点）
   "maxQueuedTasks": 100,
   "reputation": {
     "enabled": true,
-    "initialScore": 50,
-    "minScoreForService": 20,
-    "decayRate": 0.01
+    "initialScore": 50
   },
   "security": {
     "requireConfirmation": false,
     "whitelist": [],
-    "blacklist": [],
-    "maxTasksPerMinute": 10
+    "blacklist": []
   },
-  "webhookPush": {
-    "enabled": false,
-    "url": ""
-  }
+  "f2aPath": "/path/to/F2A"      // 仅开发调试时需要
 }
 ```
 
-### 2.3 使用方式
+> **提示**：`f2aPath` 仅在开发调试时需要，用于指定本地 F2A 源码路径。通过 `openclaw plugins install` 安装时不需要配置。
+
+### 3.3 使用方式
 
 安装后，直接在 OpenClaw 对话中使用：
 
@@ -170,35 +339,43 @@ npm install -g @f2a/openclaw-adapter
 | 广播任务 | "让所有人帮我检查这段代码的bug" |
 | 查看状态 | "查看F2A网络状态" |
 
-### 2.4 提供的工具（共 14 个）
+### 3.4 提供的工具
 
-#### 核心工具
-- `f2a_discover` - 发现网络中的 Agents（可按能力过滤）
-- `f2a_delegate` - 委托任务给指定 Agent
-- `f2a_broadcast` - 广播任务给多个 Agents（并行执行）
-- `f2a_status` - 查看网络状态和已连接 Peers
+**Agent 发现与任务分发**：
+| 工具 | 功能 |
+|------|------|
+| `f2a_discover` | 发现网络中的 Agents，支持按能力过滤 |
+| `f2a_delegate` | 委托任务给指定 Agent |
+| `f2a_broadcast` | 广播任务给多个 Agents（并行执行） |
 
-#### 任务队列工具
-- `f2a_poll_tasks` - 查询本节点收到的远程任务队列
-- `f2a_submit_result` - 提交任务执行结果
-- `f2a_task_stats` - 查看任务队列统计
+**任务队列管理**：
+| 工具 | 功能 |
+|------|------|
+| `f2a_poll_tasks` | 查询本节点收到的远程任务队列 |
+| `f2a_submit_result` | 提交任务执行结果 |
+| `f2a_task_stats` | 查看任务队列统计信息 |
 
-#### 认领模式工具
-- `f2a_announce` - 广播任务到网络，等待其他 Agent 认领
-- `f2a_list_announcements` - 查看当前可认领的任务广播
-- `f2a_claim` - 认领一个开放的任务广播
-- `f2a_manage_claims` - 管理我发布的任务认领请求（接受/拒绝）
-- `f2a_my_claims` - 查看我提交的任务认领状态
-- `f2a_announcement_stats` - 查看任务广播统计
+**任务认领模式**：
+| 工具 | 功能 |
+|------|------|
+| `f2a_announce` | 发布任务（认领模式） |
+| `f2a_list_announcements` | 列出可认领的任务 |
+| `f2a_claim` | 认领任务 |
+| `f2a_manage_claims` | 管理认领的任务 |
+| `f2a_my_claims` | 查看我认领的任务 |
+| `f2a_announcement_stats` | 查看任务发布统计 |
 
-#### 信誉管理
-- `f2a_reputation` - 查看/管理 Peer 信誉（list/view/block/unblock）
+**网络与信誉管理**：
+| 工具 | 功能 |
+|------|------|
+| `f2a_status` | 查看 F2A 网络状态和已连接 Peers |
+| `f2a_reputation` | 查看或管理 Peer 信誉 |
 
 ---
 
-## 3. 开发指南
+## 4. 开发指南
 
-### 3.1 项目结构
+### 4.1 项目结构
 
 ```
 F2A/
@@ -206,35 +383,24 @@ F2A/
 │   ├── core/                 # P2P网络、信誉系统
 │   ├── daemon/               # 后台服务
 │   ├── cli/                  # 命令行工具
-│   ├── types/                # 类型定义
 │   └── utils/                # 工具函数
 ├── packages/
 │   └── openclaw-adapter/     # OpenClaw 插件
-├── skill/                    # OpenClaw skill
 ├── docs/                     # 文档
-├── tests/                    # 测试
-│   ├── integration/          # 集成测试
-│   └── docker/               # Docker 测试环境
-└── .github/                  # GitHub Actions
+└── tests/                    # 测试
 ```
 
-### 3.2 核心 API
+### 4.2 核心 API
 
 ```typescript
-import { F2A } from '@f2a/network';
+import { F2A } from 'f2a-network';
 
 // 创建节点
 const f2a = await F2A.create({
   displayName: 'My Agent',
   network: {
     listenPort: 9000,
-    enableMDNS: true,
-    enableDHT: false
-  },
-  security: {
-    level: 'medium',
-    requireConfirmation: true,
-    verifySignatures: true
+    enableMDNS: true
   }
 });
 
@@ -253,83 +419,81 @@ f2a.registerCapability({
 // 发现 Agents
 const agents = await f2a.discoverAgents('code-generation');
 
-// 委托任务（支持并行和重试）
+// 委托任务
 const result = await f2a.delegateTask({
   capability: 'code-generation',
   description: 'Generate fibonacci function',
-  parameters: { language: 'python' },
-  parallel: true,
-  minResponses: 1,
-  timeout: 60000,
-  retryOptions: {
-    maxRetries: 3,
-    retryDelayMs: 1000
-  }
+  parameters: { language: 'python' }
 });
-
-// 响应任务（供 OpenClaw 调用）
-await f2a.respondToTask(peerId, taskId, 'success', result);
 ```
 
-### 3.3 开发命令
+### 4.3 开发命令
 
 ```bash
 # 构建
 npm run build
-npm run build:watch      # 监听模式
 
 # 测试
-npm test                 # 运行所有测试
-npm run test:unit        # 单元测试
-npm run test:integration # 集成测试
-npm run test:coverage    # 覆盖率报告
-npm run test:docker      # Docker 多节点测试
+npm test
+npm run test:coverage
 
 # 构建所有包
 npm run build:all
 ```
 
-### 3.4 文档
+### 4.4 文档
 
 - [协议规范](docs/F2A-PROTOCOL.md)
 - [中间件指南](docs/middleware-guide.md)
 - [信誉系统指南](docs/reputation-guide.md)
-- [安全设计](docs/security-design.md)
-- [移动端引导设计](docs/MOBILE_BOOTSTRAP_DESIGN.md)
 
 ---
 
 ## 快速开始（最小步骤）
 
-### 方式一：NPM 安装（推荐）
+### 方式一：一键安装（推荐）
 
 ```bash
-# 1. 安装 F2A 网络
-npm install -g @f2a/network
+# 1. 安装 F2A
+curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bash -s -- --global
 
-# 2. 启动节点
+# 2. 配置
+f2a init
+
+# 3. 启动
+f2a daemon -d
+
+# 4. 验证
 f2a status
-
-# 3. 配置 OpenClaw 插件
-openclaw plugins install @f2a/openclaw-adapter
-
-# 4. 编辑配置文件，启用插件
-# ~/.openclaw/config.json
 ```
 
-### 方式二：源码安装
+### 方式二：NPM 安装
 
 ```bash
-# 1. 启动 F2A 节点
-cd ~/projects/F2A
+# 1. 安装
+npm install -g @f2a/network
+
+# 2. 配置
+f2a init
+
+# 3. 启动
+f2a daemon -d
+```
+
+### 方式三：源码安装
+
+```bash
+# 1. 克隆并构建
+git clone https://github.com/LuciusCao/F2A.git
+cd F2A
+npm install
 npm run build
-node dist/daemon/index.js
 
-# 2. 配置 OpenClaw 插件
-# 编辑 ~/.openclaw/config.json，添加插件配置
+# 2. 配置
+node dist/cli/index.js init
 
-# 3. 开始使用
-# 在 OpenClaw 中对话："帮我找一下网络里的Agents"
+# 3. 启动
+node dist/cli/index.js daemon -d
 ```
 
 ---

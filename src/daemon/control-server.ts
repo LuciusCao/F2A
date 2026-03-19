@@ -10,14 +10,60 @@ import { Logger } from '../utils/logger.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 
 export interface ControlServerOptions {
-  port: number;
+  /** 端口，如果不传则使用构造函数传入的 port */
+  port?: number;
   token?: string;
+  /** 数据目录，用于存储 token 等文件 */
+  dataDir?: string;
   /** 允许的 CORS 来源列表，默认为 ['http://localhost'] */
   allowedOrigins?: string[];
 }
 
 /** 默认允许的 CORS 来源 */
 const DEFAULT_ALLOWED_ORIGINS = ['http://localhost'];
+
+/**
+ * P2 修复：生产环境 CORS 配置验证
+ * 检查是否在生产环境使用了宽松的 CORS 配置
+ * P2-4 修复：在严格模式下禁止 localhost
+ */
+function validateCorsConfig(allowedOrigins: string[]): void {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const isStrictMode = process.env.F2A_STRICT_CORS === 'true';
+  
+  if (isProduction || isStrictMode) {
+    // 检查是否使用默认配置
+    if (allowedOrigins.length === 1 && allowedOrigins[0] === 'http://localhost') {
+      const logger = new Logger({ component: 'ControlServer' });
+      if (isStrictMode) {
+        // P2-4 修复：严格模式下禁止 localhost
+        logger.error('CORS configuration error: localhost origin is not allowed in strict mode!');
+        throw new Error('Localhost CORS origin is not allowed in strict mode (F2A_STRICT_CORS=true). Configure specific allowed origins.');
+      }
+      logger.error('CORS configuration warning: Using default localhost origin in production!');
+      logger.error('Set F2A_ALLOWED_ORIGINS environment variable or pass allowedOrigins option.');
+      logger.error('Example: F2A_ALLOWED_ORIGINS=https://your-domain.com,https://api.your-domain.com');
+    }
+    
+    // 检查是否包含通配符或过于宽松的配置
+    if (allowedOrigins.includes('*')) {
+      const logger = new Logger({ component: 'ControlServer' });
+      logger.error('CORS configuration error: Wildcard origin (*) is not allowed in production!');
+      throw new Error('Wildcard CORS origin is not allowed in production. Configure specific allowed origins.');
+    }
+    
+    // 检查是否包含 localhost
+    if (allowedOrigins.some(o => o.includes('localhost') || o.includes('127.0.0.1'))) {
+      const logger = new Logger({ component: 'ControlServer' });
+      // P2-4 修复：严格模式下禁止 localhost
+      if (isStrictMode) {
+        logger.error('CORS configuration error: localhost/127.0.0.1 origins are not allowed in strict mode!');
+        throw new Error('Localhost/127.0.0.1 CORS origins are not allowed in strict mode (F2A_STRICT_CORS=true). Configure specific allowed origins.');
+      }
+      logger.warn('CORS configuration warning: localhost/127.0.0.1 origins in production may be a security risk.');
+    }
+  }
+}
 
 export class ControlServer {
   private server?: Server;
@@ -31,18 +77,27 @@ export class ControlServer {
   constructor(f2a: F2A, port: number, tokenManager?: TokenManager, options?: ControlServerOptions) {
     this.f2a = f2a;
     this.port = port;
-    this.tokenManager = tokenManager || new TokenManager();
+    // 使用传入的 dataDir 创建 TokenManager
+    this.tokenManager = tokenManager || new TokenManager(options?.dataDir);
     this.logger = new Logger({ component: 'ControlServer' });
     // 速率限制: 每分钟最多 60 个请求
     this.rateLimiter = new RateLimiter({ maxRequests: 60, windowMs: 60000 });
     // CORS 配置：优先使用传入的 allowedOrigins，否则使用默认值
-    this.allowedOrigins = options?.allowedOrigins ?? DEFAULT_ALLOWED_ORIGINS;
+    // 支持从环境变量 F2A_ALLOWED_ORIGINS 读取（逗号分隔）
+    const envOrigins = process.env.F2A_ALLOWED_ORIGINS?.split(',').map(o => o.trim()).filter(Boolean);
+    this.allowedOrigins = options?.allowedOrigins ?? envOrigins ?? DEFAULT_ALLOWED_ORIGINS;
+    
+    // P2 修复：生产环境强制验证 CORS 配置
+    validateCorsConfig(this.allowedOrigins);
   }
 
   /**
    * 启动控制服务器
    */
   start(): Promise<void> {
+    // 确保 token 已生成（便于 CLI 连接）
+    this.tokenManager.getToken();
+    
     return new Promise((resolve, reject) => {
       this.server = createServer((req, res) => {
         this.handleRequest(req, res);

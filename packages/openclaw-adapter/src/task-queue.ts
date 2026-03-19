@@ -100,6 +100,9 @@ export class TaskQueue {
     try {
       this.db = new Database(dbPath);
 
+      // P1 修复：在创建表之前检查数据库完整性
+      this.checkDatabaseIntegrity();
+
       // 创建表
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS tasks (
@@ -136,7 +139,15 @@ export class TaskQueue {
       
       // 删除损坏的数据库文件
       if (fs.existsSync(dbPath)) {
-        fs.unlinkSync(dbPath);
+        // P1 修复：备份损坏的数据库文件，便于后续分析
+        const backupPath = `${dbPath}.corrupted.${Date.now()}`;
+        try {
+          fs.renameSync(dbPath, backupPath);
+          logger.info('已备份损坏的数据库: %s', backupPath);
+        } catch (backupErr) {
+          // 备份失败，直接删除
+          fs.unlinkSync(dbPath);
+        }
       }
       
       // 重新创建
@@ -161,6 +172,29 @@ export class TaskQueue {
       `);
       
       logger.info('数据库已重建');
+    }
+  }
+
+  /**
+   * P1 修复：检查数据库完整性
+   * 在恢复数据前验证数据库结构是否正确
+   */
+  private checkDatabaseIntegrity(): void {
+    if (!this.db) return;
+    
+    try {
+      // 运行 SQLite PRAGMA integrity_check
+      const result = this.db.pragma('integrity_check') as Array<{ integrity_check: string }>;
+      
+      if (result.length > 0 && result[0].integrity_check !== 'ok') {
+        logger.warn('数据库完整性检查失败: %s', JSON.stringify(result));
+        throw new Error(`Database integrity check failed: ${JSON.stringify(result)}`);
+      }
+      
+      logger.debug('数据库完整性检查通过');
+    } catch (e) {
+      logger.warn('数据库完整性检查异常: %s', e);
+      throw e;
     }
   }
 

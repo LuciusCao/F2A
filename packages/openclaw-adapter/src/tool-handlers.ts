@@ -7,6 +7,7 @@ import type {
   SessionContext,
   ToolResult,
   AgentInfo,
+  AgentCapability,
   TaskResponse,
   F2APluginConfig,
   OpenClawPluginApi
@@ -18,6 +19,7 @@ import type { F2ANetworkClient } from './network-client.js';
 import type { F2ANodeManager } from './node-manager.js';
 import type { TaskQueue } from './task-queue.js';
 import type { AnnouncementQueue } from './announcement-queue.js';
+import type { ReviewCommittee, TaskReview, RiskFlag, ReviewResult } from '@f2a/network';
 import { pluginLogger as logger } from './logger.js';
 
 /** 广播结果类型 */
@@ -39,6 +41,7 @@ interface AdapterInternalAccess {
   announcementQueue: AnnouncementQueue;
   config: F2APluginConfig;
   api?: OpenClawPluginApi;
+  reviewCommittee?: ReviewCommittee;
 }
 
 /**
@@ -51,6 +54,35 @@ export interface ToolHandlerParams {
   reputation: { action: string; peer_id?: string };
   pollTasks: { limit?: number; status?: 'pending' | 'processing' | 'completed' | 'failed' };
   submitResult: { task_id: string; result: string; status: 'success' | 'error' };
+  // 任务评估相关工具
+  estimateTask: { 
+    task_type: string; 
+    description: string; 
+    required_capabilities?: string[] 
+  };
+  reviewTask: { 
+    task_id: string; 
+    workload: number; 
+    value: number; 
+    risk_flags?: RiskFlag[]; 
+    comment?: string 
+  };
+  getReviews: { task_id: string };
+  getCapabilities: { peer_id?: string; agent_name?: string };
+}
+
+/**
+ * 任务评估结果
+ */
+export interface TaskEstimation {
+  /** 工作量 (0-100) */
+  workload: number;
+  /** 复杂度 (1-10) */
+  complexity: number;
+  /** 预估时间（毫秒） */
+  estimated_time_ms: number;
+  /** 置信度 (0-1) */
+  confidence: number;
 }
 
 /**
@@ -570,5 +602,372 @@ ${tasks.map(t => {
       const latency = r.latency ? ` (${r.latency}ms)` : '';
       return `${icon} ${r.agent}${latency}\n   ${r.success ? '完成' : `失败: ${r.error}`}`;
     }).join('\n\n');
+  }
+
+  // ========== 任务评估相关工具 ==========
+
+  /**
+   * 处理 f2a_estimate_task 工具
+   * 评估任务成本
+   */
+  async handleEstimateTask(
+    params: ToolHandlerParams['estimateTask'],
+    context: SessionContext
+  ): Promise<ToolResult> {
+    // 输入验证
+    if (!params.task_type || typeof params.task_type !== 'string' || params.task_type.trim() === '') {
+      return { content: '❌ 请提供有效的 task_type 参数（任务类型）' };
+    }
+    if (!params.description || typeof params.description !== 'string' || params.description.trim() === '') {
+      return { content: '❌ 请提供有效的 description 参数（任务描述）' };
+    }
+
+    // 基于任务类型和描述估算工作量
+    const estimation = this.estimateTaskComplexity(
+      params.task_type,
+      params.description,
+      params.required_capabilities || []
+    );
+
+    const content = `
+📊 任务评估结果:
+
+🏷️ 任务类型: ${params.task_type}
+📝 描述: ${params.description.slice(0, 100)}${params.description.length > 100 ? '...' : ''}
+🔧 所需能力: ${params.required_capabilities?.join(', ') || '无特定要求'}
+
+📈 评估指标:
+   • 工作量: ${estimation.workload}/100
+   • 复杂度: ${estimation.complexity}/10
+   • 预估时间: ${this.formatDuration(estimation.estimated_time_ms)}
+   • 置信度: ${(estimation.confidence * 100).toFixed(0)}%
+    `.trim();
+
+    return {
+      content,
+      data: estimation
+    };
+  }
+
+  /**
+   * 处理 f2a_review_task 工具
+   * 作为评审者评审任务
+   */
+  async handleReviewTask(
+    params: ToolHandlerParams['reviewTask'],
+    context: SessionContext
+  ): Promise<ToolResult> {
+    // 输入验证
+    if (!params.task_id || typeof params.task_id !== 'string' || params.task_id.trim() === '') {
+      return { content: '❌ 请提供有效的 task_id 参数' };
+    }
+    if (typeof params.workload !== 'number' || params.workload < 0 || params.workload > 100) {
+      return { content: '❌ workload 参数必须是 0-100 之间的数字' };
+    }
+    if (typeof params.value !== 'number' || params.value < -100 || params.value > 100) {
+      return { content: '❌ value 参数必须是 -100 到 100 之间的数字' };
+    }
+
+    const reviewCommittee = (this.adapter as unknown as AdapterInternalAccess).reviewCommittee;
+    const reputationSystem = (this.adapter as unknown as AdapterInternalAccess).reputationSystem;
+    
+    if (!reviewCommittee) {
+      return { content: '❌ 评审系统未初始化' };
+    }
+
+    // 获取评审者 ID（从 context 或使用默认）
+    const reviewerId = context.sessionId || 'anonymous-reviewer';
+
+    // 检查评审者资格
+    if (!reputationSystem.hasPermission(reviewerId, 'review')) {
+      return { content: '❌ 您的信誉等级不足以进行评审' };
+    }
+
+    // 提交评审
+    const result = reviewCommittee.submitReview({
+      taskId: params.task_id,
+      reviewerId,
+      dimensions: {
+        workload: params.workload,
+        value: params.value
+      },
+      riskFlags: params.risk_flags,
+      comment: params.comment,
+      timestamp: Date.now()
+    });
+
+    if (!result.success) {
+      return { content: `❌ 评审提交失败: ${result.message}` };
+    }
+
+    // 检查评审是否完成
+    const isComplete = reviewCommittee.isReviewComplete(params.task_id);
+    
+    const content = `
+✅ 评审已提交
+
+📋 任务ID: ${params.task_id.slice(0, 16)}...
+📊 您的评审:
+   • 工作量: ${params.workload}/100
+   • 价值分: ${params.value}
+   ${params.risk_flags?.length ? `• 风险标记: ${params.risk_flags.join(', ')}` : ''}
+   ${params.comment ? `• 评论: ${params.comment}` : ''}
+
+${isComplete ? '🎉 评审已完成，可以使用 f2a_get_reviews 查看最终结果' : '⏳ 等待其他评审者...'}
+    `.trim();
+
+    return {
+      content,
+      data: {
+        taskId: params.task_id,
+        submitted: true,
+        reviewComplete: isComplete
+      }
+    };
+  }
+
+  /**
+   * 处理 f2a_get_reviews 工具
+   * 获取任务的评审结果
+   */
+  async handleGetReviews(
+    params: ToolHandlerParams['getReviews'],
+    context: SessionContext
+  ): Promise<ToolResult> {
+    // 输入验证
+    if (!params.task_id || typeof params.task_id !== 'string' || params.task_id.trim() === '') {
+      return { content: '❌ 请提供有效的 task_id 参数' };
+    }
+
+    const reviewCommittee = (this.adapter as unknown as AdapterInternalAccess).reviewCommittee;
+    
+    if (!reviewCommittee) {
+      return { content: '❌ 评审系统未初始化' };
+    }
+
+    // 获取评审状态
+    const pendingReview = reviewCommittee.getReviewStatus(params.task_id);
+    
+    if (!pendingReview) {
+      // 尝试获取已完成的评审结果（如果存储了的话）
+      return { content: `❌ 找不到任务 ${params.task_id.slice(0, 16)}... 的评审记录` };
+    }
+
+    // 检查是否完成
+    if (pendingReview.reviews.length < pendingReview.requiredReviewers) {
+      const content = `
+⏳ 评审进行中
+
+📋 任务ID: ${params.task_id.slice(0, 16)}...
+📝 任务描述: ${pendingReview.taskDescription.slice(0, 100)}...
+📊 进度: ${pendingReview.reviews.length}/${pendingReview.requiredReviewers}
+
+已收到的评审:
+${pendingReview.reviews.map((r, i) => 
+  `  ${i + 1}. 工作量: ${r.dimensions.workload}, 价值: ${r.dimensions.value}`
+).join('\n')}
+      `.trim();
+      
+      return {
+        content,
+        data: {
+          taskId: params.task_id,
+          status: 'in_progress',
+          current: pendingReview.reviews.length,
+          required: pendingReview.requiredReviewers,
+          reviews: pendingReview.reviews.map(r => ({
+            reviewerId: r.reviewerId.slice(0, 16) + '...',
+            workload: r.dimensions.workload,
+            value: r.dimensions.value,
+            riskFlags: r.riskFlags,
+            comment: r.comment
+          }))
+        }
+      };
+    }
+
+    // 评审已完成，结算结果
+    const result = reviewCommittee.finalizeReview(params.task_id);
+    
+    if (!result) {
+      return { content: '❌ 无法结算评审结果' };
+    }
+
+    const content = `
+🎉 评审完成
+
+📋 任务ID: ${params.task_id.slice(0, 16)}...
+📊 最终评估:
+   • 最终工作量: ${result.finalWorkload.toFixed(1)}/100
+   • 最终价值分: ${result.finalValue.toFixed(1)}
+   • 评审人数: ${result.reviews.length}
+   ${result.outliers.length > 0 ? `• 偏离评审: ${result.outliers.length} 个` : ''}
+
+详细评审:
+${result.reviews.map((r, i) => {
+  const isOutlier = result.outliers.includes(r);
+  const outlierMark = isOutlier ? ' ⚠️ (偏离)' : '';
+  return `  ${i + 1}. 工作量: ${r.dimensions.workload}, 价值: ${r.dimensions.value}${outlierMark}`;
+}).join('\n')}
+    `.trim();
+
+    return {
+      content,
+      data: {
+        taskId: params.task_id,
+        status: 'completed',
+        finalWorkload: result.finalWorkload,
+        finalValue: result.finalValue,
+        reviewerCount: result.reviews.length,
+        outlierCount: result.outliers.length
+      }
+    };
+  }
+
+  /**
+   * 处理 f2a_get_capabilities 工具
+   * 获取指定 Agent 的能力列表
+   */
+  async handleGetCapabilities(
+    params: ToolHandlerParams['getCapabilities'],
+    context: SessionContext
+  ): Promise<ToolResult> {
+    // 需要提供 peer_id 或 agent_name 其中之一
+    if (!params.peer_id && !params.agent_name) {
+      return { content: '❌ 请提供 peer_id 或 agent_name 参数' };
+    }
+
+    const networkClient = (this.adapter as unknown as AdapterInternalAccess).networkClient;
+    
+    // 发现所有 agents
+    const result = await networkClient.discoverAgents();
+    
+    if (!result.success) {
+      return { content: `❌ 查询失败: ${result.error.message}` };
+    }
+
+    const agents = result.data || [];
+
+    // 根据 peer_id 或 agent_name 查找
+    let targetAgent: AgentInfo | undefined;
+    
+    if (params.peer_id) {
+      // 精确匹配或前缀匹配
+      targetAgent = agents.find((a: AgentInfo) => 
+        a.peerId === params.peer_id || 
+        a.peerId.startsWith(params.peer_id!)
+      );
+    } else if (params.agent_name) {
+      // 精确匹配或模糊匹配
+      targetAgent = agents.find((a: AgentInfo) => 
+        a.displayName === params.agent_name ||
+        a.displayName.toLowerCase().includes(params.agent_name!.toLowerCase())
+      );
+    }
+
+    if (!targetAgent) {
+      const searchBy = params.peer_id ? `peer_id=${params.peer_id}` : `agent_name=${params.agent_name}`;
+      return { content: `❌ 找不到 Agent: ${searchBy}` };
+    }
+
+    const capabilities: AgentCapability[] = targetAgent.capabilities || [];
+
+    const content = `
+🔧 Agent 能力列表
+
+📋 Agent: ${targetAgent.displayName}
+🆔 Peer ID: ${targetAgent.peerId.slice(0, 24)}...
+
+能力 (${capabilities.length} 个):
+${capabilities.length > 0 
+  ? capabilities.map((cap, i) => 
+      `  ${i + 1}. ${cap.name}
+     ${cap.description}
+     ${cap.tools?.length ? `工具: ${cap.tools.join(', ')}` : ''}`
+    ).join('\n')
+  : '  暂无能力信息'}
+    `.trim();
+
+    return {
+      content,
+      data: {
+        peerId: targetAgent.peerId,
+        displayName: targetAgent.displayName,
+        capabilities
+      }
+    };
+  }
+
+  // ========== 任务评估辅助方法 ==========
+
+  /**
+   * 估算任务复杂度
+   * 基于任务类型、描述和所需能力进行估算
+   */
+  private estimateTaskComplexity(
+    taskType: string,
+    description: string,
+    requiredCapabilities: string[]
+  ): TaskEstimation {
+    // 基础复杂度（根据任务类型）
+    const typeComplexityMap: Record<string, number> = {
+      'code-generation': 5,
+      'code-review': 3,
+      'file-operation': 2,
+      'data-analysis': 6,
+      'web-search': 2,
+      'api-call': 3,
+      'testing': 4,
+      'documentation': 3,
+      'debugging': 7,
+      'refactoring': 6,
+      'deployment': 5,
+      'security-audit': 8
+    };
+
+    const baseComplexity = typeComplexityMap[taskType.toLowerCase()] || 4;
+
+    // 描述长度影响复杂度
+    const descLength = description.length;
+    const descComplexityBonus = descLength > 500 ? 2 : descLength > 200 ? 1 : 0;
+
+    // 所需能力数量影响复杂度
+    const capComplexityBonus = requiredCapabilities.length > 3 ? 2 : requiredCapabilities.length > 1 ? 1 : 0;
+
+    // 计算最终复杂度 (1-10)
+    const complexity = Math.min(10, Math.max(1, baseComplexity + descComplexityBonus + capComplexityBonus));
+
+    // 工作量估算 (0-100)
+    // 基于复杂度和描述长度
+    const workload = Math.min(100, Math.max(0, 
+      complexity * 8 + Math.min(descLength / 20, 20)
+    ));
+
+    // 预估时间（毫秒）
+    // 复杂度越高，时间越长
+    const baseTime = 60000; // 1分钟基础
+    const estimatedTimeMs = baseTime * complexity * (1 + requiredCapabilities.length * 0.3);
+
+    // 置信度 (0-1)
+    // 熟悉的任务类型置信度更高
+    const isKnownType = taskType.toLowerCase() in typeComplexityMap;
+    const confidence = isKnownType ? 0.8 : 0.5;
+
+    return {
+      workload: Math.round(workload),
+      complexity,
+      estimated_time_ms: Math.round(estimatedTimeMs),
+      confidence
+    };
+  }
+
+  /**
+   * 格式化持续时间
+   */
+  private formatDuration(ms: number): string {
+    if (ms < 1000) return `${ms}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+    if (ms < 3600000) return `${(ms / 60000).toFixed(1)}min`;
+    return `${(ms / 3600000).toFixed(1)}h`;
   }
 }

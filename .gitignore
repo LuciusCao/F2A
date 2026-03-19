@@ -24,6 +24,14 @@ coverage/
 # nyc test coverage
 .nyc_output/
 
+# Agent 中间文档（不适合追踪）
+discussion-log.md
+docs/roadmap-discussion-log.md
+docs/P2_P3_FIX_REPORT.md
+docs/P2_P3_IMPROVEMENTS.md
+docs/readme-update-checklist.md
+docs/security-p0-fix-plan.md
+
 # Grunt intermediate storage
 .grunt/
 
@@ -128,3 +136,10 @@ skill/memory/
 tmp/
 temp/
 *.tmp
+
+# Test temporary directories
+test-tmp-persistence-*
+
+# F2A runtime data
+f2a-data/
+test-tmp-*/

@@ -4,7 +4,7 @@
  */
 
 import { Logger } from '../utils/logger.js';
-import { ReputationManager } from './reputation.js';
+import type { IReputationManager, ReputationEntry } from './reputation.js';
 
 // ============================================================================
 // 类型定义
@@ -99,12 +99,12 @@ const DEFAULT_COMMITTEE_CONFIG: ReviewCommitteeConfig = {
 
 export class ReviewCommittee {
   private config: ReviewCommitteeConfig;
-  private reputationManager: ReputationManager;
+  private reputationManager: IReputationManager;
   private pendingReviews: Map<string, PendingReview> = new Map();
   private logger: Logger;
 
   constructor(
-    reputationManager: ReputationManager,
+    reputationManager: IReputationManager,
     config: Partial<ReviewCommitteeConfig> = {}
   ) {
     this.reputationManager = reputationManager;
@@ -279,12 +279,36 @@ export class ReviewCommittee {
     finalValue: number;
     outliers: TaskReview[];
   } {
+    if (reviews.length === 0) {
+      return { finalWorkload: 0, finalValue: 0, outliers: [] };
+    }
+    
     if (reviews.length === 1) {
       return {
         finalWorkload: reviews[0].dimensions.workload,
         finalValue: reviews[0].dimensions.value,
         outliers: [],
       };
+    }
+
+    // P1-1 修复：当 reviews.length === 2 时，slice(1, -1) 返回空数组
+    // 修复：2个或更少评审时直接取平均值，不进行修剪
+    if (reviews.length === 2) {
+      const workloads = reviews.map(r => r.dimensions.workload);
+      const values = reviews.map(r => r.dimensions.value);
+      
+      const avgWorkload = this.average(workloads);
+      const avgValue = this.average(values);
+      const stdDevWorkload = this.stdDev(workloads, avgWorkload);
+      const stdDevValue = this.stdDev(values, avgValue);
+      
+      // 识别偏离者
+      const outliers = reviews.filter(r => 
+        Math.abs(r.dimensions.workload - avgWorkload) > this.config.outlierThreshold * stdDevWorkload ||
+        Math.abs(r.dimensions.value - avgValue) > this.config.outlierThreshold * stdDevValue
+      );
+      
+      return { finalWorkload: avgWorkload, finalValue: avgValue, outliers };
     }
 
     // 计算平均值和标准差

@@ -519,11 +519,12 @@ describe('P2PNetwork', () => {
         agentInfo: mockAgentInfo
       });
 
-      // 添加活跃 peer
+      // 添加活跃 peer（3 小时前，未连接但未超过 stale 阈值）
+      // 注意：未连接超过 1 小时的 peer 会被清理，所以这个测试验证的是连接中的 peer 不会被清理
       (network as any).peerTable.set('active-peer', {
         peerId: 'active-peer',
-        connected: false,
-        lastSeen: Date.now() - 1 * 60 * 60 * 1000, // 1 小时前
+        connected: true, // 连接中的 peer 不应该被清理
+        lastSeen: Date.now() - 3 * 60 * 60 * 1000, // 3 小时前
         agentInfo: mockAgentInfo
       });
 

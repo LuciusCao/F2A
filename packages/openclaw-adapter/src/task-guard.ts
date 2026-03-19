@@ -345,6 +345,9 @@ export class TaskGuard {
         this.persistTimer.unref();
       }
       
+      // 注册进程退出处理，确保状态持久化（仅在真正需要持久化时注册）
+      registerShutdownHandlers();
+      
       logger.info('persistence-initialized: persistDir=%s, intervalMs=%d', persistDir, interval);
     } catch (error) {
       logger.error('persistence-init-failed: error=%s', error);
@@ -889,7 +892,7 @@ export class TaskGuard {
   }
 }
 
-// 导出单例（带进程退出时自动保存）
+// 导出单例
 const globalTaskGuard = new TaskGuard();
 
 // 注册进程退出处理，确保状态持久化
@@ -916,9 +919,7 @@ const registerShutdownHandlers = () => {
   });
 };
 
-// 仅在非测试环境注册
-if (process.env.NODE_ENV !== 'test') {
-  registerShutdownHandlers();
-}
+// 不在模块加载时注册，改为在 initPersistence 中注册
+// 避免阻止 openclaw gateway status 等一次性命令退出
 
 export const taskGuard = globalTaskGuard;

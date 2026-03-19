@@ -150,16 +150,6 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
 
     // 处理器使用 getter 延迟初始化，无需在此显式创建
 
-    // 启动 F2A Node
-    if (this.config.autoStart) {
-      const result = await this.nodeManager.ensureRunning();
-      if (!result.success) {
-        const errorObj = result.error as { code?: string; message?: string } | undefined;
-        const errorMsg = errorObj?.message || JSON.stringify(result.error);
-        throw new Error(`F2A Node 启动失败: ${errorMsg}`);
-      }
-    }
-
     // 检测能力（基于配置，不依赖 OpenClaw 会话）
     this.capabilities = this.capabilityDetector.getDefaultCapabilities();
     if (this.config.capabilities?.length) {
@@ -169,20 +159,44 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       );
     }
 
-    // 启动 Webhook 服务器
-    this.webhookServer = new WebhookServer(
-      this.config.webhookPort || 0,
-      this.createWebhookHandler()
-    );
-    await this.webhookServer.start();
+    // 启动 Webhook 服务器（优雅处理错误，不让端口冲突导致整个插件失败）
+    try {
+      this.webhookServer = new WebhookServer(
+        this.config.webhookPort || 0,
+        this.createWebhookHandler()
+      );
+      await this.webhookServer.start();
+      logger.info(`Webhook 服务器已启动: ${this.webhookServer.getUrl()}`);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      logger.warn(`Webhook 服务器启动失败: ${errorMsg}`);
+      logger.warn('F2A Adapter 将以降级模式运行，部分功能不可用');
+      // 不抛出异常，继续初始化
+    }
 
-    // 注册到 F2A Node
-    await this.registerToNode();
+    // 方案 A: 插件不启动 Node，只检查是否已运行
+    // F2A Node 应该由外部管理（如 systemd/launchd 或手动启动）
+    this.nodeManager.isRunning().then(running => {
+      if (running) {
+        logger.info('F2A Node 已运行，正在注册...');
+        this.registerToNode().catch(err => {
+          logger.warn(`注册到 Node 失败: ${err}`);
+        });
+      } else {
+        logger.warn('F2A Node 未运行，部分功能不可用');
+        logger.warn('请手动启动: cd ~/Projects/f2a && npm run daemon');
+        logger.warn('或查看文档了解如何配置自动启动');
+      }
+    }).catch(err => {
+      logger.warn(`检查 Node 状态失败: ${err}`);
+    });
 
     logger.info('初始化完成');
     logger.info(`Agent 名称: ${this.config.agentName}`);
     logger.info(`能力数: ${this.capabilities.length}`);
-    logger.info(`Webhook: ${this.webhookServer.getUrl()}`);
+    if (this.webhookServer) {
+      logger.info(`Webhook: ${this.webhookServer.getUrl()}`);
+    }
 
     // 启动兜底轮询（降低到 60 秒）
     this.startFallbackPolling();
@@ -222,6 +236,11 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         logger.error('兜底轮询失败:', error);
       }
     }, interval);
+    
+    // 防止定时器阻止进程退出
+    if (this.pollTimer.unref) {
+      this.pollTimer.unref();
+    }
   }
   
   /**

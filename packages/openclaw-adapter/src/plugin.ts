@@ -38,8 +38,10 @@ export default async function register(api: OpenClawPluginApi) {
       api.logger?.warn(`[F2A Adapter] 清理资源时出错: ${shutdownError.message}`);
     }
     
-    // 抛出错误让 OpenClaw 知道插件加载失败
-    throw new Error(`F2A Adapter 初始化失败: ${error.message}`);
+    // 不抛出异常，让插件以降级模式加载
+    // 这样 Gateway 可以继续运行，只是 F2A 功能不可用
+    api.logger?.warn('[F2A Adapter] 插件将以降级模式运行，功能受限');
+    return; // 直接返回，不注册工具
   }
   
   // 初始化完成后注册所有工具

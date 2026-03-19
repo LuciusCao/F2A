@@ -10,8 +10,11 @@ import { Logger } from '../utils/logger.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 
 export interface ControlServerOptions {
-  port: number;
+  /** 端口，如果不传则使用构造函数传入的 port */
+  port?: number;
   token?: string;
+  /** 数据目录，用于存储 token 等文件 */
+  dataDir?: string;
   /** 允许的 CORS 来源列表，默认为 ['http://localhost'] */
   allowedOrigins?: string[];
 }
@@ -74,7 +77,8 @@ export class ControlServer {
   constructor(f2a: F2A, port: number, tokenManager?: TokenManager, options?: ControlServerOptions) {
     this.f2a = f2a;
     this.port = port;
-    this.tokenManager = tokenManager || new TokenManager();
+    // 使用传入的 dataDir 创建 TokenManager
+    this.tokenManager = tokenManager || new TokenManager(options?.dataDir);
     this.logger = new Logger({ component: 'ControlServer' });
     // 速率限制: 每分钟最多 60 个请求
     this.rateLimiter = new RateLimiter({ maxRequests: 60, windowMs: 60000 });
@@ -91,6 +95,9 @@ export class ControlServer {
    * 启动控制服务器
    */
   start(): Promise<void> {
+    // 确保 token 已生成（便于 CLI 连接）
+    this.tokenManager.getToken();
+    
     return new Promise((resolve, reject) => {
       this.server = createServer((req, res) => {
         this.handleRequest(req, res);

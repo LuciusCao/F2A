@@ -59,7 +59,7 @@ describe('F2A OpenClaw Adapter Plugin', () => {
       expect(tools.map(t => t.name)).toContain('f2a_delegate');
     });
 
-    it('应该创建 Webhook 服务器', async () => {
+    it('initialize() 不应该启动 Webhook 服务器（延迟模式）', async () => {
       adapter = new F2AOpenClawAdapter();
       
       const config = {
@@ -70,10 +70,42 @@ describe('F2A OpenClaw Adapter Plugin', () => {
 
       await adapter.initialize(config);
       
+      // 延迟模式下，initialize() 不启动 WebhookServer
+      // WebhookServer 只有在 enable() 时才启动
+      
+      // 尝试连接应该失败，证明服务器未启动
+      let fetchFailed = false;
+      try {
+        await fetch('http://localhost:19003/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ test: true }),
+        });
+      } catch (err) {
+        // 预期：连接失败，因为 WebhookServer 未启动
+        fetchFailed = true;
+      }
+      
+      // fetch 应该失败，证明 WebhookServer 未启动
+      expect(fetchFailed).toBe(true);
+    });
+
+    it('enable() 应该启动 Webhook 服务器', async () => {
+      adapter = new F2AOpenClawAdapter();
+      
+      const config = {
+        dataDir: testDir,
+        webhookPort: 19009, // 使用不同端口避免冲突
+        enableMDNS: false,
+      };
+
+      await adapter.initialize(config);
+      
+      // enable() 应该启动 WebhookServer
+      await adapter.enable();
+      
       // 测试 Webhook 服务器是否可访问
-      // POST 到根路径会返回 400（没有 event 类型）或类似的错误
-      // 这证明服务器正在监听
-      const response = await fetch('http://localhost:19003/', {
+      const response = await fetch('http://localhost:19009/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ test: true }),

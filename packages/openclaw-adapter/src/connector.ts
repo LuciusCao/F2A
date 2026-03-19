@@ -43,15 +43,16 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   name = 'f2a-openclaw-adapter';
   version = '0.3.0';
 
-  private nodeManager!: F2ANodeManager;
-  private networkClient!: F2ANetworkClient;
-  private webhookServer!: WebhookServer;
-  private reputationSystem!: ReputationSystem;
-  private capabilityDetector!: CapabilityDetector;
-  private taskQueue!: TaskQueue;
-  private announcementQueue!: AnnouncementQueue;
-  private webhookPusher?: WebhookPusher;
-  private reviewCommittee?: ReviewCommittee;
+  // 核心组件（延迟初始化）
+  private _nodeManager?: F2ANodeManager;
+  private _networkClient?: F2ANetworkClient;
+  private _webhookServer?: WebhookServer;
+  private _reputationSystem?: ReputationSystem;
+  private _capabilityDetector?: CapabilityDetector;
+  private _taskQueue?: TaskQueue;
+  private _announcementQueue?: AnnouncementQueue;
+  private _webhookPusher?: WebhookPusher;
+  private _reviewCommittee?: ReviewCommittee;
   
   // 处理器实例（延迟初始化）
   private _toolHandlers?: ToolHandlers;
@@ -62,6 +63,104 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   private capabilities: AgentCapability[] = [];
   private api?: OpenClawPluginApi;
   private pollTimer?: NodeJS.Timeout;
+  private _initialized = false;
+  
+  // ========== 懒加载 Getter ==========
+  
+  /**
+   * 获取节点管理器（懒加载）
+   */
+  private get nodeManager(): F2ANodeManager {
+    if (!this._nodeManager) {
+      this._nodeManager = new F2ANodeManager(this.nodeConfig);
+    }
+    return this._nodeManager;
+  }
+  
+  /**
+   * 获取网络客户端（懒加载）
+   */
+  private get networkClient(): F2ANetworkClient {
+    if (!this._networkClient) {
+      this._networkClient = new F2ANetworkClient(this.nodeConfig);
+    }
+    return this._networkClient;
+  }
+  
+  /**
+   * 获取任务队列（懒加载）
+   * 只有在真正需要处理任务时才初始化 SQLite 数据库
+   */
+  private get taskQueue(): TaskQueue {
+    if (!this._taskQueue) {
+      const dataDir = this.config.dataDir || './f2a-data';
+      this._taskQueue = new TaskQueue({
+        maxSize: this.config.maxQueuedTasks || 100,
+        maxAgeMs: 24 * 60 * 60 * 1000, // 24小时
+        persistDir: dataDir,
+        persistEnabled: true
+      });
+      logger.info('TaskQueue 已初始化（懒加载）');
+    }
+    return this._taskQueue;
+  }
+  
+  /**
+   * 获取信誉系统（懒加载）
+   */
+  private get reputationSystem(): ReputationSystem {
+    if (!this._reputationSystem) {
+      this._reputationSystem = new ReputationSystem(
+        {
+          enabled: INTERNAL_REPUTATION_CONFIG.enabled,
+          initialScore: INTERNAL_REPUTATION_CONFIG.initialScore,
+          minScoreForService: INTERNAL_REPUTATION_CONFIG.minScoreForService,
+          decayRate: INTERNAL_REPUTATION_CONFIG.decayRate,
+        },
+        this.config.dataDir || './f2a-data'
+      );
+    }
+    return this._reputationSystem;
+  }
+  
+  /**
+   * 获取能力检测器（懒加载）
+   */
+  private get capabilityDetector(): CapabilityDetector {
+    if (!this._capabilityDetector) {
+      this._capabilityDetector = new CapabilityDetector();
+    }
+    return this._capabilityDetector;
+  }
+  
+  /**
+   * 获取广播队列（懒加载）
+   */
+  private get announcementQueue(): AnnouncementQueue {
+    if (!this._announcementQueue) {
+      this._announcementQueue = new AnnouncementQueue({
+        maxSize: 50,
+        maxAgeMs: 30 * 60 * 1000 // 30分钟
+      });
+    }
+    return this._announcementQueue;
+  }
+  
+  /**
+   * 获取评审委员会（懒加载）
+   */
+  private get reviewCommittee(): ReviewCommittee {
+    if (!this._reviewCommittee) {
+      const reputationAdapter = new ReputationManagerAdapter(this.reputationSystem);
+      this._reviewCommittee = new ReviewCommittee(reputationAdapter, {
+        minReviewers: 1,
+        maxReviewers: 5,
+        minReputation: INTERNAL_REPUTATION_CONFIG.minScoreForReview,
+        reviewTimeout: 5 * 60 * 1000 // 5 分钟
+      });
+    }
+    return this._reviewCommittee;
+  }
   
   /**
    * 获取工具处理器（延迟初始化，支持未初始化时调用getTools）
@@ -82,17 +181,29 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     }
     return this._claimHandlers;
   }
+  
+  /**
+   * 检查是否已初始化（用于判断是否需要启动服务）
+   */
+  isInitialized(): boolean {
+    return this._initialized;
+  }
 
   /**
    * 初始化插件
+   * 
+   * 架构重构：延迟初始化策略
+   * - 构造函数/initialize 只保存配置，不打开任何资源
+   * - TaskQueue/WebhookServer 在首次访问时才初始化
+   * - 这允许 `openclaw gateway status` 等 CLI 命令能正常退出
    */
   async initialize(config: Record<string, unknown> & { _api?: OpenClawPluginApi }): Promise<void> {
-    logger.info('初始化...');
+    logger.info('初始化（延迟模式）...');
 
     // 保存 API 引用（用于触发心跳等）
     this.api = config._api;
     
-    // 合并配置
+    // 合并配置（只保存，不初始化资源）
     this.config = this.mergeConfig(config);
     this.nodeConfig = {
       nodePath: this.config.f2aPath || './F2A',
@@ -103,79 +214,14 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       bootstrapPeers: this.config.bootstrapPeers || []
     };
 
-    // 初始化任务队列（带持久化）
-    const dataDir = this.config.dataDir || './f2a-data';
-    this.taskQueue = new TaskQueue({
-      maxSize: this.config.maxQueuedTasks || 100,
-      maxAgeMs: 24 * 60 * 60 * 1000, // 24小时
-      persistDir: dataDir,
-      persistEnabled: true
-    });
-
-    // 初始化 Webhook 推送器
+    // 初始化 Webhook 推送器（如果配置了）
     if (this.config.webhookPush?.enabled !== false && this.config.webhookPush?.url) {
-      this.webhookPusher = new WebhookPusher(this.config.webhookPush);
-      logger.info('Webhook 推送已启用');
+      this._webhookPusher = new WebhookPusher(this.config.webhookPush);
+      logger.info('Webhook 推送已配置');
     }
 
-    // 初始化广播队列
-    this.announcementQueue = new AnnouncementQueue({
-      maxSize: 50,
-      maxAgeMs: 30 * 60 * 1000 // 30分钟
-    });
-
-    // 初始化组件
-    this.nodeManager = new F2ANodeManager(this.nodeConfig);
-    this.networkClient = new F2ANetworkClient(this.nodeConfig);
-    // 使用程序内部控制的经济参数，防止用户作弊
-    this.reputationSystem = new ReputationSystem(
-      {
-        enabled: INTERNAL_REPUTATION_CONFIG.enabled,
-        initialScore: INTERNAL_REPUTATION_CONFIG.initialScore,
-        minScoreForService: INTERNAL_REPUTATION_CONFIG.minScoreForService,
-        decayRate: INTERNAL_REPUTATION_CONFIG.decayRate,
-      },
-      this.config.dataDir || './f2a-data'
-    );
-    this.capabilityDetector = new CapabilityDetector();
-
-    // 初始化评审委员会（使用适配器包装 ReputationSystem）
-    const reputationAdapter = new ReputationManagerAdapter(this.reputationSystem);
-    this.reviewCommittee = new ReviewCommittee(reputationAdapter, {
-      minReviewers: 1,
-      maxReviewers: 5,
-      minReputation: INTERNAL_REPUTATION_CONFIG.minScoreForReview,
-      reviewTimeout: 5 * 60 * 1000 // 5 分钟
-    });
-
-    // 处理器使用 getter 延迟初始化，无需在此显式创建
-
-    // 注册自动清理处理器，确保 CLI 命令能正常退出
-    // 使用 once 而非 on，确保只执行一次
-    const autoCleanup = () => {
-      // 同步关闭资源（不使用 await，因为 beforeExit 不支持异步）
-      if (this.pollTimer) {
-        clearInterval(this.pollTimer);
-        this.pollTimer = undefined;
-      }
-      if (this.webhookServer) {
-        try {
-          // stop() 是异步的，但我们可以直接关闭底层服务器
-          (this.webhookServer as any).server?.close();
-        } catch {}
-      }
-      if (this.taskQueue) {
-        try {
-          this.taskQueue.close();
-        } catch {}
-      }
-    };
-    
-    process.once('beforeExit', autoCleanup);
-    process.once('SIGINT', autoCleanup);
-    process.once('SIGTERM', autoCleanup);
-
     // 检测能力（基于配置，不依赖 OpenClaw 会话）
+    // 这是轻量级操作，不需要延迟
     this.capabilities = this.capabilityDetector.getDefaultCapabilities();
     if (this.config.capabilities?.length) {
       this.capabilities = this.capabilityDetector.mergeCustomCapabilities(
@@ -184,24 +230,45 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       );
     }
 
-    // 启动 Webhook 服务器（优雅处理错误，不让端口冲突导致整个插件失败）
+    // 注册自动清理处理器
+    this.registerCleanupHandlers();
+
+    logger.info('初始化完成（延迟模式）');
+    logger.info(`Agent 名称: ${this.config.agentName}`);
+    logger.info(`能力数: ${this.capabilities.length}`);
+    logger.info('资源将在首次使用时初始化（TaskQueue/WebhookServer 等）');
+  }
+
+  /**
+   * 启用适配器（启动 WebhookServer 和 F2A Node 连接）
+   * 这是在插件真正被使用时调用，而不是在构造函数中
+   */
+  async enable(): Promise<void> {
+    if (this._initialized) {
+      logger.info('适配器已启用，跳过');
+      return;
+    }
+    
+    logger.info('启用适配器...');
+    this._initialized = true;
+
+    // 启动 Webhook 服务器（懒加载触发）
     try {
-      this.webhookServer = new WebhookServer(
+      this._webhookServer = new WebhookServer(
         this.config.webhookPort || 0,
         this.createWebhookHandler()
       );
-      await this.webhookServer.start();
-      logger.info(`Webhook 服务器已启动: ${this.webhookServer.getUrl()}`);
+      await this._webhookServer.start();
+      logger.info(`Webhook 服务器已启动: ${this._webhookServer.getUrl()}`);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       logger.warn(`Webhook 服务器启动失败: ${errorMsg}`);
       logger.warn('F2A Adapter 将以降级模式运行，部分功能不可用');
-      // 不抛出异常，继续初始化
     }
 
-    // 方案 A: 插件不启动 Node，只检查是否已运行
-    // F2A Node 应该由外部管理（如 systemd/launchd 或手动启动）
-    this.nodeManager.isRunning().then(running => {
+    // 检查 F2A Node 状态
+    this._nodeManager = new F2ANodeManager(this.nodeConfig);
+    this._nodeManager.isRunning().then(running => {
       if (running) {
         logger.info('F2A Node 已运行，正在注册...');
         this.registerToNode().catch(err => {
@@ -216,15 +283,39 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       logger.warn(`检查 Node 状态失败: ${err}`);
     });
 
-    logger.info('初始化完成');
-    logger.info(`Agent 名称: ${this.config.agentName}`);
-    logger.info(`能力数: ${this.capabilities.length}`);
-    if (this.webhookServer) {
-      logger.info(`Webhook: ${this.webhookServer.getUrl()}`);
-    }
-
-    // 启动兜底轮询（降低到 60 秒）
+    // 启动兜底轮询
     this.startFallbackPolling();
+    
+    if (this._webhookServer) {
+      logger.info(`Webhook: ${this._webhookServer.getUrl()}`);
+    }
+  }
+
+  /**
+   * 注册清理处理器
+   */
+  private registerCleanupHandlers(): void {
+    const autoCleanup = () => {
+      // 同步关闭资源（不使用 await，因为 beforeExit 不支持异步）
+      if (this.pollTimer) {
+        clearInterval(this.pollTimer);
+        this.pollTimer = undefined;
+      }
+      if (this._webhookServer) {
+        try {
+          (this._webhookServer as any).server?.close();
+        } catch {}
+      }
+      if (this._taskQueue) {
+        try {
+          this._taskQueue.close();
+        } catch {}
+      }
+    };
+    
+    process.once('beforeExit', autoCleanup);
+    process.once('SIGINT', autoCleanup);
+    process.once('SIGTERM', autoCleanup);
   }
 
   /**
@@ -236,24 +327,32 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     
     this.pollTimer = setInterval(async () => {
       // P1 修复：定期检查并重置超时的 processing 任务，防止僵尸任务
-      this.resetTimedOutProcessingTasks();
+      // 只有在 TaskQueue 已初始化时才检查
+      if (this._taskQueue) {
+        this.resetTimedOutProcessingTasks();
+      }
       
-      if (!this.webhookPusher) {
+      if (!this._webhookPusher) {
         // 没有配置 webhook，不轮询（保持原有轮询模式）
+        return;
+      }
+
+      // 只有在 TaskQueue 已初始化时才处理
+      if (!this._taskQueue) {
         return;
       }
 
       try {
         // 获取未推送的任务
-        const pending = this.taskQueue.getWebhookPending();
+        const pending = this._taskQueue.getWebhookPending();
         
         if (pending.length > 0) {
           logger.info(`兜底轮询: ${pending.length} 个待推送任务`);
           
           for (const task of pending) {
-            const result = await this.webhookPusher.pushTask(task);
+            const result = await this._webhookPusher.pushTask(task);
             if (result.success) {
-              this.taskQueue.markWebhookPushed(task.taskId);
+              this._taskQueue.markWebhookPushed(task.taskId);
             }
           }
         }
@@ -274,12 +373,14 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
    * 防止因处理失败导致的僵尸任务
    */
   private resetTimedOutProcessingTasks(): void {
-    const stats = this.taskQueue.getStats();
+    if (!this._taskQueue) return;
+    
+    const stats = this._taskQueue.getStats();
     if (stats.processing === 0) {
       return; // 没有处理中的任务，无需检查
     }
     
-    const allTasks = this.taskQueue.getAll();
+    const allTasks = this._taskQueue.getAll();
     const now = Date.now();
     const processingTimeout = this.config.processingTimeoutMs || 5 * 60 * 1000; // 默认 5 分钟
     
@@ -292,7 +393,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         if (processingTime > maxAllowedTime) {
           logger.warn(`检测到僵尸任务 ${task.taskId.slice(0, 8)}... (processing ${Math.round(processingTime / 1000)}s)，重置为 pending`);
           // 将任务重置为 pending 状态
-          this.taskQueue.resetProcessingTask(task.taskId);
+          this._taskQueue.resetProcessingTask(task.taskId);
         }
       }
     }
@@ -648,7 +749,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   private createWebhookHandler(): WebhookHandler {
     return {
       onDiscover: async (payload: DiscoverWebhookPayload) => {
-        // 检查请求者信誉
+        // 检查请求者信誉（懒加载触发）
         if (!this.reputationSystem.isAllowed(payload.requester)) {
           return {
             capabilities: [],
@@ -672,7 +773,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       },
 
       onDelegate: async (payload: DelegateWebhookPayload) => {
-        // 安全检查
+        // 安全检查（懒加载触发 reputationSystem）
         if (!this.reputationSystem.isAllowed(payload.from)) {
           return {
             accepted: false,
@@ -733,7 +834,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           // 目前记录警告但继续处理任务
         }
 
-        // 检查队列是否已满
+        // 检查队列是否已满（懒加载触发 taskQueue）
         const stats = this.taskQueue.getStats();
         if (stats.pending >= (this.config.maxQueuedTasks || 100)) {
           return {
@@ -748,8 +849,8 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           const task = this.taskQueue.add(payload);
           
           // 优先使用 webhook 推送
-          if (this.webhookPusher) {
-            const result = await this.webhookPusher.pushTask(task);
+          if (this._webhookPusher) {
+            const result = await this._webhookPusher.pushTask(task);
             if (result.success) {
               this.taskQueue.markWebhookPushed(task.taskId);
               logger.info(`任务 ${task.taskId} 已通过 webhook 推送 (${result.latency}ms)`);
@@ -775,7 +876,17 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       },
 
       onStatus: async () => {
-        const stats = this.taskQueue.getStats();
+        // 如果 TaskQueue 未初始化，返回空闲状态
+        if (!this._taskQueue) {
+          return {
+            status: 'available',
+            load: 0,
+            queued: 0,
+            processing: 0
+          };
+        }
+        
+        const stats = this._taskQueue.getStats();
         return {
           status: 'available',
           load: stats.pending + stats.processing,
@@ -790,7 +901,9 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
    * 注册到 F2A Node
    */
   private async registerToNode(): Promise<void> {
-    await this.networkClient.registerWebhook(this.webhookServer.getUrl());
+    if (!this._webhookServer) return;
+    
+    await this.networkClient.registerWebhook(this._webhookServer.getUrl());
     
     await this.networkClient.updateAgentInfo({
       displayName: this.config.agentName,
@@ -888,6 +1001,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
 
   /**
    * 关闭插件，清理资源
+   * 只清理已初始化的资源
    */
   async shutdown(): Promise<void> {
     logger.info('正在关闭...');
@@ -898,14 +1012,15 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       this.pollTimer = undefined;
     }
     
-    // 停止 Webhook 服务器
-    if (this.webhookServer) {
-      await this.webhookServer.stop?.();
+    // 停止 Webhook 服务器（只有已启动时才关闭）
+    if (this._webhookServer) {
+      await this._webhookServer.stop?.();
+      logger.info('Webhook 服务器已停止');
     }
     
     // P1 修复：关闭前刷新信誉系统数据，确保持久化
-    if (this.reputationSystem) {
-      this.reputationSystem.flush();
+    if (this._reputationSystem) {
+      this._reputationSystem.flush();
       logger.info('信誉系统数据已保存');
     }
     
@@ -913,18 +1028,20 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     taskGuard.shutdown();
     logger.info('TaskGuard 已关闭');
     
-    // 停止 F2A Node
-    if (this.nodeManager) {
-      await this.nodeManager.stop();
+    // 停止 F2A Node（只有已启动时才关闭）
+    if (this._nodeManager) {
+      await this._nodeManager.stop();
+      logger.info('F2A Node 管理器已停止');
     }
     
-    // 关闭任务队列连接（保留持久化数据，不删除任务）
-    // 这样重启后可以恢复未完成的任务
-    if (this.taskQueue) {
-      this.taskQueue.close();
+    // 关闭任务队列连接（只有已初始化时才关闭）
+    // 保留持久化数据，不删除任务，这样重启后可以恢复未完成的任务
+    if (this._taskQueue) {
+      this._taskQueue.close();
       logger.info('任务队列已关闭，持久化数据已保留');
     }
     
+    this._initialized = false;
     logger.info('已关闭');
   }
 }

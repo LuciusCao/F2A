@@ -230,8 +230,8 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       );
     }
 
-    // 注册自动清理处理器
-    this.registerCleanupHandlers();
+    // 注意：registerCleanupHandlers() 移到 enable() 中调用
+    // 因为它注册 process.on 事件处理器，会阻止 CLI 进程退出
 
     logger.info('初始化完成（延迟模式）');
     logger.info(`Agent 名称: ${this.config.agentName}`);
@@ -251,6 +251,9 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     
     logger.info('启用适配器...');
     this._initialized = true;
+    
+    // 注册清理处理器（只在真正启用时才注册，避免阻止 CLI 进程退出）
+    this.registerCleanupHandlers();
 
     // 启动 Webhook 服务器（懒加载触发）
     try {

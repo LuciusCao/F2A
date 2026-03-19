@@ -6,6 +6,7 @@
 import { x25519 } from '@noble/curves/ed25519.js';
 import { randomBytes, createCipheriv, createDecipheriv, createHmac, hkdfSync, timingSafeEqual } from 'crypto';
 import { Logger } from '../utils/logger.js';
+import { getErrorMessage } from '../utils/error-utils.js';
 
 // AES-256-GCM 参数
 const AES_KEY_SIZE = 32; // 256 bits
@@ -228,8 +229,7 @@ export class E2EECrypto implements Disposable {
         throw new Error('Public key does not match the private key. The key pair is invalid.');
       }
     } catch (error) {
-      // 如果派生失败，可能是无效的私钥
-      throw new Error(`Invalid key pair: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`Invalid key pair: ${getErrorMessage(error)}`);
     }
     
     this.keyPair = { privateKey, publicKey };
@@ -382,7 +382,7 @@ export class E2EECrypto implements Disposable {
         salt: salt.toString('base64')
       };
     } catch (error) {
-      this.logger.error('Encryption failed', { error: error instanceof Error ? error.message : String(error) });
+      this.logger.error('Encryption failed', { error: getErrorMessage(error) });
       return null;
     }
   }
@@ -788,7 +788,7 @@ export class E2EECrypto implements Disposable {
     } catch (error) {
       this.logger.error('Key exchange confirmation failed with exception', {
         peerId: peerId.slice(0, 16),
-        error: error instanceof Error ? error.message : String(error)
+        error: getErrorMessage(error)
       });
       return false;
     }

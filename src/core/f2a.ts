@@ -11,6 +11,7 @@ import { P2PNetwork } from './p2p-network.js';
 import { Logger } from '../utils/logger.js';
 import { Middleware } from '../utils/middleware.js';
 import { validateAgentCapability, validateTaskDelegateOptions } from '../utils/validation.js';
+import { getErrorMessage } from '../utils/error-utils.js';
 import {
   F2AOptions,
   F2AEvents,
@@ -583,14 +584,15 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       } catch (error) {
         this.logger.error('Task execution failed', {
           taskId: request.taskId,
-          error: error instanceof Error ? error.message : String(error)
+          fromPeerId: fromPeerId.slice(0, 16),
+          error: getErrorMessage(error)
         });
         await this.p2pNetwork.sendTaskResponse(
           fromPeerId,
           request.taskId,
           'error',
           undefined,
-          error instanceof Error ? error.message : String(error)
+          getErrorMessage(error)
         );
       }
     }

@@ -78,6 +78,12 @@ export {
   createMessageTypeFilterMiddleware 
 } from './utils/middleware.js';
 export type { Middleware, MiddlewareContext, MiddlewareResult } from './utils/middleware.js';
+export { 
+  ensureError,
+  getErrorMessage,
+  toF2AError,
+  toF2AErrorFromUnknown
+} from './utils/error-utils.js';
 
 // 类型定义
 export * from './types/index.js';

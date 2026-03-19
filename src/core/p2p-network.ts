@@ -44,6 +44,7 @@ import { validateF2AMessage, validateTaskRequestPayload, validateTaskResponsePay
 import { MiddlewareManager, Middleware } from '../utils/middleware.js';
 import { RequestSigner, loadSignatureConfig, SignedMessage } from '../utils/signature.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
+import { getErrorMessage } from '../utils/error-utils.js';
 
 // DHT 服务类型定义
 interface DHTService {
@@ -759,7 +760,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         await this.initiateDiscovery(peerId, evt.detail.multiaddrs);
       } catch (error) {
         this.logger.error('Error in peer:discovery handler', {
-          error: error instanceof Error ? error.message : String(error)
+          error: getErrorMessage(error)
         });
       }
     };
@@ -815,7 +816,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         this.connectedPeers.add(peerId);
       } catch (error) {
         this.logger.error('Error in peer:connect handler', {
-          error: error instanceof Error ? error.message : String(error)
+          error: getErrorMessage(error)
         });
       }
     };
@@ -848,7 +849,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         }
       } catch (error) {
         this.logger.error('Error in peer:disconnect handler', {
-          error: error instanceof Error ? error.message : String(error)
+          error: getErrorMessage(error)
         });
       }
     };
@@ -934,7 +935,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       // 连接失败不应阻止发现流程，记录警告即可
       this.logger.warn('Failed to connect/send DISCOVER to mDNS peer', {
         peerId: peerId.slice(0, 16),
-        error: connectError instanceof Error ? connectError.message : String(connectError)
+        error: getErrorMessage(connectError)
       });
     }
   }
@@ -1443,7 +1444,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           } catch (hangUpError) {
             this.logger.warn('Failed to hang up after fingerprint mismatch', {
               addr,
-              error: hangUpError instanceof Error ? hangUpError.message : String(hangUpError)
+              error: getErrorMessage(hangUpError)
             });
           }
           continue;
@@ -1465,7 +1466,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       } catch (error) {
         this.logger.warn('Failed to connect to bootstrap', { 
           addr,
-          error: error instanceof Error ? error.message : String(error)
+          error: getErrorMessage(error)
         });
       }
     }

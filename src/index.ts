@@ -81,5 +81,7 @@ export type { Middleware, MiddlewareContext, MiddlewareResult } from './utils/mi
 
 // 类型定义
 export * from './types/index.js';
+// 显式导出 SecurityConfig，确保在 dist/index.d.ts 中可用
+export type { SecurityConfig, SecurityLevel, RateLimitConfig, F2AOptions, LogLevel } from './types/index.js';
 
 // 版本号已在文件顶部从 package.json 导出

@@ -2,23 +2,10 @@
  * F2A Dashboard Types
  */
 
-export interface AgentCapability {
-  name: string;
-  description: string;
-  tools?: string[];
-  parameters?: Record<string, unknown>;
-}
-
-export interface AgentInfo {
-  peerId: string;
-  displayName?: string;
-  agentType: 'openclaw' | 'custom' | 'assistant';
-  version: string;
-  capabilities: AgentCapability[];
-  protocolVersion: string;
-  lastSeen: number;
-  multiaddrs: string[];
-}
+// ============================================================================
+// F2A 核心类型（从 @f2a/network 重新导出，避免重复定义）
+// ============================================================================
+export type { AgentInfo, AgentCapability } from '@f2a/network';
 
 export interface HealthStatus {
   status: 'ok' | 'error';

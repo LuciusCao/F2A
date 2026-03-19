@@ -5,6 +5,8 @@
 
 import { Multiaddr } from '@multiformats/multiaddr';
 import { EventEmitter } from 'eventemitter3';
+// 从 rate-limiter.ts 导入 RateLimitConfig，避免重复定义
+import type { RateLimitConfig } from '../utils/rate-limiter.js';
 
 // ============================================================================
 // 基础类型
@@ -96,23 +98,24 @@ export interface F2AOptions {
 }
 
 export interface SecurityConfig {
-  level: SecurityLevel;
+  /** 安全级别 */
+  level?: SecurityLevel;
   /** 是否要求确认连接 */
-  requireConfirmation: boolean;
+  requireConfirmation?: boolean;
   /** 是否验证签名 */
-  verifySignatures: boolean;
-  /** 白名单 */
-  whitelist?: Set<string>;
-  /** 黑名单 */
-  blacklist?: Set<string>;
+  verifySignatures?: boolean;
+  /** 白名单（Peer ID 列表） */
+  whitelist?: string[];
+  /** 黑名单（Peer ID 列表） */
+  blacklist?: string[];
   /** 速率限制 */
   rateLimit?: RateLimitConfig;
+  /** 每分钟最大任务数（用于限流） */
+  maxTasksPerMinute?: number;
 }
 
-export interface RateLimitConfig {
-  maxRequests: number;
-  windowMs: number;
-}
+// 重导出 RateLimitConfig，供其他模块使用
+export type { RateLimitConfig };
 
 // ============================================================================
 // F2A 消息协议

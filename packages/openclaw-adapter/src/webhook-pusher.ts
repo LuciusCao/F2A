@@ -4,18 +4,8 @@
  */
 
 import type { QueuedTask } from './task-queue.js';
+import type { WebhookPushConfig } from './types.js';
 import { queueLogger as logger } from './logger.js';
-
-export interface WebhookPushConfig {
-  /** OpenClaw webhook URL */
-  url: string;
-  /** Webhook 认证 token */
-  token: string;
-  /** 推送超时（毫秒） */
-  timeout?: number;
-  /** 是否启用 webhook 推送 */
-  enabled?: boolean;
-}
 
 export interface WebhookPushResult {
   success: boolean;

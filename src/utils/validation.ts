@@ -45,15 +45,16 @@ export const P2PNetworkConfigSchema = z.object({
 });
 
 export const SecurityConfigSchema = z.object({
-  level: SecurityLevelSchema,
-  requireConfirmation: z.boolean(),
-  verifySignatures: z.boolean(),
-  whitelist: z.set(z.string()).optional(),
-  blacklist: z.set(z.string()).optional(),
+  level: SecurityLevelSchema.optional(),
+  requireConfirmation: z.boolean().optional(),
+  verifySignatures: z.boolean().optional(),
+  whitelist: z.array(z.string()).optional(),
+  blacklist: z.array(z.string()).optional(),
   rateLimit: z.object({
     maxRequests: z.number().int().positive(),
     windowMs: z.number().int().positive()
-  }).optional()
+  }).optional(),
+  maxTasksPerMinute: z.number().int().positive().optional()
 });
 
 export const F2AOptionsSchema = z.object({

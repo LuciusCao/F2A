@@ -167,6 +167,7 @@ export class CapabilityDetector {
         merged.push({
           name: capName,
           description: `Custom capability: ${capName}`,
+          tools: [],
           parameters: {
             query: {
               type: 'string',

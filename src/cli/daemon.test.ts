@@ -763,4 +763,21 @@ describe('CLI Daemon Commands', () => {
       expect(mockServer.listen).toBeDefined();
     });
   });
+
+  describe('daemon script path', () => {
+    it('should use correct path for daemon script', async () => {
+      // 实际测试：验证路径计算正确
+      const { join } = await import('path');
+      const { fileURLToPath } = await import('url');
+      const { existsSync } = await import('fs');
+      
+      // 计算实际路径（模拟 daemon.ts 中的逻辑）
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = join(__filename, '..');
+      const daemonScript = join(__dirname, '..', 'daemon', 'main.js');
+      
+      // 验证路径存在（这是真实文件系统测试）
+      expect(existsSync(daemonScript)).toBe(true);
+    });
+  });
 });

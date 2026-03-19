@@ -5,6 +5,8 @@
 
 import { EventEmitter } from 'eventemitter3';
 import { randomUUID } from 'crypto';
+import { join } from 'path';
+import { homedir } from 'os';
 import { P2PNetwork } from './p2p-network.js';
 import { Logger } from '../utils/logger.js';
 import { Middleware } from '../utils/middleware.js';
@@ -82,7 +84,16 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     this._agentInfo = agentInfo;
     this.p2pNetwork = p2pNetwork;
     this.options = options;
-    this.logger = new Logger({ level: options.logLevel, component: 'F2A' });
+    
+    // 初始化 logger，默认启用文件日志到 dataDir
+    const dataDir = options.dataDir || join(homedir(), '.f2a');
+    this.logger = new Logger({ 
+      level: options.logLevel, 
+      component: 'F2A',
+      enableConsole: true,
+      enableFile: true,
+      filePath: join(dataDir, 'f2a.log')
+    });
 
     this.bindEvents();
   }

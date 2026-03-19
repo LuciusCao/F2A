@@ -327,7 +327,8 @@ export async function startBackground(): Promise<void> {
   // 使用脚本所在目录定位 daemon 脚本，而不是 process.cwd()
   // 这样可以在任何目录执行 f2a daemon 命令
   const nodePath = process.execPath;
-  const daemonScript = join(__dirname, '..', '..', 'daemon', 'main.js');
+  // __dirname = dist/cli/, 所以只需要 ../daemon/main.js
+  const daemonScript = join(__dirname, '..', 'daemon', 'main.js');
   
   // 检查 daemon 脚本是否存在
   if (!existsSync(daemonScript)) {
@@ -368,18 +369,11 @@ export async function startBackground(): Promise<void> {
     // 启动后台进程
     const child = spawn(nodePath, [daemonScript], {
       detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'ignore', 'ignore'],  // 忽略所有 stdio，避免父进程等待
       env,
       // 使用跨平台的工作目录
       cwd: homedir(),
     });
-
-    // 创建日志写入流
-    const { createWriteStream } = await import('fs');
-    const logStream = createWriteStream(LOG_FILE, { flags: 'a' });
-    
-    child.stdout?.pipe(logStream);
-    child.stderr?.pipe(logStream);
 
     // 等待 daemon 进程启动
     await new Promise<void>((resolve, reject) => {

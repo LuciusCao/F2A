@@ -1,6 +1,6 @@
 /**
- * F2A Init 命令
- * 交互式配置向导
+ * F2A Configure 命令
+ * 交互式配置向导（支持首次配置和重新配置）
  */
 
 import * as readline from 'readline';
@@ -98,25 +98,33 @@ async function confirm(rl: readline.Interface, prompt: string, defaultValue: boo
 /**
  * 显示欢迎信息
  */
-function showWelcome(): void {
+function showWelcome(isReconfigure: boolean): void {
   console.log('');
   console.log(color('╔════════════════════════════════════════════════╗', 'blue'));
-  console.log(color('║         F2A 配置向导                           ║', 'blue'));
+  if (isReconfigure) {
+    console.log(color('║         F2A 重新配置                           ║', 'blue'));
+  } else {
+    console.log(color('║         F2A 配置向导                           ║', 'blue'));
+  }
   console.log(color('║         Friend-to-Agent P2P 网络               ║', 'blue'));
   console.log(color('╚════════════════════════════════════════════════╝', 'blue'));
   console.log('');
-  console.log('这个向导将帮助你配置 F2A 网络。');
-  console.log('只需要回答几个简单的问题即可完成配置。');
+  if (isReconfigure) {
+    console.log('显示当前配置值，直接回车保持原值，输入新值修改。');
+  } else {
+    console.log('这个向导将帮助你配置 F2A 网络。');
+    console.log('只需要回答几个简单的问题即可完成配置。');
+  }
   console.log('');
 }
 
 /**
  * 显示配置摘要
  */
-function showSummary(config: F2AConfig): void {
+function showSummary(config: F2AConfig, isReconfigure: boolean): void {
   console.log('');
   console.log(color('══════════════════════════════════════════════════', 'blue'));
-  console.log(color('配置摘要', 'bold'));
+  console.log(color(isReconfigure ? '修改后的配置' : '配置摘要', 'bold'));
   console.log(color('══════════════════════════════════════════════════', 'blue'));
   console.log('');
   console.log(`${color('Agent 名称:', 'cyan')}     ${config.agentName}`);
@@ -143,30 +151,20 @@ function showSummary(config: F2AConfig): void {
 /**
  * 主配置流程
  */
-export async function initConfig(): Promise<void> {
+export async function configureCommand(): Promise<void> {
   // TTY 检测：确保在交互式环境中运行
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     console.error(color('Error: This command requires an interactive terminal (TTY).', 'red'));
-    console.error(color('Please run "f2a init" in a terminal.', 'red'));
+    console.error(color('Please run "f2a configure" in a terminal.', 'red'));
     process.exit(1);
   }
   
-  showWelcome();
-  
-  const rl = createInterface();
   const existingConfig = loadConfig();
   const hasExisting = configExists();
   
-  if (hasExisting) {
-    console.log(color('发现已有配置文件。', 'yellow'));
-    const overwrite = await confirm(rl, '是否覆盖现有配置？', false);
-    if (!overwrite) {
-      console.log(color('\n配置已取消。', 'yellow'));
-      rl.close();
-      return;
-    }
-    console.log('');
-  }
+  showWelcome(hasExisting);
+  
+  const rl = createInterface();
   
   // ============================================
   // 必需配置
@@ -373,7 +371,7 @@ export async function initConfig(): Promise<void> {
   // ============================================
   // 显示摘要并确认
   // ============================================
-  showSummary(config);
+  showSummary(config, hasExisting);
   
   const confirmSave = await confirm(rl, '保存配置？', true);
   
@@ -393,9 +391,9 @@ export async function initConfig(): Promise<void> {
 }
 
 /**
- * 显示配置信息
+ * 显示配置信息（用于 config list 命令）
  */
-export function showConfig(): void {
+export function listConfig(): void {
   const config = loadConfig();
   const path = getConfigPath();
   
@@ -406,4 +404,99 @@ export function showConfig(): void {
   console.log('');
   console.log(JSON.stringify(config, null, 2));
   console.log('');
+}
+
+/**
+ * 获取配置项值（用于 config get 命令）
+ */
+export function getConfigValue(key: string): void {
+  const config = loadConfig();
+  
+  // 支持嵌套 key，如 network.bootstrapPeers
+  const keys = key.split('.');
+  let value: unknown = config;
+  
+  for (const k of keys) {
+    if (value && typeof value === 'object' && k in value) {
+      value = (value as Record<string, unknown>)[k];
+    } else {
+      console.error(color(`Error: Configuration key "${key}" not found`, 'red'));
+      process.exit(1);
+    }
+  }
+  
+  // 根据类型输出
+  if (typeof value === 'string') {
+    console.log(value);
+  } else if (typeof value === 'boolean') {
+    console.log(value ? 'true' : 'false');
+  } else if (typeof value === 'number') {
+    console.log(value.toString());
+  } else if (value === null || value === undefined) {
+    console.log('');
+  } else {
+    console.log(JSON.stringify(value));
+  }
+}
+
+/**
+ * 设置配置项值（用于 config set 命令）
+ */
+export function setConfigValue(key: string, value: string): void {
+  const config = loadConfig();
+  
+  // 支持嵌套 key
+  const keys = key.split('.');
+  
+  // 根据 key 推断类型并转换 value
+  const typedValue = parseConfigValue(key, value);
+  
+  // 深度设置值
+  let target: Record<string, unknown> = config;
+  for (let i = 0; i < keys.length - 1; i++) {
+    const k = keys[i];
+    if (!(k in target) || typeof target[k] !== 'object' || target[k] === null) {
+      target[k] = {};
+    }
+    target = target[k] as Record<string, unknown>;
+  }
+  
+  target[keys[keys.length - 1]] = typedValue;
+  
+  // 验证并保存
+  try {
+    saveConfig(config as F2AConfig);
+    console.log(color(`✅ Configuration updated: ${key} = ${JSON.stringify(typedValue)}`, 'green'));
+  } catch (error) {
+    console.error(color(`Error: Failed to save configuration - ${error instanceof Error ? error.message : String(error)}`, 'red'));
+    process.exit(1);
+  }
+}
+
+/**
+ * 根据配置项 key 解析 value 为正确类型
+ */
+function parseConfigValue(key: string, value: string): unknown {
+  // 布尔值
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  
+  // 数字
+  if (/^-?\d+$/.test(value)) {
+    return parseInt(value, 10);
+  }
+  
+  // 尝试解析 JSON（用于数组、对象）
+  if ((value.startsWith('[') && value.endsWith(']')) || 
+      (value.startsWith('{') && value.endsWith('}'))) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      // 解析失败，作为字符串返回
+      return value;
+    }
+  }
+  
+  // 默认字符串
+  return value;
 }

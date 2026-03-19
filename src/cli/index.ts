@@ -14,7 +14,7 @@ import {
   showStatus,
   getDaemonStatus,
 } from './daemon.js';
-import { initConfig, showConfig } from './init.js';
+import { configureCommand, listConfig, getConfigValue, setConfigValue } from './configure.js';
 import { getConfigPath } from './config.js';
 
 const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
@@ -63,6 +63,7 @@ interface Args {
   capability?: string;
   reason?: string;
   detach?: boolean;
+  helpTarget?: string;
 }
 
 /**
@@ -78,24 +79,39 @@ function parseArgs(): Args {
 
   const command = args[0];
   
-  // 解析 daemon 子命令
+  // 检查是否是 help 命令或 -h/--help 标志
+  if (command === '-h' || command === '--help') {
+    return { command: 'help' };
+  }
+  
+  if (command === 'help' && args[1]) {
+    return { command: 'help', helpTarget: args[1] };
+  }
+
+  // 解析子命令（daemon 和 config）
   let subcommand: string | undefined;
-  if (command === 'daemon' && args[1]) {
+  if ((command === 'daemon' || command === 'config') && args[1]) {
+    // 检查是否是 help 请求
+    if (args[1] === '-h' || args[1] === '--help') {
+      return { command: 'help', helpTarget: command };
+    }
     subcommand = args[1];
   }
 
   // 解析 ID 或序号
   let idOrIndex: string | number | undefined;
   const idArg = command === 'daemon' ? args[2] : args[1];
-  if (idArg) {
+  if (idArg && !idArg.startsWith('-')) {
     idOrIndex = /^\d+$/.test(idArg) ? parseInt(idArg) : idArg;
   }
 
   // 解析能力过滤
   let capability: string | undefined;
-  const capIndex = args.indexOf('--capability');
-  if (capIndex !== -1 && args[capIndex + 1]) {
-    capability = args[capIndex + 1];
+  const capIndex = args.indexOf('-c');
+  const capLongIndex = args.indexOf('--capability');
+  const capFlagIndex = capIndex !== -1 ? capIndex : capLongIndex;
+  if (capFlagIndex !== -1 && args[capFlagIndex + 1]) {
+    capability = args[capFlagIndex + 1];
   }
 
   // 解析原因
@@ -112,42 +128,31 @@ function parseArgs(): Args {
 }
 
 /**
- * 显示帮助信息
- * @returns void
+ * 显示主帮助信息
  */
-function showHelp(): void {
+function showMainHelp(): void {
   console.log(`
 F2A CLI - Friend-to-Agent P2P Networking
 
 Usage: f2a [command] [options]
 
 Commands:
-  init                 交互式配置向导
-  config               显示当前配置
+  configure            交互式配置向导
+  config               配置管理 (get/set/list)
   status               查看节点状态
   peers                查看已连接的 Peers
   discover [options]   发现网络中的 Agents
   pending              查看待确认连接
   confirm [id|index]   确认连接请求
   reject [id|index]    拒绝连接请求
-  daemon               启动和管理 daemon 服务
-  help                 显示帮助
+  daemon [subcommand]  启动和管理 daemon 服务
+  help [command]       显示帮助信息
 
-Daemon Commands:
-  f2a daemon           前台启动 daemon
-  f2a daemon -d        后台启动 daemon
-  f2a daemon --detach  后台启动 daemon
-  f2a daemon stop      停止后台 daemon
-  f2a daemon status    查看 daemon 状态
-
-Options:
-  -c, --capability     按能力过滤 (discover 命令)
-  --reason [text]      拒绝原因 (reject 命令)
-  -d, --detach         后台启动 daemon (daemon 命令)
+Use "f2a help [command]" for more information about a command.
 
 Configuration:
   配置文件: ~/.f2a/config.json
-  运行 f2a init 进行交互式配置
+  运行 f2a configure 进行交互式配置
 
 Environment Variables:
   F2A_CONTROL_PORT     控制服务器端口 (默认: 9001)
@@ -155,22 +160,170 @@ Environment Variables:
                        (如果不设置，会读取 ~/.f2a/control-token)
   F2A_P2P_PORT         P2P 监听端口 (默认: 0 随机分配)
   BOOTSTRAP_PEERS      引导节点地址 (逗号分隔)
+`);
+}
+
+/**
+ * 显示指定命令的帮助信息
+ */
+function showCommandHelp(command: string): void {
+  switch (command) {
+    case 'configure':
+      console.log(`
+Usage: f2a configure
+
+交互式配置向导。首次运行会创建新配置，后续运行会显示当前值并允许修改。
 
 Examples:
-  # 首次使用
-  f2a init             # 交互式配置
-  f2a daemon -d        # 后台启动
-  
-  # 日常使用
-  f2a status           # 查看状态
-  f2a peers            # 查看已连接节点
-  f2a discover         # 发现网络中的 Agents
-  
-  # 连接管理
-  f2a pending          # 查看待确认连接
-  f2a confirm 1        # 确认连接
-  f2a reject 2         # 拒绝连接
+  f2a configure        # 启动配置向导
 `);
+      break;
+
+    case 'config':
+      console.log(`
+Usage: f2a config [subcommand]
+
+配置管理命令，用于直接读写配置值。
+
+Subcommands:
+  f2a config list                    列出所有配置
+  f2a config get <key>               获取配置项值
+  f2a config set <key> <value>       设置配置项值
+
+Examples:
+  f2a config list
+  f2a config get agentName
+  f2a config get network.bootstrapPeers
+  f2a config set agentName "my-agent"
+  f2a config set autoStart true
+  f2a config set p2pPort 9000
+  f2a config set network.bootstrapPeers '["/ip4/..."]'
+
+Notes:
+  - 支持嵌套 key，如 network.bootstrapPeers
+  - 布尔值: true/false
+  - 数字: 直接输入数字
+  - 数组/对象: 使用 JSON 格式字符串
+`);
+      break;
+
+    case 'daemon':
+      console.log(`
+Usage: f2a daemon [subcommand] [options]
+
+启动和管理 F2A daemon 服务。
+
+Subcommands:
+  f2a daemon           前台启动 daemon
+  f2a daemon -d        后台启动 daemon
+  f2a daemon --detach  后台启动 daemon
+  f2a daemon stop      停止后台 daemon
+  f2a daemon status    查看 daemon 状态
+
+Options:
+  -d, --detach         后台启动 daemon
+
+Examples:
+  f2a daemon           # 前台启动（用于调试）
+  f2a daemon -d        # 后台启动
+  f2a daemon stop      # 停止后台 daemon
+  f2a daemon status    # 查看 daemon 状态
+`);
+      break;
+
+    case 'discover':
+      console.log(`
+Usage: f2a discover [options]
+
+发现网络中的 Agents。
+
+Options:
+  -c, --capability <name>   按能力过滤
+
+Examples:
+  f2a discover                    # 发现所有 Agents
+  f2a discover -c code-generation # 发现具有代码生成能力的 Agents
+`);
+      break;
+
+    case 'confirm':
+      console.log(`
+Usage: f2a confirm [id|index]
+
+确认待处理的连接请求。
+
+Parameters:
+  id|index    连接的 ID 或序号（从 f2a pending 查看）
+
+Examples:
+  f2a pending       # 查看待确认连接列表
+  f2a confirm 1     # 确认序号为 1 的连接
+  f2a confirm abc123 # 确认 ID 为 abc123 的连接
+`);
+      break;
+
+    case 'reject':
+      console.log(`
+Usage: f2a reject [id|index] [--reason <text>]
+
+拒绝待处理的连接请求。
+
+Parameters:
+  id|index        连接的 ID 或序号（从 f2a pending 查看）
+
+Options:
+  --reason <text> 拒绝原因（可选）
+
+Examples:
+  f2a pending              # 查看待确认连接列表
+  f2a reject 1             # 拒绝序号为 1 的连接
+  f2a reject 1 --reason "不信任该节点"
+`);
+      break;
+
+    case 'status':
+    case 'peers':
+    case 'pending':
+      console.log(`
+Usage: f2a ${command}
+
+${getCommandDescription(command)}
+`);
+      break;
+
+    default:
+      console.log(`
+Unknown command: ${command}
+
+Use "f2a help" to see available commands.
+`);
+  }
+}
+
+/**
+ * 获取命令描述
+ */
+function getCommandDescription(command: string): string {
+  switch (command) {
+    case 'status':
+      return '查看 F2A 节点状态，包括 PeerID、监听地址、连接数等信息。';
+    case 'peers':
+      return '查看已连接的 Peers 列表。';
+    case 'pending':
+      return '查看待确认的入站连接请求列表。';
+    default:
+      return '';
+  }
+}
+
+/**
+ * 显示废弃提示
+ */
+function showDeprecatedInit(): void {
+  console.log('');
+  console.log('\x1b[33m⚠️  Warning: "f2a init" is deprecated.\x1b[0m');
+  console.log('\x1b[33m   Please use "f2a configure" instead.\x1b[0m');
+  console.log('');
 }
 
 /**
@@ -238,13 +391,28 @@ async function sendCommand(action: string, params?: Record<string, unknown>): Pr
 async function main(): Promise<void> {
   const args = parseArgs();
 
+  // 处理 help 命令
+  if (args.command === 'help') {
+    if (args.helpTarget) {
+      showCommandHelp(args.helpTarget);
+    } else {
+      showMainHelp();
+    }
+    return;
+  }
+
   switch (args.command) {
     case 'init':
-      await initConfig();
+      showDeprecatedInit();
+      await configureCommand();
+      break;
+
+    case 'configure':
+      await configureCommand();
       break;
 
     case 'config':
-      showConfig();
+      await handleConfigCommand(args);
       break;
 
     case 'status':
@@ -285,9 +453,63 @@ async function main(): Promise<void> {
       await handleDaemonCommand(args);
       break;
 
-    case 'help':
     default:
-      showHelp();
+      console.error(`[F2A] Unknown command: ${args.command}`);
+      console.error('Use "f2a help" to see available commands.');
+      process.exit(1);
+  }
+}
+
+/**
+ * 处理 config 子命令
+ */
+async function handleConfigCommand(args: Args): Promise<void> {
+  const subcommand = args.subcommand;
+  // 获取命令行参数中 config 之后的所有参数
+  const configIndex = process.argv.indexOf('config');
+  const remainingArgs = configIndex >= 0 ? process.argv.slice(configIndex + 1) : [];
+  
+  switch (subcommand) {
+    case 'list':
+    case undefined:
+      // f2a config 或 f2a config list
+      listConfig();
+      break;
+
+    case 'get':
+      {
+        const key = remainingArgs[1];
+        if (!key) {
+          console.error('[F2A] Error: Configuration key is required');
+          console.error('Usage: f2a config get <key>');
+          process.exit(1);
+        }
+        getConfigValue(key);
+      }
+      break;
+
+    case 'set':
+      {
+        const key = remainingArgs[1];
+        const value = remainingArgs[2];
+        if (!key || value === undefined) {
+          console.error('[F2A] Error: Both key and value are required');
+          console.error('Usage: f2a config set <key> <value>');
+          process.exit(1);
+        }
+        setConfigValue(key, value);
+      }
+      break;
+
+    case '-h':
+    case '--help':
+      showCommandHelp('config');
+      break;
+
+    default:
+      console.error(`[F2A] Unknown config subcommand: ${subcommand}`);
+      console.error('Usage: f2a config [list|get|set]');
+      process.exit(1);
   }
 }
 

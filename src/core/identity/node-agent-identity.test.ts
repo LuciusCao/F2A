@@ -768,6 +768,46 @@ describe('migrateAgent', () => {
     expect(migrateResult.error.code).toBe('CHALLENGE_EXPIRED');
   });
 
+  // SEC-5: 未来时间戳测试
+  it('should reject challenge with future timestamp', async () => {
+    // 创建 Agent
+    const createResult = await delegator.createAgent({
+      name: 'MigratableAgent'
+    });
+    expect(createResult.success).toBe(true);
+    if (!createResult.success) return;
+
+    const agentIdentity = createResult.data.agentIdentity;
+    const agentPrivateKeyBase64 = createResult.data.agentPrivateKey;
+
+    // 创建未来时间戳的 challenge (10 分钟后)
+    const futureTimestamp = new Date(Date.now() + 10 * 60 * 1000);
+    const challenge = JSON.stringify({ timestamp: futureTimestamp.toISOString() });
+    const challengeBytes = Buffer.from(challenge, 'utf-8');
+
+    // 使用 Agent 私钥签名 challenge（使用 libp2p 的私钥对象）
+    const agentPrivateKey = await restorePrivateKey(agentPrivateKeyBase64);
+    const proofOfOwnership = await agentPrivateKey.sign(challengeBytes);
+
+    const signFunction = async (data: Uint8Array) => {
+      const privateKey = nodeManager.getPrivateKey()!;
+      return privateKey.sign(data);
+    };
+
+    const migrateResult = await delegator.migrateAgent(
+      agentIdentity,
+      agentPrivateKeyBase64,
+      proofOfOwnership,
+      challenge,
+      'new-node-id-123',
+      signFunction
+    );
+
+    expect(migrateResult.success).toBe(false);
+    if (migrateResult.success) return;
+    expect(migrateResult.error.code).toBe('CHALLENGE_FUTURE_TIMESTAMP');
+  });
+
   it('should reject migration with challenge missing timestamp', async () => {
     // 创建 Agent
     const createResult = await delegator.createAgent({
@@ -925,7 +965,7 @@ describe('migrateAgent', () => {
 });
 
 // SEC-3: Agent 名称字符白名单测试
-describe('Agent name validation', () => {
+describe('Agent name validation (SEC-3 + SEC-5 tests)', () => {
   let tempDir: string;
   let nodeManager: NodeIdentityManager;
 
@@ -951,6 +991,27 @@ describe('Agent name validation', () => {
       return await privateKey.sign(data);
     };
   };
+
+  it('should reject empty agent name', async () => {
+    const delegator = new IdentityDelegator(nodeManager);
+
+    const result = await delegator.createAgent({ name: '' });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.code).toBe('AGENT_IDENTITY_INVALID_NAME');
+  });
+
+  it('should reject agent name longer than 64 characters', async () => {
+    const delegator = new IdentityDelegator(nodeManager);
+    const longName = 'a'.repeat(65);
+
+    const result = await delegator.createAgent({ name: longName });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.code).toBe('AGENT_IDENTITY_INVALID_NAME');
+  });
 
   it('should reject agent name with special characters', async () => {
     const agentManager = new AgentIdentityManager(tempDir);

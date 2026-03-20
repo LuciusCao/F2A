@@ -267,10 +267,26 @@ export class IdentityDelegator {
 
       const now = new Date();
       const maxAgeMs = 5 * 60 * 1000; // 5 分钟
-      if (now.getTime() - challengeTimestamp.getTime() > maxAgeMs) {
+      const timeDiff = challengeTimestamp.getTime() - now.getTime();
+
+      // 检查未来时间
+      if (timeDiff > 0) {
+        this.logger.warn('Agent migration rejected: challenge timestamp is in the future', {
+          agentId: agentIdentity.id,
+          challengeTimestamp: challengeTimestamp.toISOString(),
+          now: now.toISOString()
+        });
+        return failure({
+          code: 'CHALLENGE_FUTURE_TIMESTAMP',
+          message: 'Challenge timestamp cannot be in the future.'
+        });
+      }
+
+      // 检查过期（timeDiff 是负数）
+      if (-timeDiff > maxAgeMs) {
         this.logger.warn('Agent migration rejected: challenge expired', {
           agentId: agentIdentity.id,
-          challengeAge: Math.floor((now.getTime() - challengeTimestamp.getTime()) / 1000) + 's'
+          challengeAge: Math.floor(-timeDiff / 1000) + 's'
         });
         return failure({
           code: 'CHALLENGE_EXPIRED',

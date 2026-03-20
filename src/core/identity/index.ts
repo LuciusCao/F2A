@@ -4,7 +4,7 @@
 
 // 原有的导出
 export { IdentityManager } from './identity-manager.js';
-export { encryptIdentity, decryptIdentity } from './encrypted-key-store.js';
+export { encryptIdentity, decryptIdentity, validatePasswordStrength, MIN_PASSWORD_LENGTH } from './encrypted-key-store.js';
 export type { 
   PersistedIdentity, 
   IdentityManagerOptions, 

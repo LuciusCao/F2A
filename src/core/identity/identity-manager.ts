@@ -5,8 +5,8 @@
  */
 
 import { promises as fs } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { join, resolve } from 'path';
+import { homedir, tmpdir } from 'os';
 import { generateKeyPair, unmarshalPrivateKey, marshalPrivateKey } from '@libp2p/crypto/keys';
 import { peerIdFromKeys } from '@libp2p/peer-id';
 import type { PeerId } from '@libp2p/interface';
@@ -35,10 +35,10 @@ function isEncryptedIdentity(obj: unknown): obj is EncryptedIdentity {
   const record = obj as Record<string, unknown>;
   return (
     record.encrypted === true &&
-    typeof record.salt === 'string' &&
-    typeof record.iv === 'string' &&
-    typeof record.authTag === 'string' &&
-    typeof record.ciphertext === 'string'
+    typeof record.salt === 'string' && record.salt.length > 0 &&
+    typeof record.iv === 'string' && record.iv.length > 0 &&
+    typeof record.authTag === 'string' && record.authTag.length > 0 &&
+    typeof record.ciphertext === 'string' && record.ciphertext.length > 0
   );
 }
 
@@ -74,9 +74,34 @@ export class IdentityManager {
   private static readonly EXPORT_MAX_CALLS_WARN = 10;
 
   constructor(options: IdentityManagerOptions = {}) {
-    this.dataDir = options.dataDir || join(homedir(), DEFAULT_DATA_DIR);
-    this.password = options.password;
+    // 先初始化 logger
     this.logger = new Logger({ component: 'Identity' });
+    
+    // P1 修复：路径遍历保护 - 验证和清理路径
+    let dataDir = options.dataDir || join(homedir(), DEFAULT_DATA_DIR);
+    
+    // 解析为绝对路径，防止相对路径遍历
+    dataDir = resolve(dataDir);
+    
+    // 允许的路径前缀
+    const systemTmpDir = resolve(tmpdir());
+    const homeDir = homedir();
+    
+    // 检查路径是否包含可疑的遍历模式或不在允许的目录下
+    if (dataDir.includes('..')) {
+      this.logger.warn('Suspicious path traversal detected', { path: dataDir });
+      dataDir = join(homedir(), DEFAULT_DATA_DIR);
+    } else if (!dataDir.startsWith(homeDir) && !dataDir.startsWith(systemTmpDir)) {
+      // 允许 home 目录和系统临时目录
+      this.logger.warn('dataDir is outside home and system temp directory', { 
+        path: dataDir,
+        hint: 'Path should be under home directory or system temp'
+      });
+      // 不强制重定向，只记录警告
+    }
+    
+    this.dataDir = dataDir;
+    this.password = options.password;
   }
 
   /**
@@ -359,12 +384,24 @@ export class IdentityManager {
 
   /**
    * Export identity information (internal version, no rate limiting)
-   * 用于内部调用，不触发频率限制和审计日志
+   * 
+   * 用于内部调用，不触发频率限制。
+   * 
+   * 安全考虑：
+   * - 此方法是私有的，不会被外部直接调用
+   * - 仅在 loadOrCreate 返回结果时使用，确保调用者获得完整的身份信息
+   * - 结果不会被记录或存储，直接返回给调用者
+   * - 如果需要追踪，可以在此处添加 DEBUG 级别日志（不含私钥内容）
    */
   private exportIdentityInternal(): ExportedIdentity {
     if (!this.peerId || !this.privateKey || !this.e2eePublicKey || !this.e2eePrivateKey || !this.createdAt) {
       throw new Error('Identity not initialized');
     }
+    
+    // P2 修复：添加 DEBUG 级别审计日志（不含敏感数据）
+    this.logger.debug('exportIdentityInternal called (internal use)', {
+      peerId: this.peerId.toString().slice(0, 16)
+    });
     
     return {
       peerId: this.peerId.toString(),
@@ -481,6 +518,13 @@ export class IdentityManager {
    */
   getE2EEKeyPair(): { publicKey: Uint8Array; privateKey: Uint8Array } | null {
     if (!this.e2eePublicKey || !this.e2eePrivateKey) return null;
+    
+    // P2 修复：添加审计日志
+    this.logger.warn('SECURITY: getE2EEKeyPair called - private key material accessed', {
+      peerId: this.peerId?.toString().slice(0, 16),
+      timestamp: new Date().toISOString()
+    });
+    
     return {
       publicKey: this.e2eePublicKey,
       privateKey: this.e2eePrivateKey
@@ -535,6 +579,10 @@ export class IdentityManager {
       this.e2eePublicKey = null;
       this.e2eePrivateKey = null;
       this.createdAt = null;
+      
+      // P2 修复：清除频率限制状态
+      this.exportCallCount = 0;
+      this.exportTimestamps = [];
       
       this.logger.warn('Identity deleted and memory cleared');
       return success(undefined);

@@ -68,7 +68,7 @@ describe('NodeIdentityManager', () => {
     it('should encrypt node identity with password', async () => {
       const manager = new NodeIdentityManager({ 
         dataDir: tempDir, 
-        password: 'secure-password-123' 
+        password: 'Secure-password-123' 
       });
       const result = await manager.loadOrCreate();
 
@@ -84,7 +84,7 @@ describe('NodeIdentityManager', () => {
     });
 
     it('should decrypt node identity with correct password', async () => {
-      const password = 'secure-password-123';
+      const password = 'Secure-password-123';
       
       // 创建加密的身份
       const manager1 = new NodeIdentityManager({ dataDir: tempDir, password });
@@ -104,7 +104,7 @@ describe('NodeIdentityManager', () => {
     });
 
     it('should fail to decrypt with wrong password', async () => {
-      const password = 'correct-password';
+      const password = 'Correct-password-1';
       
       // 创建加密的身份
       const manager1 = new NodeIdentityManager({ dataDir: tempDir, password });
@@ -112,7 +112,7 @@ describe('NodeIdentityManager', () => {
       expect(result1.success).toBe(true);
 
       // 使用错误密码尝试解密
-      const manager2 = new NodeIdentityManager({ dataDir: tempDir, password: 'wrong-password' });
+      const manager2 = new NodeIdentityManager({ dataDir: tempDir, password: 'Wrong-password-1' });
       const result2 = await manager2.loadOrCreate();
       
       expect(result2.success).toBe(false);
@@ -121,7 +121,7 @@ describe('NodeIdentityManager', () => {
     });
 
     it('should return NODE_IDENTITY_PASSWORD_REQUIRED when encrypted file has no password', async () => {
-      const password = 'secure-password';
+      const password = 'Secure-password-1';
       
       // 创建加密的身份
       const manager1 = new NodeIdentityManager({ dataDir: tempDir, password });

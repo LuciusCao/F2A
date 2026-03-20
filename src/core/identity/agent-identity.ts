@@ -380,7 +380,12 @@ export class AgentIdentityManager {
       const signatureBytes = Buffer.from(agentIdentity.signature, 'base64');
       
       return await verifyWithNodeKey(payloadBytes, signatureBytes, agentIdentity.nodeId);
-    } catch {
+    } catch (error) {
+      // P3-2: 添加 DEBUG 日志，便于问题排查
+      this.logger.debug('Signature verification failed', {
+        agentId: agentIdentity.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
       return false;
     }
   }

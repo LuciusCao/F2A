@@ -23,7 +23,13 @@ export const IDENTITY_FILE = 'identity.json';
  * Persisted identity data structure
  */
 export interface PersistedIdentity {
-  /** libp2p PeerId (Ed25519) protobuf encoded (base64) */
+  /** 
+   * Ed25519 private key (protobuf encoded, base64) - SENSITIVE
+   * 
+   * Note: Despite the field name "peerId", this field stores the PRIVATE KEY,
+   * not the public PeerId. The naming is preserved for backward compatibility
+   * with existing identity files.
+   */
   peerId: string;
   /** E2EE private key (X25519, base64) */
   e2eePrivateKey: string;
@@ -99,7 +105,13 @@ export interface NodeIdentityOptions {
 export interface PersistedNodeIdentity {
   /** Node ID (PeerId 字符串) */
   nodeId: string;
-  /** libp2p PeerId (Ed25519) protobuf encoded (base64) */
+  /** 
+   * Ed25519 private key (protobuf encoded, base64) - SENSITIVE
+   * 
+   * Note: Despite the field name "peerId", this field stores the PRIVATE KEY,
+   * not the public PeerId. The naming is preserved for backward compatibility
+   * with existing identity files.
+   */
   peerId: string;
   /** E2EE 私钥 (X25519, base64) */
   e2eePrivateKey: string;

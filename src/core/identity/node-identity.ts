@@ -371,7 +371,11 @@ export class NodeIdentityManager extends IdentityManager {
         });
         
         return success(this.exportNodeIdentityInternal());
-      } catch {
+      } catch (migrationError) {
+        // P3-2: 添加 DEBUG 日志，旧文件不存在时创建新身份
+        this.nodeLogger.debug('Legacy identity migration skipped, creating new node identity', {
+          reason: migrationError instanceof Error ? migrationError.message : String(migrationError)
+        });
         // 旧文件不存在，创建新的 Node Identity
         this.nodeLogger.info('Creating new node identity...');
         return await this.createNewNodeIdentity();

@@ -147,6 +147,13 @@ export class AgentIdentityManager {
           message: 'Agent name must be 1-64 characters.'
         });
       }
+      // SEC-3: Agent 名称字符白名单验证
+      if (!/^[a-zA-Z0-9_\-:]+$/.test(options.name)) {
+        return failure({
+          code: 'AGENT_IDENTITY_INVALID_NAME',
+          message: 'Agent name contains invalid characters. Only alphanumeric, underscore, hyphen, and colon are allowed.'
+        });
+      }
       
       // P2-5: 验证 capabilities 格式
       if (options.capabilities) {
@@ -161,7 +168,7 @@ export class AgentIdentityManager {
           if (!/^[a-zA-Z0-9_\-:]+$/.test(cap)) {
             return failure({
               code: 'AGENT_IDENTITY_INVALID_CAPABILITY',
-              message: `Invalid capability format: ${cap}. Only alphanumeric, underscore, hyphen, and colon are allowed.`
+              message: 'Invalid capability format. Only alphanumeric, underscore, hyphen, and colon are allowed.'
             });
           }
         }
@@ -171,7 +178,8 @@ export class AgentIdentityManager {
 
       // 生成 Agent 密钥对 (Ed25519)
       const agentPrivateKey = await generateKeyPair('Ed25519');
-      const agentPublicKeyBytes = agentPrivateKey.public.bytes;
+      // 使用 marshal() 获取原始公钥字节（32 字节），而不是 .bytes（protobuf 编码）
+      const agentPublicKeyBytes = agentPrivateKey.public.marshal();
       const agentPrivateKeyBytes = agentPrivateKey.bytes;
 
       // 生成 Agent ID

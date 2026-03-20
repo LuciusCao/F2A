@@ -35,7 +35,7 @@ const NODE_ID_MIN_LENGTH = 1;
  * @param nodeId 要验证的 Node ID
  * @returns 是否有效
  */
-function isValidNodeId(nodeId: string): boolean {
+export function isValidNodeId(nodeId: string): boolean {
   if (typeof nodeId !== 'string') return false;
   if (nodeId.length < NODE_ID_MIN_LENGTH || nodeId.length > NODE_ID_MAX_LENGTH) return false;
   return NODE_ID_PATTERN.test(nodeId);

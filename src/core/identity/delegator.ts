@@ -13,7 +13,7 @@ import { unmarshalPrivateKey } from '@libp2p/crypto/keys';
 import { Logger } from '../../utils/logger.js';
 import { success, failure, failureFromError, Result } from '../../types/index.js';
 import { secureWipe } from '../../utils/crypto-utils.js';
-import { NodeIdentityManager } from './node-identity.js';
+import { NodeIdentityManager, isValidNodeId } from './node-identity.js';
 import { AgentIdentityManager } from './agent-identity.js';
 import type {
   AgentIdentity,
@@ -222,11 +222,13 @@ export class IdentityDelegator {
    * 迁移 Agent 到新的 Node
    * 
    * P1-2 修复: 添加授权验证 - 要求调用者证明拥有 Agent 私钥
+   * SEC-1 修复: 添加 Challenge 新鲜度验证，防止重放攻击
+   * N1 修复: 添加 newNodeId 格式验证
    * 
    * @param agentIdentity 要迁移的 Agent Identity
    * @param agentPrivateKey Agent 的私钥 (base64)
    * @param proofOfOwnership 所有权证明 - 用 Agent 私钥签名的 challenge
-   * @param challenge 用于验证所有权的 challenge 字符串
+   * @param challenge 用于验证所有权的 challenge 字符串 (JSON with timestamp)
    * @param newNodeId 新的 Node ID
    * @param signWithNewNodeKey 使用新 Node 私钥签名的函数
    */
@@ -239,13 +241,72 @@ export class IdentityDelegator {
     signWithNewNodeKey: (data: Uint8Array) => Promise<Uint8Array>
   ): Promise<Result<MigrationResult>> {
     try {
+      // SEC-1: 验证 challenge 新鲜度，防止重放攻击
+      let challengeTimestamp: Date;
+      try {
+        const challengeData = JSON.parse(challenge);
+        if (!challengeData.timestamp) {
+          return failure({
+            code: 'INVALID_CHALLENGE_FORMAT',
+            message: 'Challenge must contain a timestamp.'
+          });
+        }
+        challengeTimestamp = new Date(challengeData.timestamp);
+        if (isNaN(challengeTimestamp.getTime())) {
+          return failure({
+            code: 'INVALID_CHALLENGE_FORMAT',
+            message: 'Challenge timestamp is invalid.'
+          });
+        }
+      } catch {
+        return failure({
+          code: 'INVALID_CHALLENGE_FORMAT',
+          message: 'Challenge must be valid JSON with a timestamp.'
+        });
+      }
+
+      const now = new Date();
+      const maxAgeMs = 5 * 60 * 1000; // 5 分钟
+      if (now.getTime() - challengeTimestamp.getTime() > maxAgeMs) {
+        this.logger.warn('Agent migration rejected: challenge expired', {
+          agentId: agentIdentity.id,
+          challengeAge: Math.floor((now.getTime() - challengeTimestamp.getTime()) / 1000) + 's'
+        });
+        return failure({
+          code: 'CHALLENGE_EXPIRED',
+          message: 'Challenge has expired. Maximum age is 5 minutes.'
+        });
+      }
+
+      // N1: 验证 newNodeId 格式
+      if (!isValidNodeId(newNodeId)) {
+        return failure({
+          code: 'INVALID_NODE_ID',
+          message: 'newNodeId format is invalid. Must be 1-64 alphanumeric characters or hyphens.'
+        });
+      }
+      
       // P1-2: 验证所有权 - 使用 Agent 公钥验证签名
       const { ed25519 } = await import('@noble/curves/ed25519.js');
       
       const publicKeyBytes = Buffer.from(agentIdentity.publicKey, 'base64');
       const challengeBytes = Buffer.from(challenge, 'utf-8');
       
-      const isValidOwnership = ed25519.verify(proofOfOwnership, challengeBytes, publicKeyBytes);
+      // 验证签名，处理可能的格式错误
+      let isValidOwnership: boolean;
+      try {
+        isValidOwnership = ed25519.verify(proofOfOwnership, challengeBytes, publicKeyBytes);
+      } catch (verifyError) {
+        this.logger.warn('Agent migration rejected: signature verification failed', {
+          agentId: agentIdentity.id,
+          error: verifyError instanceof Error ? verifyError.message : String(verifyError)
+        });
+        return failure({
+          code: 'AGENT_MIGRATION_UNAUTHORIZED',
+          message: 'Invalid ownership proof: signature format is invalid.'
+        });
+      }
+      
       if (!isValidOwnership) {
         this.logger.warn('Agent migration rejected: invalid ownership proof', {
           agentId: agentIdentity.id

@@ -666,7 +666,370 @@ describe('Signature Verification', () => {
   });
 });
 
-// P2-4: 添加 batchVerify 和 revokeAgent 测试
+// SEC-2: migrateAgent 授权验证测试
+describe('migrateAgent', () => {
+  let tempDir: string;
+  let nodeManager: NodeIdentityManager;
+  let delegator: IdentityDelegator;
+
+  beforeEach(async () => {
+    tempDir = join(tmpdir(), `f2a-migrate-test-${Date.now()}`);
+    await fs.mkdir(tempDir, { recursive: true });
+    nodeManager = new NodeIdentityManager({ dataDir: tempDir });
+    await nodeManager.loadOrCreate();
+    delegator = new IdentityDelegator(nodeManager);
+  });
+
+  afterEach(async () => {
+    try {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
+
+  // 辅助函数：从 base64 私钥恢复 Ed25519 私钥对象
+  const restorePrivateKey = async (privateKeyBase64: string) => {
+    const { unmarshalPrivateKey } = await import('@libp2p/crypto/keys');
+    const privateKeyBytes = Buffer.from(privateKeyBase64, 'base64');
+    return unmarshalPrivateKey(privateKeyBytes);
+  };
+
+  it('should reject migration with invalid ownership proof', async () => {
+    // 创建 Agent
+    const createResult = await delegator.createAgent({
+      name: 'MigratableAgent'
+    });
+    expect(createResult.success).toBe(true);
+    if (!createResult.success) return;
+
+    const agentIdentity = createResult.data.agentIdentity;
+    const now = new Date();
+    const challenge = JSON.stringify({ timestamp: now.toISOString() });
+
+    // 使用无效的签名
+    const invalidProof = new Uint8Array(64); // 全零的无效签名
+
+    const signFunction = async (data: Uint8Array) => {
+      const privateKey = nodeManager.getPrivateKey()!;
+      return privateKey.sign(data);
+    };
+
+    const migrateResult = await delegator.migrateAgent(
+      agentIdentity,
+      createResult.data.agentPrivateKey,
+      invalidProof,
+      challenge,
+      'new-node-id-123',
+      signFunction
+    );
+
+    expect(migrateResult.success).toBe(false);
+    if (migrateResult.success) return;
+    expect(migrateResult.error.code).toBe('AGENT_MIGRATION_UNAUTHORIZED');
+  });
+
+  it('should reject migration with expired challenge', async () => {
+    // 创建 Agent
+    const createResult = await delegator.createAgent({
+      name: 'MigratableAgent'
+    });
+    expect(createResult.success).toBe(true);
+    if (!createResult.success) return;
+
+    const agentIdentity = createResult.data.agentIdentity;
+    const agentPrivateKeyBase64 = createResult.data.agentPrivateKey;
+
+    // 创建过期的 challenge (10 分钟前)
+    const oldTimestamp = new Date(Date.now() - 10 * 60 * 1000);
+    const challenge = JSON.stringify({ timestamp: oldTimestamp.toISOString() });
+    const challengeBytes = Buffer.from(challenge, 'utf-8');
+
+    // 使用 Agent 私钥签名 challenge（使用 libp2p 的私钥对象）
+    const agentPrivateKey = await restorePrivateKey(agentPrivateKeyBase64);
+    const proofOfOwnership = await agentPrivateKey.sign(challengeBytes);
+
+    const signFunction = async (data: Uint8Array) => {
+      const privateKey = nodeManager.getPrivateKey()!;
+      return privateKey.sign(data);
+    };
+
+    const migrateResult = await delegator.migrateAgent(
+      agentIdentity,
+      agentPrivateKeyBase64,
+      proofOfOwnership,
+      challenge,
+      'new-node-id-123',
+      signFunction
+    );
+
+    expect(migrateResult.success).toBe(false);
+    if (migrateResult.success) return;
+    expect(migrateResult.error.code).toBe('CHALLENGE_EXPIRED');
+  });
+
+  it('should reject migration with challenge missing timestamp', async () => {
+    // 创建 Agent
+    const createResult = await delegator.createAgent({
+      name: 'MigratableAgent'
+    });
+    expect(createResult.success).toBe(true);
+    if (!createResult.success) return;
+
+    const agentIdentity = createResult.data.agentIdentity;
+    const agentPrivateKeyBase64 = createResult.data.agentPrivateKey;
+
+    // 创建没有 timestamp 的 challenge
+    const challenge = JSON.stringify({ data: 'some-data' });
+    const challengeBytes = Buffer.from(challenge, 'utf-8');
+
+    // 使用 Agent 私钥签名 challenge（使用 libp2p 的私钥对象）
+    const agentPrivateKey = await restorePrivateKey(agentPrivateKeyBase64);
+    const proofOfOwnership = await agentPrivateKey.sign(challengeBytes);
+
+    const signFunction = async (data: Uint8Array) => {
+      const privateKey = nodeManager.getPrivateKey()!;
+      return privateKey.sign(data);
+    };
+
+    const migrateResult = await delegator.migrateAgent(
+      agentIdentity,
+      agentPrivateKeyBase64,
+      proofOfOwnership,
+      challenge,
+      'new-node-id-123',
+      signFunction
+    );
+
+    expect(migrateResult.success).toBe(false);
+    if (migrateResult.success) return;
+    expect(migrateResult.error.code).toBe('INVALID_CHALLENGE_FORMAT');
+  });
+
+  it('should reject migration with non-JSON challenge', async () => {
+    // 创建 Agent
+    const createResult = await delegator.createAgent({
+      name: 'MigratableAgent'
+    });
+    expect(createResult.success).toBe(true);
+    if (!createResult.success) return;
+
+    const agentIdentity = createResult.data.agentIdentity;
+    const agentPrivateKeyBase64 = createResult.data.agentPrivateKey;
+
+    // 创建非 JSON 的 challenge
+    const challenge = 'not-a-json-challenge';
+    const challengeBytes = Buffer.from(challenge, 'utf-8');
+
+    // 使用 Agent 私钥签名 challenge（使用 libp2p 的私钥对象）
+    const agentPrivateKey = await restorePrivateKey(agentPrivateKeyBase64);
+    const proofOfOwnership = await agentPrivateKey.sign(challengeBytes);
+
+    const signFunction = async (data: Uint8Array) => {
+      const privateKey = nodeManager.getPrivateKey()!;
+      return privateKey.sign(data);
+    };
+
+    const migrateResult = await delegator.migrateAgent(
+      agentIdentity,
+      agentPrivateKeyBase64,
+      proofOfOwnership,
+      challenge,
+      'new-node-id-123',
+      signFunction
+    );
+
+    expect(migrateResult.success).toBe(false);
+    if (migrateResult.success) return;
+    expect(migrateResult.error.code).toBe('INVALID_CHALLENGE_FORMAT');
+  });
+
+  it('should reject migration with invalid newNodeId format', async () => {
+    // 创建 Agent
+    const createResult = await delegator.createAgent({
+      name: 'MigratableAgent'
+    });
+    expect(createResult.success).toBe(true);
+    if (!createResult.success) return;
+
+    const agentIdentity = createResult.data.agentIdentity;
+    const agentPrivateKeyBase64 = createResult.data.agentPrivateKey;
+
+    // 创建有效的 challenge
+    const challenge = JSON.stringify({ timestamp: new Date().toISOString() });
+    const challengeBytes = Buffer.from(challenge, 'utf-8');
+
+    // 使用 Agent 私钥签名 challenge（使用 libp2p 的私钥对象）
+    const agentPrivateKey = await restorePrivateKey(agentPrivateKeyBase64);
+    const proofOfOwnership = await agentPrivateKey.sign(challengeBytes);
+
+    const signFunction = async (data: Uint8Array) => {
+      const privateKey = nodeManager.getPrivateKey()!;
+      return privateKey.sign(data);
+    };
+
+    const migrateResult = await delegator.migrateAgent(
+      agentIdentity,
+      agentPrivateKeyBase64,
+      proofOfOwnership,
+      challenge,
+      'invalid node id with spaces!', // 无效的 Node ID
+      signFunction
+    );
+
+    expect(migrateResult.success).toBe(false);
+    if (migrateResult.success) return;
+    expect(migrateResult.error.code).toBe('INVALID_NODE_ID');
+  });
+
+  it('should successfully migrate with valid ownership proof', async () => {
+    // 创建 Agent
+    const createResult = await delegator.createAgent({
+      name: 'MigratableAgent'
+    });
+    expect(createResult.success).toBe(true);
+    if (!createResult.success) return;
+
+    const agentIdentity = createResult.data.agentIdentity;
+    const agentPrivateKeyBase64 = createResult.data.agentPrivateKey;
+
+    // 创建有效的 challenge
+    const challenge = JSON.stringify({ timestamp: new Date().toISOString() });
+    const challengeBytes = Buffer.from(challenge, 'utf-8');
+
+    // 使用 Agent 私钥签名 challenge（使用 libp2p 的私钥对象）
+    const agentPrivateKey = await restorePrivateKey(agentPrivateKeyBase64);
+    const proofOfOwnership = await agentPrivateKey.sign(challengeBytes);
+
+    const signFunction = async (data: Uint8Array) => {
+      const privateKey = nodeManager.getPrivateKey()!;
+      return privateKey.sign(data);
+    };
+
+    const newNodeId = 'new-node-123';
+    const migrateResult = await delegator.migrateAgent(
+      agentIdentity,
+      agentPrivateKeyBase64,
+      proofOfOwnership,
+      challenge,
+      newNodeId,
+      signFunction
+    );
+
+    expect(migrateResult.success).toBe(true);
+    if (!migrateResult.success) return;
+    expect(migrateResult.data.agentIdentity.nodeId).toBe(newNodeId);
+    expect(migrateResult.data.agentIdentity.id).toBe(agentIdentity.id);
+    expect(migrateResult.data.agentIdentity.name).toBe(agentIdentity.name);
+  });
+});
+
+// SEC-3: Agent 名称字符白名单测试
+describe('Agent name validation', () => {
+  let tempDir: string;
+  let nodeManager: NodeIdentityManager;
+
+  beforeEach(async () => {
+    tempDir = join(tmpdir(), `f2a-name-test-${Date.now()}`);
+    await fs.mkdir(tempDir, { recursive: true });
+    nodeManager = new NodeIdentityManager({ dataDir: tempDir });
+    await nodeManager.loadOrCreate();
+  });
+
+  afterEach(async () => {
+    try {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
+
+  const createSignFunction = (manager: NodeIdentityManager) => {
+    return async (data: Uint8Array): Promise<Uint8Array> => {
+      const privateKey = manager.getPrivateKey();
+      if (!privateKey) throw new Error('No private key');
+      return await privateKey.sign(data);
+    };
+  };
+
+  it('should reject agent name with special characters', async () => {
+    const agentManager = new AgentIdentityManager(tempDir);
+    const nodeId = nodeManager.getNodeId()!;
+
+    const invalidNames = [
+      'agent with spaces',
+      'agent@name',
+      'agent.name',
+      'agent!name',
+      'agent#name',
+      'agent$name',
+      'agent%name',
+      'agent^name',
+      'agent&name',
+      'agent*name',
+      'agent(name)',
+      'agent[name]',
+      'agent{name}',
+      'agent/name',
+      'agent\\name',
+      'agent|name',
+      'agent<name>',
+      'agent+name',
+      'agent=name',
+      'agent"name',
+      "agent'name",
+      'agent`name',
+      'agent~name'
+    ];
+
+    for (const name of invalidNames) {
+      const result = await agentManager.createAgentIdentity(
+        nodeId,
+        createSignFunction(nodeManager),
+        { name }
+      );
+
+      expect(result.success).toBe(false);
+      if (result.success) continue;
+      expect(result.error.code).toBe('AGENT_IDENTITY_INVALID_NAME');
+    }
+  });
+
+  it('should accept agent name with valid characters', async () => {
+    const agentManager = new AgentIdentityManager(tempDir);
+    const nodeId = nodeManager.getNodeId()!;
+
+    const validNames = [
+      'ValidAgent',
+      'valid_agent',
+      'valid-agent',
+      'valid:agent',
+      'Agent123',
+      'AGENT',
+      'agent_test-123:prod'
+    ];
+
+    for (const name of validNames) {
+      // 每次使用新的目录避免冲突
+      const newTempDir = join(tmpdir(), `f2a-name-test-${Date.now()}-${Math.random()}`);
+      await fs.mkdir(newTempDir, { recursive: true });
+      const newAgentManager = new AgentIdentityManager(newTempDir);
+
+      const result = await newAgentManager.createAgentIdentity(
+        nodeId,
+        createSignFunction(nodeManager),
+        { name }
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) continue;
+      expect(result.data.name).toBe(name);
+
+      // 清理
+      await fs.rm(newTempDir, { recursive: true, force: true });
+    }
+  });
+});
 describe('batchVerify and revokeAgent', () => {
   let tempDir: string;
   let nodeManager: NodeIdentityManager;

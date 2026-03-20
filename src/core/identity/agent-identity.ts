@@ -39,6 +39,9 @@ export class AgentIdentityManager {
   private agentPrivateKey: Uint8Array | null = null;
   private logger: Logger;
   private loadPromise: Promise<Result<ExportedAgentIdentity>> | null = null;
+  
+  // 静态 logger 用于静态方法
+  private static staticLogger = new Logger({ component: 'AgentIdentity' });
 
   constructor(dataDir?: string) {
     this.dataDir = dataDir || join(homedir(), DEFAULT_DATA_DIR);
@@ -390,7 +393,8 @@ export class AgentIdentityManager {
       return await verifyWithNodeKey(payloadBytes, signatureBytes, agentIdentity.nodeId);
     } catch (error) {
       // P3-2: 添加 DEBUG 日志，便于问题排查
-      this.logger.debug('Signature verification failed', {
+      // 注意：静态方法使用静态 logger
+      AgentIdentityManager.staticLogger.debug('Signature verification failed', {
         agentId: agentIdentity.id,
         error: error instanceof Error ? error.message : String(error)
       });

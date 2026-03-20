@@ -179,9 +179,11 @@ export class IdentityDelegator {
 
       return success(isValid);
     } catch (error) {
+      // P3-3 修复: 记录错误详情后再返回
       this.logger.error('Failed to verify agent signature', {
         agentId: agentIdentity.id,
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
       });
       return success(false);
     }
@@ -219,18 +221,41 @@ export class IdentityDelegator {
   /**
    * 迁移 Agent 到新的 Node
    * 
+   * P1-2 修复: 添加授权验证 - 要求调用者证明拥有 Agent 私钥
+   * 
    * @param agentIdentity 要迁移的 Agent Identity
-   * @param agentPrivateKey Agent 的私钥
+   * @param agentPrivateKey Agent 的私钥 (base64)
+   * @param proofOfOwnership 所有权证明 - 用 Agent 私钥签名的 challenge
+   * @param challenge 用于验证所有权的 challenge 字符串
    * @param newNodeId 新的 Node ID
    * @param signWithNewNodeKey 使用新 Node 私钥签名的函数
    */
   async migrateAgent(
     agentIdentity: AgentIdentity,
     agentPrivateKey: string,
+    proofOfOwnership: Uint8Array,
+    challenge: string,
     newNodeId: string,
     signWithNewNodeKey: (data: Uint8Array) => Promise<Uint8Array>
   ): Promise<Result<MigrationResult>> {
     try {
+      // P1-2: 验证所有权 - 使用 Agent 公钥验证签名
+      const { ed25519 } = await import('@noble/curves/ed25519.js');
+      
+      const publicKeyBytes = Buffer.from(agentIdentity.publicKey, 'base64');
+      const challengeBytes = Buffer.from(challenge, 'utf-8');
+      
+      const isValidOwnership = ed25519.verify(proofOfOwnership, challengeBytes, publicKeyBytes);
+      if (!isValidOwnership) {
+        this.logger.warn('Agent migration rejected: invalid ownership proof', {
+          agentId: agentIdentity.id
+        });
+        return failure({
+          code: 'AGENT_MIGRATION_UNAUTHORIZED',
+          message: 'Invalid ownership proof. The caller must prove possession of the agent private key.'
+        });
+      }
+      
       // 更新 Node ID
       const updatedPayload = AgentIdentityManager.createSignaturePayload(
         agentIdentity.id,
@@ -342,6 +367,8 @@ export class IdentityDelegator {
   /**
    * 续期 Agent
    * 
+   * P1-3 修复: 添加 nodeId 匹配检查，验证请求来自当前所属 Node
+   * 
    * @param agentIdentity 要续期的 Agent Identity
    * @param newExpiresAt 新的过期时间
    * @param signWithNodeKey 使用 Node 私钥签名的函数
@@ -352,6 +379,27 @@ export class IdentityDelegator {
     signWithNodeKey: (data: Uint8Array) => Promise<Uint8Array>
   ): Promise<Result<AgentIdentity>> {
     try {
+      // P1-3: 验证请求来自当前所属 Node
+      const currentNodeId = this.nodeIdentity.getNodeId();
+      if (!currentNodeId) {
+        return failure({
+          code: 'NODE_IDENTITY_NOT_LOADED',
+          message: 'Node identity is not loaded.'
+        });
+      }
+      
+      if (agentIdentity.nodeId !== currentNodeId) {
+        this.logger.warn('Agent renewal rejected: nodeId mismatch', {
+          agentId: agentIdentity.id,
+          agentNodeId: agentIdentity.nodeId,
+          currentNodeId
+        });
+        return failure({
+          code: 'AGENT_RENEW_UNAUTHORIZED',
+          message: 'Agent renewal can only be performed by the current owning Node.'
+        });
+      }
+      
       // 创建新的签名载荷（更新过期时间）
       const newPayload = AgentIdentityManager.createSignaturePayload(
         agentIdentity.id,

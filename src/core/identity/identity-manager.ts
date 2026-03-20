@@ -272,8 +272,10 @@ export class IdentityManager {
 
   /**
    * Load identity from persisted data
+   * 
+   * P1-1 修复: 从 private 改为 protected，允许子类访问
    */
-  private async loadPersistedIdentity(persisted: PersistedIdentity): Promise<void> {
+  protected async loadPersistedIdentity(persisted: PersistedIdentity): Promise<void> {
     // P4 修复：验证字段是否为有效的 base64
     if (!isValidBase64(persisted.peerId)) {
       throw new Error('Invalid persisted identity: peerId is not valid base64');

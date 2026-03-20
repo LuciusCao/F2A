@@ -90,6 +90,18 @@ export class AgentIdentityManager {
 
   /**
    * 序列化签名载荷用于签名
+   * 
+   * P3-4: 添加文档说明格式稳定性
+   * 
+   * **格式稳定性保证**:
+   * - 签名载荷按固定顺序序列化，确保签名一致性
+   * - 字段顺序: id, name, capabilities(排序后), nodeId, publicKey, createdAt, expiresAt(可选)
+   * - capabilities 数组按字母顺序排序，确保不同顺序的输入产生相同的签名
+   * - 字段之间使用冒号 ':' 分隔
+   * - 此格式在 v1.x 版本中保持稳定，未来变更将使用版本号区分
+   * 
+   * @param payload 签名载荷
+   * @returns 序列化后的字符串
    */
   static serializePayloadForSignature(payload: AgentSignaturePayload): string {
     // 按固定顺序序列化，确保签名一致性
@@ -122,6 +134,39 @@ export class AgentIdentityManager {
     options: AgentIdentityOptions
   ): Promise<Result<ExportedAgentIdentity>> {
     try {
+      // P2-5: 输入验证
+      if (!options.name || options.name.length === 0) {
+        return failure({
+          code: 'AGENT_IDENTITY_INVALID_NAME',
+          message: 'Agent name is required.'
+        });
+      }
+      if (options.name.length > 64) {
+        return failure({
+          code: 'AGENT_IDENTITY_INVALID_NAME',
+          message: 'Agent name must be 1-64 characters.'
+        });
+      }
+      
+      // P2-5: 验证 capabilities 格式
+      if (options.capabilities) {
+        for (const cap of options.capabilities) {
+          if (typeof cap !== 'string' || cap.length === 0 || cap.length > 64) {
+            return failure({
+              code: 'AGENT_IDENTITY_INVALID_CAPABILITY',
+              message: 'Each capability must be a non-empty string with 1-64 characters.'
+            });
+          }
+          // 允许字母、数字、连字符、下划线、冒号
+          if (!/^[a-zA-Z0-9_\-:]+$/.test(cap)) {
+            return failure({
+              code: 'AGENT_IDENTITY_INVALID_CAPABILITY',
+              message: `Invalid capability format: ${cap}. Only alphanumeric, underscore, hyphen, and colon are allowed.`
+            });
+          }
+        }
+      }
+      
       await this.ensureDataDir();
 
       // 生成 Agent 密钥对 (Ed25519)
@@ -247,6 +292,14 @@ export class AgentIdentityManager {
         };
         
         this.agentPrivateKey = Buffer.from(persisted.privateKey, 'base64');
+        
+        // P2-6: 检查 Agent 身份是否已过期
+        if (this.isExpired()) {
+          this.logger.warn('Loaded agent identity is expired', {
+            agentId: this.agentIdentity.id,
+            expiresAt: this.agentIdentity.expiresAt
+          });
+        }
         
         this.logger.info('Loaded existing agent identity', {
           agentId: this.agentIdentity.id,

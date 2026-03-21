@@ -177,27 +177,14 @@ export function rotateLogIfNeeded(): void {
 export async function isDaemonRunning(): Promise<boolean> {
   const pid = readDaemonPid();
   if (pid !== null && isProcessRunning(pid)) {
-    // P1-3 修复：即使 PID 存在，也检查 health 端点，确保 daemon 真正就绪
-    const controlPort = getControlPort();
-    const healthReady = await checkDaemonHealth(controlPort);
-    if (healthReady) {
-      return true;
-    }
-    // PID 存在但 health 端点不可用，可能正在启动或已崩溃
-    // 不立即返回 false，继续检查端口
+    // PID 存在且进程正在运行，直接返回 true
+    return true;
   }
   
   // PID 文件丢失或进程不存在，检查端口是否被占用
   const controlPort = getControlPort();
   const portInUse = await checkPortInUse(controlPort);
-  if (!portInUse) {
-    return false;
-  }
-  
-  // P1-3 修复：端口被占用时，也要检查 health 端点
-  // 防止 daemon 正在启动过程中（端口已绑定但服务未就绪）的误判
-  const healthReady = await checkDaemonHealth(controlPort);
-  return healthReady;
+  return portInUse;
 }
 
 // 同步版本用于向后兼容（不检查端口）
@@ -696,26 +683,30 @@ async function waitForDaemonHealth(port: number, timeoutMs: number): Promise<boo
  */
 async function checkDaemonHealth(port: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const req = request({
-      hostname: '127.0.0.1',
-      port,
-      path: '/health',
-      method: 'GET',
-      timeout: 1000,
-    }, (res) => {
-      resolve(res.statusCode === 200);
-    });
+    try {
+      const req = request({
+        hostname: '127.0.0.1',
+        port,
+        path: '/health',
+        method: 'GET',
+        timeout: 1000,
+      }, (res) => {
+        resolve(res.statusCode === 200);
+      });
 
-    req.on('error', () => {
+      req.on('error', () => {
+        resolve(false);
+      });
+
+      req.on('timeout', () => {
+        req.destroy();
+        resolve(false);
+      });
+
+      req.end();
+    } catch {
       resolve(false);
-    });
-
-    req.on('timeout', () => {
-      req.destroy();
-      resolve(false);
-    });
-
-    req.end();
+    }
   });
 }
 

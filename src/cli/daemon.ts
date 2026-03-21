@@ -172,17 +172,32 @@ export function rotateLogIfNeeded(): void {
 /**
  * 检查 daemon 是否在运行
  * 优先检查 PID 文件，如果 PID 文件丢失但端口被占用，也认为是运行中
+ * P1-3 修复：同时检查 /health 端点，避免误判正在启动中的 daemon
  */
 export async function isDaemonRunning(): Promise<boolean> {
   const pid = readDaemonPid();
   if (pid !== null && isProcessRunning(pid)) {
-    return true;
+    // P1-3 修复：即使 PID 存在，也检查 health 端点，确保 daemon 真正就绪
+    const controlPort = getControlPort();
+    const healthReady = await checkDaemonHealth(controlPort);
+    if (healthReady) {
+      return true;
+    }
+    // PID 存在但 health 端点不可用，可能正在启动或已崩溃
+    // 不立即返回 false，继续检查端口
   }
   
   // PID 文件丢失或进程不存在，检查端口是否被占用
   const controlPort = getControlPort();
   const portInUse = await checkPortInUse(controlPort);
-  return portInUse;
+  if (!portInUse) {
+    return false;
+  }
+  
+  // P1-3 修复：端口被占用时，也要检查 health 端点
+  // 防止 daemon 正在启动过程中（端口已绑定但服务未就绪）的误判
+  const healthReady = await checkDaemonHealth(controlPort);
+  return healthReady;
 }
 
 // 同步版本用于向后兼容（不检查端口）

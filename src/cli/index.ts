@@ -5,8 +5,9 @@
 
 import { request, RequestOptions } from 'http';
 import { existsSync, readFileSync, statSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
+import { fileURLToPath } from 'url';
 import {
   startForeground,
   startBackground,
@@ -19,6 +20,19 @@ import { configureCommand, listConfig, getConfigValue, setConfigValue } from './
 import { getConfigPath } from './config.js';
 
 const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
+
+// 获取版本号（从 package.json 读取）
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+function getVersion(): string {
+  try {
+    const packageJsonPath = join(__dirname, '..', '..', 'package.json');
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
+    return packageJson.version || '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
 
 /**
  * 获取控制 Token
@@ -113,6 +127,11 @@ function parseArgs(): Args {
   }
 
   const command = args[0];
+  
+  // P0-1 修复：检查是否是 -v/--version 标志
+  if (command === '-v' || command === '--version') {
+    return { command: 'version' };
+  }
   
   // 检查是否是 help 命令或 -h/--help 标志
   if (command === '-h' || command === '--help') {
@@ -380,8 +399,12 @@ function showDeprecatedInit(): void {
 
 /**
  * 敏感字段列表
+ * P2-2 修复：扩展敏感字段列表，包含更多常见敏感字段
  */
-const SENSITIVE_FIELDS = ['token', 'password', 'secret', 'key', 'credential', 'auth'];
+const SENSITIVE_FIELDS = [
+  'token', 'password', 'secret', 'key', 'credential', 'auth',
+  'privateKey', 'secretKey', 'apiKey', 'accessToken', 'refreshToken'
+];
 
 /**
  * 过滤响应中的敏感信息
@@ -417,10 +440,11 @@ function sanitizeResponse(response: Record<string, unknown>): Record<string, unk
  * 发送控制命令到 F2A Daemon
  * @param action - 命令动作
  * @param params - 命令参数（可选）
+ * @param isRetry - 是否为重试请求（P1-2 修复：内部使用）
  * @returns Promise，命令执行完成后 resolve
  * @throws 当网络请求失败时 reject
  */
-async function sendCommand(action: string, params?: Record<string, unknown>): Promise<void> {
+async function sendCommand(action: string, params?: Record<string, unknown>, isRetry: boolean = false): Promise<void> {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify({ action, ...params });
 
@@ -446,16 +470,32 @@ async function sendCommand(action: string, params?: Record<string, unknown>): Pr
             // 过滤敏感信息后输出
             const sanitizedResponse = sanitizeResponse(response);
             console.log(JSON.stringify(sanitizedResponse, null, 2));
+            resolve();
           } else {
             if (res.statusCode === 401) {
+              // P1-2 修复：认证失败时强制刷新 token 并重试一次
+              if (!isRetry) {
+                // 强制重新加载 token
+                _controlToken = undefined;
+                _tokenFileMtime = undefined;
+                
+                // 重试请求
+                sendCommand(action, params, true)
+                  .then(resolve)
+                  .catch(retryErr => {
+                    console.error('❌ Authentication failed after token refresh. Please check your F2A_CONTROL_TOKEN.');
+                    reject(retryErr);
+                  });
+                return;
+              }
               console.error('❌ Authentication failed. Please check your F2A_CONTROL_TOKEN.');
             } else {
               // 错误响应也过滤敏感信息
               const sanitizedError = sanitizeResponse(response);
               console.error('Error:', sanitizedError.error || sanitizedError);
             }
+            resolve();
           }
-          resolve();
         } catch {
           // JSON 解析失败时，尝试过滤敏感信息后输出
           try {
@@ -477,8 +517,14 @@ async function sendCommand(action: string, params?: Record<string, unknown>): Pr
     });
 
     req.on('error', (err) => {
+      // P1-1 修复：提供详细的排查建议
       console.error('Failed to connect to F2A daemon:', err.message);
-      console.log('Make sure the daemon is running (f2a daemon)');
+      console.log('');
+      console.log('Troubleshooting:');
+      console.log('  1. Check if daemon is running: f2a daemon status');
+      console.log('  2. Start daemon: f2a daemon -d');
+      console.log('  3. Check logs: cat ~/.f2a/daemon.log');
+      console.log(`  4. Verify port: lsof -i :${CONTROL_PORT}`);
       reject(err);
     });
 
@@ -502,6 +548,12 @@ async function main(): Promise<void> {
     } else {
       showMainHelp();
     }
+    return;
+  }
+
+  // P0-1 修复：处理 version 命令
+  if (args.command === 'version') {
+    console.log(`@f2a/network v${getVersion()}`);
     return;
   }
 

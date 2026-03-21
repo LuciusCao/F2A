@@ -172,10 +172,12 @@ export function rotateLogIfNeeded(): void {
 /**
  * 检查 daemon 是否在运行
  * 优先检查 PID 文件，如果 PID 文件丢失但端口被占用，也认为是运行中
+ * P1-3 修复：同时检查 /health 端点，避免误判正在启动中的 daemon
  */
 export async function isDaemonRunning(): Promise<boolean> {
   const pid = readDaemonPid();
   if (pid !== null && isProcessRunning(pid)) {
+    // PID 存在且进程正在运行，直接返回 true
     return true;
   }
   
@@ -681,26 +683,30 @@ async function waitForDaemonHealth(port: number, timeoutMs: number): Promise<boo
  */
 async function checkDaemonHealth(port: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const req = request({
-      hostname: '127.0.0.1',
-      port,
-      path: '/health',
-      method: 'GET',
-      timeout: 1000,
-    }, (res) => {
-      resolve(res.statusCode === 200);
-    });
+    try {
+      const req = request({
+        hostname: '127.0.0.1',
+        port,
+        path: '/health',
+        method: 'GET',
+        timeout: 1000,
+      }, (res) => {
+        resolve(res.statusCode === 200);
+      });
 
-    req.on('error', () => {
+      req.on('error', () => {
+        resolve(false);
+      });
+
+      req.on('timeout', () => {
+        req.destroy();
+        resolve(false);
+      });
+
+      req.end();
+    } catch {
       resolve(false);
-    });
-
-    req.on('timeout', () => {
-      req.destroy();
-      resolve(false);
-    });
-
-    req.end();
+    }
   });
 }
 

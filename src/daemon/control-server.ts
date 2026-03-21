@@ -22,6 +22,9 @@ export interface ControlServerOptions {
 /** 默认允许的 CORS 来源 */
 const DEFAULT_ALLOWED_ORIGINS = ['http://localhost'];
 
+/** P2-1 修复：最大请求体大小 (1MB) */
+const MAX_BODY_SIZE = 1024 * 1024;
+
 /**
  * P2 修复：生产环境 CORS 配置验证
  * 检查是否在生产环境使用了宽松的 CORS 配置
@@ -258,8 +261,28 @@ export class ControlServer {
       success: true
     });
 
+    // P2-1 修复：添加请求体大小限制
     let body = '';
-    req.on('data', chunk => body += chunk);
+    let bodySize = 0;
+    req.on('data', chunk => {
+      bodySize += chunk.length;
+      if (bodySize > MAX_BODY_SIZE) {
+        this.logger.warn('Request body too large', { 
+          clientIp, 
+          bodySize, 
+          maxSize: MAX_BODY_SIZE 
+        });
+        res.writeHead(413);
+        res.end(JSON.stringify({
+          success: false,
+          error: 'Request body too large',
+          code: 'PAYLOAD_TOO_LARGE'
+        }));
+        req.destroy(); // 终止接收数据
+        return;
+      }
+      body += chunk;
+    });
     req.on('end', () => {
       this.processCommand(body, res);
     });

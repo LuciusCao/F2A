@@ -35,13 +35,13 @@ function validateCorsConfig(allowedOrigins: string[], logger: Logger): void {
   if (isProduction) {
     // 检查是否使用默认配置
     if (allowedOrigins.length === 1 && allowedOrigins[0] === 'http://localhost') {
-      this.logger.error('[F2A:Webhook] CORS configuration warning: Using default localhost origin in production!');
-      this.logger.error('[F2A:Webhook] Set F2A_WEBHOOK_ALLOWED_ORIGINS environment variable or pass allowedOrigins option.');
+      logger.error('[F2A:Webhook] CORS configuration warning: Using default localhost origin in production!');
+      logger.error('[F2A:Webhook] Set F2A_WEBHOOK_ALLOWED_ORIGINS environment variable or pass allowedOrigins option.');
     }
     
     // 检查是否包含通配符
     if (allowedOrigins.includes('*')) {
-      this.logger.error('[F2A:Webhook] CORS configuration error: Wildcard origin (*) is not allowed in production!');
+      logger.error('[F2A:Webhook] CORS configuration error: Wildcard origin (*) is not allowed in production!');
       throw new Error('Wildcard CORS origin is not allowed in production. Configure specific allowed origins.');
     }
   }

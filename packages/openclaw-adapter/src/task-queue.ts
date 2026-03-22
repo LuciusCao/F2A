@@ -202,7 +202,7 @@ export class TaskQueue {
         throw new Error(`Database integrity check failed: ${JSON.stringify(result)}`);
       }
       
-      this.logger.debug('[F2A:Queue] 数据库完整性检查通过');
+      this.logger.debug?.('[F2A:Queue] 数据库完整性检查通过');
     } catch (e) {
       this.logger.warn('[F2A:Queue] 数据库完整性检查异常: %s', e);
       throw e;

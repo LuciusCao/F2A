@@ -55,7 +55,7 @@ export class WebhookPusher {
     const multiplier = Math.pow(2, this.consecutiveFailures - this.FAILURE_THRESHOLD);
     const cooldown = Math.min(this.BASE_COOLDOWN_MS * multiplier, this.MAX_COOLDOWN_MS);
     
-    this.logger.debug(`[F2A:Pusher] 冷却期计算: 失败次数=${this.consecutiveFailures}, 冷却期=${Math.round(cooldown / 1000)}秒`);
+    this.logger.debug?.(`[F2A:Pusher] 冷却期计算: 失败次数=${this.consecutiveFailures}, 冷却期=${Math.round(cooldown / 1000)}秒`);
     return cooldown;
   }
 

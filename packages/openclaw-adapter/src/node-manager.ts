@@ -391,8 +391,8 @@ export class F2ANodeManager {
         
         // 检查是否达到最大重启次数
         if (this.consecutiveRestarts >= this.restartConfig.maxRestarts) {
-          logger.error(
-            'Node 健康检查失败，已达到最大重启次数: maxRestarts=%d, resetWindowMs=%d',
+          this.logger.error(
+            '[F2A:Node] Node 健康检查失败，已达到最大重启次数: maxRestarts=%d, resetWindowMs=%d',
             this.restartConfig.maxRestarts,
             Math.round(this.restartConfig.resetWindowMs / 1000)
           );
@@ -405,8 +405,8 @@ export class F2ANodeManager {
           this.restartConfig.cooldownMaxMs
         );
         
-        logger.warn(
-          'Node 健康检查失败，尝试重启: attempt=%d/%d, cooldownMs=%d',
+        this.logger.warn(
+          '[F2A:Node] Node 健康检查失败，尝试重启: attempt=%d/%d, cooldownMs=%d',
           this.consecutiveRestarts + 1,
           this.restartConfig.maxRestarts,
           Math.round(cooldownMs / 1000)

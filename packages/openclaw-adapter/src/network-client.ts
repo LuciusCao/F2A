@@ -12,8 +12,15 @@ import type {
   DelegateOptions
 } from './types.js';
 import { Result, failure, success, createError } from './types.js';
-import { nodeLogger as logger } from './logger.js';
 import { ensureError, getErrorMessage } from '@f2a/network';
+
+/** Logger 接口 */
+interface Logger {
+  info(message: string, ...args: unknown[]): void;
+  warn(message: string, ...args: unknown[]): void;
+  error(message: string, ...args: unknown[]): void;
+  debug?(message: string, ...args: unknown[]): void;
+}
 
 /** 默认请求超时（毫秒） */
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -42,13 +49,15 @@ export class F2ANetworkClient {
   private timeoutMs: number;
   private maxRetries: number;
   private baseDelayMs: number;
+  private logger: Logger;
 
-  constructor(config: F2ANodeConfig) {
+  constructor(config: F2ANodeConfig, logger?: Logger) {
     this.baseUrl = `http://localhost:${config.controlPort}`;
     this.token = config.controlToken;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
     this.baseDelayMs = config.retryDelayMs ?? DEFAULT_BASE_DELAY_MS;
+    this.logger = logger || console;
   }
 
   /**
@@ -115,7 +124,7 @@ export class F2ANetworkClient {
           if (RETRYABLE_STATUS_CODES.includes(response.status) && attempt < this.maxRetries) {
             lastError = new Error(`HTTP ${response.status}: ${errorText}`);
             const delayMs = this.calculateDelay(attempt);
-            logger.info(`Retrying request to ${path} after ${delayMs}ms (attempt ${attempt + 1}/${this.maxRetries})`);
+            this.logger.info(`[F2A:Network] Retrying request to ${path} after ${delayMs}ms (attempt ${attempt + 1}/${this.maxRetries})`);
             clearTimeout(timeoutId);
             await this.delay(delayMs);
             continue;
@@ -135,7 +144,7 @@ export class F2ANetworkClient {
         if (error instanceof Error && error.name === 'AbortError') {
           if (attempt < this.maxRetries) {
             const delayMs = this.calculateDelay(attempt);
-            logger.info(`Retrying request to ${path} after timeout (${delayMs}ms, attempt ${attempt + 1}/${this.maxRetries})`);
+            this.logger.info(`[F2A:Network] Retrying request to ${path} after timeout (${delayMs}ms, attempt ${attempt + 1}/${this.maxRetries})`);
             clearTimeout(timeoutId);
             await this.delay(delayMs);
             continue;
@@ -151,7 +160,7 @@ export class F2ANetworkClient {
         if (this.isRetryableError(error) && attempt < this.maxRetries) {
           lastError = ensureError(error);
           const delayMs = this.calculateDelay(attempt);
-          logger.info(`Retrying request to ${path} after ${delayMs}ms (attempt ${attempt + 1}/${this.maxRetries})`);
+          this.logger.info(`[F2A:Network] Retrying request to ${path} after ${delayMs}ms (attempt ${attempt + 1}/${this.maxRetries})`);
           clearTimeout(timeoutId);
           await this.delay(delayMs);
           continue;

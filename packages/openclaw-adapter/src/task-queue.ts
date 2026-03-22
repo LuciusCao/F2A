@@ -8,7 +8,14 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { randomUUID } from 'crypto';
-import { queueLogger as logger } from './logger.js';
+
+/** Logger 接口 */
+interface Logger {
+  info(message: string, ...args: unknown[]): void;
+  warn(message: string, ...args: unknown[]): void;
+  error(message: string, ...args: unknown[]): void;
+  debug?(message: string, ...args: unknown[]): void;
+}
 
 export interface QueuedTask extends TaskRequest {
   status: 'pending' | 'processing' | 'completed' | 'failed';
@@ -36,6 +43,8 @@ export interface TaskQueueOptions {
   persistEnabled?: boolean;
   /** 清理阈值比例（当队列大小超过 maxSize * cleanupThreshold 时触发清理，默认 0.8） */
   cleanupThreshold?: number;
+  /** 日志记录器 */
+  logger?: Logger;
 }
 
 /** 数据库行类型 */
@@ -72,12 +81,14 @@ export class TaskQueue {
   private lastCleanupTime: number = 0;
   private cleanupIntervalMs: number;
   private db?: Database.Database;
+  private logger: Logger;
 
   constructor(options?: TaskQueueOptions) {
     this.maxSize = options?.maxSize || 1000;
     this.maxAgeMs = options?.maxAgeMs || 24 * 60 * 60 * 1000; // 24小时
     this.persistEnabled = options?.persistEnabled ?? true;
     this.cleanupThreshold = options?.cleanupThreshold || 0.8; // 默认 80% 触发清理
+    this.logger = options?.logger || console;
     // 清理间隔：至少每 maxAgeMs/10 时间执行一次清理检查
     this.cleanupIntervalMs = Math.min(this.maxAgeMs / 10, 60000); // 最多 1 分钟
 
@@ -127,14 +138,14 @@ export class TaskQueue {
       this.restore();
     } catch (e) {
       // 数据库损坏或无法访问，删除并重新创建
-      logger.warn('数据库初始化失败，将重建: error=%s', e);
+      this.logger.warn('[F2A:Queue] 数据库初始化失败，将重建: error=%s', e);
       try {
         if (this.db) {
           this.db.close();
         }
       } catch (closeErr) {
         // 忽略关闭错误，继续重建
-        logger.warn('关闭数据库时出错: error=%s', closeErr);
+        this.logger.warn('[F2A:Queue] 关闭数据库时出错: error=%s', closeErr);
       }
       
       // 删除损坏的数据库文件
@@ -143,7 +154,7 @@ export class TaskQueue {
         const backupPath = `${dbPath}.corrupted.${Date.now()}`;
         try {
           fs.renameSync(dbPath, backupPath);
-          logger.info('已备份损坏的数据库: %s', backupPath);
+          this.logger.info('[F2A:Queue] 已备份损坏的数据库: %s', backupPath);
         } catch (backupErr) {
           // 备份失败，直接删除
           fs.unlinkSync(dbPath);
@@ -171,7 +182,7 @@ export class TaskQueue {
         CREATE INDEX IF NOT EXISTS idx_created ON tasks(created_at);
       `);
       
-      logger.info('数据库已重建');
+      this.logger.info('[F2A:Queue] 数据库已重建');
     }
   }
 
@@ -187,13 +198,13 @@ export class TaskQueue {
       const result = this.db.pragma('integrity_check') as Array<{ integrity_check: string }>;
       
       if (result.length > 0 && result[0].integrity_check !== 'ok') {
-        logger.warn('数据库完整性检查失败: %s', JSON.stringify(result));
+        this.logger.warn('[F2A:Queue] 数据库完整性检查失败: %s', JSON.stringify(result));
         throw new Error(`Database integrity check failed: ${JSON.stringify(result)}`);
       }
       
-      logger.debug('数据库完整性检查通过');
+      this.logger.debug('[F2A:Queue] 数据库完整性检查通过');
     } catch (e) {
-      logger.warn('数据库完整性检查异常: %s', e);
+      this.logger.warn('[F2A:Queue] 数据库完整性检查异常: %s', e);
       throw e;
     }
   }
@@ -226,13 +237,13 @@ export class TaskQueue {
         try {
           // 验证必要字段
           if (!row.id || typeof row.id !== 'string') {
-            logger.warn('跳过无效记录: 缺少 id');
+            this.logger.warn('[F2A:Queue] 跳过无效记录: 缺少 id');
             skippedCount++;
             continue;
           }
           
           if (!row.created_at || typeof row.created_at !== 'number') {
-            logger.warn('跳过无效记录: id=%s, 缺少 created_at', row.id);
+            this.logger.warn('[F2A:Queue] 跳过无效记录: id=%s, 缺少 created_at', row.id);
             skippedCount++;
             continue;
           }
@@ -266,19 +277,19 @@ export class TaskQueue {
           this.tasks.set(task.taskId, task);
           recoveredCount++;
         } catch (e) {
-          logger.warn('跳过无效任务记录: id=%s, error=%s', row.id, e);
+          this.logger.warn('[F2A:Queue] 跳过无效任务记录: id=%s, error=%s', row.id, e);
           skippedCount++;
         }
       }
 
       if (skippedCount > 0) {
-        logger.info('恢复完成: recovered=%d, skipped=%d', recoveredCount, skippedCount);
+        this.logger.info('[F2A:Queue] 恢复完成: recovered=%d, skipped=%d', recoveredCount, skippedCount);
       } else {
-        logger.info('从持久化恢复任务: count=%d', this.tasks.size);
+        this.logger.info('[F2A:Queue] 从持久化恢复任务: count=%d', this.tasks.size);
       }
     } catch (e) {
       // P1 修复：数据库损坏时不清空所有任务，而是尝试逐条恢复
-      logger.warn('批量恢复失败，尝试逐条恢复: error=%s', e);
+      this.logger.warn('[F2A:Queue] 批量恢复失败，尝试逐条恢复: error=%s', e);
       
       try {
         // 尝试逐条读取并恢复
@@ -307,14 +318,14 @@ export class TaskQueue {
             }
           } catch (rowError) {
             // 单条记录恢复失败，跳过并继续
-            logger.warn('单条记录恢复失败: id=%s, error=%s', row?.id, rowError);
+            this.logger.warn('[F2A:Queue] 单条记录恢复失败: id=%s, error=%s', row?.id, rowError);
           }
         }
         
-        logger.info('逐条恢复完成: count=%d', this.tasks.size);
+        this.logger.info('[F2A:Queue] 逐条恢复完成: count=%d', this.tasks.size);
       } catch (recoverError) {
         // 所有恢复尝试都失败，记录错误但不清空内存
-        logger.error('所有恢复尝试失败，将使用空内存队列: error=%s', recoverError);
+        this.logger.error('[F2A:Queue] 所有恢复尝试失败，将使用空内存队列: error=%s', recoverError);
         // 注意：这里不清空 this.tasks，保留任何可能已部分恢复的数据
       }
     }
@@ -328,7 +339,7 @@ export class TaskQueue {
     try {
       return JSON.parse(json);
     } catch {
-      logger.warn('JSON 解析失败，跳过: json=%s...', json.slice(0, 50));
+      this.logger.warn('[F2A:Queue] JSON 解析失败，跳过: json=%s...', json.slice(0, 50));
       return undefined;
     }
   }
@@ -684,7 +695,7 @@ export class TaskQueue {
       }
       
       if (toRemove.length > 0) {
-        logger.info('清理已完成/失败任务以释放空间: count=%d', toRemove.length);
+        this.logger.info('[F2A:Queue] 清理已完成/失败任务以释放空间: count=%d', toRemove.length);
       }
     }
   }

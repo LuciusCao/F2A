@@ -11,7 +11,14 @@ import type {
   AgentCapability,
   TaskResponse 
 } from './types.js';
-import { webhookLogger as logger } from './logger.js';
+
+/** Logger 接口 */
+interface Logger {
+  info(message: string, ...args: unknown[]): void;
+  warn(message: string, ...args: unknown[]): void;
+  error(message: string, ...args: unknown[]): void;
+  debug?(message: string, ...args: unknown[]): void;
+}
 
 /** 默认请求体大小限制 (64KB) - 元数据交换足够，防止 DoS */
 const DEFAULT_MAX_BODY_SIZE = 64 * 1024;
@@ -22,19 +29,19 @@ const DEFAULT_ALLOWED_ORIGINS = ['http://localhost'];
 /**
  * P2 修复：生产环境 CORS 配置验证
  */
-function validateCorsConfig(allowedOrigins: string[]): void {
+function validateCorsConfig(allowedOrigins: string[], logger: Logger): void {
   const isProduction = process.env.NODE_ENV === 'production';
   
   if (isProduction) {
     // 检查是否使用默认配置
     if (allowedOrigins.length === 1 && allowedOrigins[0] === 'http://localhost') {
-      logger.error('CORS configuration warning: Using default localhost origin in production!');
-      logger.error('Set F2A_WEBHOOK_ALLOWED_ORIGINS environment variable or pass allowedOrigins option.');
+      this.logger.error('[F2A:Webhook] CORS configuration warning: Using default localhost origin in production!');
+      this.logger.error('[F2A:Webhook] Set F2A_WEBHOOK_ALLOWED_ORIGINS environment variable or pass allowedOrigins option.');
     }
     
     // 检查是否包含通配符
     if (allowedOrigins.includes('*')) {
-      logger.error('CORS configuration error: Wildcard origin (*) is not allowed in production!');
+      this.logger.error('[F2A:Webhook] CORS configuration error: Wildcard origin (*) is not allowed in production!');
       throw new Error('Wildcard CORS origin is not allowed in production. Configure specific allowed origins.');
     }
   }
@@ -65,10 +72,13 @@ export class WebhookServer {
   private maxBodySize: number;
   /** 允许的 CORS 来源列表 */
   private allowedOrigins: string[];
+  /** 日志记录器 */
+  private logger: Logger;
 
   constructor(port: number, handler: WebhookHandler, options?: { 
     maxBodySize?: number;
     allowedOrigins?: string[];
+    logger?: Logger;
   }) {
     this.port = port;
     this.handler = handler;
@@ -76,9 +86,11 @@ export class WebhookServer {
     // P2 修复：支持从环境变量读取 CORS 配置
     const envOrigins = process.env.F2A_WEBHOOK_ALLOWED_ORIGINS?.split(',').map(o => o.trim()).filter(Boolean);
     this.allowedOrigins = options?.allowedOrigins ?? envOrigins ?? DEFAULT_ALLOWED_ORIGINS;
+    // 使用传入的 logger 或默认的 console
+    this.logger = options?.logger || console;
     
     // P2 修复：生产环境强制验证 CORS 配置
-    validateCorsConfig(this.allowedOrigins);
+    validateCorsConfig(this.allowedOrigins, this.logger);
   }
 
   /**
@@ -89,7 +101,7 @@ export class WebhookServer {
       this.server = createServer(this.handleRequest.bind(this));
       
       this.server.listen(this.port, () => {
-        logger.info('服务器启动在端口 %d', this.port);
+        this.logger.info('[F2A:Webhook] 服务器启动在端口 %d', this.port);
         // 允许进程在只有这个服务器时退出（用于 CLI 命令如 gateway status）
         this.server?.unref();
         resolve();
@@ -108,7 +120,7 @@ export class WebhookServer {
     if (this.server) {
       return new Promise((resolve) => {
         this.server?.close(() => {
-          logger.info('服务器已停止');
+          this.logger.info('[F2A:Webhook] 服务器已停止');
           resolve();
         });
       });
@@ -157,7 +169,7 @@ export class WebhookServer {
       const body = await this.parseBody(req);
       const event = body as WebhookEvent;
 
-      logger.info('收到事件: %s', event.type);
+      this.logger.info('[F2A:Webhook] 收到事件: %s', event.type);
 
       let result: unknown;
 
@@ -184,7 +196,7 @@ export class WebhookServer {
       res.end(JSON.stringify(result));
 
     } catch (error) {
-      logger.error('处理错误: %s', error);
+      this.logger.error('[F2A:Webhook] 处理错误: %s', error);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ 
         error: error instanceof Error ? error.message : 'Internal error' 

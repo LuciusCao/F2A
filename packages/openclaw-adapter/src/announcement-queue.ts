@@ -9,8 +9,15 @@
 
 import type { TaskAnnouncement, TaskClaim } from './types.js';
 import { randomUUID } from 'crypto';
-import { queueLogger as logger } from './logger.js';
 import { EventEmitter } from 'eventemitter3';
+
+/** Logger 接口 */
+interface Logger {
+  info(message: string, ...args: unknown[]): void;
+  warn(message: string, ...args: unknown[]): void;
+  error(message: string, ...args: unknown[]): void;
+  debug?(message: string, ...args: unknown[]): void;
+}
 
 /**
  * 任务广播队列统计信息
@@ -73,11 +80,13 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
   private maxAgeMs: number;
   /** 正在处理的广播 ID 集合，用于防止并发操作 */
   private processingLocks = new Set<string>();
+  private logger: Logger;
 
-  constructor(options?: { maxSize?: number; maxAgeMs?: number }) {
+  constructor(options?: { maxSize?: number; maxAgeMs?: number; logger?: Logger }) {
     super();
     this.maxSize = options?.maxSize || 100;
     this.maxAgeMs = options?.maxAgeMs || 30 * 60 * 1000; // 30分钟
+    this.logger = options?.logger || console;
   }
 
   /**
@@ -89,7 +98,7 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
 
     // 检查容量
     if (this.announcements.size >= this.maxSize) {
-      logger.error(' create: queue is full, size=%d, maxSize=%d', this.announcements.size, this.maxSize);
+      this.logger.error('[F2A:Announce]  create: queue is full, size=%d, maxSize=%d', this.announcements.size, this.maxSize);
       throw new Error('Announcement queue is full');
     }
 
@@ -104,7 +113,7 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
     };
 
     this.announcements.set(id, created);
-    logger.info(' create: announcementId=%s, from=%s, taskType=%s', id, announcement.from, announcement.taskType);
+    this.logger.info('[F2A:Announce]  create: announcementId=%s, from=%s, taskType=%s', id, announcement.from, announcement.taskType);
     
     // 发出创建事件
     this.emit('announcement:created', created);
@@ -140,18 +149,18 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
   ): TaskClaim | null {
     const announcement = this.announcements.get(announcementId);
     if (!announcement) {
-      logger.warn(' submitClaim: announcement not found, id=%s, claimant=%s', announcementId, claim.claimant);
+      this.logger.warn('[F2A:Announce]  submitClaim: announcement not found, id=%s, claimant=%s', announcementId, claim.claimant);
       return null;
     }
     if (announcement.status !== 'open') {
-      logger.warn(' submitClaim: announcement not open, id=%s, status=%s, claimant=%s', announcementId, announcement.status, claim.claimant);
+      this.logger.warn('[F2A:Announce]  submitClaim: announcement not open, id=%s, status=%s, claimant=%s', announcementId, announcement.status, claim.claimant);
       return null;
     }
 
     // 检查该 claimant 是否已经提交过认领（防止重复认领）
     const existingClaim = announcement.claims?.find(c => c.claimant === claim.claimant);
     if (existingClaim) {
-      logger.info(' submitClaim: duplicate claim ignored, id=%s, claimant=%s, existingClaimId=%s', announcementId, claim.claimant, existingClaim.claimId);
+      this.logger.info('[F2A:Announce]  submitClaim: duplicate claim ignored, id=%s, claimant=%s, existingClaimId=%s', announcementId, claim.claimant, existingClaim.claimId);
       // 返回已存在的认领，而不是创建新的
       return existingClaim;
     }
@@ -171,7 +180,7 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
     }
     announcement.claims.push(created);
 
-    logger.info(' submitClaim: claimId=%s, announcementId=%s, claimant=%s', claimId, announcementId, claim.claimant);
+    this.logger.info('[F2A:Announce]  submitClaim: claimId=%s, announcementId=%s, claimant=%s', claimId, announcementId, claim.claimant);
     return created;
   }
 
@@ -184,25 +193,25 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
   acceptClaim(announcementId: string, claimId: string): TaskClaim | null {
     const announcement = this.announcements.get(announcementId);
     if (!announcement) {
-      logger.warn(' acceptClaim: announcement not found, id=%s, claimId=%s', announcementId, claimId);
+      this.logger.warn('[F2A:Announce]  acceptClaim: announcement not found, id=%s, claimId=%s', announcementId, claimId);
       return null;
     }
 
     // 检查是否已被锁定（正在被其他操作处理）
     if (this.processingLocks.has(announcementId)) {
-      logger.warn(' acceptClaim: announcement is being processed, id=%s, claimId=%s', announcementId, claimId);
+      this.logger.warn('[F2A:Announce]  acceptClaim: announcement is being processed, id=%s, claimId=%s', announcementId, claimId);
       return null;
     }
 
     // 检查广播状态
     if (announcement.status !== 'open') {
-      logger.warn(' acceptClaim: announcement not open, id=%s, status=%s, claimId=%s', announcementId, announcement.status, claimId);
+      this.logger.warn('[F2A:Announce]  acceptClaim: announcement not open, id=%s, status=%s, claimId=%s', announcementId, announcement.status, claimId);
       return null;
     }
 
     const claim = announcement.claims?.find(c => c.claimId === claimId);
     if (!claim) {
-      logger.warn(' acceptClaim: claim not found, announcementId=%s, claimId=%s', announcementId, claimId);
+      this.logger.warn('[F2A:Announce]  acceptClaim: claim not found, announcementId=%s, claimId=%s', announcementId, claimId);
       return null;
     }
 
@@ -212,7 +221,7 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
     try {
       // 再次检查广播状态（双重检查）
       if (announcement.status !== 'open') {
-        logger.warn(' acceptClaim: race condition detected, announcement status changed, id=%s, status=%s, claimId=%s', announcementId, announcement.status, claimId);
+        this.logger.warn('[F2A:Announce]  acceptClaim: race condition detected, announcement status changed, id=%s, status=%s, claimId=%s', announcementId, announcement.status, claimId);
         return null;
       }
 
@@ -231,7 +240,7 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
       // 标记广播为已认领
       announcement.status = 'claimed';
 
-      logger.info(' acceptClaim: claimId=%s, announcementId=%s, claimant=%s, rejectedCount=%d', claimId, announcementId, claim.claimant, rejectedCount);
+      this.logger.info('[F2A:Announce]  acceptClaim: claimId=%s, announcementId=%s, claimant=%s, rejectedCount=%d', claimId, announcementId, claim.claimant, rejectedCount);
       
       // 发出认领事件（在锁内发出，确保状态一致）
       this.emit('announcement:claimed', announcement, claim);
@@ -239,7 +248,7 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
       return claim;
     } catch (error) {
       // P1 修复：记录异常并返回 null，但不改变状态
-      logger.error(' acceptClaim: unexpected error, id=%s, claimId=%s, error=%s', announcementId, claimId, error);
+      this.logger.error('[F2A:Announce]  acceptClaim: unexpected error, id=%s, claimId=%s, error=%s', announcementId, claimId, error);
       // 注意：不恢复状态，因为操作可能已部分完成
       // 但锁会在 finally 中释放
       return null;
@@ -255,18 +264,18 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
   rejectClaim(announcementId: string, claimId: string): TaskClaim | null {
     const announcement = this.announcements.get(announcementId);
     if (!announcement) {
-      logger.warn(' rejectClaim: announcement not found, id=%s, claimId=%s', announcementId, claimId);
+      this.logger.warn('[F2A:Announce]  rejectClaim: announcement not found, id=%s, claimId=%s', announcementId, claimId);
       return null;
     }
 
     const claim = announcement.claims?.find(c => c.claimId === claimId);
     if (!claim) {
-      logger.warn(' rejectClaim: claim not found, announcementId=%s, claimId=%s', announcementId, claimId);
+      this.logger.warn('[F2A:Announce]  rejectClaim: claim not found, announcementId=%s, claimId=%s', announcementId, claimId);
       return null;
     }
 
     claim.status = 'rejected';
-    logger.info(' rejectClaim: claimId=%s, announcementId=%s, claimant=%s', claimId, announcementId, claim.claimant);
+    this.logger.info('[F2A:Announce]  rejectClaim: claimId=%s, announcementId=%s, claimant=%s', claimId, announcementId, claim.claimant);
     return claim;
   }
 
@@ -342,7 +351,7 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
             reason: 'timeout'
           };
           this.emit('announcement:expired', expiredEvent);
-          logger.info('cleanup: announcement expired, id=%s, taskType=%s, from=%s', 
+          this.logger.info('[F2A:Announce] cleanup: announcement expired, id=%s, taskType=%s, from=%s', 
             announcement.announcementId, announcement.taskType, announcement.from);
         }
         // 删除已过期一段时间的
@@ -354,7 +363,7 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
     }
     
     if (expiredCount > 0 || deletedCount > 0) {
-      logger.info(' cleanup: expired=%d, deleted=%d, remaining=%d', expiredCount, deletedCount, this.announcements.size);
+      this.logger.info('[F2A:Announce]  cleanup: expired=%d, deleted=%d, remaining=%d', expiredCount, deletedCount, this.announcements.size);
     }
   }
 
@@ -380,7 +389,7 @@ export class AnnouncementQueue extends EventEmitter<AnnouncementQueueEvents> {
     const count = this.processingLocks.size;
     this.processingLocks.clear();
     if (count > 0) {
-      logger.warn(' forceClearOrphanLocks: cleared %d orphan locks', count);
+      this.logger.warn('[F2A:Announce]  forceClearOrphanLocks: cleared %d orphan locks', count);
     }
     return count;
   }

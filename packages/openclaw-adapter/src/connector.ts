@@ -269,22 +269,46 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       logger.warn('F2A Adapter 将以降级模式运行，部分功能不可用');
     }
 
-    // 检查 F2A Node 状态
+    // 检查 F2A Node 状态并自动启动（如果配置了 autoStart）
     this._nodeManager = new F2ANodeManager(this.nodeConfig);
-    this._nodeManager.isRunning().then(running => {
-      if (running) {
-        logger.info('F2A Node 已运行，正在注册...');
-        this.registerToNode().catch(err => {
-          logger.warn(`注册到 Node 失败: ${err}`);
-        });
+    
+    // 先检查 daemon 是否运行
+    const running = await this._nodeManager.isRunning();
+    
+    if (running) {
+      logger.info('F2A Node 已运行，正在注册...');
+      await this.registerToNode().catch(err => {
+        logger.warn(`注册到 Node 失败: ${err}`);
+      });
+    } else {
+      // Daemon 未运行，检查 F2A CLI 是否可用
+      const f2aInstalled = await this.checkF2AInstalled();
+      
+      if (f2aInstalled) {
+        // F2A 已安装，尝试自动启动 daemon
+        if (this.config.autoStart) {
+          logger.info('F2A Node 未运行，正在通过 CLI 自动启动...');
+          const started = await this.startDaemonViaCLI();
+          if (started) {
+            logger.info('F2A Node 自动启动成功');
+            await this.registerToNode().catch(err => {
+              logger.warn(`注册到 Node 失败: ${err}`);
+            });
+          } else {
+            logger.error('F2A Node 自动启动失败');
+            logger.warn('请手动启动: f2a daemon start');
+          }
+        } else {
+          logger.warn('F2A Node 未运行，autoStart 已禁用');
+          logger.warn('手动启动: f2a daemon start');
+        }
       } else {
-        logger.warn('F2A Node 未运行，部分功能不可用');
-        logger.warn('请手动启动: cd ~/Projects/f2a && npm run daemon');
-        logger.warn('或查看文档了解如何配置自动启动');
+        // F2A CLI 未安装
+        logger.warn('F2A Network 未安装');
+        logger.warn('请先安装: npm install -g @f2a/network');
+        logger.warn('或查看文档: https://github.com/openclaw/F2A');
       }
-    }).catch(err => {
-      logger.warn(`检查 Node 状态失败: ${err}`);
-    });
+    }
 
     // 启动兜底轮询
     this.startFallbackPolling();
@@ -958,6 +982,84 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       token += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     return token;
+  }
+
+  /**
+   * 检查 F2A CLI 是否已安装
+   * 通过执行 `f2a version` 命令来检测
+   */
+  private async checkF2AInstalled(): Promise<boolean> {
+    try {
+      const { exec } = await import('child_process');
+      const { promisify } = await import('util');
+      const execAsync = promisify(exec);
+      
+      const { stdout } = await execAsync('f2a version', { timeout: 5000 });
+      logger.info(`F2A CLI 已安装: ${stdout.trim()}`);
+      return true;
+    } catch (error) {
+      // 如果是命令不存在，说明 CLI 未安装
+      if (error instanceof Error && (error.message.includes('ENOENT') || error.message.includes('not found'))) {
+        logger.debug('F2A CLI 未安装');
+        return false;
+      }
+      // 其他错误，可能是 CLI 已安装但有问题
+      logger.debug(`F2A CLI 检测异常: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
+  }
+
+  /**
+   * 通过 CLI 启动 F2A daemon
+   * 执行 `f2a daemon -d` 命令（后台模式）
+   */
+  private async startDaemonViaCLI(): Promise<boolean> {
+    try {
+      const { spawn } = await import('child_process');
+      
+      return new Promise((resolve) => {
+        logger.info('执行: f2a daemon -d');
+        const proc = spawn('f2a', ['daemon', '-d'], {
+          stdio: 'pipe'
+        });
+        
+        let output = '';
+        proc.stdout?.on('data', (data) => {
+          output += data.toString();
+          logger.debug(`[f2a stdout] ${data.toString().trim()}`);
+        });
+        
+        proc.stderr?.on('data', (data) => {
+          logger.debug(`[f2a stderr] ${data.toString().trim()}`);
+        });
+        
+        proc.on('error', (err) => {
+          logger.error(`启动 daemon 失败: ${err.message}`);
+          resolve(false);
+        });
+        
+        proc.on('close', (code) => {
+          if (code === 0) {
+            logger.info('F2A daemon 启动命令执行成功');
+          } else {
+            logger.warn(`F2A daemon 启动命令退出码: ${code}`);
+          }
+        });
+        
+        // 等待 daemon 启动（CLI 会等待服务就绪后退出）
+        setTimeout(async () => {
+          const running = await this._nodeManager?.isRunning();
+          if (running) {
+            logger.info('F2A daemon 服务已就绪');
+          }
+          resolve(running || false);
+        }, 5000);
+      });
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(`启动 daemon 失败: ${errMsg}`);
+      return false;
+    }
   }
 
   /**

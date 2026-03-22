@@ -128,8 +128,8 @@ function parseArgs(): Args {
 
   const command = args[0];
   
-  // P0-1 修复：检查是否是 -v/--version 标志
-  if (command === '-v' || command === '--version') {
+  // P0-1 修复：检查是否是 -v/--version 标志或 version 命令
+  if (command === '-v' || command === '--version' || command === 'version') {
     return { command: 'version' };
   }
   
@@ -215,7 +215,12 @@ Commands:
   confirm [id|index]   确认连接请求
   reject [id|index]    拒绝连接请求
   daemon [subcommand]  启动和管理 daemon 服务
+  version              显示版本信息
   help [command]       显示帮助信息
+
+Options:
+  -v, --version        显示版本信息
+  -h, --help           显示帮助信息
 
 Use "f2a help [command]" for more information about a command.
 

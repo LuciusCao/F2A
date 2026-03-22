@@ -296,11 +296,11 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             });
           } else {
             logger.error('F2A Node 自动启动失败');
-            logger.warn('请手动启动: f2a daemon start');
+            logger.warn('请手动启动: f2a daemon -d');
           }
         } else {
           logger.warn('F2A Node 未运行，autoStart 已禁用');
-          logger.warn('手动启动: f2a daemon start');
+          logger.warn('手动启动: f2a daemon -d');
         }
       } else {
         // F2A CLI 未安装
@@ -1003,6 +1003,11 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         logger.debug('F2A CLI 未安装');
         return false;
       }
+      // P2-3 修复：timeout 也视为 CLI 未安装（CLI 可能存在但响应慢）
+      if (error instanceof Error && error.message.includes('ETIMEDOUT')) {
+        logger.debug('F2A CLI 响应超时，视为未安装');
+        return false;
+      }
       // 其他错误，可能是 CLI 已安装但有问题
       logger.debug(`F2A CLI 检测异常: ${error instanceof Error ? error.message : String(error)}`);
       return false;
@@ -1020,39 +1025,29 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       return new Promise((resolve) => {
         logger.info('执行: f2a daemon -d');
         const proc = spawn('f2a', ['daemon', '-d'], {
-          stdio: 'pipe'
+          detached: true,  // P1-1 修复：让 daemon 独立运行，不随父进程退出
+          stdio: 'ignore'  // P1-2 修复：ignore stdio 配合 detached 使用
         });
         
-        let output = '';
-        proc.stdout?.on('data', (data) => {
-          output += data.toString();
-          logger.debug(`[f2a stdout] ${data.toString().trim()}`);
-        });
-        
-        proc.stderr?.on('data', (data) => {
-          logger.debug(`[f2a stderr] ${data.toString().trim()}`);
-        });
+        // P1-2 修复：detached + ignore stdio 后，需要 unref 让父进程可以独立退出
+        proc.unref();
         
         proc.on('error', (err) => {
           logger.error(`启动 daemon 失败: ${err.message}`);
           resolve(false);
         });
         
-        proc.on('close', (code) => {
-          if (code === 0) {
-            logger.info('F2A daemon 启动命令执行成功');
-          } else {
-            logger.warn(`F2A daemon 启动命令退出码: ${code}`);
-          }
-        });
-        
-        // 等待 daemon 启动（CLI 会等待服务就绪后退出）
+        // P2-1 修复：daemon 启动后 CLI 会自动等待服务就绪后退出
+        // 我们只需要等待一段时间后检查 daemon 是否真的在运行
         setTimeout(async () => {
           const running = await this._nodeManager?.isRunning();
           if (running) {
             logger.info('F2A daemon 服务已就绪');
+            resolve(true);
+          } else {
+            logger.warn('F2A daemon 启动超时，请检查日志: ~/.f2a/daemon.log');
+            resolve(false);
           }
-          resolve(running || false);
         }, 5000);
       });
     } catch (error) {

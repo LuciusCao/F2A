@@ -18,6 +18,7 @@ import {
 } from './daemon.js';
 import { configureCommand, listConfig, getConfigValue, setConfigValue } from './configure.js';
 import { getConfigPath } from './config.js';
+import { showIdentityStatus, exportIdentity, importIdentity, showIdentityHelp } from './identity.js';
 
 const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
 
@@ -113,6 +114,7 @@ interface Args {
   helpTarget?: string;
   configKey?: string;
   configValue?: string;
+  filePath?: string;  // identity export/import 路径
 }
 
 /**
@@ -142,9 +144,9 @@ function parseArgs(): Args {
     return { command: 'help', helpTarget: args[1] };
   }
 
-  // 解析子命令（daemon 和 config）
+  // 解析子命令（daemon, config, identity）
   let subcommand: string | undefined;
-  if ((command === 'daemon' || command === 'config') && args[1]) {
+  if ((command === 'daemon' || command === 'config' || command === 'identity') && args[1]) {
     // 检查是否是 help 请求
     if (args[1] === '-h' || args[1] === '--help') {
       return { command: 'help', helpTarget: command };
@@ -193,7 +195,18 @@ function parseArgs(): Args {
     }
   }
 
-  return { command, subcommand, idOrIndex, capability, reason, detach, configKey, configValue };
+  // 解析 identity 子命令的文件路径
+  let filePath: string | undefined;
+  if (command === 'identity' && subcommand) {
+    if (subcommand === 'export' && args[2]) {
+      filePath = args[2];
+    }
+    if (subcommand === 'import' && args[2]) {
+      filePath = args[2];
+    }
+  }
+
+  return { command, subcommand, idOrIndex, capability, reason, detach, configKey, configValue, filePath };
 }
 
 /**
@@ -208,6 +221,7 @@ Usage: f2a [command] [options]
 Commands:
   configure            交互式配置向导
   config               配置管理 (get/set/list)
+  identity             身份管理 (status/export/import)
   status               查看节点状态
   peers                查看已连接的 Peers
   discover [options]   发现网络中的 Agents
@@ -227,6 +241,11 @@ Use "f2a help [command]" for more information about a command.
 Configuration:
   配置文件: ~/.f2a/config.json
   运行 f2a configure 进行交互式配置
+
+Identity:
+  节点身份: ~/.f2a/node-identity.json
+  Agent身份: ~/.f2a/agent-identity.json
+  运行 f2a identity status 查看身份状态
 
 Environment Variables:
   F2A_CONTROL_PORT     控制服务器端口 (默认: 9001)
@@ -365,6 +384,10 @@ Usage: f2a ${command}
 
 ${getCommandDescription(command)}
 `);
+      break;
+
+    case 'identity':
+      showIdentityHelp();
       break;
 
     default:
@@ -576,6 +599,10 @@ async function main(): Promise<void> {
       await handleConfigCommand(args);
       break;
 
+    case 'identity':
+      await handleIdentityCommand(args);
+      break;
+
     case 'status':
       await sendCommand('status');
       break;
@@ -709,6 +736,45 @@ async function handleDaemonCommand(args: Args): Promise<void> {
     default:
       console.error(`[F2A] Unknown daemon subcommand: ${args.subcommand}`);
       console.error('Usage: f2a daemon [stop|restart|status|-d|--detach]');
+      process.exit(1);
+  }
+}
+
+/**
+ * 处理 identity 命令
+ * @param args - 解析后的参数
+ */
+async function handleIdentityCommand(args: Args): Promise<void> {
+  const subcommand = args.subcommand;
+
+  switch (subcommand) {
+    case 'status':
+    case undefined:
+      // f2a identity 或 f2a identity status
+      await showIdentityStatus();
+      break;
+
+    case 'export':
+      await exportIdentity(args.filePath);
+      break;
+
+    case 'import':
+      if (!args.filePath) {
+        console.error('[F2A] Error: File path is required for import');
+        console.error('Usage: f2a identity import <path>');
+        process.exit(1);
+      }
+      await importIdentity(args.filePath);
+      break;
+
+    case '-h':
+    case '--help':
+      showIdentityHelp();
+      break;
+
+    default:
+      console.error(`[F2A] Unknown identity subcommand: ${subcommand}`);
+      console.error('Usage: f2a identity [status|export|import]');
       process.exit(1);
   }
 }

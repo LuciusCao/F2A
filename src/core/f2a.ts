@@ -1,6 +1,10 @@
 /**
  * F2A 主类 - P2P 版本
  * 整合 P2P 网络、能力发现与任务委托
+ * 
+ * Phase 1: 集成 Node/Agent Identity 系统
+ * - 使用 NodeIdentityManager 替代旧的 IdentityManager
+ * - 使用 IdentityDelegator 创建和管理 Agent 身份
  */
 
 import { EventEmitter } from 'eventemitter3';
@@ -11,6 +15,9 @@ import { fileURLToPath } from 'url';
 import { readFileSync } from 'fs';
 import { P2PNetwork } from './p2p-network.js';
 import { IdentityManager } from './identity/index.js';
+import { NodeIdentityManager } from './identity/node-identity.js';
+import { AgentIdentityManager } from './identity/agent-identity.js';
+import { IdentityDelegator } from './identity/delegator.js';
 import { CapabilityManager } from './capability-manager.js';
 import { SkillExchangeManager } from './skill-exchange-manager.js';
 import { Logger } from '../utils/logger.js';
@@ -35,6 +42,7 @@ import {
   success,
   failureFromError
 } from '../types/index.js';
+import type { ExportedAgentIdentity, AgentIdentity } from './identity/types.js';
 
 // P1-1 修复：从 package.json 读取版本号
 const __filename = fileURLToPath(import.meta.url);
@@ -90,7 +98,14 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   private running: boolean = false;
   private registeredCapabilities: Map<string, RegisteredCapability> = new Map();
   private logger: Logger;
+  
+  // Phase 1: 新的身份系统
+  /** @deprecated 使用 nodeIdentityManager 替代 */
   private identityManager?: IdentityManager;
+  private nodeIdentityManager?: NodeIdentityManager;
+  private agentIdentityManager?: AgentIdentityManager;
+  private identityDelegator?: IdentityDelegator;
+  
   private capabilityManager?: CapabilityManager;
   private skillExchangeManager?: SkillExchangeManager;
 
@@ -135,6 +150,10 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
 
   /**
    * 工厂方法：创建 F2A 实例
+   * 
+   * Phase 1: 使用 Node/Agent Identity 系统
+   * - NodeIdentityManager 管理物理节点身份
+   * - IdentityDelegator 创建和管理 Agent 身份
    */
   static async create(options: F2AOptions = {}): Promise<F2A> {
     // 默认配置
@@ -157,41 +176,113 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       dataDir: options.dataDir || './f2a-data'
     };
 
+    // Phase 1: 创建 NodeIdentityManager 并加载节点身份
+    const dataDir = mergedOptions.dataDir;
+    const nodeIdentityManager = new NodeIdentityManager({ dataDir });
+    const nodeIdentityResult = await nodeIdentityManager.loadOrCreate();
+    
+    if (!nodeIdentityResult.success) {
+      throw new Error(`Failed to load or create node identity: ${JSON.stringify(nodeIdentityResult.error)}`);
+    }
+
+    const nodeId = nodeIdentityManager.getNodeId();
+    const nodePeerId = nodeIdentityManager.getPeerIdString();
+    
+    if (!nodeId || !nodePeerId) {
+      throw new Error('Failed to get node ID or peer ID');
+    }
+
+    // Phase 1: 创建 IdentityDelegator（传入 dataDir）
+    const identityDelegator = new IdentityDelegator(nodeIdentityManager, dataDir);
+
+    // Phase 1: 创建或加载 Agent 身份
+    const agentIdentityManager = new AgentIdentityManager(dataDir);
+    let agentIdentity: ExportedAgentIdentity;
+    
+    // 尝试加载已有的 Agent 身份
+    const loadResult = await agentIdentityManager.loadAgentIdentity();
+    
+    if (loadResult.success) {
+      agentIdentity = loadResult.data;
+    } else {
+      // 创建新的 Agent 身份
+      // Agent 名称只能包含字母、数字、下划线、连字符和冒号
+      // 将 displayName 转换为有效的 Agent 名称
+      let agentName = mergedOptions.displayName
+        .replace(/[^a-zA-Z0-9_\-:]/g, '-')  // 替换无效字符为连字符
+        .replace(/-+/g, '-')                 // 合并连续连字符
+        .replace(/^-|-$/g, '')               // 移除首尾连字符
+        .slice(0, 64);                       // 限制长度
+      
+      // 如果名称为空，使用默认名称
+      if (!agentName) {
+        agentName = `Agent-${nodeId.slice(0, 8)}`;
+      }
+      
+      const createResult = await identityDelegator.createAgent({
+        name: agentName,
+        capabilities: []
+      });
+      
+      if (!createResult.success) {
+        throw new Error(`Failed to create agent identity: ${JSON.stringify(createResult.error)}`);
+      }
+      
+      agentIdentity = {
+        id: createResult.data.agentIdentity.id,
+        name: createResult.data.agentIdentity.name,
+        capabilities: createResult.data.agentIdentity.capabilities,
+        nodeId: createResult.data.agentIdentity.nodeId,
+        publicKey: createResult.data.agentIdentity.publicKey,
+        signature: createResult.data.agentIdentity.signature,
+        createdAt: createResult.data.agentIdentity.createdAt,
+        expiresAt: createResult.data.agentIdentity.expiresAt,
+        privateKey: createResult.data.agentPrivateKey
+      };
+      
+      // IdentityDelegator.createAgent 会保存到文件，我们需要重新加载
+      // 确保 agentIdentityManager 实例持有正确的身份
+      const reloadResult = await agentIdentityManager.loadAgentIdentity();
+      if (!reloadResult.success) {
+        // 如果重新加载失败，记录警告但继续
+        console.warn('Warning: Failed to reload agent identity after creation');
+      }
+    }
+
     // 创建 AgentInfo
     const agentInfo: AgentInfo = {
       peerId: '', // 启动后由 P2P 网络填充
-      displayName: mergedOptions.displayName,
+      displayName: mergedOptions.displayName,  // 保留原始 displayName
       agentType: mergedOptions.agentType as AgentInfo['agentType'],
       version: F2A_VERSION,
       capabilities: [],
       protocolVersion: PROTOCOL_VERSION,
       lastSeen: Date.now(),
-      multiaddrs: []
+      multiaddrs: [],
+      // Phase 1: 添加 Agent ID
+      agentId: agentIdentity.id
     };
-
-    // 创建 IdentityManager 并加载身份
-    const dataDir = mergedOptions.dataDir;
-    const identityManager = new IdentityManager({ dataDir });
-    const identityResult = await identityManager.loadOrCreate();
-    
-    if (!identityResult.success) {
-      throw new Error(`Failed to load or create identity: ${JSON.stringify(identityResult.error)}`);
-    }
 
     // 创建 P2P 网络
     const p2pNetwork = new P2PNetwork(agentInfo, mergedOptions.network);
     
-    // 注入 IdentityManager（使用持久化的私钥）
-    p2pNetwork.setIdentityManager(identityManager);
+    // 注入 IdentityManager（使用 NodeIdentityManager 作为基础身份管理器）
+    // NodeIdentityManager 继承自 IdentityManager，可以直接使用
+    p2pNetwork.setIdentityManager(nodeIdentityManager);
 
     // 创建 CapabilityManager（智能调度）
     const capabilityManager = new CapabilityManager({
-      peerId: identityManager.getPeerIdString() || '',
+      peerId: nodePeerId,
       baseCapabilities: [],
     });
 
     // 创建实例
-    const f2a = new F2A(agentInfo, p2pNetwork, mergedOptions, identityManager, capabilityManager);
+    const f2a = new F2A(agentInfo, p2pNetwork, mergedOptions, nodeIdentityManager, capabilityManager);
+    
+    // Phase 1: 设置新的身份管理组件
+    f2a.nodeIdentityManager = nodeIdentityManager;
+    f2a.agentIdentityManager = agentIdentityManager;
+    f2a.identityDelegator = identityDelegator;
 
     return f2a;
   }
@@ -692,5 +783,118 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
    */
   private updateAgentCapabilities(): void {
     this._agentInfo.capabilities = this.getCapabilities();
+  }
+
+  // ========================================================================
+  // Phase 1: Node/Agent Identity 方法
+  // ========================================================================
+
+  /**
+   * 获取 Node ID
+   * 
+   * Node ID 是物理节点的持久化标识，存储在 ~/.f2a/node-identity.json
+   */
+  getNodeId(): string | null {
+    return this.nodeIdentityManager?.getNodeId() || null;
+  }
+
+  /**
+   * 获取 Agent ID
+   * 
+   * Agent ID 是 Agent 的独立标识，由 Node 签发
+   */
+  getAgentId(): string | null {
+    return this.agentIdentityManager?.getAgentId() || null;
+  }
+
+  /**
+   * 获取 Agent 名称
+   */
+  getAgentName(): string | null {
+    return this.agentIdentityManager?.getAgentName() || null;
+  }
+
+  /**
+   * 获取 Agent Identity（不包含私钥）
+   */
+  getAgentIdentity(): AgentIdentity | null {
+    return this.agentIdentityManager?.getAgentIdentity() || null;
+  }
+
+  /**
+   * 导出 Node Identity（用于备份/迁移）
+   * 
+   * WARNING: 返回敏感的私钥材料
+   */
+  async exportNodeIdentity(): Promise<Result<{ nodeId: string; peerId: string; privateKey: string }>> {
+    if (!this.nodeIdentityManager) {
+      return failureFromError('IDENTITY_NOT_INITIALIZED', 'Node identity manager not initialized');
+    }
+
+    try {
+      const identity = this.nodeIdentityManager.exportIdentity();
+      return success({
+        nodeId: this.nodeIdentityManager.getNodeId() || '',
+        peerId: identity.peerId,
+        privateKey: identity.privateKey
+      });
+    } catch (error) {
+      return failureFromError('EXPORT_FAILED', 'Failed to export node identity', error as Error);
+    }
+  }
+
+  /**
+   * 导出 Agent Identity（用于备份/迁移）
+   * 
+   * WARNING: 返回敏感的私钥材料
+   */
+  async exportAgentIdentity(): Promise<Result<ExportedAgentIdentity>> {
+    if (!this.agentIdentityManager) {
+      return failureFromError('IDENTITY_NOT_INITIALIZED', 'Agent identity manager not initialized');
+    }
+
+    try {
+      const identity = this.agentIdentityManager.exportAgentIdentity();
+      if (!identity) {
+        return failureFromError('IDENTITY_NOT_FOUND', 'No agent identity found');
+      }
+      return success(identity);
+    } catch (error) {
+      return failureFromError('EXPORT_FAILED', 'Failed to export agent identity', error as Error);
+    }
+  }
+
+  /**
+   * 检查 Agent 身份是否过期
+   */
+  isAgentExpired(): boolean {
+    return this.agentIdentityManager?.isExpired() || false;
+  }
+
+  /**
+   * 续期 Agent 身份
+   * 
+   * @param newExpiresAt 新的过期时间
+   */
+  async renewAgentIdentity(newExpiresAt: Date): Promise<Result<AgentIdentity>> {
+    if (!this.identityDelegator || !this.agentIdentityManager) {
+      return failureFromError('IDENTITY_NOT_INITIALIZED', 'Identity system not initialized');
+    }
+
+    const currentIdentity = this.agentIdentityManager.getAgentIdentity();
+    if (!currentIdentity) {
+      return failureFromError('IDENTITY_NOT_FOUND', 'No current agent identity found');
+    }
+
+    const privateKey = this.nodeIdentityManager?.getPrivateKey();
+    if (!privateKey) {
+      return failureFromError('NODE_KEY_NOT_AVAILABLE', 'Node private key not available');
+    }
+
+    const signWithNodeKey = async (data: Uint8Array): Promise<Uint8Array> => {
+      return await privateKey.sign(data);
+    };
+
+    return this.identityDelegator.renewAgent(currentIdentity, newExpiresAt, signWithNodeKey);
   }
 }

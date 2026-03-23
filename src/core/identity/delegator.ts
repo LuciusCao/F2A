@@ -33,10 +33,12 @@ import type {
  */
 export class IdentityDelegator {
   private nodeIdentity: NodeIdentityManager;
+  private dataDir?: string;
   private logger: Logger;
 
-  constructor(nodeIdentity: NodeIdentityManager) {
+  constructor(nodeIdentity: NodeIdentityManager, dataDir?: string) {
     this.nodeIdentity = nodeIdentity;
+    this.dataDir = dataDir;
     this.logger = new Logger({ component: 'IdentityDelegator' });
   }
 
@@ -80,8 +82,8 @@ export class IdentityDelegator {
         return signature;
       };
 
-      // 创建 Agent Identity Manager
-      const agentManager = new AgentIdentityManager();
+      // 创建 Agent Identity Manager（使用传入的 dataDir）
+      const agentManager = new AgentIdentityManager(this.dataDir);
 
       // 创建 Agent Identity
       const result = await agentManager.createAgentIdentity(

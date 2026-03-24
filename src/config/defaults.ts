@@ -28,6 +28,7 @@ export const DEFAULT_P2P_NETWORK_CONFIG: Required<P2PNetworkConfig> = {
   enableMDNS: true,
   enableDHT: true,
   dhtServerMode: false,
+  enableNATTraversal: false, // Phase 2: 默认禁用，需要用户显式启用
 };
 
 // ============================================================================

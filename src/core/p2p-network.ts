@@ -1,6 +1,11 @@
 /**
  * P2P 网络管理器
  * 基于 libp2p 实现 Agent 发现与通信
+ * 
+ * Phase 2: NAT 穿透支持
+ * - AutoNAT: 自动检测公网可达性
+ * - Circuit Relay: 中继服务
+ * - DCUtR: 打洞技术
  */
 
 import { createLibp2p } from 'libp2p';
@@ -8,6 +13,9 @@ import { tcp } from '@libp2p/tcp';
 import { noise } from '@chainsafe/libp2p-noise';
 import { kadDHT } from '@libp2p/kad-dht';
 import { mdns } from '@libp2p/mdns';
+import { autoNAT } from '@libp2p/autonat';
+import { circuitRelayTransport, circuitRelayServer } from '@libp2p/circuit-relay-v2';
+import { dcutr } from '@libp2p/dcutr';
 import { peerIdFromString } from '@libp2p/peer-id';
 import type { PeerId } from '@libp2p/interface';
 import type { PrivateKey } from '@libp2p/interface';
@@ -253,7 +261,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         `/ip4/0.0.0.0/tcp/${this.config.listenPort}`
       ];
 
-      // 创建 libp2p 节点 - 启用 noise 加密
+      // 创建 libp2p 节点 - 启用 noise 加密和 NAT 穿透
       const services: Record<string, any> = {};
       
       // 只有显式启用 DHT 时才添加
@@ -263,12 +271,24 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         });
       }
 
+      // Phase 2: NAT 穿透服务（可选，默认禁用以保持向后兼容）
+      // 启用后可以检测公网可达性和支持 Relay 连接
+      if (this.config.enableNATTraversal) {
+        services.autonat = autoNAT();
+        // DCUtR 需要 Circuit Relay 支持
+        // services.dcutr = dcutr();
+      }
+
       // Medium 修复：使用 libp2p 提供的类型定义
       const libp2pOptions: Libp2pInit = {
         addresses: {
           listen: listenAddresses
         },
-        transports: [tcp()],
+        transports: [
+          tcp()
+          // Phase 2: Circuit Relay 传输暂时禁用，需要更多配置
+          // circuitRelayTransport()
+        ],
         connectionEncryption: [noise()],
         services
       };

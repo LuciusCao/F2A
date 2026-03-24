@@ -11,8 +11,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Lint 检查
-  lint:
+  # Lint + 单元测试（合并）
+  lint-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,26 +20,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
       
       - name: Install dependencies
         run: npm install
       
       - name: Run lint
         run: npm run lint || npm run build -- --noEmit
-
-  # 单元测试
-  unit-tests:
-    runs-on: ubuntu-latest
-    needs: lint
-    steps:
-      - uses: actions/checkout@v4
-      
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      
-      - name: Install dependencies
-        run: npm install
       
       - name: Build
         run: npm run build
@@ -56,7 +43,7 @@ jobs:
   # 集成测试（仅 push 触发，PR 时跳过但返回成功）
   integration-tests:
     runs-on: ubuntu-latest
-    needs: unit-tests
+    needs: lint-and-test
     steps:
       - name: Skip on PR
         if: github.event_name != 'push'
@@ -71,6 +58,7 @@ jobs:
         if: github.event_name == 'push'
         with:
           node-version: '22'
+          cache: 'npm'
 
       - name: Install dependencies
         if: github.event_name == 'push'
@@ -120,6 +108,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           node-version: '22'
+          cache: 'npm'
 
       - name: Install dependencies
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

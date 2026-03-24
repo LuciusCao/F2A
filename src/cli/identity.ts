@@ -492,7 +492,7 @@ async function importAgentIdentity(
   dataDir: string,
   importFilePath: string,
   forceImport: boolean = false
-): Promise<Result<void, AgentImportConfirmation>> {
+): Promise<Result<void>> {
   try {
     // 验证必要字段
     if (!agentData.id || !agentData.name || !agentData.nodeId || 

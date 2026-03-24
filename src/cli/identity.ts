@@ -253,8 +253,17 @@ function validateImportPath(inputPath: string): { safe: true; resolvedPath: stri
     '/private/var',    // macOS: realpathSync(/var/folders/...) 的实际路径
   ];
   
-  // 检查路径是否在允许的目录下
-  const isAllowed = allowedPrefixes.some(prefix => resolvedPath.startsWith(prefix));
+  // P1-1 修复：确保精确匹配或路径分隔符在正确位置
+  // 避免 /home/user2/file.json 匹配 /home/user 前缀的问题
+  const isAllowed = allowedPrefixes.some(prefix => {
+    // 精确匹配
+    if (resolvedPath === prefix) {
+      return true;
+    }
+    // 确保路径分隔符在正确位置，防止部分匹配
+    const prefixWithSep = prefix.endsWith('/') ? prefix : prefix + '/';
+    return resolvedPath.startsWith(prefixWithSep);
+  });
   
   if (!isAllowed) {
     logger.warn('P1-4: Import path rejected - outside allowed directories', {

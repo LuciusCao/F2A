@@ -295,7 +295,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       }
 
       // 构建传输层
-      const transports = [tcp()];
+      // 使用 any[] 绕过 libp2p transport 类型不兼容问题
+      // tcp() 和 circuitRelayTransport() 的 Components 类型不同
+      const transports: any[] = [tcp()];
       
       // Phase 2: Circuit Relay Transport（允许通过 Relay 连接）
       if (this.config.enableNATTraversal) {

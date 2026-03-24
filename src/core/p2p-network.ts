@@ -1880,18 +1880,41 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       return failureFromError('DHT_NOT_AVAILABLE', 'DHT service not enabled');
     }
 
-    const timeout = options?.timeout || 10000;
+    const timeout = options?.timeout ?? 10000;
 
     try {
       const discoveredAddresses: string[] = [];
 
       if (options?.peerId) {
+        // P1-1 修复：验证 peerId 格式
+        if (!options.peerId || typeof options.peerId !== 'string') {
+          return failureFromError('INVALID_PEER_ID', 'Invalid peer ID format');
+        }
+
         // 查找特定节点
         this.logger.info('Finding peer via DHT', { peerId: options.peerId.slice(0, 16) });
-        
-        const peerIdObj = peerIdFromString(options.peerId);
-        const peerInfo = await dht.findPeer(peerIdObj);
-        
+
+        let peerIdObj: PeerId;
+        try {
+          peerIdObj = peerIdFromString(options.peerId);
+        } catch (error) {
+          const err = error instanceof Error ? error : new Error(String(error));
+          if (err.message?.includes('invalid')) {
+            return failureFromError('INVALID_PEER_ID', 'Invalid peer ID format', err);
+          }
+          throw error;
+        }
+
+        // P0-1 修复：使用 Promise.race 实现超时
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('DHT lookup timeout')), timeout)
+        );
+
+        const peerInfo = await Promise.race([
+          dht.findPeer(peerIdObj),
+          timeoutPromise
+        ]);
+
         if (peerInfo && peerInfo.multiaddrs.length > 0) {
           discoveredAddresses.push(...peerInfo.multiaddrs.map(ma => ma.toString()));
         }

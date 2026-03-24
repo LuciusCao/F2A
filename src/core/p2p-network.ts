@@ -1905,18 +1905,23 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           throw error;
         }
 
-        // P0-1 修复：使用 Promise.race 实现超时
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('DHT lookup timeout')), timeout)
-        );
+        // P0-1 修复：使用 Promise.race 实现超时，并正确清理定时器
+        let timeoutId: ReturnType<typeof setTimeout>;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('DHT lookup timeout')), timeout);
+        });
 
-        const peerInfo = await Promise.race([
-          dht.findPeer(peerIdObj),
-          timeoutPromise
-        ]);
+        try {
+          const peerInfo = await Promise.race([
+            dht.findPeer(peerIdObj),
+            timeoutPromise
+          ]);
 
-        if (peerInfo && peerInfo.multiaddrs.length > 0) {
-          discoveredAddresses.push(...peerInfo.multiaddrs.map(ma => ma.toString()));
+          if (peerInfo && peerInfo.multiaddrs.length > 0) {
+            discoveredAddresses.push(...peerInfo.multiaddrs.map(ma => ma.toString()));
+          }
+        } finally {
+          clearTimeout(timeoutId);
         }
       } else {
         // 发现随机节点（通过路由表）

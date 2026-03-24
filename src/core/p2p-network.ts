@@ -47,6 +47,7 @@ import {
 } from '../types/index.js';
 import { E2EECrypto, EncryptedMessage } from './e2ee-crypto.js';
 import { IdentityManager } from './identity/index.js';
+import { NATTraversalManager, NATTraversalStatus } from './nat-traversal.js';
 import { Logger } from '../utils/logger.js';
 import { validateF2AMessage, validateTaskRequestPayload, validateTaskResponsePayload } from '../utils/validation.js';
 import { MiddlewareManager, Middleware } from '../utils/middleware.js';
@@ -210,6 +211,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private e2eeCrypto: E2EECrypto;
   private enableE2EE: boolean = true;
   private identityManager?: IdentityManager;
+  private natTraversalManager?: NATTraversalManager;
   private logger: Logger;
   private middlewareManager: MiddlewareManager;
 
@@ -271,12 +273,35 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         });
       }
 
-      // Phase 2: NAT 穿透服务（可选，默认禁用以保持向后兼容）
+      // Phase 2: NAT 穿透服务
       // 启用后可以检测公网可达性和支持 Relay 连接
       if (this.config.enableNATTraversal) {
+        // AutoNAT - 自动检测公网可达性
         services.autonat = autoNAT();
-        // DCUtR 需要 Circuit Relay 支持
-        // services.dcutr = dcutr();
+        
+        // DCUtR - 打洞技术（允许两个 NAT 后的节点建立直接连接）
+        services.dcutr = dcutr();
+        
+        this.logger.info('NAT traversal services enabled', {
+          autonat: true,
+          dcutr: true
+        });
+      }
+
+      // Circuit Relay 服务端模式（可选，用于提供 Relay 服务给其他节点）
+      if (this.config.enableRelayServer) {
+        services.relay = circuitRelayServer();
+        this.logger.info('Circuit Relay server mode enabled');
+      }
+
+      // 构建传输层
+      // 使用 any[] 绕过 libp2p transport 类型不兼容问题
+      // tcp() 和 circuitRelayTransport() 的 Components 类型不同
+      const transports: any[] = [tcp()];
+      
+      // Phase 2: Circuit Relay Transport（允许通过 Relay 连接）
+      if (this.config.enableNATTraversal) {
+        transports.push(circuitRelayTransport());
       }
 
       // Medium 修复：使用 libp2p 提供的类型定义
@@ -284,11 +309,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         addresses: {
           listen: listenAddresses
         },
-        transports: [
-          tcp()
-          // Phase 2: Circuit Relay 传输暂时禁用，需要更多配置
-          // circuitRelayTransport()
-        ],
+        transports,
         connectionEncryption: [noise()],
         services
       };
@@ -373,6 +394,13 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         this.logger.info('DHT enabled, waiting for routing table');
       }
 
+      // Phase 2: 初始化 NAT 穿透管理器
+      if (this.config.enableNATTraversal) {
+        this.natTraversalManager = new NATTraversalManager(this.node);
+        await this.natTraversalManager.initialize();
+        this.logger.info('NAT traversal manager initialized');
+      }
+
       this.logger.info('Started', { peerId: peerId.toString().slice(0, 16) });
       this.logger.info('Listening', { addresses: addrs });
       this.logger.info('Connection encryption enabled', { protocol: 'Noise' });
@@ -434,6 +462,12 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       await this.node.stop();
       this.node = null;
       this.logger.info('Stopped');
+    }
+
+    // Phase 2: 清理 NAT 穿透管理器
+    if (this.natTraversalManager) {
+      await this.natTraversalManager.destroy();
+      this.natTraversalManager = undefined;
     }
   }
 
@@ -1841,5 +1875,44 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    */
   listMiddlewares(): string[] {
     return this.middlewareManager.list();
+  }
+
+  /**
+   * 获取当前配置
+   * @returns P2P 网络配置
+   */
+  getConfig(): P2PNetworkConfig {
+    // 返回深拷贝，防止调用者修改内部配置
+    return JSON.parse(JSON.stringify(this.config));
+  }
+
+  /**
+   * 获取 NAT 穿透状态
+   * @returns NAT 穿透状态，如果未启用则返回 undefined
+   */
+  getNATTraversalStatus(): NATTraversalStatus | undefined {
+    return this.natTraversalManager?.getStatus();
+  }
+
+  /**
+   * 连接到 Relay 服务器
+   * @param relayAddress Relay 服务器地址（multiaddr 格式）
+   * @returns 是否连接成功
+   */
+  async connectToRelay(relayAddress: string): Promise<boolean> {
+    if (!this.natTraversalManager) {
+      this.logger.warn('NAT traversal not enabled, cannot connect to relay');
+      return false;
+    }
+
+    // 验证地址格式
+    try {
+      multiaddr(relayAddress); // 验证格式，无效则抛出异常
+    } catch (error) {
+      this.logger.error('Invalid relay address format', { relayAddress, error });
+      return false;
+    }
+
+    return this.natTraversalManager.connectToRelay(relayAddress);
   }
 }

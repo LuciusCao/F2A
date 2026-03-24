@@ -1906,7 +1906,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         }
 
         // P0-1 修复：使用 Promise.race 实现超时，并正确清理定时器
-        let timeoutId: ReturnType<typeof setTimeout>;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
         const timeoutPromise = new Promise<never>((_, reject) => {
           timeoutId = setTimeout(() => reject(new Error('DHT lookup timeout')), timeout);
         });
@@ -1921,7 +1921,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
             discoveredAddresses.push(...peerInfo.multiaddrs.map(ma => ma.toString()));
           }
         } finally {
-          clearTimeout(timeoutId);
+          if (timeoutId) clearTimeout(timeoutId);
         }
       } else {
         // 发现随机节点（通过路由表）

@@ -154,6 +154,43 @@ describe('NATTraversalManager', () => {
     });
   });
 
+  describe('DCUtR hole punch', () => {
+    it('should attempt hole punch when DCUtR is available', async () => {
+      // Mock DCUtR service
+      const localMockLibp2p = createMockLibp2p();
+      localMockLibp2p.services = { dcutr: {} };
+      
+      const localManager = new NATTraversalManager(localMockLibp2p as Libp2p);
+      
+      const successHandler = vi.fn();
+      localManager.on('hole-punch:success', successHandler);
+      
+      await localManager.initialize();
+      const result = await localManager.attemptHolePunch('QmPeer123');
+      
+      expect(result).toBe(true);
+      expect(successHandler).toHaveBeenCalledWith('QmPeer123');
+      
+      await localManager.destroy();
+    });
+
+    it('should fail hole punch when DCUtR is not available', async () => {
+      const localMockLibp2p = createMockLibp2p();
+      const localManager = new NATTraversalManager(localMockLibp2p as Libp2p);
+      
+      const failedHandler = vi.fn();
+      localManager.on('hole-punch:failed', failedHandler);
+      
+      await localManager.initialize();
+      const result = await localManager.attemptHolePunch('QmPeer123');
+      
+      expect(result).toBe(false);
+      expect(failedHandler).toHaveBeenCalledWith('QmPeer123', 'DCUtR not configured');
+      
+      await localManager.destroy();
+    });
+  });
+
   describe('isPublicAddress', () => {
     it('should identify localhost as private', async () => {
       const localMockLibp2p = createMockLibp2p();

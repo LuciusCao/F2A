@@ -57,8 +57,10 @@ export interface P2PNetworkConfig {
   enableDHT?: boolean;
   /** DHT 服务器模式 (默认 false，即客户端模式) */
   dhtServerMode?: boolean;
-  /** Phase 2: 是否启用 NAT 穿透服务 (AutoNAT, DCUtR) */
+  /** Phase 2: 是否启用 NAT 穿透服务 (AutoNAT, DCUtR, Circuit Relay Client) */
   enableNATTraversal?: boolean;
+  /** Phase 2: 是否启用 Relay 服务端模式（允许其他节点通过本节点中继） */
+  enableRelayServer?: boolean;
 }
 
 // ============================================================================

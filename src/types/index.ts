@@ -79,6 +79,12 @@ export interface AgentInfo {
   multiaddrs: string[];
   /** 端到端加密公钥 (base64) */
   encryptionPublicKey?: string;
+  /** 
+   * Agent ID (Phase 1)
+   * 独立于 PeerID 的 Agent 身份标识
+   * 格式: UUID 或类似 agent-{timestamp}-{random}
+   */
+  agentId?: string;
 }
 
 // ============================================================================

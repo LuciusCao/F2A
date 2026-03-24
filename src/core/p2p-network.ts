@@ -295,7 +295,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       }
 
       // 构建传输层
-      const transports: any[] = [tcp()];
+      const transports = [tcp()];
       
       // Phase 2: Circuit Relay Transport（允许通过 Relay 连接）
       if (this.config.enableNATTraversal) {
@@ -460,6 +460,12 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       await this.node.stop();
       this.node = null;
       this.logger.info('Stopped');
+    }
+
+    // Phase 2: 清理 NAT 穿透管理器
+    if (this.natTraversalManager) {
+      await this.natTraversalManager.destroy();
+      this.natTraversalManager = undefined;
     }
   }
 
@@ -1874,7 +1880,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    * @returns P2P 网络配置
    */
   getConfig(): P2PNetworkConfig {
-    return { ...this.config };
+    // 返回深拷贝，防止调用者修改内部配置
+    return JSON.parse(JSON.stringify(this.config));
   }
 
   /**
@@ -1887,7 +1894,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
   /**
    * 连接到 Relay 服务器
-   * @param relayAddress Relay 服务器地址
+   * @param relayAddress Relay 服务器地址（multiaddr 格式）
    * @returns 是否连接成功
    */
   async connectToRelay(relayAddress: string): Promise<boolean> {
@@ -1895,7 +1902,16 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       this.logger.warn('NAT traversal not enabled, cannot connect to relay');
       return false;
     }
-    
+
+    // 验证地址格式
+    try {
+      const { multiaddr } = await import('@multiformats/multiaddr');
+      multiaddr(relayAddress); // 验证格式，无效则抛出异常
+    } catch (error) {
+      this.logger.error('Invalid relay address format', { relayAddress, error });
+      return false;
+    }
+
     return this.natTraversalManager.connectToRelay(relayAddress);
   }
 }

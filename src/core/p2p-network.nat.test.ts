@@ -107,5 +107,54 @@ describe('P2PNetwork NAT Traversal', () => {
 
       await network.stop();
     });
+
+    it('connectToRelay 未启用 NAT 时返回 false', async () => {
+      const agentInfo = createTestAgentInfo();
+      const network = new P2PNetwork(agentInfo, {
+        listenPort: 0,
+        dataDir: tempDir
+        // enableNATTraversal 未设置
+      });
+
+      await network.start();
+
+      const result = await network.connectToRelay('/ip4/127.0.0.1/tcp/4001/p2p/QmRelay');
+      expect(result).toBe(false);
+
+      await network.stop();
+    });
+
+    it('connectToRelay 无效地址返回 false', async () => {
+      const agentInfo = createTestAgentInfo();
+      const network = new P2PNetwork(agentInfo, {
+        listenPort: 0,
+        dataDir: tempDir,
+        enableNATTraversal: true
+      });
+
+      await network.start();
+
+      const result = await network.connectToRelay('invalid-address');
+      expect(result).toBe(false);
+
+      await network.stop();
+    });
+  });
+
+  describe('Relay Server 模式', () => {
+    it('可以启用 Relay Server 模式', async () => {
+      const agentInfo = createTestAgentInfo();
+      const network = new P2PNetwork(agentInfo, {
+        listenPort: 0,
+        dataDir: tempDir,
+        enableRelayServer: true
+      });
+
+      const config = network.getConfig();
+      expect(config.enableRelayServer).toBe(true);
+
+      // 注意：实际 Relay Server 需要公网可达性
+      // 这里只测试配置正确
+    });
   });
 });

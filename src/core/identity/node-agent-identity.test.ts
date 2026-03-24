@@ -552,9 +552,10 @@ describe('IdentityDelegator', () => {
       };
 
       const verifyResult = await delegator.verifyAgent(agentIdentity, getNodePublicKey);
-      expect(verifyResult.success).toBe(true);
-      if (!verifyResult.success) return;
-      expect(verifyResult.data).toBe(false); // 已过期
+      // P1-3 修复: verifyAgent 现在对过期返回 failure 而非 success(false)
+      expect(verifyResult.success).toBe(false); // 过期时返回 failure
+      if (verifyResult.success) return;
+      expect(verifyResult.error.code).toBe('AGENT_IDENTITY_EXPIRED');
     });
   });
 

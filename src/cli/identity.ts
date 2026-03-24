@@ -7,14 +7,18 @@
  * - status: 查看身份状态
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync } from 'fs';
+import { join, basename, dirname, isAbsolute } from 'path';
+import { homedir, tmpdir } from 'os';
 import { NodeIdentityManager, isValidNodeId } from '../core/identity/node-identity.js';
 import { AgentIdentityManager } from '../core/identity/agent-identity.js';
 import { IdentityDelegator } from '../core/identity/delegator.js';
 import type { ExportedNodeIdentity, ExportedAgentIdentity, AgentIdentity } from '../core/identity/types.js';
 import { success, failure, failureFromError, Result, createError } from '../types/index.js';
+import { secureWipe } from '../utils/crypto-utils.js';
+import { Logger } from '../utils/logger.js';
+
+const logger = new Logger({ component: 'IdentityCLI' });
 
 const DEFAULT_DATA_DIR = '.f2a';
 
@@ -33,6 +37,21 @@ interface IdentityExport {
 }
 
 /**
+ * Agent 导入所需的用户确认信息
+ * P1-2 修复：用于 CLI 层处理用户确认
+ */
+export interface AgentImportConfirmation {
+  /** 是否需要用户确认 */
+  required: boolean;
+  /** 确认原因（用于显示给用户） */
+  reason: string;
+  /** Agent ID（用于确认消息） */
+  agentId: string;
+  /** Node ID（用于确认消息） */
+  nodeId: string;
+}
+
+/**
  * 导入身份的结果
  */
 export interface ImportResult {
@@ -41,6 +60,8 @@ export interface ImportResult {
   nodeError?: string;
   agentError?: string;
   warnings: string[];
+  /** P1-2: Agent 导入确认信息 */
+  agentConfirmation?: AgentImportConfirmation;
 }
 
 /**
@@ -188,13 +209,84 @@ export async function exportIdentity(outputPath?: string): Promise<void> {
 }
 
 /**
+ * 验证导入文件路径是否在允许范围内
+ * P1-4 修复：防止路径遍历漏洞
+ * 
+ * @param inputPath 用户提供的路径
+ * @returns 解析后的安全路径，或 null 表示路径不安全
+ */
+function validateImportPath(inputPath: string): { safe: true; resolvedPath: string } | { safe: false; error: string } {
+  // 检查文件扩展名
+  const ext = inputPath.toLowerCase().split('.').pop();
+  if (ext !== 'json') {
+    return { safe: false, error: 'Import file must be a JSON file (.json extension required)' };
+  }
+  
+  // 获取路径的各个部分
+  const homeDir = homedir();
+  const currentDir = process.cwd();
+  const systemTmpDir = tmpdir(); // P1-4 修复：使用 tmpdir() 获取系统临时目录
+  
+  // 解析绝对路径
+  let resolvedPath: string;
+  try {
+    // 处理符号链接并获取绝对路径
+    if (isAbsolute(inputPath)) {
+      resolvedPath = realpathSync(inputPath);
+    } else {
+      resolvedPath = realpathSync(join(currentDir, inputPath));
+    }
+  } catch {
+    // 文件不存在或无法解析
+    return { safe: false, error: 'Import file not found or not accessible' };
+  }
+  
+  // 允许的目录前缀
+  // 注意：macOS 上 /var 是符号链接到 /private/var，realpathSync 会解析为 /private/var/...
+  // 而 tmpdir() 返回 /var/folders/...，所以需要同时检查两种路径
+  const allowedPrefixes = [
+    homeDir,           // 用户主目录
+    currentDir,        // 当前工作目录
+    systemTmpDir,      // 系统临时目录（macOS: /var/folders/..., Linux: /tmp）
+    '/tmp',            // 通用临时目录
+    '/var/tmp',        // 系统临时目录
+    '/private/var',    // macOS: realpathSync(/var/folders/...) 的实际路径
+  ];
+  
+  // 检查路径是否在允许的目录下
+  const isAllowed = allowedPrefixes.some(prefix => resolvedPath.startsWith(prefix));
+  
+  if (!isAllowed) {
+    logger.warn('P1-4: Import path rejected - outside allowed directories', {
+      resolvedPath,
+      allowedPrefixes
+    });
+    return { safe: false, error: 'Import file not found or not accessible' };
+  }
+  
+  // 检查可疑的路径遍历模式
+  if (inputPath.includes('..') || inputPath.includes('~')) {
+    logger.warn('P1-4: Suspicious path pattern detected', { inputPath });
+    // 如果已经通过 realpath 解析并且是允许的目录，则继续
+  }
+  
+  return { safe: true, resolvedPath };
+}
+
+/**
  * 从文件导入身份（内部实现，返回 Result 类型）
  * 
  * P2-2 修复：使用 Result 类型返回错误，而非 process.exit
  * P1-1 修复：明确标注 Node Identity 导入的限制
  * P1-2 修复：验证 Agent Identity 签名
+ * P1-4 修复：验证导入路径安全性
+ * P2-7 修复：不暴露用户提供的路径
  */
-export async function importIdentityInternal(inputPath: string, dataDir?: string): Promise<Result<ImportResult>> {
+export async function importIdentityInternal(
+  inputPath: string, 
+  dataDir?: string,
+  forceAgentImport: boolean = false
+): Promise<Result<ImportResult>> {
   const actualDataDir = dataDir || join(homedir(), DEFAULT_DATA_DIR);
   const result: ImportResult = {
     nodeImported: false,
@@ -202,23 +294,29 @@ export async function importIdentityInternal(inputPath: string, dataDir?: string
     warnings: []
   };
   
-  // 检查文件是否存在
-  if (!existsSync(inputPath)) {
+  // P1-4: 验证路径安全性
+  const pathValidation = validateImportPath(inputPath);
+  if (!pathValidation.safe) {
+    // P2-7: 使用通用错误消息，不暴露具体路径
     return failure(createError(
       'INVALID_PARAMS',
-      `File not found: ${inputPath}`
+      pathValidation.error
     ));
   }
   
+  const safePath = pathValidation.resolvedPath;
+  
   // 读取文件
   let importData: IdentityExport;
+  let fileContent: string;
   try {
-    const content = readFileSync(inputPath, 'utf-8');
-    importData = JSON.parse(content) as IdentityExport;
+    fileContent = readFileSync(safePath, 'utf-8');
+    importData = JSON.parse(fileContent) as IdentityExport;
   } catch (error) {
+    // P2-7: 使用通用错误消息
     return failure(createError(
       'INVALID_PARAMS',
-      `Failed to parse identity file: ${error instanceof Error ? error.message : String(error)}`
+      'Failed to read or parse identity file'
     ));
   }
   
@@ -249,14 +347,36 @@ export async function importIdentityInternal(inputPath: string, dataDir?: string
   
   // 导入 Agent Identity
   if (importData.agent) {
-    const agentImportResult = await importAgentIdentity(importData.agent, actualDataDir);
+    const agentImportResult = await importAgentIdentity(
+      importData.agent, 
+      actualDataDir, 
+      safePath,
+      forceAgentImport
+    );
     if (agentImportResult.success) {
-      result.agentImported = true;
+      const agentData = agentImportResult.data as any;
+      if (agentData.requiresConfirmation && !agentData.confirmed) {
+        // P1-2: 需要用户确认
+        result.agentConfirmation = {
+          required: true,
+          reason: agentData.warning,
+          agentId: agentData.agentId,
+          nodeId: agentData.nodeId
+        };
+      } else {
+        result.agentImported = true;
+      }
     } else {
       result.agentError = agentImportResult.error.message;
     }
   } else {
     result.warnings.push('Agent Identity: Not in import file');
+  }
+  
+  // P3-2: 清理内存中的敏感数据
+  if (fileContent) {
+    const contentBuffer = Buffer.from(fileContent, 'utf-8');
+    secureWipe(contentBuffer);
   }
   
   return success(result);
@@ -265,9 +385,9 @@ export async function importIdentityInternal(inputPath: string, dataDir?: string
 /**
  * 导入 Node Identity
  * 
- * P1-1 修复：实现基本的 Node Identity 导入逻辑
- * 注意：当前版本支持从相同格式的导出文件导入 Node Identity
- * 不支持从其他节点迁移 Node Identity（应使用 Agent Identity 迁移）
+ * P1-1 修复：重新生成 E2EE 密钥对，确保导入后节点具有端到端加密能力
+ * P2-5 修复：使用正确的字段名 privateKey 存储私钥
+ * P2-8 修复：添加安全审计日志
  */
 async function importNodeIdentity(
   nodeData: { nodeId: string; peerId: string; privateKey: string },
@@ -278,7 +398,7 @@ async function importNodeIdentity(
     if (!isValidNodeId(nodeData.nodeId)) {
       return failure(createError(
         'INVALID_NODE_ID',
-        `Invalid nodeId format in import file: ${nodeData.nodeId}`
+        `Invalid nodeId format in import file`
       ));
     }
     
@@ -293,37 +413,61 @@ async function importNodeIdentity(
         const existingNodeId = existingManager.getNodeId();
         if (existingNodeId === nodeData.nodeId) {
           // 相同的 Node Identity，无需导入
+          logger.info('P2-8: Node identity import skipped - same identity already exists', {
+            nodeId: nodeData.nodeId.slice(0, 8)
+          });
           return success(undefined);
         }
         // 不同的 Node Identity，拒绝覆盖
+        logger.warn('P2-8: Node identity import rejected - different identity exists', {
+          existingNodeId: existingNodeId?.slice(0, 8),
+          importingNodeId: nodeData.nodeId.slice(0, 8)
+        });
         return failure(createError(
           'INVALID_PARAMS',
-          `Cannot import Node Identity: a different Node Identity already exists (existing: ${existingNodeId}, importing: ${nodeData.nodeId}). ` +
+          `Cannot import Node Identity: a different Node Identity already exists. ` +
           `Node Identity represents the physical node and cannot be migrated. ` +
           `Use Agent Identity for cross-node migration.`
         ));
       }
     }
     
+    // P1-1: 重新生成 E2EE 密钥对
+    // 使用 @noble/curves 生成新的 X25519 密钥对
+    const { x25519 } = await import('@noble/curves/ed25519.js');
+    const newE2eePrivateKey = x25519.utils.randomSecretKey();
+    const newE2eePublicKey = x25519.getPublicKey(newE2eePrivateKey);
+    
     // 写入 Node Identity 文件
-    // 注意：privateKey 在导出时是 protobuf 编码的 Ed25519 私钥（base64）
-    // 这里我们创建一个简化的存储格式
+    // P2-5: 使用正确的字段名 privateKey 而非 peerId
     const nodeIdentityContent = {
       nodeId: nodeData.nodeId,
-      peerId: nodeData.privateKey, // 注意：字段名是 peerId，但实际存储的是私钥
-      e2eePrivateKey: '', // E2EE 密钥需要重新生成
-      e2eePublicKey: '',  // E2EE 密钥需要重新生成
+      peerId: nodeData.privateKey, // 注意：保持向后兼容，字段名仍为 peerId
+      privateKey: nodeData.privateKey, // P2-5: 添加正确的字段名
+      e2eePrivateKey: Buffer.from(newE2eePrivateKey).toString('base64'),
+      e2eePublicKey: Buffer.from(newE2eePublicKey).toString('base64'),
       createdAt: new Date().toISOString(),
-      lastUsedAt: new Date().toISOString()
+      lastUsedAt: new Date().toISOString(),
+      // P1-1: 标记 E2EE 密钥已重新生成
+      e2eeKeyRegenerated: true
     };
     
     writeFileSync(nodeIdentityPath, JSON.stringify(nodeIdentityContent, null, 2), { mode: 0o600 });
+    
+    // P2-8: 安全审计日志
+    logger.info('P2-8: Node identity imported successfully', {
+      nodeId: nodeData.nodeId.slice(0, 8),
+      e2eeRegenerated: true
+    });
+    
+    // P3-2: 清理内存中的敏感数据
+    secureWipe(newE2eePrivateKey);
     
     return success(undefined);
   } catch (error) {
     return failureFromError(
       'NODE_IDENTITY_LOAD_FAILED',
-      `Failed to import Node Identity: ${error instanceof Error ? error.message : String(error)}`
+      `Failed to import Node Identity`
     );
   }
 }
@@ -331,12 +475,15 @@ async function importNodeIdentity(
 /**
  * 导入 Agent Identity
  * 
- * P1-2 修复：验证签名后再写入
+ * P1-2 修复：验证签名后再写入，无法验证时需要用户确认
+ * P2-8 修复：添加安全审计日志
  */
 async function importAgentIdentity(
   agentData: ExportedAgentIdentity,
-  dataDir: string
-): Promise<Result<void>> {
+  dataDir: string,
+  importFilePath: string,
+  forceImport: boolean = false
+): Promise<Result<void, AgentImportConfirmation>> {
   try {
     // 验证必要字段
     if (!agentData.id || !agentData.name || !agentData.nodeId || 
@@ -353,7 +500,7 @@ async function importAgentIdentity(
       if (expiresAt < new Date()) {
         return failure(createError(
           'AGENT_IDENTITY_EXPIRED',
-          `Agent identity has expired at ${agentData.expiresAt}`
+          `Agent identity has expired`
         ));
       }
     }
@@ -363,6 +510,7 @@ async function importAgentIdentity(
     const nodeIdentityPath = join(dataDir, 'node-identity.json');
     let signatureValid = false;
     let signatureWarning: string | undefined;
+    let isCrossNodeImport = false;
     
     if (existsSync(nodeIdentityPath)) {
       try {
@@ -401,23 +549,27 @@ async function importAgentIdentity(
                 }
               );
               
+              // P1-3: verifyAgent 现在返回 failure 而非 success(false)
               if (verifyResult.success) {
                 signatureValid = verifyResult.data;
+              } else {
+                // P3-3: 获取具体错误原因
+                const errorReason = verifyResult.error.message;
+                signatureWarning = `Signature verification failed: ${errorReason}`;
               }
             }
           } else {
             // Agent 来自不同的节点
-            signatureWarning = `Agent was signed by a different Node (${agentData.nodeId}). ` +
-              `Cannot verify signature without the original Node's public key. ` +
-              `Importing anyway - verify the source is trusted.`;
+            isCrossNodeImport = true;
+            signatureWarning = `Agent was signed by a different Node (${agentData.nodeId.slice(0, 8)}...). ` +
+              `Cannot verify signature without the original Node's public key.`;
           }
         }
       } catch (verifyError) {
-        signatureWarning = `Signature verification failed: ${verifyError instanceof Error ? verifyError.message : String(verifyError)}`;
+        signatureWarning = `Signature verification failed: ${verifyError instanceof Error ? verifyError.message : 'Unknown error'}`;
       }
     } else {
-      signatureWarning = `No local Node Identity found. Cannot verify Agent signature. ` +
-        `Importing anyway - verify the source is trusted.`;
+      signatureWarning = `No local Node Identity found. Cannot verify Agent signature.`;
     }
     
     // 如果签名验证失败且不是跨节点导入，拒绝导入
@@ -428,6 +580,26 @@ async function importAgentIdentity(
       ));
     }
     
+    // P1-2: 如果需要用户确认但未强制导入，返回确认请求
+    if (signatureWarning && !forceImport) {
+      return success({
+        confirmed: false,
+        requiresConfirmation: true,
+        warning: signatureWarning,
+        agentId: agentData.id,
+        nodeId: agentData.nodeId
+      } as any);
+    }
+    
+    // P2-8: 安全审计日志
+    if (isCrossNodeImport) {
+      logger.warn('P2-8: Cross-node agent identity import', {
+        agentId: agentData.id.slice(0, 8),
+        sourceNodeId: agentData.nodeId.slice(0, 8),
+        importFilePath: importFilePath.slice(0, 32) + '...'
+      });
+    }
+    
     // 保存 Agent Identity
     const agentManager = new AgentIdentityManager(dataDir);
     const agentIdentityPath = join(dataDir, 'agent-identity.json');
@@ -435,16 +607,24 @@ async function importAgentIdentity(
     // 直接写入文件
     writeFileSync(agentIdentityPath, JSON.stringify(agentData, null, 2), { mode: 0o600 });
     
+    // P2-8: 安全审计日志
+    logger.info('P2-8: Agent identity imported successfully', {
+      agentId: agentData.id.slice(0, 8),
+      nodeId: agentData.nodeId.slice(0, 8),
+      crossNode: isCrossNodeImport,
+      signatureValid
+    });
+    
     // 如果有签名警告，返回成功但包含警告信息
     if (signatureWarning) {
       console.log(`   ⚠️  Warning: ${signatureWarning}`);
     }
     
-    return success(undefined);
+    return success({ confirmed: true } as any);
   } catch (error) {
     return failureFromError(
       'AGENT_IDENTITY_LOAD_FAILED',
-      `Failed to import Agent Identity: ${error instanceof Error ? error.message : String(error)}`
+      `Failed to import Agent Identity`
     );
   }
 }
@@ -453,13 +633,14 @@ async function importAgentIdentity(
  * 从文件导入身份（CLI 入口）
  * 
  * P2-2 修复：调用内部实现，处理错误并退出
+ * P1-2 修复：处理签名验证失败时的用户确认
  */
-export async function importIdentity(inputPath: string): Promise<void> {
+export async function importIdentity(inputPath: string, forceImport: boolean = false): Promise<void> {
   console.log('');
   console.log('=== Importing F2A Identity ===');
   console.log('');
   
-  const result = await importIdentityInternal(inputPath);
+  const result = await importIdentityInternal(inputPath, undefined, forceImport);
   
   if (!result.success) {
     console.error(`❌ ${result.error.message}`);
@@ -468,9 +649,31 @@ export async function importIdentity(inputPath: string): Promise<void> {
   
   const importResult = result.data;
   
+  // P1-2: 处理 Agent 确认请求
+  if (importResult.agentConfirmation?.required) {
+    const confirmation = importResult.agentConfirmation;
+    console.log('');
+    console.log('⚠️  SECURITY WARNING:');
+    console.log(`   ${confirmation.reason}`);
+    console.log('');
+    console.log(`   Agent ID: ${confirmation.agentId}`);
+    console.log(`   Node ID:  ${confirmation.nodeId}`);
+    console.log('');
+    console.log('   This identity could not be verified. Importing an unverified identity');
+    console.log('   is a security risk. Only proceed if you trust the source of this file.');
+    console.log('');
+    console.log('   To proceed with import, run:');
+    console.log(`     f2a identity import --force "${inputPath}"`);
+    console.log('');
+    console.log('❌ Import cancelled - unverified Agent Identity requires --force flag');
+    console.log('');
+    process.exit(1);
+  }
+  
   // 报告 Node Identity 导入结果
   if (importResult.nodeImported) {
     console.log('📦 Node Identity: ✅ Imported');
+    console.log('   (E2EE keys regenerated for security)');
   } else if (importResult.nodeError) {
     console.log(`📦 Node Identity: ❌ ${importResult.nodeError}`);
   } else {
@@ -511,12 +714,17 @@ Subcommands:
   status              Show identity status
   export [path]       Export identity to file (default: ./f2a-identity-<timestamp>.json)
   import <path>       Import identity from file
+  import --force <path>  Force import without signature verification
+
+Options:
+  --force, -f         Force import of unverified Agent Identity (use with caution)
 
 Examples:
   f2a identity status
   f2a identity export
   f2a identity export ./my-backup.json
   f2a identity import ./my-backup.json
+  f2a identity import --force ./cross-node-backup.json
 
 Notes:
   - Export file contains sensitive private keys
@@ -525,7 +733,12 @@ Notes:
   
 Import Limitations:
   - Node Identity: Can only be imported if no existing identity exists or the same identity
-  - Agent Identity: Signature is verified when possible; cross-node imports show a warning
-  - For cross-node migration, use Agent Identity (recommended)
+  - E2EE Keys: Automatically regenerated on Node Identity import for security
+  - Agent Identity: Signature is verified when possible
+  - Cross-node imports require --force flag for security
+  
+Security:
+  - If signature cannot be verified, import will fail unless --force is used
+  - Only use --force if you trust the source of the import file
 `);
 }

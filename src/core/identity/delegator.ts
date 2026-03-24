@@ -125,6 +125,9 @@ export class IdentityDelegator {
   /**
    * 验证 Agent Identity 的签名
    * 
+   * P1-3 修复: 验证失败时返回 failure(error) 而非 success(false)
+   * P3-3 修复: 返回具体验证失败原因
+   * 
    * @param agentIdentity 要验证的 Agent Identity
    * @param getNodePublicKey 获取 Node 公钥的函数
    */
@@ -141,7 +144,12 @@ export class IdentityDelegator {
             agentId: agentIdentity.id,
             expiresAt: agentIdentity.expiresAt
           });
-          return success(false);
+          // P1-3: 返回 failure 而非 success(false)
+          // P3-3: 返回具体错误原因
+          return failure({
+            code: 'AGENT_IDENTITY_EXPIRED',
+            message: `Agent identity has expired at ${agentIdentity.expiresAt}`
+          });
         }
       }
 
@@ -151,7 +159,12 @@ export class IdentityDelegator {
         this.logger.warn('Node public key not found', {
           nodeId: agentIdentity.nodeId
         });
-        return success(false);
+        // P1-3: 返回 failure 而非 success(false)
+        // P3-3: 返回具体错误原因
+        return failure({
+          code: 'NODE_PUBLIC_KEY_NOT_FOUND',
+          message: `Node public key not found for nodeId: ${agentIdentity.nodeId}`
+        });
       }
 
       // 重建签名载荷
@@ -179,7 +192,16 @@ export class IdentityDelegator {
         signatureBytes
       );
 
-      return success(isValid);
+      if (!isValid) {
+        // P1-3: 返回 failure 而非 success(false)
+        // P3-3: 返回具体错误原因
+        return failure({
+          code: 'AGENT_SIGNATURE_INVALID',
+          message: 'Agent signature verification failed - signature does not match'
+        });
+      }
+
+      return success(true);
     } catch (error) {
       // P3-3 修复: 记录错误详情后再返回
       this.logger.error('Failed to verify agent signature', {
@@ -187,7 +209,12 @@ export class IdentityDelegator {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined
       });
-      return success(false);
+      // P1-3: 返回 failure 而非 success(false)
+      // P3-3: 返回具体错误原因
+      return failure({
+        code: 'AGENT_SIGNATURE_VERIFY_ERROR',
+        message: `Failed to verify agent signature: ${error instanceof Error ? error.message : String(error)}`
+      });
     }
   }
 

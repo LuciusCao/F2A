@@ -19,6 +19,7 @@ import { dcutr } from '@libp2p/dcutr';
 import { peerIdFromString } from '@libp2p/peer-id';
 import type { PeerId } from '@libp2p/interface';
 import type { PrivateKey } from '@libp2p/interface';
+import type { Transport } from '@libp2p/interface';
 import type { Libp2pInit } from 'libp2p';
 import { multiaddr } from '@multiformats/multiaddr';
 import type { Multiaddr } from '@multiformats/multiaddr';
@@ -295,7 +296,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       }
 
       // 构建传输层
-      const transports = [tcp()];
+      const transports: Transport[] = [tcp()];
       
       // Phase 2: Circuit Relay Transport（允许通过 Relay 连接）
       if (this.config.enableNATTraversal) {
@@ -1905,7 +1906,6 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
     // 验证地址格式
     try {
-      const { multiaddr } = await import('@multiformats/multiaddr');
       multiaddr(relayAddress); // 验证格式，无效则抛出异常
     } catch (error) {
       this.logger.error('Invalid relay address format', { relayAddress, error });

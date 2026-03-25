@@ -61,6 +61,8 @@ export interface P2PNetworkConfig {
   enableNATTraversal?: boolean;
   /** Phase 2: 是否启用 Relay 服务端模式（允许其他节点通过本节点中继） */
   enableRelayServer?: boolean;
+  /** 消息处理 URL - 收到自由消息时调用此 URL */
+  messageHandlerUrl?: string;
 }
 
 // ============================================================================
@@ -133,6 +135,8 @@ export interface F2AOptions {
   logLevel?: LogLevel;
   /** 数据目录 */
   dataDir?: string;
+  /** 消息处理 URL - 收到自由消息时调用此 URL */
+  messageHandlerUrl?: string;
 }
 
 // ============================================================================

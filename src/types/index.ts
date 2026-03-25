@@ -245,6 +245,7 @@ export interface F2AEvents {
   'network:started': (event: NetworkStartedEvent) => void;
   'network:stopped': () => void;
   'error': (error: Error) => void;
+  'message': (event: { from: string; content: string; metadata?: Record<string, unknown>; messageId: string }) => void;
 }
 
 export type F2AEventEmitter = EventEmitter<F2AEvents>;

@@ -63,6 +63,10 @@ export interface WebhookHandler {
     status: 'available' | 'busy' | 'offline';
     load?: number;
   }>;
+  
+  onMessage?(payload: { from: string; content: string; metadata?: Record<string, unknown>; messageId: string }): Promise<{
+    response?: string;
+  }>;
 }
 
 export class WebhookServer {

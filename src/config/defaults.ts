@@ -30,6 +30,7 @@ export const DEFAULT_P2P_NETWORK_CONFIG: Required<P2PNetworkConfig> = {
   dhtServerMode: false,
   enableNATTraversal: false, // Phase 2: 默认禁用，需要用户显式启用
   enableRelayServer: false,  // Phase 2: 默认不提供 Relay 服务
+  messageHandlerUrl: '',     // 默认不配置消息处理 URL
 };
 
 // ============================================================================
@@ -84,6 +85,7 @@ export const DEFAULT_F2A_OPTIONS: Required<Omit<F2AOptions, 'network' | 'securit
   security: DEFAULT_SECURITY_CONFIG,
   logLevel: DEFAULT_LOG_LEVEL,
   dataDir: '.f2a',
+  messageHandlerUrl: '',
 };
 
 // ============================================================================

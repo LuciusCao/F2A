@@ -13,6 +13,7 @@ import { tcp } from '@libp2p/tcp';
 import { noise } from '@chainsafe/libp2p-noise';
 import { kadDHT } from '@libp2p/kad-dht';
 import { mdns } from '@libp2p/mdns';
+import { yamux } from '@chainsafe/libp2p-yamux';
 import { autoNAT } from '@libp2p/autonat';
 import { circuitRelayTransport, circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { dcutr } from '@libp2p/dcutr';
@@ -273,9 +274,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       services.identify = identify();
       
       // Ping 服务 - ConnectionMonitor 需要此服务进行心跳检测
-      // 注意：@libp2p/ping@3.x 与 libp2p@1.x 存在版本兼容性问题
-      // 当前已禁用 ConnectionMonitor，待升级到 libp2p@2.x+ 后可重新启用
-      // services.ping = ping();
+      // libp2p v2.x 已兼容 @libp2p/ping@3.x
+      services.ping = ping();
       
       // 只有显式启用 DHT 时才添加
       if (this.config.enableDHT === true) {
@@ -325,6 +325,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         },
         transports,
         connectionEncrypters: [noise()] as any,
+        streamMuxers: [yamux()] as any,
         // Identify 服务必需的 nodeInfo 配置
         nodeInfo: {
           name: 'F2A',

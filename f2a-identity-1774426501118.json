@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+  "exportedAt": "2026-03-25T08:15:01.112Z",
+  "node": {
+    "nodeId": "12D3KooWGovjTGt1",
+    "peerId": "12D3KooWGovjTGt1ecwtxxE7zxfzhUM4J71jSaBaojgHzhoQpgjT",
+    "privateKey": "CAESQH1caiU0u5gSdHr/7EmHX7vuIrm7swoENFWN+fAhIIRjZ+UMQE1jDmoePNtB2FqpZWCXk4iHijp4dFOjVBiL5SI="
+  },
+  "agent": {
+    "id": "3f1bbad4-1689-4f61-95fa-18b6065610e6",
+    "name": "my-agent",
+    "capabilities": [],
+    "nodeId": "12D3KooWGovjTGt1",
+    "publicKey": "4spProl+lmhfQ6Lk/TA80u9fKDxuzZnGVAL3Fm0Lsq4=",
+    "signature": "H/R35wGlNZVllBHzuCW+FrTYQDSc4lyd8griERxDJaKuQ8mdrJMFvvY9v35FYb5NqVsX2otxBlRTWQDJOvU9BQ==",
+    "createdAt": "2026-03-25T08:12:09.800Z",
+    "privateKey": "1hoPNvpqe87UQjdbmnpgJ31zWDnovskuIVCcQbapuKTiyk+uiX6WaF9DouT9MDzS718oPG7NmcZUAvcWbQuyrg=="
+  }
+}

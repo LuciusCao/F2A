@@ -7,8 +7,8 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { IdentityManager } from './identity-manager.js';
-import { unmarshalPrivateKey } from '@libp2p/crypto/keys';
-import { createFromPrivKey } from '@libp2p/peer-id-factory';
+import { privateKeyFromProtobuf } from '@libp2p/crypto/keys';
+import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 
 describe('IdentityManager', () => {
   let tempDir: string;
@@ -261,10 +261,10 @@ describe('IdentityManager', () => {
       
       // 验证可以反序列化私钥
       const privateKeyBytes = Buffer.from(exported.privateKey, 'base64');
-      const privateKey = await unmarshalPrivateKey(privateKeyBytes);
-      
+      const privateKey = await privateKeyFromProtobuf(privateKeyBytes);
+
       // 验证可以从私钥创建 PeerId
-      const peerId = await createFromPrivKey(privateKey);
+      const peerId = peerIdFromPrivateKey(privateKey);
       expect(peerId.toString()).toBe(exported.peerId);
     });
   });

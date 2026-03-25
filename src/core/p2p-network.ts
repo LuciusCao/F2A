@@ -324,19 +324,14 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           listen: listenAddresses
         },
         transports,
-        connectionEncryption: [noise()],
+        connectionEncrypters: [noise()] as any,
         // Identify 服务必需的 nodeInfo 配置
-        // userAgent 是 @libp2p/identify 需要的字段，但类型定义中缺失
         nodeInfo: {
           name: 'F2A',
           version: this.agentInfo.version || '0.3.2',
           userAgent: `F2A/${this.agentInfo.version || '0.3.2'}`
         } as any,
-        // 临时禁用 ConnectionMonitor，因为 @libp2p/ping@3.x 与 libp2p@1.x 不兼容
-        // TODO: 升级到 libp2p@2.x+ 后重新启用
-        connectionMonitor: {
-          enabled: false
-        },
+        // libp2p v2.x 已兼容 @libp2p/ping@2.x，可以启用 ConnectionMonitor
         services
       };
 
@@ -356,10 +351,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       // 如果提供了 IdentityManager，使用持久化的私钥
       if (this.identityManager?.isLoaded()) {
         const privateKey = this.identityManager.getPrivateKey();
-        const peerId = this.identityManager.getPeerId();
-        if (privateKey && peerId) {
-          libp2pOptions.privateKey = privateKey;
-          libp2pOptions.peerId = peerId;
+        if (privateKey) {
+          libp2pOptions.privateKey = privateKey as any;
           this.logger.info('Using persisted identity', {
             peerId: this.identityManager.getPeerIdString()?.slice(0, 16)
           });

@@ -8,8 +8,8 @@
  * - 支持 Agent 迁移（重新签名）
  */
 
-import { Ed25519PrivateKey } from '@libp2p/crypto/keys';
-import { unmarshalPrivateKey } from '@libp2p/crypto/keys';
+import { generateKeyPair, privateKeyFromProtobuf } from '@libp2p/crypto/keys';
+import type { PrivateKey } from '@libp2p/interface';
 import { Logger } from '../../utils/logger.js';
 import { success, failure, failureFromError, Result } from '../../types/index.js';
 import { secureWipe } from '../../utils/crypto-utils.js';

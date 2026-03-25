@@ -536,7 +536,7 @@ async function importAgentIdentity(
             // 获取 Node 公钥用于验证
             const privateKey = nodeManager.getPrivateKey();
             if (privateKey) {
-              const nodePublicKey = privateKey.public.marshal();
+              const nodePublicKey = privateKey.publicKey.raw;
               
               const verifyResult = await delegator.verifyAgent(
                 {

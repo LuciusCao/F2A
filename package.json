@@ -54,6 +54,7 @@
     "@libp2p/circuit-relay-v2": "^4.1.6",
     "@libp2p/crypto": "^4.0.0",
     "@libp2p/dcutr": "^3.0.13",
+    "@libp2p/identify": "^4.0.13",
     "@libp2p/interface": "^1.0.0",
     "@libp2p/kad-dht": "^16.1.4",
     "@libp2p/mdns": "^12.0.13",

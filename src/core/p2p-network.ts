@@ -16,6 +16,7 @@ import { mdns } from '@libp2p/mdns';
 import { autoNAT } from '@libp2p/autonat';
 import { circuitRelayTransport, circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { dcutr } from '@libp2p/dcutr';
+import { identify } from '@libp2p/identify';
 import { peerIdFromString } from '@libp2p/peer-id';
 import type { PeerId } from '@libp2p/interface';
 import type { PrivateKey } from '@libp2p/interface';
@@ -266,6 +267,10 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       // 创建 libp2p 节点 - 启用 noise 加密和 NAT 穿透
       const services: Record<string, any> = {};
       
+      // Identify 服务 - libp2p 核心协议，用于协议协商和地址交换
+      // 必须添加，否则连接无法正常建立
+      services.identify = identify();
+      
       // 只有显式启用 DHT 时才添加
       if (this.config.enableDHT === true) {
         services.dht = kadDHT({
@@ -314,6 +319,13 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         },
         transports,
         connectionEncryption: [noise()],
+        // Identify 服务必需的 nodeInfo 配置
+        // userAgent 是 @libp2p/identify 需要的字段，但类型定义中缺失
+        nodeInfo: {
+          name: 'F2A',
+          version: this.agentInfo.version || '0.3.2',
+          userAgent: `F2A/${this.agentInfo.version || '0.3.2'}`
+        } as any,
         services
       };
 

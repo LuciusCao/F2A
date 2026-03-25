@@ -241,8 +241,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         // 从 multiaddr 提取 peer ID
         try {
           const ma = multiaddr(addr);
-          const peerId = ma.getPeerId();
-          if (peerId) this.trustedPeers.add(peerId);
+          const components = ma.getComponents();
+          const p2pComponent = components.find(c => c.name === 'p2p');
+          if (p2pComponent?.value) this.trustedPeers.add(p2pComponent.value);
         } catch { /* ignore invalid addresses */ }
       });
     }
@@ -770,9 +771,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         data = Buffer.from(JSON.stringify(message));
       }
 
-      // 使用协议流发送消息
+      // 使用协议流发送消息 (libp2p v3 Stream API)
       const stream = await peer.newStream(F2A_PROTOCOL);
-      await stream.sink([data]);
+      stream.send(data);
       await stream.close();
 
       return success(undefined);
@@ -943,14 +944,13 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     this.node.addEventListener('peer:connect', this.boundEventHandlers.peerConnect);
     this.node.addEventListener('peer:disconnect', this.boundEventHandlers.peerDisconnect);
 
-    // 处理传入的协议流
-    this.node.handle(F2A_PROTOCOL, async ({ stream, connection }) => {
+    // 处理传入的协议流 (libp2p v3 Stream API)
+    this.node.handle(F2A_PROTOCOL, async (stream, connection) => {
       try {
-        // 读取数据
+        // 读取数据 - 使用异步迭代器
         const chunks: Uint8Array[] = [];
-        for await (const chunk of stream.source) {
-          // chunk 可能是 Uint8Array 或 Uint8ArrayList（来自旧版本库）
-          // 统一转换为 Uint8Array
+        for await (const chunk of stream) {
+          // chunk 可能是 Uint8Array 或 Uint8ArrayList
           const data = chunk instanceof Uint8Array 
             ? chunk 
             : new Uint8Array((chunk as { subarray(): Uint8Array }).subarray());

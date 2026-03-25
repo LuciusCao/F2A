@@ -8,7 +8,7 @@
  * - 支持 Agent 迁移（重新签名）
  */
 
-import { generateKeyPair, privateKeyFromProtobuf } from '@libp2p/crypto/keys';
+import { privateKeyFromProtobuf } from '@libp2p/crypto/keys';
 import type { PrivateKey } from '@libp2p/interface';
 import { Logger } from '../../utils/logger.js';
 import { success, failure, failureFromError, Result } from '../../types/index.js';

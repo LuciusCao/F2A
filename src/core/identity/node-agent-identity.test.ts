@@ -518,8 +518,8 @@ describe('IdentityDelegator', () => {
           // 从私钥获取公钥
           const privateKey = nodeManager.getPrivateKey();
           if (privateKey) {
-            // Ed25519 私钥的 public 属性返回 Ed25519PublicKey
-            return privateKey.public.marshal();
+            // Ed25519 私钥的 publicKey 属性返回 Ed25519PublicKey
+            return privateKey.publicKey.raw;
           }
         }
         return null;
@@ -548,7 +548,7 @@ describe('IdentityDelegator', () => {
 
       const getNodePublicKey = async (): Promise<Uint8Array | null> => {
         const peerId = nodeManager.getPeerId();
-        return peerId?.publicKey ? peerId.publicKey.bytes : null;
+        return peerId?.publicKey ? peerId.publicKey.raw : null;
       };
 
       const verifyResult = await delegator.verifyAgent(agentIdentity, getNodePublicKey);
@@ -691,9 +691,9 @@ describe('migrateAgent', () => {
 
   // 辅助函数：从 base64 私钥恢复 Ed25519 私钥对象
   const restorePrivateKey = async (privateKeyBase64: string) => {
-    const { unmarshalPrivateKey } = await import('@libp2p/crypto/keys');
+    const { privateKeyFromRaw } = await import('@libp2p/crypto/keys');
     const privateKeyBytes = Buffer.from(privateKeyBase64, 'base64');
-    return unmarshalPrivateKey(privateKeyBytes);
+    return privateKeyFromRaw(privateKeyBytes);
   };
 
   it('should reject migration with invalid ownership proof', async () => {
@@ -1127,7 +1127,7 @@ describe('batchVerify and revokeAgent', () => {
     const getNodePublicKey = async (nodeId: string) => {
       if (nodeId === nodeManager.getNodeId()) {
         const peerId = nodeManager.getPeerId();
-        return peerId?.publicKey ? peerId.publicKey.bytes : null;
+        return peerId?.publicKey ? peerId.publicKey.raw : null;
       }
       return null;
     };
@@ -1160,7 +1160,7 @@ describe('batchVerify and revokeAgent', () => {
     const getNodePublicKey = async (nodeId: string) => {
       if (nodeId === nodeManager.getNodeId()) {
         const peerId = nodeManager.getPeerId();
-        return peerId?.publicKey ? peerId.publicKey.bytes : null;
+        return peerId?.publicKey ? peerId.publicKey.raw : null;
       }
       return null; // 未知 Node 返回 null
     };

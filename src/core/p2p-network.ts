@@ -17,6 +17,7 @@ import { autoNAT } from '@libp2p/autonat';
 import { circuitRelayTransport, circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { dcutr } from '@libp2p/dcutr';
 import { identify } from '@libp2p/identify';
+import { ping } from '@libp2p/ping';
 import { peerIdFromString } from '@libp2p/peer-id';
 import type { PeerId } from '@libp2p/interface';
 import type { PrivateKey } from '@libp2p/interface';
@@ -271,6 +272,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       // 必须添加，否则连接无法正常建立
       services.identify = identify();
       
+      // Ping 服务 - ConnectionMonitor 需要此服务进行心跳检测
+      // 注意：@libp2p/ping@3.x 与 libp2p@1.x 存在版本兼容性问题
+      // 当前已禁用 ConnectionMonitor，待升级到 libp2p@2.x+ 后可重新启用
+      // services.ping = ping();
+      
       // 只有显式启用 DHT 时才添加
       if (this.config.enableDHT === true) {
         services.dht = kadDHT({
@@ -326,6 +332,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           version: this.agentInfo.version || '0.3.2',
           userAgent: `F2A/${this.agentInfo.version || '0.3.2'}`
         } as any,
+        // 临时禁用 ConnectionMonitor，因为 @libp2p/ping@3.x 与 libp2p@1.x 不兼容
+        // TODO: 升级到 libp2p@2.x+ 后重新启用
+        connectionMonitor: {
+          enabled: false
+        },
         services
       };
 
@@ -410,7 +421,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       }
 
       // Phase 2: 初始化 NAT 穿透管理器
-      if (this.config.enableNATTraversal) {
+      if (this.config.enableNATTraversal && this.node) {
         this.natTraversalManager = new NATTraversalManager(this.node);
         await this.natTraversalManager.initialize();
         this.logger.info('NAT traversal manager initialized');

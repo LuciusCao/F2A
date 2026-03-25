@@ -490,14 +490,14 @@ export class ControlServer {
         return;
       }
 
-      this.logger.info('Sending message', { 
+      this.logger.debug('Sending message', { 
         peerId: command.peerId.slice(0, 16), 
         contentLength: command.content.length 
       });
 
       const result = await this.f2a.sendMessage(command.peerId, command.content, command.metadata);
       
-      this.logger.info('Message send result', { 
+      this.logger.debug('Message send result', { 
         success: result.success, 
         error: result.success ? undefined : result.error 
       });

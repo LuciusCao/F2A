@@ -655,7 +655,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     content: string,
     metadata?: Record<string, unknown>
   ): Promise<Result<void>> {
-    this.logger.info('sendFreeMessage called', {
+    this.logger.debug('sendFreeMessage called', {
       peerId: peerId.slice(0, 16),
       contentLength: content.length
     });
@@ -675,7 +675,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     // 发送消息（启用 E2EE 加密）
     const result = await this.sendMessage(peerId, message, true);
     
-    this.logger.info('sendFreeMessage result', {
+    this.logger.debug('sendFreeMessage result', {
       success: result.success,
       error: result.success ? undefined : result.error
     });

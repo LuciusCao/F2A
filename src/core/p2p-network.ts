@@ -44,6 +44,7 @@ import {
   DiscoverPayload,
   CapabilityQueryPayload,
   CapabilityResponsePayload,
+  MessagePayload,
   success,
   failureFromError,
   createError
@@ -646,6 +647,31 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   }
 
   /**
+   * 发送自由消息给特定 Peer
+   * Agent 之间的自然语言通信，无需预定义协议
+   */
+  async sendFreeMessage(
+    peerId: string,
+    content: string,
+    metadata?: Record<string, unknown>
+  ): Promise<Result<void>> {
+    const message: F2AMessage = {
+      id: randomUUID(),
+      type: 'MESSAGE',
+      from: this.agentInfo.peerId,
+      to: peerId,
+      timestamp: Date.now(),
+      payload: {
+        content,
+        metadata
+      }
+    };
+
+    // 发送消息（启用 E2EE 加密）
+    return this.sendMessage(peerId, message, true);
+  }
+
+  /**
    * 发送任务响应
    */
   async sendTaskResponse(
@@ -1207,6 +1233,13 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       case 'DECRYPT_FAILED':
         await this.handleDecryptFailedMessage(message, peerId);
         break;
+
+      case 'MESSAGE':
+        await this.handleFreeMessage(message, peerId);
+        break;
+
+      // TASK_REQUEST 不在这里处理，由 F2A 通过 'message:received' 事件处理
+      // 这样允许 F2A 访问其自己的 registeredCapabilities
     }
   }
 
@@ -1296,6 +1329,20 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     
     // 发出事件通知上层应用
     this.emit('error', new Error(`Decrypt failed for message ${originalMessageId}: ${errorMsg}`));
+  }
+
+  /**
+   * 处理自由消息（Agent 之间的自然语言通信）
+   */
+  private async handleFreeMessage(message: F2AMessage, peerId: string): Promise<void> {
+    const payload = message.payload as MessagePayload;
+    this.logger.info('Received free message', {
+      fromPeerId: peerId.slice(0, 16),
+      contentLength: payload.content?.length || 0
+    });
+
+    // 发出事件供上层处理
+    this.emit('message:received', message, peerId);
   }
 
   /**

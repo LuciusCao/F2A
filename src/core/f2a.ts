@@ -603,6 +603,18 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   }
 
   /**
+   * 发送自由消息给特定 Peer
+   * Agent 之间的自然语言通信
+   */
+  async sendMessage(
+    peerId: string,
+    content: string,
+    metadata?: Record<string, unknown>
+  ): Promise<Result<void>> {
+    return this.p2pNetwork.sendFreeMessage(peerId, content, metadata);
+  }
+
+  /**
    * 注册中间件
    */
   useMiddleware(middleware: Middleware): void {

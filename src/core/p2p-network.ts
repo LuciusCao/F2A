@@ -271,6 +271,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         services.dht = kadDHT({
           clientMode: !this.config.dhtServerMode, // 默认客户端模式
         });
+        this.logger.info('DHT service configured', {
+          serverMode: this.config.dhtServerMode || false
+        });
       }
 
       // Phase 2: NAT 穿透服务
@@ -1850,6 +1853,144 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    */
   isDHTEnabled(): boolean {
     return !!(this.node?.services as Libp2pServices)?.dht;
+  }
+
+  /**
+   * 通过 DHT 发现节点（全局发现）
+   * 
+   * DHT 提供两种发现模式：
+   * 1. 查找特定节点（需要知道 Peer ID）
+   * 2. 发现随机节点（构建路由表）
+   * 
+   * @param options 发现选项
+   * @returns 发现的节点地址列表
+   */
+  async discoverPeersViaDHT(options?: {
+    /** 查找特定 Peer ID（可选） */
+    peerId?: string;
+    /** 超时时间（毫秒，默认 10000） */
+    timeout?: number;
+  }): Promise<Result<string[]>> {
+    if (!this.node) {
+      return failureFromError('NETWORK_NOT_STARTED', 'P2P network not started');
+    }
+
+    const dht = (this.node.services as Libp2pServices).dht;
+    if (!dht) {
+      return failureFromError('DHT_NOT_AVAILABLE', 'DHT service not enabled');
+    }
+
+    const timeout = options?.timeout ?? 10000;
+
+    try {
+      const discoveredAddresses: string[] = [];
+
+      if (options?.peerId) {
+        // P1-1 修复：验证 peerId 格式
+        if (!options.peerId || typeof options.peerId !== 'string') {
+          return failureFromError('INVALID_PEER_ID', 'Invalid peer ID format');
+        }
+
+        // 查找特定节点
+        this.logger.info('Finding peer via DHT', { peerId: options.peerId.slice(0, 16) });
+
+        let peerIdObj: PeerId;
+        try {
+          peerIdObj = peerIdFromString(options.peerId);
+        } catch (error) {
+          const err = error instanceof Error ? error : new Error(String(error));
+          if (err.message?.includes('invalid')) {
+            return failureFromError('INVALID_PEER_ID', 'Invalid peer ID format', err);
+          }
+          throw error;
+        }
+
+        // P0-1 修复：使用 Promise.race 实现超时，并正确清理定时器
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('DHT lookup timeout')), timeout);
+        });
+
+        try {
+          const peerInfo = await Promise.race([
+            dht.findPeer(peerIdObj),
+            timeoutPromise
+          ]);
+
+          if (peerInfo && peerInfo.multiaddrs.length > 0) {
+            discoveredAddresses.push(...peerInfo.multiaddrs.map(ma => ma.toString()));
+          }
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
+        }
+      } else {
+        // 发现随机节点（通过路由表）
+        this.logger.info('Discovering peers via DHT routing table');
+        
+        // 获取路由表中的节点
+        const routingTableSize = dht.routingTable?.size || 0;
+        this.logger.info('DHT routing table size', { size: routingTableSize });
+
+        // libp2p DHT 会自动维护路由表
+        // 我们可以通过连接到已知的节点来触发更多发现
+        const knownPeers = this.getConnectedPeers();
+        this.logger.info('Known peers for DHT discovery', { count: knownPeers.length });
+        
+        // 返回当前已知的节点
+        for (const peer of knownPeers) {
+          if (peer.multiaddrs && Array.isArray(peer.multiaddrs)) {
+            // Multiaddr[] 转换为 string[]
+            discoveredAddresses.push(...peer.multiaddrs.map(ma => ma.toString()));
+          }
+        }
+      }
+
+      if (discoveredAddresses.length === 0) {
+        return failureFromError('PEER_NOT_FOUND', 'No peers discovered via DHT');
+      }
+
+      this.logger.info('DHT discovery complete', { 
+        count: discoveredAddresses.length 
+      });
+
+      return success(discoveredAddresses);
+    } catch (error) {
+      this.logger.error('DHT discovery failed', { error });
+      return failureFromError('DHT_LOOKUP_FAILED', 'DHT discovery failed', error as Error);
+    }
+  }
+
+  /**
+   * 向 DHT 注册自己（使其他节点能找到自己）
+   * 
+   * 注意：只有公网可达的节点才能作为 DHT 服务器
+   * NAT 后的节点只能作为客户端
+   */
+  async registerToDHT(): Promise<Result<void>> {
+    if (!this.node) {
+      return failureFromError('NETWORK_NOT_STARTED', 'P2P network not started');
+    }
+
+    const dht = (this.node.services as Libp2pServices).dht;
+    if (!dht) {
+      return failureFromError('DHT_NOT_AVAILABLE', 'DHT service not enabled');
+    }
+
+    try {
+      // DHT 会自动注册，这里主要是检查和日志
+      const peerId = this.node.peerId.toString();
+      const addresses = this.node.getMultiaddrs().map(ma => ma.toString());
+      
+      this.logger.info('DHT registration info', {
+        peerId: peerId.slice(0, 16),
+        addresses: addresses.length,
+        isServer: this.config.dhtServerMode
+      });
+
+      return success(undefined);
+    } catch (error) {
+      return failureFromError('INTERNAL_ERROR', 'DHT registration failed', error as Error);
+    }
   }
 
   /**

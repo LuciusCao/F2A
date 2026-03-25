@@ -490,10 +490,22 @@ export class ControlServer {
         return;
       }
 
+      this.logger.info('Sending message', { 
+        peerId: command.peerId.slice(0, 16), 
+        contentLength: command.content.length 
+      });
+
       const result = await this.f2a.sendMessage(command.peerId, command.content, command.metadata);
+      
+      this.logger.info('Message send result', { 
+        success: result.success, 
+        error: result.success ? undefined : result.error 
+      });
+
       res.writeHead(200);
       res.end(JSON.stringify(result));
     } catch (error) {
+      this.logger.error('Message send failed', { error: error instanceof Error ? error.message : String(error) });
       res.writeHead(500);
       res.end(JSON.stringify({
         success: false,

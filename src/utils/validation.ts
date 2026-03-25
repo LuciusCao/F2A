@@ -96,7 +96,14 @@ export const F2AMessageTypeSchema = z.enum([
   'TASK_DELEGATE',
   'DECRYPT_FAILED',
   'PING',
-  'PONG'
+  'PONG',
+  'SKILL_ANNOUNCE',
+  'SKILL_QUERY',
+  'SKILL_QUERY_RESPONSE',
+  'SKILL_INVOKE',
+  'SKILL_INVOKE_RESPONSE',
+  'SKILL_RESULT',
+  'MESSAGE'
 ]);
 
 export const F2AMessageSchema = z.object({

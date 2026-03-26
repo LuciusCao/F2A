@@ -45,5 +45,73 @@ export const DEFAULT_SECURITY_CONFIG: Required<Omit<SecurityConfig, 'rateLimit'>
 } = {
   level: 'medium' as SecurityLevel,
   requireConfirmation: true,
-  level: 'medium' as SecurityLevel,
-  requireConfirmation: true,
+  verifySignatures: true,
+  whitelist: [],
+  blacklist: [],
+  rateLimit: {
+    maxRequests: 100,
+    windowMs: 60000,
+    burstMultiplier: 1.5,
+    skipSuccessfulRequests: false,
+  },
+  maxTasksPerMinute: 60,
+};
+
+// ============================================================================
+// 日志默认配置
+// ============================================================================
+
+/**
+ * 默认日志级别
+ */
+export const DEFAULT_LOG_LEVEL: LogLevel = 'INFO';
+
+// ============================================================================
+// F2A 核心默认配置
+// ============================================================================
+
+/**
+ * 默认 F2A 选项
+ */
+export const DEFAULT_F2A_OPTIONS: Required<Omit<F2AOptions, 'network' | 'security'>> & {
+  network: Required<P2PNetworkConfig>;
+  security: Required<Omit<SecurityConfig, 'rateLimit'>> & {
+    rateLimit: Required<import('../utils/rate-limiter.js').RateLimitConfig>;
+  };
+} = {
+  displayName: 'F2A-Node',
+  agentType: 'openclaw',
+  network: DEFAULT_P2P_NETWORK_CONFIG,
+  security: DEFAULT_SECURITY_CONFIG,
+  logLevel: DEFAULT_LOG_LEVEL,
+  dataDir: '.f2a',
+  messageHandlerUrl: '',
+};
+
+// ============================================================================
+// 默认数据目录
+// ============================================================================
+
+/**
+ * 默认数据目录名
+ */
+export const DEFAULT_DATA_DIR = '.f2a';
+
+/**
+ * 身份文件名
+ */
+export const IDENTITY_FILE = 'identity.json';
+
+// ============================================================================
+// 速率限制默认配置
+// ============================================================================
+
+/**
+ * 默认速率限制配置
+ */
+export const DEFAULT_RATE_LIMIT_CONFIG: Required<import('../utils/rate-limiter.js').RateLimitConfig> = {
+  maxRequests: 100,
+  windowMs: 60000,
+  burstMultiplier: 1.5,
+  skipSuccessfulRequests: false,
+};

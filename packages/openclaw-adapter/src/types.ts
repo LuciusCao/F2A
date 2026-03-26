@@ -133,6 +133,7 @@ export interface F2ANodeConfig {
   p2pPort: number;
   enableMDNS: boolean;
   bootstrapPeers: string[];
+  dataDir?: string;
   /** 请求超时（毫秒），默认 30000 */
   timeoutMs?: number;
   /** 最大重试次数，默认 3 */

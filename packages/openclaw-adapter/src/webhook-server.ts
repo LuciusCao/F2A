@@ -190,6 +190,20 @@ export class WebhookServer {
           result = await this.handler.onStatus();
           break;
 
+        case 'message' as any:
+          // 处理 P2P 消息（Agent 对话）
+          if (this.handler.onMessage) {
+            result = await this.handler.onMessage(event.payload as { 
+              from: string; 
+              content: string; 
+              metadata?: Record<string, unknown>; 
+              messageId: string 
+            });
+          } else {
+            result = { response: 'Message handler not configured' };
+          }
+          break;
+
         default:
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: `Unknown event type: ${event.type}` }));

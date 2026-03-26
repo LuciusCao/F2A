@@ -1,8 +1,15 @@
 /**
  * F2A OpenClaw Connector Plugin
- * 主插件类 - 任务队列架构
+ * 主插件类 - 直接管理 F2A 实例
+ * 
+ * 架构说明：
+ * - Adapter 直接创建和管理 F2A 实例（不需要独立的 daemon 进程）
+ * - 收到 P2P 消息时，直接调用 OpenClaw Agent API 生成回复
+ * - 这种方式更简洁，避免了 HTTP + CLI 的复杂性
  */
 
+import { join } from 'path';
+import { homedir } from 'os';
 import type { 
   OpenClawPlugin, 
   OpenClawPluginApi,
@@ -28,7 +35,7 @@ import { WebhookPusher } from './webhook-pusher.js';
 import { taskGuard, TaskGuardContext } from './task-guard.js';
 import { ToolHandlers } from './tool-handlers.js';
 import { ClaimHandlers } from './claim-handlers.js';
-import { ReviewCommittee } from '@f2a/network';
+import { ReviewCommittee, F2A } from '@f2a/network';
 
 /** OpenClaw API Logger 类型 */
 interface ApiLogger {
@@ -61,6 +68,9 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   private _announcementQueue?: AnnouncementQueue;
   private _webhookPusher?: WebhookPusher;
   private _reviewCommittee?: ReviewCommittee;
+  
+  // F2A 实例（直接管理模式）
+  private _f2a?: F2A;
   
   // 处理器实例（延迟初始化）
   private _toolHandlers?: ToolHandlers;
@@ -223,7 +233,8 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       controlToken: this.config.controlToken || this.generateToken(),
       p2pPort: this.config.p2pPort || 9000,
       enableMDNS: this.config.enableMDNS ?? true,
-      bootstrapPeers: this.config.bootstrapPeers || []
+      bootstrapPeers: this.config.bootstrapPeers || [],
+      dataDir: this.config.dataDir
     };
 
     // 初始化 Webhook 推送器（如果配置了）
@@ -252,8 +263,10 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   }
 
   /**
-   * 启用适配器（启动 WebhookServer 和 F2A Node 连接）
-   * 这是在插件真正被使用时调用，而不是在构造函数中
+   * 启用适配器（直接创建 F2A 实例）
+   * 
+   * 新架构：Adapter 直接管理 F2A 实例，不需要独立的 daemon 进程。
+   * 这样消息处理可以直接调用 OpenClaw API，避免 HTTP + CLI 的复杂性。
    */
   async enable(): Promise<void> {
     if (this._initialized) {
@@ -261,13 +274,111 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       return;
     }
     
-    this._logger?.info('[F2A] 启用适配器...');
+    this._logger?.info('[F2A] 启用适配器（直接管理模式）...');
     this._initialized = true;
     
-    // 注册清理处理器（只在真正启用时才注册，避免阻止 CLI 进程退出）
+    // 注册清理处理器
     this.registerCleanupHandlers();
 
-    // 启动 Webhook 服务器（懒加载触发）
+    // 直接创建 F2A 实例（新架构）
+    try {
+      // 使用绝对路径，避免相对路径问题
+      // 默认使用 ~/.f2a 以复用已有的 identity
+      const dataDir = this.nodeConfig.dataDir 
+        ? (this.nodeConfig.dataDir.startsWith('/') || this.nodeConfig.dataDir.startsWith('~')
+            ? this.nodeConfig.dataDir 
+            : join(homedir(), this.nodeConfig.dataDir.replace(/^\.\/?/, '')))
+        : join(homedir(), '.f2a');
+      
+      // 文件日志确保不被丢失
+      const debugLog = (msg: string) => {
+        const fs = require('fs');
+        const logPath = join(homedir(), '.openclaw/logs/adapter-debug.log');
+        try {
+          fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`);
+        } catch {}
+        console.log(msg);
+        this._logger?.info(msg);
+      };
+      
+      debugLog(`[F2A] 使用数据目录: ${dataDir}`);
+      debugLog(`[F2A] nodeConfig.dataDir: ${this.nodeConfig.dataDir}`);
+      debugLog(`[F2A] config.dataDir: ${this.config.dataDir}`);
+      
+      this._f2a = await F2A.create({
+        displayName: this.config.agentName || 'OpenClaw Agent',
+        dataDir,
+        network: {
+          listenPort: this.config.p2pPort || 0,
+          bootstrapPeers: this.config.bootstrapPeers || [],
+          enableMDNS: this.config.enableMDNS ?? true,
+          enableDHT: false,
+        }
+      });
+      
+      // 监听 P2P 消息，调用 OpenClaw Agent 生成回复
+      (this._f2a as any).on('message', async (msg: { from: string; content: string; metadata?: Record<string, unknown>; messageId: string }) => {
+        this._logger?.info('[F2A] 收到 P2P 消息', { from: msg.from.slice(0, 16), content: msg.content.slice(0, 50) });
+        
+        try {
+          // 调用 OpenClaw Agent 生成回复
+          const reply = await this.invokeOpenClawAgent(msg.from, msg.content);
+          
+          // 发送回复
+          if (reply && this._f2a) {
+            await (this._f2a as any).sendMessage(msg.from, reply, { type: 'reply', replyTo: msg.messageId });
+            this._logger?.info('[F2A] 回复已发送', { to: msg.from.slice(0, 16) });
+          }
+        } catch (err) {
+          this._logger?.error('[F2A] 处理消息失败', { error: err instanceof Error ? err.message : String(err) });
+        }
+      });
+      
+      // 监听其他事件
+      this._f2a.on('peer:connected', (event: { peerId: string }) => {
+        this._logger?.info('[F2A] Peer 连接', { peerId: event.peerId.slice(0, 16) });
+      });
+      
+      this._f2a.on('peer:disconnected', (event: { peerId: string }) => {
+        this._logger?.info('[F2A] Peer 断开', { peerId: event.peerId.slice(0, 16) });
+      });
+      
+      // 启动 F2A（带超时保护，避免阻塞 Gateway）
+      const START_TIMEOUT_MS = 10000; // 10 秒超时
+      
+      const startPromise = this._f2a.start();
+      const timeoutPromise = new Promise<typeof startPromise>((_, reject) => {
+        const timer = setTimeout(() => {
+          reject(new Error('F2A 启动超时'));
+        }, START_TIMEOUT_MS);
+        timer.unref(); // 确保 Gateway 可以退出
+      });
+      
+      const result = await Promise.race([startPromise, timeoutPromise]);
+      if (!result.success) {
+        throw new Error(`F2A 启动失败: ${result.error}`);
+      }
+      
+      this._logger?.info('[F2A] F2A 实例已启动', { 
+        peerId: this._f2a.peerId?.slice(0, 16),
+        multiaddrs: this._f2a.agentInfo?.multiaddrs?.length || 0
+      });
+      
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this._logger?.error(`[F2A] 创建 F2A 实例失败: ${errorMsg}`);
+      this._logger?.warn('[F2A] F2A Adapter 将以降级模式运行，P2P 功能不可用');
+      
+      // 清理失败的实例
+      if (this._f2a) {
+        try {
+          await this._f2a.stop();
+        } catch {}
+        this._f2a = undefined;
+      }
+    }
+
+    // 仍然启动 Webhook 服务器（用于任务委托等场景）
     try {
       this._webhookServer = new WebhookServer(
         this.config.webhookPort || 0,
@@ -279,64 +390,67 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       this._logger?.warn(`[F2A] Webhook 服务器启动失败: ${errorMsg}`);
-      this._logger?.warn('[F2A] F2A Adapter 将以降级模式运行，部分功能不可用');
-    }
-
-    // 检查 F2A Node 状态并自动启动（如果配置了 autoStart）
-    this._nodeManager = new F2ANodeManager(this.nodeConfig, this._logger);
-    
-    // 先检查 daemon 是否运行
-    const running = await this._nodeManager.isRunning();
-    
-    if (running) {
-      this._logger?.info('[F2A] F2A Node 已运行，正在注册...');
-      await this.registerToNode().catch(err => {
-        this._logger?.warn(`[F2A] 注册到 Node 失败: ${err}`);
-      });
-    } else {
-      // Daemon 未运行，检查 F2A CLI 是否可用
-      const f2aInstalled = await this.checkF2AInstalled();
-      
-      if (f2aInstalled) {
-        // F2A 已安装，尝试自动启动 daemon
-        if (this.config.autoStart) {
-          this._logger?.info('[F2A] F2A Node 未运行，正在通过 CLI 自动启动...');
-          const started = await this.startDaemonViaCLI();
-          if (started) {
-            this._logger?.info('[F2A] F2A Node 自动启动成功');
-            await this.registerToNode().catch(err => {
-              this._logger?.warn(`[F2A] 注册到 Node 失败: ${err}`);
-            });
-          } else {
-            this._logger?.error('[F2A] F2A Node 自动启动失败');
-            this._logger?.warn('[F2A] 请手动启动: f2a daemon -d');
-          }
-        } else {
-          this._logger?.warn('[F2A] F2A Node 未运行，autoStart 已禁用');
-          this._logger?.warn('[F2A] 手动启动: f2a daemon -d');
-        }
-      } else {
-        // F2A CLI 未安装
-        this._logger?.warn('[F2A] F2A Network 未安装');
-        this._logger?.warn('[F2A] 请先安装: npm install -g @f2a/network');
-        this._logger?.warn('[F2A] 或查看文档: https://github.com/openclaw/F2A');
-      }
     }
 
     // 启动兜底轮询
     this.startFallbackPolling();
     
-    if (this._webhookServer) {
-      this._logger?.info(`[F2A] Webhook: ${this._webhookServer.getUrl()}`);
+    if (this._f2a) {
+      this._logger?.info(`[F2A] P2P 已就绪，Peer ID: ${this._f2a.peerId?.slice(0, 20)}...`);
     }
+  }
+
+  /**
+   * 调用 OpenClaw Agent 生成回复
+   * 使用 OpenClaw Plugin API 而不是 CLI
+   */
+  private async invokeOpenClawAgent(fromPeerId: string, message: string): Promise<string | undefined> {
+    // 使用 peerId 作为 session id，保持对话上下文
+    const sessionId = `f2a-${fromPeerId.slice(0, 16)}`;
+    
+    if (this._logger?.debug) {
+      this._logger.debug('[F2A] 调用 OpenClaw Agent', { sessionId, messageLength: message.length });
+    }
+    
+    // 如果有 OpenClaw API，直接调用
+    if (this.api?.runtime?.system?.runCommandWithTimeout) {
+      try {
+        const result = await this.api!.runtime!.system!.runCommandWithTimeout!(
+          `openclaw agent --session-id ${sessionId} --message "${message.replace(/"/g, '\\"')}" --json`,
+          60000 // 60 秒超时
+        );
+        
+        if (result.stdout) {
+          try {
+            const parsed = JSON.parse(result.stdout);
+            return parsed.content?.[0]?.text || parsed.reply || parsed.message;
+          } catch {
+            return result.stdout.trim() || undefined;
+          }
+        }
+      } catch (err) {
+        this._logger?.warn('[F2A] 调用 OpenClaw Agent 失败', { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    
+    // 降级：返回简单回复
+    return `收到你的消息："${message.slice(0, 30)}"。我是 ${this.config.agentName || 'OpenClaw Agent'}，很高兴与你交流！`;
   }
 
   /**
    * 注册清理处理器
    */
   private registerCleanupHandlers(): void {
-    const autoCleanup = () => {
-      // 同步关闭资源（不使用 await，因为 beforeExit 不支持异步）
+    const autoCleanup = async () => {
+      // 关闭 F2A 实例
+      if (this._f2a) {
+        try {
+          await this._f2a.stop();
+          this._logger?.info('[F2A] F2A 实例已停止');
+        } catch {}
+      }
+      
+      // 同步关闭其他资源
       if (this.pollTimer) {
         clearInterval(this.pollTimer);
         this.pollTimer = undefined;
@@ -915,6 +1029,30 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         }
       },
 
+      onMessage: async (payload: { from: string; content: string; metadata?: Record<string, unknown>; messageId: string }) => {
+        this._logger?.info('[F2A] 收到 P2P 消息', { 
+          from: payload.from.slice(0, 16), 
+          content: payload.content.slice(0, 50) 
+        });
+
+        try {
+          // 调用 OpenClaw Agent 处理消息
+          // 使用 peerId 作为 session id，确保同一个对话者使用同一个 session
+          const sessionId = `f2a-${payload.from.slice(0, 16)}`;
+          
+          // 构造消息，包含发送者信息
+          const message = `[来自 ${payload.metadata?.from || payload.from.slice(0, 16)}] ${payload.content}`;
+          
+          // 调用 openclaw agent 命令
+          const result = await this.invokeOpenClawAgent(payload.from, message);
+          
+          return { response: result || '收到消息，但我暂时无法生成回复。' };
+        } catch (error) {
+          this._logger?.error('[F2A] 处理消息失败', { error: error instanceof Error ? error.message : String(error) });
+          return { response: '抱歉，我遇到了一些问题，无法处理你的消息。' };
+        }
+      },
+
       onStatus: async () => {
         // 如果 TaskQueue 未初始化，返回空闲状态
         if (!this._taskQueue) {
@@ -1037,9 +1175,19 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       
       return new Promise((resolve) => {
         this._logger?.info('[F2A] 执行: f2a daemon -d');
+        
+        // 设置 messageHandlerUrl 环境变量，让 daemon 将消息推送到 adapter 的 webhook
+        const env = { ...process.env };
+        if (this._webhookServer) {
+          const webhookUrl = `${this._webhookServer.getUrl()}/message`;
+          env.F2A_MESSAGE_HANDLER_URL = webhookUrl;
+          this._logger?.info(`[F2A] 配置消息处理 URL: ${webhookUrl}`);
+        }
+        
         const proc = spawn('f2a', ['daemon', '-d'], {
           detached: true,  // P1-1 修复：让 daemon 独立运行，不随父进程退出
-          stdio: 'ignore'  // P1-2 修复：ignore stdio 配合 detached 使用
+          stdio: 'ignore',  // P1-2 修复：ignore stdio 配合 detached 使用
+          env  // 传递环境变量
         });
         
         // P1-2 修复：detached + ignore stdio 后，需要 unref 让父进程可以独立退出
@@ -1123,6 +1271,17 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
+    }
+    
+    // 停止 F2A 实例（新架构直接管理）
+    if (this._f2a) {
+      try {
+        await this._f2a.stop();
+        this._logger?.info('[F2A] F2A 实例已停止');
+      } catch (err) {
+        this._logger?.warn('[F2A] F2A 实例停止失败', { error: err instanceof Error ? err.message : String(err) });
+      }
+      this._f2a = undefined;
     }
     
     // 停止 Webhook 服务器（只有已启动时才关闭）

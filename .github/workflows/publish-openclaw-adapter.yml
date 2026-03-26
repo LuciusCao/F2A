@@ -21,13 +21,17 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
       
-      # 安装依赖 - 使用 npm install 而非 npm ci，因为 workspaces 可能需要解析
-      - run: npm install --workspaces
+      # 在根目录安装所有依赖
+      - run: npm install
       
-      # 先 build 主仓库（@f2a/network），确保类型定义是最新的
+      # 先 build 根目录（@f2a/network）
       - run: npm run build
       
-      # 再 build adapter（会使用本地 workspace 的 @f2a/network）
+      # 进入 adapter 目录，安装其特定依赖
+      - run: npm install
+        working-directory: packages/openclaw-adapter
+      
+      # build adapter
       - run: npm run build
         working-directory: packages/openclaw-adapter
       

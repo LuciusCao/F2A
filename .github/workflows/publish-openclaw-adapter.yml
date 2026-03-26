@@ -21,8 +21,8 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
       
-      # 在根目录安装依赖（workspaces 会自动链接本地包）
-      - run: npm ci --workspaces
+      # 安装依赖 - 使用 npm install 而非 npm ci，因为 workspaces 可能需要解析
+      - run: npm install --workspaces
       
       # 先 build 主仓库（@f2a/network），确保类型定义是最新的
       - run: npm run build

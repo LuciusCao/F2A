@@ -318,7 +318,14 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       
       // 监听 P2P 消息，调用 OpenClaw Agent 生成回复
       (this._f2a as any).on('message', async (msg: { from: string; content: string; metadata?: Record<string, unknown>; messageId: string }) => {
-        this._logger?.info('[F2A Adapter] 收到 P2P 消息', { from: msg.from.slice(0, 16), content: msg.content.slice(0, 50) });
+        const logMsg = `[F2A Adapter] 收到 P2P 消息: from=${msg.from?.slice(0, 16)}, content=${msg.content?.slice(0, 50)}`;
+        this._logger?.info(logMsg);
+        this._f2a?.log?.info?.(logMsg);
+        
+        // 写入文件日志
+        const fs = require('fs');
+        const logPath = join(homedir(), '.openclaw/logs/adapter-debug.log');
+        try { fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${logMsg}\n`); } catch {}
         
         try {
           // 调用 OpenClaw Agent 生成回复

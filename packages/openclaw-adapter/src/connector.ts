@@ -420,18 +420,23 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     // 使用 peerId 作为 session key，保持对话上下文
     const sessionKey = `f2a-${fromPeerId.slice(0, 16)}`;
     
-    this._logger?.info('[F2A Adapter] 调用 OpenClaw Agent', { 
-      sessionKey, 
-      messageLength: message.length,
-      hasChannel: !!this.api?.channel,
-      hasDispatchReply: !!this.api?.channel?.reply?.dispatchReplyFromConfig
-    });
+    // 写入文件日志（确保不被丢失）
+    const debugLog = (msg: string) => {
+      try {
+        const fs = require('fs');
+        const logPath = join(homedir(), '.openclaw/logs/adapter-debug.log');
+        fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`);
+      } catch {}
+      this._logger?.info(msg);
+    };
+    
+    debugLog(`[F2A Adapter] invokeOpenClawAgent called: sessionKey=${sessionKey}`);
+    debugLog(`[F2A Adapter] API status: hasApi=${!!this.api}, hasChannel=${!!this.api?.channel}, hasSubagent=${!!this.api?.runtime?.subagent}`);
     
     // 使用 OpenClaw Channel API (参考飞书插件)
     if (this.api?.channel?.reply?.dispatchReplyFromConfig) {
+      debugLog('[F2A Adapter] 使用 Channel API');
       try {
-        this._logger?.info('[F2A Adapter] 使用 Channel API 分发消息');
-        
         // 解析路由
         const route = this.api.channel.routing.resolveAgentRoute({
           peerId: sessionKey,
@@ -455,43 +460,37 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         });
         
         // 分发消息给 Agent
-        const { queuedFinal, counts } = await this.api.channel.reply.dispatchReplyFromConfig({
+        const result = await this.api.channel.reply.dispatchReplyFromConfig({
           ctx,
           cfg: this.config,
         });
         
-        this._logger?.info('[F2A Adapter] 分发完成', { 
-          queuedFinal, 
-          replyCount: counts?.final 
-        });
-        
-        // dispatchReplyFromConfig 会自动发送回复，这里不需要返回
-        // 因为回复会直接发送回 F2A
-        return undefined;
+        debugLog(`[F2A Adapter] Channel API 完成: queuedFinal=${result.queuedFinal}, counts=${JSON.stringify(result.counts)}`);
+        return undefined; // dispatchReplyFromConfig 会自动发送回复
         
       } catch (err) {
-        this._logger?.error('[F2A Adapter] Channel API 调用失败', { error: err instanceof Error ? err.message : String(err) });
+        debugLog(`[F2A Adapter] Channel API 失败: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     
-    // 降级：使用 subagent API（如果 channel 不可用）
+    // 降级：使用 subagent API
     if (this.api?.runtime?.subagent?.run) {
+      debugLog('[F2A Adapter] 使用 Subagent API');
       try {
-        this._logger?.info('[F2A Adapter] 使用 Subagent API');
-        
         const runResult = await this.api.runtime.subagent.run({
           sessionKey,
           message,
-          deliver: false,  // 不自动发送，我们需要获取结果
+          deliver: false,
         });
         
-        this._logger?.info('[F2A Adapter] 子 Agent 已启动', { runId: runResult.runId });
+        debugLog(`[F2A Adapter] Subagent 启动: runId=${runResult.runId}`);
         
-        // 等待完成
         const waitResult = await this.api.runtime.subagent.waitForRun({
           runId: runResult.runId,
           timeoutMs: 60000,
         });
+        
+        debugLog(`[F2A Adapter] Subagent 完成: status=${waitResult.status}`);
         
         if (waitResult.status === 'ok') {
           const messagesResult = await this.api.runtime.subagent.getSessionMessages({
@@ -505,12 +504,12 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           }
         }
       } catch (err) {
-        this._logger?.error('[F2A Adapter] Subagent API 调用失败', { error: err instanceof Error ? err.message : String(err) });
+        debugLog(`[F2A Adapter] Subagent 失败: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     
-    // 最终降级：返回简单回复
-    this._logger?.warn('[F2A Adapter] 使用降级回复');
+    // 最终降级
+    debugLog('[F2A Adapter] 使用降级回复');
     return `收到你的消息："${message.slice(0, 30)}"。我是 ${this.config.agentName || 'OpenClaw Agent'}，很高兴与你交流！`;
   }
 

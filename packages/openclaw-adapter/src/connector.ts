@@ -408,17 +408,27 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     // 使用 peerId 作为 session id，保持对话上下文
     const sessionId = `f2a-${fromPeerId.slice(0, 16)}`;
     
-    if (this._logger?.debug) {
-      this._logger.debug('[F2A Adapter] 调用 OpenClaw Agent', { sessionId, messageLength: message.length });
-    }
+    this._logger?.info('[F2A Adapter] 调用 OpenClaw Agent', { 
+      sessionId, 
+      messageLength: message.length,
+      hasApi: !!this.api,
+      hasRuntime: !!this.api?.runtime,
+      hasSystem: !!this.api?.runtime?.system,
+      hasRunCommand: !!this.api?.runtime?.system?.runCommandWithTimeout
+    });
     
     // 如果有 OpenClaw API，直接调用
     if (this.api?.runtime?.system?.runCommandWithTimeout) {
       try {
-        const result = await this.api!.runtime!.system!.runCommandWithTimeout!(
-          `openclaw agent --session-id ${sessionId} --message "${message.replace(/"/g, '\\"')}" --json`,
-          60000 // 60 秒超时
-        );
+        const command = `openclaw agent --session-id ${sessionId} --message "${message.replace(/"/g, '\\"')}" --json`;
+        this._logger?.info('[F2A Adapter] 执行命令', { command: command.slice(0, 100) });
+        
+        const result = await this.api!.runtime!.system!.runCommandWithTimeout!(command, 60000);
+        
+        this._logger?.info('[F2A Adapter] 命令执行完成', { 
+          stdoutLength: result.stdout?.length || 0,
+          stderrLength: result.stderr?.length || 0
+        });
         
         if (result.stdout) {
           try {
@@ -429,8 +439,10 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           }
         }
       } catch (err) {
-        this._logger?.warn('[F2A Adapter] 调用 OpenClaw Agent 失败', { error: err instanceof Error ? err.message : String(err) });
+        this._logger?.error('[F2A Adapter] 调用 OpenClaw Agent 失败', { error: err instanceof Error ? err.message : String(err) });
       }
+    } else {
+      this._logger?.warn('[F2A Adapter] OpenClaw API 不可用，使用降级回复');
     }
     
     // 降级：返回简单回复

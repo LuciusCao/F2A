@@ -108,7 +108,9 @@ export type F2AMessageType =
   | 'SKILL_QUERY_RESPONSE' // 技能查询响应
   | 'SKILL_INVOKE'        // 技能调用
   | 'SKILL_INVOKE_RESPONSE' // 技能调用响应
-  | 'SKILL_RESULT';       // 技能执行结果
+  | 'SKILL_RESULT'       // 技能执行结果
+  // 自由消息
+  | 'MESSAGE';       // Agent 自由通信（自然语言）
 
 export interface F2AMessage {
   /** 消息ID */
@@ -173,6 +175,26 @@ export interface TaskResponsePayload {
   delegatedTo?: string;
 }
 
+// 自由消息（Agent 之间的自然语言通信）
+export interface MessagePayload {
+  /** 消息内容（自然语言） */
+  content: string;
+  /** 可选元数据 */
+  metadata?: Record<string, unknown>;
+  /** 消息引用（回复某条消息时使用） */
+  replyTo?: string;
+}
+
+// 消息响应
+export interface MessageResponsePayload {
+  /** 原消息ID */
+  originalMessageId: string;
+  /** 响应内容 */
+  content: string;
+  /** 可选元数据 */
+  metadata?: Record<string, unknown>;
+}
+
 // ============================================================================
 // 事件定义
 // ============================================================================
@@ -223,6 +245,7 @@ export interface F2AEvents {
   'network:started': (event: NetworkStartedEvent) => void;
   'network:stopped': () => void;
   'error': (error: Error) => void;
+  'message': (event: { from: string; content: string; metadata?: Record<string, unknown>; messageId: string }) => void;
 }
 
 export type F2AEventEmitter = EventEmitter<F2AEvents>;

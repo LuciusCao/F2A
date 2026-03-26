@@ -89,6 +89,49 @@ export interface OpenClawPluginApi {
       shouldLogVerbose: () => boolean;
       getChildLogger: (bindings?: Record<string, unknown>) => unknown;
     };
+    /** Subagent API for spawning child agents */
+    subagent?: {
+      run: (params: { sessionKey: string; message: string; provider?: string; model?: string; deliver?: boolean }) => Promise<{ runId: string }>;
+      waitForRun: (params: { runId: string; timeoutMs?: number }) => Promise<{ status: 'ok' | 'error' | 'timeout'; error?: string }>;
+      getSessionMessages: (params: { sessionKey: string; limit?: number }) => Promise<{ messages: unknown[] }>;
+    };
+  };
+  /** Channel API - 参考 feishu 插件实现 */
+  channel?: {
+    routing: {
+      resolveAgentRoute: (params: { 
+        sessionKey?: string; 
+        agentId?: string;
+        peerId?: string;
+        lane?: string;
+      }) => { sessionKey: string; agentId?: string };
+      buildAgentSessionKey: (params: { peerId: string; lane?: string }) => string;
+    };
+    reply: {
+      dispatchReplyFromConfig: (params: {
+        ctx: unknown;
+        cfg: unknown;
+        dispatcher?: unknown;
+        replyOptions?: unknown;
+      }) => Promise<{ queuedFinal: boolean; counts: { final: number } }>;
+      formatAgentEnvelope: (params: {
+        body: string;
+        options?: unknown;
+      }) => unknown;
+      finalizeInboundContext: (params: {
+        SessionKey: string;
+        AgentId?: string;
+        PeerId?: string;
+        ReplyTo?: string;
+        ChannelType?: string;
+        InboundId?: string;
+        Sender?: string;
+        SenderId?: string;
+        SenderName?: string;
+        ExtraContext?: Record<string, unknown>;
+      }) => unknown;
+      resolveEnvelopeFormatOptions: (cfg: unknown) => unknown;
+    };
   };
   logger: {
     debug?: (message: string) => void;
@@ -133,6 +176,7 @@ export interface F2ANodeConfig {
   p2pPort: number;
   enableMDNS: boolean;
   bootstrapPeers: string[];
+  dataDir?: string;
   /** 请求超时（毫秒），默认 30000 */
   timeoutMs?: number;
   /** 最大重试次数，默认 3 */

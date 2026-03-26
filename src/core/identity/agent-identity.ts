@@ -181,9 +181,9 @@ export class AgentIdentityManager {
 
       // 生成 Agent 密钥对 (Ed25519)
       const agentPrivateKey = await generateKeyPair('Ed25519');
-      // 使用 marshal() 获取原始公钥字节（32 字节），而不是 .bytes（protobuf 编码）
-      const agentPublicKeyBytes = agentPrivateKey.public.marshal();
-      const agentPrivateKeyBytes = agentPrivateKey.bytes;
+      // 使用 .raw 获取原始公钥字节（32 字节）
+      const agentPublicKeyBytes = agentPrivateKey.publicKey.raw;
+      const agentPrivateKeyBytes = agentPrivateKey.raw;
 
       // 生成 Agent ID
       const agentId = options.id || randomUUID();

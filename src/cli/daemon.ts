@@ -258,6 +258,9 @@ export async function startForeground(): Promise<void> {
   // P2P 端口
   const p2pPort = parseInt(process.env.F2A_P2P_PORT || '0') || config.p2pPort;
 
+  // 消息处理 URL
+  const messageHandlerUrl = process.env.F2A_MESSAGE_HANDLER_URL || config.messageHandlerUrl;
+
   const daemon = new F2ADaemon({
     controlPort,
     displayName: config.agentName,
@@ -265,6 +268,7 @@ export async function startForeground(): Promise<void> {
       listenPort: p2pPort,
       bootstrapPeers,
     },
+    messageHandlerUrl,
   });
 
   // 处理信号

@@ -12,6 +12,7 @@ export type ErrorCode =
   // DHT 错误
   | 'DHT_NOT_AVAILABLE'
   | 'DHT_LOOKUP_FAILED'
+  | 'INVALID_PEER_ID'
   // 加密错误
   | 'ENCRYPTION_NOT_READY'
   | 'ENCRYPTION_FAILED'

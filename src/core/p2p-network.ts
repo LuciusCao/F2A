@@ -13,9 +13,12 @@ import { tcp } from '@libp2p/tcp';
 import { noise } from '@chainsafe/libp2p-noise';
 import { kadDHT } from '@libp2p/kad-dht';
 import { mdns } from '@libp2p/mdns';
+import { yamux } from '@chainsafe/libp2p-yamux';
 import { autoNAT } from '@libp2p/autonat';
 import { circuitRelayTransport, circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { dcutr } from '@libp2p/dcutr';
+import { identify } from '@libp2p/identify';
+import { ping } from '@libp2p/ping';
 import { peerIdFromString } from '@libp2p/peer-id';
 import type { PeerId } from '@libp2p/interface';
 import type { PrivateKey } from '@libp2p/interface';
@@ -41,6 +44,7 @@ import {
   DiscoverPayload,
   CapabilityQueryPayload,
   CapabilityResponsePayload,
+  MessagePayload,
   success,
   failureFromError,
   createError
@@ -238,8 +242,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         // 从 multiaddr 提取 peer ID
         try {
           const ma = multiaddr(addr);
-          const peerId = ma.getPeerId();
-          if (peerId) this.trustedPeers.add(peerId);
+          const components = ma.getComponents();
+          const p2pComponent = components.find(c => c.name === 'p2p');
+          if (p2pComponent?.value) this.trustedPeers.add(p2pComponent.value);
         } catch { /* ignore invalid addresses */ }
       });
     }
@@ -266,10 +271,21 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       // 创建 libp2p 节点 - 启用 noise 加密和 NAT 穿透
       const services: Record<string, any> = {};
       
+      // Identify 服务 - libp2p 核心协议，用于协议协商和地址交换
+      // 必须添加，否则连接无法正常建立
+      services.identify = identify();
+      
+      // Ping 服务 - ConnectionMonitor 需要此服务进行心跳检测
+      // libp2p v2.x 已兼容 @libp2p/ping@3.x
+      services.ping = ping();
+      
       // 只有显式启用 DHT 时才添加
       if (this.config.enableDHT === true) {
         services.dht = kadDHT({
           clientMode: !this.config.dhtServerMode, // 默认客户端模式
+        });
+        this.logger.info('DHT service configured', {
+          serverMode: this.config.dhtServerMode || false
         });
       }
 
@@ -301,6 +317,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       }
 
       // 构建传输层
+      // 使用 any[] 绕过 libp2p transport 类型不兼容问题
+      // tcp() 和 circuitRelayTransport() 的 Components 类型不同
       const transports: any[] = [tcp()];
       
       // Phase 2: Circuit Relay Transport（允许通过 Relay 连接）
@@ -314,7 +332,15 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           listen: listenAddresses
         },
         transports,
-        connectionEncryption: [noise()],
+        connectionEncrypters: [noise()] as any,
+        streamMuxers: [yamux()] as any,
+        // Identify 服务必需的 nodeInfo 配置
+        nodeInfo: {
+          name: 'F2A',
+          version: this.agentInfo.version || '0.3.2',
+          userAgent: `F2A/${this.agentInfo.version || '0.3.2'}`
+        } as any,
+        // libp2p v2.x 已兼容 @libp2p/ping@2.x，可以启用 ConnectionMonitor
         services
       };
 
@@ -334,10 +360,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       // 如果提供了 IdentityManager，使用持久化的私钥
       if (this.identityManager?.isLoaded()) {
         const privateKey = this.identityManager.getPrivateKey();
-        const peerId = this.identityManager.getPeerId();
-        if (privateKey && peerId) {
-          libp2pOptions.privateKey = privateKey;
-          libp2pOptions.peerId = peerId;
+        if (privateKey) {
+          libp2pOptions.privateKey = privateKey as any;
           this.logger.info('Using persisted identity', {
             peerId: this.identityManager.getPeerIdString()?.slice(0, 16)
           });
@@ -399,7 +423,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       }
 
       // Phase 2: 初始化 NAT 穿透管理器
-      if (this.config.enableNATTraversal) {
+      if (this.config.enableNATTraversal && this.node) {
         this.natTraversalManager = new NATTraversalManager(this.node);
         await this.natTraversalManager.initialize();
         this.logger.info('NAT traversal manager initialized');
@@ -466,6 +490,12 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       await this.node.stop();
       this.node = null;
       this.logger.info('Stopped');
+    }
+
+    // Phase 2: 清理 NAT 穿透管理器
+    if (this.natTraversalManager) {
+      await this.natTraversalManager.destroy();
+      this.natTraversalManager = undefined;
     }
   }
 
@@ -623,6 +653,43 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   }
 
   /**
+   * 发送自由消息给特定 Peer
+   * Agent 之间的自然语言通信，无需预定义协议
+   */
+  async sendFreeMessage(
+    peerId: string,
+    content: string,
+    metadata?: Record<string, unknown>
+  ): Promise<Result<void>> {
+    this.logger.debug('sendFreeMessage called', {
+      peerId: peerId.slice(0, 16),
+      contentLength: content.length
+    });
+
+    const message: F2AMessage = {
+      id: randomUUID(),
+      type: 'MESSAGE',
+      from: this.agentInfo.peerId,
+      to: peerId,
+      timestamp: Date.now(),
+      payload: {
+        content,
+        metadata
+      }
+    };
+
+    // 发送消息（启用 E2EE 加密）
+    const result = await this.sendMessage(peerId, message, true);
+    
+    this.logger.debug('sendFreeMessage result', {
+      success: result.success,
+      error: result.success ? undefined : result.error
+    });
+    
+    return result;
+  }
+
+  /**
    * 发送任务响应
    */
   async sendTaskResponse(
@@ -748,9 +815,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         data = Buffer.from(JSON.stringify(message));
       }
 
-      // 使用协议流发送消息
+      // 使用协议流发送消息 (libp2p v3 Stream API)
       const stream = await peer.newStream(F2A_PROTOCOL);
-      await stream.sink([data]);
+      stream.send(data);
       await stream.close();
 
       return success(undefined);
@@ -921,14 +988,13 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     this.node.addEventListener('peer:connect', this.boundEventHandlers.peerConnect);
     this.node.addEventListener('peer:disconnect', this.boundEventHandlers.peerDisconnect);
 
-    // 处理传入的协议流
-    this.node.handle(F2A_PROTOCOL, async ({ stream, connection }) => {
+    // 处理传入的协议流 (libp2p v3 Stream API)
+    this.node.handle(F2A_PROTOCOL, async (stream, connection) => {
       try {
-        // 读取数据
+        // 读取数据 - 使用异步迭代器
         const chunks: Uint8Array[] = [];
-        for await (const chunk of stream.source) {
-          // chunk 可能是 Uint8Array 或 Uint8ArrayList（来自旧版本库）
-          // 统一转换为 Uint8Array
+        for await (const chunk of stream) {
+          // chunk 可能是 Uint8Array 或 Uint8ArrayList
           const data = chunk instanceof Uint8Array 
             ? chunk 
             : new Uint8Array((chunk as { subarray(): Uint8Array }).subarray());
@@ -1185,6 +1251,13 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       case 'DECRYPT_FAILED':
         await this.handleDecryptFailedMessage(message, peerId);
         break;
+
+      case 'MESSAGE':
+        await this.handleFreeMessage(message, peerId);
+        break;
+
+      // TASK_REQUEST 不在这里处理，由 F2A 通过 'message:received' 事件处理
+      // 这样允许 F2A 访问其自己的 registeredCapabilities
     }
   }
 
@@ -1274,6 +1347,20 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     
     // 发出事件通知上层应用
     this.emit('error', new Error(`Decrypt failed for message ${originalMessageId}: ${errorMsg}`));
+  }
+
+  /**
+   * 处理自由消息（Agent 之间的自然语言通信）
+   */
+  private async handleFreeMessage(message: F2AMessage, peerId: string): Promise<void> {
+    const payload = message.payload as MessagePayload;
+    this.logger.info('Received free message', {
+      fromPeerId: peerId.slice(0, 16),
+      contentLength: payload.content?.length || 0
+    });
+
+    // 发出事件供上层处理
+    this.emit('message:received', message, peerId);
   }
 
   /**
@@ -1851,6 +1938,144 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   }
 
   /**
+   * 通过 DHT 发现节点（全局发现）
+   * 
+   * DHT 提供两种发现模式：
+   * 1. 查找特定节点（需要知道 Peer ID）
+   * 2. 发现随机节点（构建路由表）
+   * 
+   * @param options 发现选项
+   * @returns 发现的节点地址列表
+   */
+  async discoverPeersViaDHT(options?: {
+    /** 查找特定 Peer ID（可选） */
+    peerId?: string;
+    /** 超时时间（毫秒，默认 10000） */
+    timeout?: number;
+  }): Promise<Result<string[]>> {
+    if (!this.node) {
+      return failureFromError('NETWORK_NOT_STARTED', 'P2P network not started');
+    }
+
+    const dht = (this.node.services as Libp2pServices).dht;
+    if (!dht) {
+      return failureFromError('DHT_NOT_AVAILABLE', 'DHT service not enabled');
+    }
+
+    const timeout = options?.timeout ?? 10000;
+
+    try {
+      const discoveredAddresses: string[] = [];
+
+      if (options?.peerId) {
+        // P1-1 修复：验证 peerId 格式
+        if (!options.peerId || typeof options.peerId !== 'string') {
+          return failureFromError('INVALID_PEER_ID', 'Invalid peer ID format');
+        }
+
+        // 查找特定节点
+        this.logger.info('Finding peer via DHT', { peerId: options.peerId.slice(0, 16) });
+
+        let peerIdObj: PeerId;
+        try {
+          peerIdObj = peerIdFromString(options.peerId);
+        } catch (error) {
+          const err = error instanceof Error ? error : new Error(String(error));
+          if (err.message?.includes('invalid')) {
+            return failureFromError('INVALID_PEER_ID', 'Invalid peer ID format', err);
+          }
+          throw error;
+        }
+
+        // P0-1 修复：使用 Promise.race 实现超时，并正确清理定时器
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('DHT lookup timeout')), timeout);
+        });
+
+        try {
+          const peerInfo = await Promise.race([
+            dht.findPeer(peerIdObj),
+            timeoutPromise
+          ]);
+
+          if (peerInfo && peerInfo.multiaddrs.length > 0) {
+            discoveredAddresses.push(...peerInfo.multiaddrs.map(ma => ma.toString()));
+          }
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
+        }
+      } else {
+        // 发现随机节点（通过路由表）
+        this.logger.info('Discovering peers via DHT routing table');
+        
+        // 获取路由表中的节点
+        const routingTableSize = dht.routingTable?.size || 0;
+        this.logger.info('DHT routing table size', { size: routingTableSize });
+
+        // libp2p DHT 会自动维护路由表
+        // 我们可以通过连接到已知的节点来触发更多发现
+        const knownPeers = this.getConnectedPeers();
+        this.logger.info('Known peers for DHT discovery', { count: knownPeers.length });
+        
+        // 返回当前已知的节点
+        for (const peer of knownPeers) {
+          if (peer.multiaddrs && Array.isArray(peer.multiaddrs)) {
+            // Multiaddr[] 转换为 string[]
+            discoveredAddresses.push(...peer.multiaddrs.map(ma => ma.toString()));
+          }
+        }
+      }
+
+      if (discoveredAddresses.length === 0) {
+        return failureFromError('PEER_NOT_FOUND', 'No peers discovered via DHT');
+      }
+
+      this.logger.info('DHT discovery complete', { 
+        count: discoveredAddresses.length 
+      });
+
+      return success(discoveredAddresses);
+    } catch (error) {
+      this.logger.error('DHT discovery failed', { error });
+      return failureFromError('DHT_LOOKUP_FAILED', 'DHT discovery failed', error as Error);
+    }
+  }
+
+  /**
+   * 向 DHT 注册自己（使其他节点能找到自己）
+   * 
+   * 注意：只有公网可达的节点才能作为 DHT 服务器
+   * NAT 后的节点只能作为客户端
+   */
+  async registerToDHT(): Promise<Result<void>> {
+    if (!this.node) {
+      return failureFromError('NETWORK_NOT_STARTED', 'P2P network not started');
+    }
+
+    const dht = (this.node.services as Libp2pServices).dht;
+    if (!dht) {
+      return failureFromError('DHT_NOT_AVAILABLE', 'DHT service not enabled');
+    }
+
+    try {
+      // DHT 会自动注册，这里主要是检查和日志
+      const peerId = this.node.peerId.toString();
+      const addresses = this.node.getMultiaddrs().map(ma => ma.toString());
+      
+      this.logger.info('DHT registration info', {
+        peerId: peerId.slice(0, 16),
+        addresses: addresses.length,
+        isServer: this.config.dhtServerMode
+      });
+
+      return success(undefined);
+    } catch (error) {
+      return failureFromError('INTERNAL_ERROR', 'DHT registration failed', error as Error);
+    }
+  }
+
+  /**
    * 注册中间件
    * @param middleware 中间件实例
    */
@@ -1880,7 +2105,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    * @returns P2P 网络配置
    */
   getConfig(): P2PNetworkConfig {
-    return { ...this.config };
+    // 返回深拷贝，防止调用者修改内部配置
+    return JSON.parse(JSON.stringify(this.config));
   }
 
   /**
@@ -1893,7 +2119,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
   /**
    * 连接到 Relay 服务器
-   * @param relayAddress Relay 服务器地址
+   * @param relayAddress Relay 服务器地址（multiaddr 格式）
    * @returns 是否连接成功
    */
   async connectToRelay(relayAddress: string): Promise<boolean> {
@@ -1901,7 +2127,15 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       this.logger.warn('NAT traversal not enabled, cannot connect to relay');
       return false;
     }
-    
+
+    // 验证地址格式
+    try {
+      multiaddr(relayAddress); // 验证格式，无效则抛出异常
+    } catch (error) {
+      this.logger.error('Invalid relay address format', { relayAddress, error });
+      return false;
+    }
+
     return this.natTraversalManager.connectToRelay(relayAddress);
   }
 }

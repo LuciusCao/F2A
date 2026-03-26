@@ -181,6 +181,8 @@ const ExpertConfigSchema = z.object({
     maxRequests: z.number().default(100),
     windowMs: z.number().default(60000),
   }).optional(),
+  /** 消息处理 URL - 收到自由消息时调用 */
+  messageHandlerUrl: z.string().url().optional().or(z.literal('')),
 });
 
 /**

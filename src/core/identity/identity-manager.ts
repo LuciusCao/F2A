@@ -7,10 +7,9 @@
 import { promises as fs } from 'fs';
 import { join, resolve } from 'path';
 import { homedir, tmpdir } from 'os';
-import { generateKeyPair, unmarshalPrivateKey, marshalPrivateKey } from '@libp2p/crypto/keys';
-import { peerIdFromKeys } from '@libp2p/peer-id';
-import type { PeerId } from '@libp2p/interface';
-import type { PrivateKey } from '@libp2p/interface';
+import { generateKeyPair, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys';
+import { peerIdFromPrivateKey } from '@libp2p/peer-id';
+import type { PeerId, PrivateKey } from '@libp2p/interface';
 import { x25519 } from '@noble/curves/ed25519.js';
 import { Logger } from '../../utils/logger.js';
 import { success, failure, failureFromError, Result, createError } from '../../types/index.js';
@@ -289,11 +288,8 @@ export class IdentityManager {
     
     // Restore private key and PeerId
     const privateKeyBytes = Buffer.from(persisted.peerId, 'base64');
-    this.privateKey = await unmarshalPrivateKey(privateKeyBytes);
-    this.peerId = await peerIdFromKeys(
-      this.privateKey.public.bytes,
-      this.privateKey.bytes
-    );
+    this.privateKey = await privateKeyFromProtobuf(privateKeyBytes);
+    this.peerId = peerIdFromPrivateKey(this.privateKey);
 
     // Securely wipe temporary private key bytes after use
     secureWipe(privateKeyBytes);
@@ -317,10 +313,7 @@ export class IdentityManager {
     try {
       // Generate Ed25519 key pair for libp2p PeerId
       this.privateKey = await generateKeyPair('Ed25519');
-      this.peerId = await peerIdFromKeys(
-        this.privateKey.public.bytes,
-        this.privateKey.bytes
-      );
+      this.peerId = peerIdFromPrivateKey(this.privateKey);
       
       // Generate X25519 key pair for E2EE
       this.e2eePrivateKey = x25519.utils.randomSecretKey();
@@ -351,7 +344,7 @@ export class IdentityManager {
     }
     
     const persisted: PersistedIdentity = {
-      peerId: Buffer.from(marshalPrivateKey(this.privateKey)).toString('base64'),
+      peerId: Buffer.from(privateKeyToProtobuf(this.privateKey)).toString('base64'),
       e2eePrivateKey: Buffer.from(this.e2eePrivateKey).toString('base64'),
       e2eePublicKey: Buffer.from(this.e2eePublicKey).toString('base64'),
       createdAt: this.createdAt.toISOString(),
@@ -407,7 +400,7 @@ export class IdentityManager {
     
     return {
       peerId: this.peerId.toString(),
-      privateKey: Buffer.from(marshalPrivateKey(this.privateKey)).toString('base64'),
+      privateKey: Buffer.from(privateKeyToProtobuf(this.privateKey)).toString('base64'),
       e2eeKeyPair: {
         publicKey: Buffer.from(this.e2eePublicKey).toString('base64'),
         privateKey: Buffer.from(this.e2eePrivateKey).toString('base64')
@@ -480,7 +473,7 @@ export class IdentityManager {
     
     return {
       peerId: this.peerId.toString(),
-      privateKey: Buffer.from(marshalPrivateKey(this.privateKey)).toString('base64'),
+      privateKey: Buffer.from(privateKeyToProtobuf(this.privateKey)).toString('base64'),
       e2eeKeyPair: {
         publicKey: Buffer.from(this.e2eePublicKey).toString('base64'),
         privateKey: Buffer.from(this.e2eePrivateKey).toString('base64')
@@ -569,7 +562,7 @@ export class IdentityManager {
       // Securely wipe libp2p Ed25519 private key bytes
       if (this.privateKey) {
         // Access the raw bytes of the Ed25519 private key and wipe them
-        const privateKeyBytes = this.privateKey.bytes;
+        const privateKeyBytes = this.privateKey.raw;
         if (privateKeyBytes) {
           secureWipe(privateKeyBytes);
         }

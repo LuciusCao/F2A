@@ -173,7 +173,8 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
         ...options.security
       },
       logLevel: options.logLevel || 'INFO',
-      dataDir: options.dataDir || './f2a-data'
+      dataDir: options.dataDir || './f2a-data',
+      messageHandlerUrl: options.messageHandlerUrl || ''
     };
 
     // Phase 1: 创建 NodeIdentityManager 并加载节点身份
@@ -603,6 +604,18 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   }
 
   /**
+   * 发送自由消息给特定 Peer
+   * Agent 之间的自然语言通信
+   */
+  async sendMessage(
+    peerId: string,
+    content: string,
+    metadata?: Record<string, unknown>
+  ): Promise<Result<void>> {
+    return this.p2pNetwork.sendFreeMessage(peerId, content, metadata);
+  }
+
+  /**
    * 注册中间件
    */
   useMiddleware(middleware: Middleware): void {
@@ -672,6 +685,10 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     this.p2pNetwork.on('message:received', async (message, peerId) => {
       if (message.type === 'TASK_REQUEST') {
         await this.handleTaskRequest(message.payload as TaskRequestEvent, peerId);
+      } else if (message.type === 'MESSAGE') {
+        // 自由消息：调用配置的 handler URL
+        const payload = message.payload as { content: string; metadata?: Record<string, unknown> };
+        await this.handleFreeMessage(peerId, message.id, payload.content, payload.metadata);
       }
     });
 
@@ -745,6 +762,71 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       }
     }
     // 如果没有 handler，依赖上层通过 respondToTask 手动响应
+  }
+
+  /**
+   * 处理收到的自由消息
+   * 如果配置了 messageHandlerUrl，调用该 URL 并发送响应
+   */
+  private async handleFreeMessage(
+    fromPeerId: string,
+    messageId: string,
+    content: string,
+    metadata?: Record<string, unknown>
+  ): Promise<void> {
+    this.logger.info('Received free message', {
+      from: fromPeerId.slice(0, 16),
+      content: content.slice(0, 50)
+    });
+
+    // 发出事件供上层监听
+    this.emit('message', {
+      from: fromPeerId,
+      content,
+      metadata,
+      messageId
+    });
+
+    // 如果配置了 messageHandlerUrl，调用它
+    const handlerUrl = this.options.messageHandlerUrl;
+    if (handlerUrl) {
+      try {
+        const response = await fetch(handlerUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: fromPeerId,
+            content,
+            metadata,
+            messageId
+          })
+        });
+
+        if (response.ok) {
+          const result = await response.json() as { response?: string; reply?: string };
+          const replyContent = result.response || result.reply;
+          
+          if (replyContent) {
+            // 发送响应回发送者
+            await this.p2pNetwork.sendFreeMessage(fromPeerId, replyContent);
+            this.logger.info('Sent message response', {
+              to: fromPeerId.slice(0, 16),
+              content: replyContent.slice(0, 50)
+            });
+          }
+        } else {
+          this.logger.warn('Message handler returned error', {
+            status: response.status,
+            url: handlerUrl
+          });
+        }
+      } catch (error) {
+        this.logger.error('Failed to call message handler', {
+          error: getErrorMessage(error),
+          url: handlerUrl
+        });
+      }
+    }
   }
 
   /**

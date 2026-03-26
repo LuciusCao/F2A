@@ -213,6 +213,70 @@ export class ControlServer {
       return;
     }
 
+    // POST /register-capability - 注册能力 (需要认证)
+    if (req.method === 'POST' && req.url === '/register-capability') {
+      const clientIp = req.socket.remoteAddress || 'unknown';
+      const token = req.headers['x-f2a-token'] as string | undefined 
+        || this.extractBearerToken(req.headers.authorization);
+      if (!this.tokenManager.verifyToken(token)) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
+        return;
+      }
+      
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const command = JSON.parse(body);
+          this.handleRegisterCapability(command, res);
+        } catch {
+          res.writeHead(400);
+          res.end(JSON.stringify({ success: false, error: 'Invalid JSON' }));
+        }
+      });
+      return;
+    }
+
+    // POST /agent/update - 更新 Agent 信息 (需要认证)
+    if (req.method === 'POST' && req.url === '/agent/update') {
+      const clientIp = req.socket.remoteAddress || 'unknown';
+      const token = req.headers['x-f2a-token'] as string | undefined 
+        || this.extractBearerToken(req.headers.authorization);
+      if (!this.tokenManager.verifyToken(token)) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
+        return;
+      }
+      
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const update = JSON.parse(body);
+          // 更新 agentInfo
+          if (update.displayName) {
+            this.f2a.agentInfo.displayName = update.displayName;
+          }
+          if (update.capabilities) {
+            // 注册每个能力
+            for (const cap of update.capabilities) {
+              this.f2a.registerCapability(cap, async () => ({ ok: true }));
+            }
+          }
+          res.writeHead(200);
+          res.end(JSON.stringify({ success: true }));
+        } catch (error) {
+          res.writeHead(500);
+          res.end(JSON.stringify({ 
+            success: false, 
+            error: error instanceof Error ? error.message : String(error) 
+          }));
+        }
+      });
+      return;
+    }
+
     if (req.method !== 'POST') {
       res.writeHead(405);
       res.end(JSON.stringify({ 
@@ -319,6 +383,15 @@ export class ControlServer {
           // P2-4 修复：添加 await，确保异步操作完成
           await this.handleDiscover(command.capability, res);
           break;
+        case 'delegate':
+          this.handleDelegate(command, res);
+          break;
+        case 'send':
+          this.handleSend(command, res);
+          break;
+        case 'register-capability':
+          this.handleRegisterCapability(command, res);
+          break;
         default:
           res.writeHead(400);
           res.end(JSON.stringify({ 
@@ -378,6 +451,116 @@ export class ControlServer {
         success: false,
         error: error instanceof Error ? error.message : String(error),
         code: 'DISCOVER_FAILED'
+      }));
+    }
+  }
+
+  /**
+   * 委托任务给指定 Peer
+   */
+  private async handleDelegate(command: { peerId?: string; taskType?: string; description?: string; parameters?: Record<string, unknown> }, res: ServerResponse): Promise<void> {
+    try {
+      if (!command.peerId || !command.taskType) {
+        res.writeHead(400);
+        res.end(JSON.stringify({
+          success: false,
+          error: 'Missing required fields: peerId, taskType',
+          code: 'INVALID_REQUEST'
+        }));
+        return;
+      }
+
+      const result = await this.f2a.sendTaskTo(
+        command.peerId,
+        command.taskType,
+        command.description || '',
+        command.parameters
+      );
+
+      res.writeHead(200);
+      res.end(JSON.stringify(result));
+    } catch (error) {
+      res.writeHead(500);
+      res.end(JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        code: 'DELEGATE_FAILED'
+      }));
+    }
+  }
+
+  /**
+   * 发送自由消息给指定 Peer
+   */
+  private async handleSend(command: { peerId?: string; content?: string; metadata?: Record<string, unknown> }, res: ServerResponse): Promise<void> {
+    try {
+      if (!command.peerId || !command.content) {
+        res.writeHead(400);
+        res.end(JSON.stringify({
+          success: false,
+          error: 'Missing required fields: peerId, content',
+          code: 'INVALID_REQUEST'
+        }));
+        return;
+      }
+
+      this.logger.debug('Sending message', { 
+        peerId: command.peerId.slice(0, 16), 
+        contentLength: command.content.length 
+      });
+
+      const result = await this.f2a.sendMessage(command.peerId, command.content, command.metadata);
+      
+      this.logger.debug('Message send result', { 
+        success: result.success, 
+        error: result.success ? undefined : result.error 
+      });
+
+      res.writeHead(200);
+      res.end(JSON.stringify(result));
+    } catch (error) {
+      this.logger.error('Message send failed', { error: error instanceof Error ? error.message : String(error) });
+      res.writeHead(500);
+      res.end(JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        code: 'SEND_FAILED'
+      }));
+    }
+  }
+
+  /**
+   * 注册能力
+   */
+  private handleRegisterCapability(command: { capability?: { name: string; description: string; tools: string[]; parameters?: Record<string, { type: 'string' | 'number' | 'boolean' | 'object' | 'array'; required?: boolean; description?: string }> } }, res: ServerResponse): void {
+    try {
+      if (!command.capability || !command.capability.name) {
+        res.writeHead(400);
+        res.end(JSON.stringify({
+          success: false,
+          error: 'Missing required field: capability.name',
+          code: 'INVALID_REQUEST'
+        }));
+        return;
+      }
+
+      this.f2a.registerCapability(command.capability, async () => {
+        return { registered: true };
+      });
+
+      this.logger.info('Capability registered', { name: command.capability.name });
+
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        success: true,
+        capability: command.capability.name
+      }));
+    } catch (error) {
+      res.writeHead(500);
+      res.end(JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        code: 'REGISTER_CAPABILITY_FAILED'
       }));
     }
   }

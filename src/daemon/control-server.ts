@@ -8,6 +8,7 @@ import { F2A } from '../core/f2a.js';
 import { TokenManager } from '../core/token-manager.js';
 import { Logger } from '../utils/logger.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
+import { getErrorMessage } from '../utils/error-utils.js';
 
 export interface ControlServerOptions {
   /** 端口，如果不传则使用构造函数传入的 port */
@@ -284,14 +285,26 @@ export class ControlServer {
       body += chunk;
     });
     req.on('end', () => {
-      this.processCommand(body, res);
+      // P2-4 修复：processCommand 现在是 async，需要处理 Promise
+      this.processCommand(body, res).catch(error => {
+        this.logger.error('Error processing command', { error: getErrorMessage(error) });
+        if (!res.headersSent) {
+          res.writeHead(500);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Internal server error',
+            code: 'INTERNAL_ERROR'
+          }));
+        }
+      });
     });
   }
 
   /**
    * 处理命令
+   * P2-4 修复：改为 async 方法，确保异步操作正确处理
    */
-  private processCommand(body: string, res: ServerResponse): void {
+  private async processCommand(body: string, res: ServerResponse): Promise<void> {
     try {
       const command = JSON.parse(body);
       
@@ -303,7 +316,8 @@ export class ControlServer {
           this.handlePeers(res);
           break;
         case 'discover':
-          this.handleDiscover(command.capability, res);
+          // P2-4 修复：添加 await，确保异步操作完成
+          await this.handleDiscover(command.capability, res);
           break;
         default:
           res.writeHead(400);

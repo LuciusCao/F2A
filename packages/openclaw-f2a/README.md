@@ -1,6 +1,6 @@
-# @f2a/openclaw-adapter
+# @f2a/openclaw-f2a
 
-OpenClaw 插件，用于集成 F2A P2P 网络。
+OpenClaw 插件，用于集成 F2A P2P Agent 网络。
 
 ## 功能
 
@@ -13,7 +13,7 @@ OpenClaw 插件，用于集成 F2A P2P 网络。
 ## 安装
 
 ```bash
-npm install @f2a/openclaw-adapter
+npm install @f2a/openclaw-f2a
 ```
 
 ## 配置
@@ -23,7 +23,7 @@ npm install @f2a/openclaw-adapter
 ```json
 {
   "plugins": {
-    "@f2a/openclaw-adapter": {
+    "openclaw-f2a": {
       "enabled": true,
       "config": {
         "agentName": "My OpenClaw Agent",

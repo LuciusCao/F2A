@@ -16,7 +16,7 @@
 
 ### 1.1 类型定义
 
-**文件**: `packages/openclaw-adapter/src/types.ts`
+**文件**: `packages/openclaw-f2a/src/types.ts`
 
 ```typescript
 // 新增 AgentID 类型
@@ -170,7 +170,7 @@ function routeMessage(message: F2AMessage): void {
 
 ### 4.1 Agent Registry
 
-**文件**: `packages/openclaw-adapter/src/agent-registry.ts`
+**文件**: `packages/openclaw-f2a/src/agent-registry.ts`
 
 ```typescript
 export class AgentRegistry {
@@ -218,7 +218,7 @@ export interface LocalAgent {
 ```json
 {
   "plugins": {
-    "openclaw-adapter": {
+    "openclaw-f2a": {
       "config": {
         "agents": [
           {

@@ -177,11 +177,40 @@ export class AgentManager {
    * 导入 Agent 身份（用于迁移）
    */
   importIdentity(data: string): AgentIdentity {
-    const identity = JSON.parse(data) as AgentIdentity;
+    // P1-3 修复：输入验证
+    // 1. 长度限制：防止过大的输入导致内存问题
+    const MAX_IDENTITY_SIZE = 4096; // 4KB 足够存储 AgentIdentity
+    if (data.length > MAX_IDENTITY_SIZE) {
+      throw new Error(`Identity data too large: ${data.length} bytes (max: ${MAX_IDENTITY_SIZE})`);
+    }
+
+    // 2. 基础格式校验：确保是有效的 JSON
+    let identity: AgentIdentity;
+    try {
+      identity = JSON.parse(data) as AgentIdentity;
+    } catch (parseError) {
+      throw new Error('Invalid JSON format for identity data');
+    }
+
+    // 3. 类型验证：确保解析结果是一个对象
+    if (typeof identity !== 'object' || identity === null || Array.isArray(identity)) {
+      throw new Error('Identity data must be a JSON object');
+    }
     
-    // 验证必要字段
+    // 4. 验证必要字段
     if (!identity.agentId || !identity.name || !identity.createdAt) {
-      throw new Error('Invalid agent identity data');
+      throw new Error('Invalid agent identity data: missing required fields (agentId, name, createdAt)');
+    }
+
+    // 5. 字段格式验证
+    if (typeof identity.agentId !== 'string' || identity.agentId.length === 0) {
+      throw new Error('Invalid agentId: must be a non-empty string');
+    }
+    if (typeof identity.name !== 'string' || identity.name.length === 0) {
+      throw new Error('Invalid name: must be a non-empty string');
+    }
+    if (typeof identity.createdAt !== 'number' || identity.createdAt <= 0) {
+      throw new Error('Invalid createdAt: must be a positive number');
     }
 
     this.identity = identity;

@@ -289,9 +289,15 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       }
 
       // Circuit Relay 服务端模式（可选，用于提供 Relay 服务给其他节点）
+      // ⚠️ 安全注意：启用 Relay 服务端会允许任何节点通过本节点中继流量。
+      // 这可能带来以下风险：
+      // 1. 资源消耗：中继流量会消耗带宽和 CPU
+      // 2. 滥用风险：恶意节点可能利用 Relay 隐藏身份或进行 DDoS
+      // 建议仅在受信任环境中启用，或配置访问控制策略。
+      // TODO: 添加访问控制列表 (ACL) 或基于信誉的 Relay 权限控制
       if (this.config.enableRelayServer) {
         services.relay = circuitRelayServer();
-        this.logger.info('Circuit Relay server mode enabled');
+        this.logger.info('Circuit Relay server mode enabled (WARNING: no access control)');
       }
 
       // 构建传输层

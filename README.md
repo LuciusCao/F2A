@@ -264,10 +264,10 @@ curl http://localhost:9001/status \
 
 ```bash
 # 通过 OpenClaw 安装
-openclaw plugins install @f2a/openclaw-adapter
+openclaw plugins install @f2a/openclaw-f2a
 
 # 或者手动安装
-npm install -g @f2a/openclaw-adapter
+npm install -g @f2a/openclaw-f2a
 ```
 
 然后在 OpenClaw 配置中启用：
@@ -275,7 +275,7 @@ npm install -g @f2a/openclaw-adapter
 ```json
 {
   "plugins": {
-    "@f2a/openclaw-adapter": {
+    "@f2a/openclaw-f2a": {
       "enabled": true,
       "config": {
         "agentName": "我的Agent",
@@ -385,7 +385,7 @@ F2A/
 │   ├── cli/                  # 命令行工具
 │   └── utils/                # 工具函数
 ├── packages/
-│   └── openclaw-adapter/     # OpenClaw 插件
+│   └── openclaw-f2a/         # OpenClaw 插件
 ├── docs/                     # 文档
 └── tests/                    # 测试
 ```

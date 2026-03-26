@@ -20,7 +20,7 @@ export default async function register(api: OpenClawPluginApi) {
   
   // 从 OpenClaw 配置中获取插件配置
   const pluginsConfig = api.config.plugins;
-  const config = pluginsConfig?.entries?.['openclaw-adapter']?.config || {};
+  const config = pluginsConfig?.entries?.['openclaw-f2a']?.config || {};
   
   // 将 API 引用传递给插件（用于触发心跳等操作）
   const fullConfig = {

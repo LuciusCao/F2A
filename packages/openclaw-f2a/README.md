@@ -428,7 +428,7 @@ OpenClaw: [调用 f2a_announcement_stats]
 │                    OpenClaw Agent                        │
 │                                                          │
 │  ┌─────────────────────────────────────────────────┐    │
-│  │     @f2a/openclaw-adapter 插件                    │    │
+│  │     @f2a/openclaw-f2a 插件                        │    │
 │  │                                                  │    │
 │  │  • 检测 OpenClaw 能力                            │    │
 │  │  • 提供 f2a_* Tools                             │    │

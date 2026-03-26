@@ -1,8 +1,9 @@
 {
-  "id": "openclaw-adapter",
-  "name": "F2A OpenClaw Adapter",
-  "description": "OpenClaw adapter for F2A P2P Agent network",
-  "version": "0.2.0",
+  "id": "openclaw-f2a",
+  "extension": "./dist/plugin.js",
+  "name": "F2A P2P Agent Network",
+  "description": "OpenClaw plugin for F2A P2P Agent network",
+  "version": "0.2.20",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

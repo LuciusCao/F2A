@@ -1,9 +1,9 @@
-name: Publish OpenClaw Adapter to NPM
+name: Publish OpenClaw F2A to NPM
 
 on:
   push:
     tags:
-      - 'openclaw-adapter@v*'
+      - 'openclaw-f2a@v*'
   workflow_dispatch:
 
 permissions:
@@ -33,7 +33,7 @@ jobs:
       
       # build adapter
       - run: npm run build
-        working-directory: packages/openclaw-adapter
+        working-directory: packages/openclaw-f2a
       
       - run: npm publish
-        working-directory: packages/openclaw-adapter
+        working-directory: packages/openclaw-f2a

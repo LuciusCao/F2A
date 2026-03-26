@@ -8,8 +8,8 @@ import { spawn, ChildProcess } from 'child_process';
 import { existsSync, rmSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { F2AOpenClawAdapter } from '../../packages/openclaw-adapter/src/connector.js';
-import { F2ANodeManager } from '../../packages/openclaw-adapter/src/node-manager.js';
+import { F2AOpenClawAdapter } from '../../packages/openclaw-f2a/src/connector.js';
+import { F2ANodeManager } from '../../packages/openclaw-f2a/src/node-manager.js';
 
 describe('F2A OpenClaw Adapter Plugin', () => {
   const testDir = join(tmpdir(), `f2a-adapter-test-${Date.now()}`);

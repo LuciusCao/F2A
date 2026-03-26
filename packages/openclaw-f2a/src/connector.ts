@@ -54,7 +54,7 @@ interface BroadcastResult {
 }
 
 export class F2AOpenClawAdapter implements OpenClawPlugin {
-  name = 'f2a-openclaw-adapter';
+  name = 'f2a-openclaw-f2a';
   version = '0.3.0';
 
   // 核心组件（延迟初始化）

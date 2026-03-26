@@ -38,9 +38,9 @@ src/config/
 
 以下配置类型定义在 OpenClaw 适配器包中：
 
-- **F2ANodeConfig** - `packages/openclaw-adapter/src/types.ts`
-- **F2APluginConfig** - `packages/openclaw-adapter/src/types.ts`
-- **WebhookPushConfig** - `packages/openclaw-adapter/src/types.ts`
+- **F2ANodeConfig** - `packages/openclaw-f2a/src/types.ts`
+- **F2APluginConfig** - `packages/openclaw-f2a/src/types.ts`
+- **WebhookPushConfig** - `packages/openclaw-f2a/src/types.ts`
 
 ### 4. CLI 配置
 

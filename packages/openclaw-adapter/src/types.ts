@@ -89,6 +89,12 @@ export interface OpenClawPluginApi {
       shouldLogVerbose: () => boolean;
       getChildLogger: (bindings?: Record<string, unknown>) => unknown;
     };
+    /** Subagent API for spawning child agents */
+    subagent?: {
+      run: (params: { sessionKey: string; message: string; provider?: string; model?: string; deliver?: boolean }) => Promise<{ runId: string }>;
+      waitForRun: (params: { runId: string; timeoutMs?: number }) => Promise<{ status: 'ok' | 'error' | 'timeout'; error?: string }>;
+      getSessionMessages: (params: { sessionKey: string; limit?: number }) => Promise<{ messages: unknown[] }>;
+    };
   };
   logger: {
     debug?: (message: string) => void;

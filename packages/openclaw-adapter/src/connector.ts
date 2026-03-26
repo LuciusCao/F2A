@@ -404,45 +404,64 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
    * 调用 OpenClaw Agent 生成回复
    * 使用 OpenClaw Plugin API 而不是 CLI
    */
+  /**
+   * 调用 OpenClaw Agent 生成回复
+   * 使用 OpenClaw Plugin Runtime API 的 subagent.run 方法
+   */
   private async invokeOpenClawAgent(fromPeerId: string, message: string): Promise<string | undefined> {
-    // 使用 peerId 作为 session id，保持对话上下文
-    const sessionId = `f2a-${fromPeerId.slice(0, 16)}`;
+    // 使用 peerId 作为 session key，保持对话上下文
+    const sessionKey = `f2a-${fromPeerId.slice(0, 16)}`;
     
     this._logger?.info('[F2A Adapter] 调用 OpenClaw Agent', { 
-      sessionId, 
+      sessionKey, 
       messageLength: message.length,
-      hasApi: !!this.api,
       hasRuntime: !!this.api?.runtime,
-      hasSystem: !!this.api?.runtime?.system,
-      hasRunCommand: !!this.api?.runtime?.system?.runCommandWithTimeout
+      hasSubagent: !!this.api?.runtime?.subagent
     });
     
-    // 如果有 OpenClaw API，直接调用
-    if (this.api?.runtime?.system?.runCommandWithTimeout) {
+    // 使用 OpenClaw Plugin Runtime API 的 subagent.run
+    if (this.api?.runtime?.subagent?.run) {
       try {
-        const command = `openclaw agent --session-id ${sessionId} --message "${message.replace(/"/g, '\\"')}" --json`;
-        this._logger?.info('[F2A Adapter] 执行命令', { command: command.slice(0, 100) });
+        this._logger?.info('[F2A Adapter] 启动子 Agent...');
         
-        const result = await this.api!.runtime!.system!.runCommandWithTimeout!(command, 60000);
-        
-        this._logger?.info('[F2A Adapter] 命令执行完成', { 
-          stdoutLength: result.stdout?.length || 0,
-          stderrLength: result.stderr?.length || 0
+        // 启动子 Agent
+        const runResult = await this.api.runtime.subagent.run({
+          sessionKey,
+          message,
+          deliver: true,  // 自动发送结果
         });
         
-        if (result.stdout) {
-          try {
-            const parsed = JSON.parse(result.stdout);
-            return parsed.content?.[0]?.text || parsed.reply || parsed.message;
-          } catch {
-            return result.stdout.trim() || undefined;
+        this._logger?.info('[F2A Adapter] 子 Agent 已启动', { runId: runResult.runId });
+        
+        // 等待完成
+        const waitResult = await this.api.runtime.subagent.waitForRun({
+          runId: runResult.runId,
+          timeoutMs: 60000  // 60 秒超时
+        });
+        
+        if (waitResult.status === 'ok') {
+          this._logger?.info('[F2A Adapter] 子 Agent 完成');
+          
+          // 获取结果
+          const messagesResult = await this.api.runtime.subagent.getSessionMessages({
+            sessionKey,
+            limit: 1
+          });
+          
+          if (messagesResult.messages && messagesResult.messages.length > 0) {
+            const lastMessage = messagesResult.messages[messagesResult.messages.length - 1] as any;
+            return lastMessage?.content || lastMessage?.text || undefined;
           }
+        } else if (waitResult.status === 'timeout') {
+          this._logger?.warn('[F2A Adapter] 子 Agent 超时');
+        } else {
+          this._logger?.error('[F2A Adapter] 子 Agent 失败', { error: waitResult.error });
         }
       } catch (err) {
-        this._logger?.error('[F2A Adapter] 调用 OpenClaw Agent 失败', { error: err instanceof Error ? err.message : String(err) });
+        this._logger?.error('[F2A Adapter] 调用子 Agent 失败', { error: err instanceof Error ? err.message : String(err) });
       }
     } else {
-      this._logger?.warn('[F2A Adapter] OpenClaw API 不可用，使用降级回复');
+      this._logger?.warn('[F2A Adapter] Plugin Runtime API 不可用，使用降级回复');
     }
     
     // 降级：返回简单回复

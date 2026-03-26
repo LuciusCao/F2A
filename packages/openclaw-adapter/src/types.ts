@@ -96,6 +96,43 @@ export interface OpenClawPluginApi {
       getSessionMessages: (params: { sessionKey: string; limit?: number }) => Promise<{ messages: unknown[] }>;
     };
   };
+  /** Channel API - 参考 feishu 插件实现 */
+  channel?: {
+    routing: {
+      resolveAgentRoute: (params: { 
+        sessionKey?: string; 
+        agentId?: string;
+        peerId?: string;
+        lane?: string;
+      }) => { sessionKey: string; agentId?: string };
+      buildAgentSessionKey: (params: { peerId: string; lane?: string }) => string;
+    };
+    reply: {
+      dispatchReplyFromConfig: (params: {
+        ctx: unknown;
+        cfg: unknown;
+        dispatcher?: unknown;
+        replyOptions?: unknown;
+      }) => Promise<{ queuedFinal: boolean; counts: { final: number } }>;
+      formatAgentEnvelope: (params: {
+        body: string;
+        options?: unknown;
+      }) => unknown;
+      finalizeInboundContext: (params: {
+        SessionKey: string;
+        AgentId?: string;
+        PeerId?: string;
+        ReplyTo?: string;
+        ChannelType?: string;
+        InboundId?: string;
+        Sender?: string;
+        SenderId?: string;
+        SenderName?: string;
+        ExtraContext?: Record<string, unknown>;
+      }) => unknown;
+      resolveEnvelopeFormatOptions: (cfg: unknown) => unknown;
+    };
+  };
   logger: {
     debug?: (message: string) => void;
     info: (message: string) => void;

@@ -330,7 +330,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         
         try {
           // 调用 OpenClaw Agent 生成回复
-          const reply = await this.invokeOpenClawAgent(msg.from, msg.content);
+          const reply = await this.invokeOpenClawAgent(msg.from, msg.content, msg.messageId);
           
           // 发送回复
           if (reply && this._f2a) {
@@ -413,14 +413,53 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
    * 使用 OpenClaw Plugin API 而不是 CLI
    */
   /**
+   * 创建 F2A 回复 Dispatcher
+   * 参考 feishu 插件的 createFeishuReplyDispatcher
+   * 
+   * Dispatcher 定义了如何将 Agent 的回复发送回 P2P 网络
+   */
+  private createF2AReplyDispatcher(fromPeerId: string, messageId?: string) {
+    const sendReply = async (text: string) => {
+      if (!this._f2a || !text?.trim()) {
+        return;
+      }
+      
+      try {
+        await (this._f2a as any).sendMessage(fromPeerId, text, {
+          type: 'reply',
+          replyTo: messageId,
+        });
+        this._logger?.info('[F2A Adapter] 回复已发送', { to: fromPeerId.slice(0, 16) });
+      } catch (err) {
+        this._logger?.error('[F2A Adapter] 发送回复失败', { error: err instanceof Error ? err.message : String(err) });
+      }
+    };
+
+    // 返回 dispatcher 对象，格式与 OpenClaw 兼容
+    return {
+      deliver: async (payload: { text?: string }, _info?: unknown) => {
+        const text = payload.text ?? '';
+        if (!text.trim()) {
+          return;
+        }
+        
+        // 分块发送（如果文本太长）
+        const chunkLimit = 4000;
+        for (let i = 0; i < text.length; i += chunkLimit) {
+          const chunk = text.slice(i, i + chunkLimit);
+          await sendReply(chunk);
+        }
+      },
+    };
+  }
+
+  /**
    * 调用 OpenClaw Agent 生成回复
    * 参考 feishu 插件实现，使用 api.channel.reply.dispatchReplyFromConfig
    */
-  private async invokeOpenClawAgent(fromPeerId: string, message: string): Promise<string | undefined> {
-    // 使用 peerId 作为 session key，保持对话上下文
+  private async invokeOpenClawAgent(fromPeerId: string, message: string, replyToMessageId?: string): Promise<string | undefined> {
     const sessionKey = `f2a-${fromPeerId.slice(0, 16)}`;
     
-    // 写入文件日志（确保不被丢失）
     const debugLog = (msg: string) => {
       try {
         const fs = require('fs');
@@ -430,43 +469,38 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       this._logger?.info(msg);
     };
     
-    debugLog(`[F2A Adapter] invokeOpenClawAgent called: sessionKey=${sessionKey}`);
-    debugLog(`[F2A Adapter] API status: hasApi=${!!this.api}, hasChannel=${!!this.api?.channel}, hasSubagent=${!!this.api?.runtime?.subagent}`);
+    debugLog(`[F2A Adapter] invokeOpenClawAgent: sessionKey=${sessionKey}`);
+    debugLog(`[F2A Adapter] API: hasApi=${!!this.api}, hasChannel=${!!this.api?.channel}`);
+    
+    // 创建 F2A 回复 dispatcher
+    const f2aDispatcher = this.createF2AReplyDispatcher(fromPeerId, replyToMessageId);
     
     // 使用 OpenClaw Channel API (参考飞书插件)
     if (this.api?.channel?.reply?.dispatchReplyFromConfig) {
       debugLog('[F2A Adapter] 使用 Channel API');
       try {
-        // 解析路由
         const route = this.api.channel.routing.resolveAgentRoute({
           peerId: sessionKey,
         });
         
-        // 格式化消息
-        const envelopeOptions = this.api.channel.reply.resolveEnvelopeFormatOptions?.(this.config);
-        const body = this.api.channel.reply.formatAgentEnvelope({
-          body: message,
-          options: envelopeOptions,
-        });
-        
-        // 构造上下文
         const ctx = this.api.channel.reply.finalizeInboundContext({
           SessionKey: route.sessionKey,
           PeerId: sessionKey,
-          Sender: 'F2A Agent',
+          Sender: 'F2P P2P',
           SenderId: fromPeerId.slice(0, 16),
           ChannelType: 'p2p',
           InboundId: fromPeerId.slice(0, 16),
         });
         
-        // 分发消息给 Agent
+        // 使用 F2A dispatcher 发送回复
         const result = await this.api.channel.reply.dispatchReplyFromConfig({
           ctx,
           cfg: this.config,
+          dispatcher: f2aDispatcher,
         });
         
-        debugLog(`[F2A Adapter] Channel API 完成: queuedFinal=${result.queuedFinal}, counts=${JSON.stringify(result.counts)}`);
-        return undefined; // dispatchReplyFromConfig 会自动发送回复
+        debugLog(`[F2A Adapter] Channel API 完成: ${JSON.stringify(result)}`);
+        return undefined; // dispatcher 会自动发送回复
         
       } catch (err) {
         debugLog(`[F2A Adapter] Channel API 失败: ${err instanceof Error ? err.message : String(err)}`);
@@ -483,14 +517,10 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           deliver: false,
         });
         
-        debugLog(`[F2A Adapter] Subagent 启动: runId=${runResult.runId}`);
-        
         const waitResult = await this.api.runtime.subagent.waitForRun({
           runId: runResult.runId,
           timeoutMs: 60000,
         });
-        
-        debugLog(`[F2A Adapter] Subagent 完成: status=${waitResult.status}`);
         
         if (waitResult.status === 'ok') {
           const messagesResult = await this.api.runtime.subagent.getSessionMessages({
@@ -500,7 +530,12 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           
           if (messagesResult.messages && messagesResult.messages.length > 0) {
             const lastMessage = messagesResult.messages[messagesResult.messages.length - 1] as any;
-            return lastMessage?.content || lastMessage?.text || undefined;
+            const reply = lastMessage?.content || lastMessage?.text;
+            if (reply) {
+              // 手动发送回复
+              await f2aDispatcher.deliver({ text: reply });
+              return undefined;
+            }
           }
         }
       } catch (err) {
@@ -510,7 +545,9 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     
     // 最终降级
     debugLog('[F2A Adapter] 使用降级回复');
-    return `收到你的消息："${message.slice(0, 30)}"。我是 ${this.config.agentName || 'OpenClaw Agent'}，很高兴与你交流！`;
+    const fallbackReply = `收到你的消息："${message.slice(0, 30)}"。我是 ${this.config.agentName || 'OpenClaw Agent'}，很高兴与你交流！`;
+    await f2aDispatcher.deliver({ text: fallbackReply });
+    return undefined;
   }
 
   /**

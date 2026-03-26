@@ -42,6 +42,13 @@ interface AdapterInternalAccess {
   config: F2APluginConfig;
   api?: OpenClawPluginApi;
   reviewCommittee?: ReviewCommittee;
+  // 新架构：直接访问 F2A 实例
+  f2aClient?: {
+    discoverAgents: (capability?: string) => Promise<{ success: boolean; data?: AgentInfo[]; error?: { message: string } }>;
+    getConnectedPeers: () => Promise<{ success: boolean; data?: any[]; error?: { message: string } }>;
+  };
+  // 获取 F2A 状态
+  getF2AStatus?: () => { running: boolean; peerId?: string; uptime?: number };
 }
 
 /**
@@ -100,13 +107,21 @@ export class ToolHandlers {
     params: ToolHandlerParams['discover'],
     context: SessionContext
   ): Promise<ToolResult> {
-    const networkClient = (this.adapter as unknown as AdapterInternalAccess).networkClient;
-    const reputationSystem = (this.adapter as unknown as AdapterInternalAccess).reputationSystem;
+    const adapter = this.adapter as unknown as AdapterInternalAccess;
+    const reputationSystem = adapter.reputationSystem;
     
-    const result = await networkClient.discoverAgents(params.capability);
+    // 新架构：优先使用 f2aClient（直接访问 F2A 实例）
+    let result;
+    if (adapter.f2aClient) {
+      result = await adapter.f2aClient.discoverAgents(params.capability);
+    } else {
+      // 降级：使用旧的 HTTP 方式
+      result = await adapter.networkClient.discoverAgents(params.capability);
+    }
     
     if (!result.success) {
-      return { content: `发现失败: ${result.error}` };
+      const errorMsg = result.error?.message || String(result.error) || 'Unknown error';
+      return { content: `发现失败: ${errorMsg}` };
     }
 
     let agents = result.data || [];
@@ -172,13 +187,48 @@ ${agents.map((a: AgentInfo, i: number) => {
 
     // 检查信誉
     if (!reputationSystem.isAllowed(targetAgent.peerId)) {
-      return { 
-        content: `⚠️ ${targetAgent.displayName} 信誉过低 (${reputationSystem.getReputation(targetAgent.peerId).score})，建议谨慎委托`
-      };
+      // 警告但继续执行（不阻止委托）
+      logger.warn(`⚠️ ${targetAgent.displayName} 信誉较低 (${reputationSystem.getReputation(targetAgent.peerId).score})，谨慎委托`);
     }
 
     logger.info(`委托任务给 ${targetAgent.displayName}...`);
 
+    // 新架构：直接使用 F2A 发送消息
+    const adapter = this.adapter as unknown as AdapterInternalAccess;
+    
+    if (adapter.f2aClient && (adapter as any).getF2AStatus?.()?.running) {
+      // 通过 F2A 实例直接发送消息
+      try {
+        const f2a = (this.adapter as any)._f2a;
+        if (f2a && f2a.sendMessage) {
+          // 发送任务消息
+          const message = {
+            type: 'task-request',
+            task: params.task,
+            context: params.context,
+            from: f2a.peerId,
+            timestamp: Date.now()
+          };
+          
+          await f2a.sendMessage(targetAgent.peerId, JSON.stringify(message), {
+            type: 'delegate'
+          });
+          
+          logger.info(`任务已发送给 ${targetAgent.displayName}`);
+          
+          return {
+            content: `✅ 任务已发送给 ${targetAgent.displayName}:\n\n📝 ${params.task}\n\n⏳ 等待对方处理中...`,
+            data: { sent: true, agent: targetAgent.displayName, task: params.task }
+          };
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        logger.error(`委托失败: ${errorMsg}`);
+        return { content: `❌ 委托失败: ${errorMsg}` };
+      }
+    }
+    
+    // 降级：使用旧的 HTTP 方式
     const result = await networkClient.delegateTask({
       peerId: targetAgent.peerId,
       taskType: 'openclaw-task',
@@ -283,37 +333,58 @@ ${agents.map((a: AgentInfo, i: number) => {
     params: {},
     context: SessionContext
   ): Promise<ToolResult> {
-    const nodeManager = (this.adapter as unknown as AdapterInternalAccess).nodeManager;
-    const networkClient = (this.adapter as unknown as AdapterInternalAccess).networkClient;
-    const taskQueue = (this.adapter as unknown as AdapterInternalAccess).taskQueue;
-    const reputationSystem = (this.adapter as unknown as AdapterInternalAccess).reputationSystem;
+    const adapter = this.adapter as unknown as AdapterInternalAccess;
+    const taskQueue = adapter.taskQueue;
+    const reputationSystem = adapter.reputationSystem;
     
-    const [nodeStatus, peersResult] = await Promise.all([
-      nodeManager.getStatus(),
-      networkClient.getConnectedPeers()
-    ]);
-
-    if (!nodeStatus.success) {
-      return { content: `❌ 获取状态失败: ${nodeStatus.error}` };
+    // 新架构：直接获取 F2A 状态
+    let nodeStatus: { running: boolean; peerId?: string; uptime?: number };
+    let peers: any[] = [];
+    
+    if (adapter.getF2AStatus) {
+      nodeStatus = adapter.getF2AStatus();
+      
+      // 使用 f2aClient 获取连接的 peers
+      if (adapter.f2aClient) {
+        const peersResult = await adapter.f2aClient.getConnectedPeers();
+        peers = peersResult.success ? (peersResult.data || []) : [];
+      }
+    } else {
+      // 降级：使用旧的方式
+      const [nodeStatusResult, peersResult] = await Promise.all([
+        adapter.nodeManager.getStatus(),
+        adapter.networkClient.getConnectedPeers()
+      ]);
+      
+      if (!nodeStatusResult.success) {
+        const errorMsg = nodeStatusResult.error?.message || String(nodeStatusResult.error) || 'Unknown error';
+        return { content: `❌ 获取状态失败: ${errorMsg}` };
+      }
+      
+      nodeStatus = {
+        running: nodeStatusResult.data?.running || false,
+        peerId: nodeStatusResult.data?.peerId,
+        uptime: nodeStatusResult.data?.uptime
+      };
+      peers = peersResult.success ? (peersResult.data || []) : [];
     }
 
-    const peers = peersResult.success ? (peersResult.data || []) : [];
     const taskStats = taskQueue.getStats();
 
     const content = `
-🟢 F2A 状态: ${nodeStatus.data?.running ? '运行中' : '已停止'}
-📡 本机 PeerID: ${nodeStatus.data?.peerId || 'N/A'}
-⏱️ 运行时间: ${nodeStatus.data?.uptime ? Math.floor(nodeStatus.data.uptime / 60) + ' 分钟' : 'N/A'}
+🟢 F2A 状态: ${nodeStatus.running ? '运行中' : '已停止'}
+📡 本机 PeerID: ${nodeStatus.peerId || 'N/A'}
+⏱️ 运行时间: ${nodeStatus.uptime ? Math.floor(nodeStatus.uptime / 60) + ' 分钟' : 'N/A'}
 🔗 已连接 Peers: ${peers.length}
 📋 任务队列: ${taskStats.pending} 待处理, ${taskStats.processing} 处理中, ${taskStats.completed} 已完成
 
 ${peers.map((p: any) => {
   const rep = reputationSystem.getReputation(p.peerId);
-  return `  • ${p.agentInfo?.displayName || 'Unknown'} (信誉: ${rep.score})\n    ID: ${p.peerId.slice(0, 20)}...`;
+  return `  • ${p.agentInfo?.displayName || p.displayName || 'Unknown'} (信誉: ${rep.score})\n    ID: ${p.peerId?.slice(0, 20)}...`;
 }).join('\n')}
     `.trim();
 
-    return { content, data: { status: nodeStatus.data, peers, taskStats } };
+    return { content, data: { status: nodeStatus, peers, taskStats } };
   }
 
   /**
@@ -568,8 +639,16 @@ ${tasks.map(t => {
    * 解析 Agent 引用
    */
   private async resolveAgent(agentRef: string): Promise<AgentInfo | null> {
-    const networkClient = (this.adapter as unknown as AdapterInternalAccess).networkClient;
-    const result = await networkClient.discoverAgents();
+    const adapter = this.adapter as unknown as AdapterInternalAccess;
+    
+    // 新架构：优先使用 f2aClient
+    let result;
+    if (adapter.f2aClient) {
+      result = await adapter.f2aClient.discoverAgents();
+    } else {
+      result = await adapter.networkClient.discoverAgents();
+    }
+    
     if (!result.success) return null;
 
     const agents = result.data || [];

@@ -744,15 +744,27 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       peers.map(peer => this.sendMessage(peer.toString(), message))
     );
 
-    // 记录发送失败的情况
-    const failures = results.filter(r =>
-      r.status === 'rejected' ||
-      (r.status === 'fulfilled' && !r.value.success)
-    );
+    // 记录发送失败的情况（包含详细错误信息）
+    const failures: Array<{ peerId: string; error: string }> = [];
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        failures.push({
+          peerId: peers[index].toString().slice(0, 16),
+          error: result.reason?.message || String(result.reason)
+        });
+      } else if (!result.value.success) {
+        failures.push({
+          peerId: peers[index].toString().slice(0, 16),
+          error: result.value.error?.message || 'Unknown error'
+        });
+      }
+    });
+
     if (failures.length > 0) {
       this.logger.warn('Broadcast failed to some peers', {
         failed: failures.length,
-        total: peers.length
+        total: peers.length,
+        details: failures
       });
     }
   }

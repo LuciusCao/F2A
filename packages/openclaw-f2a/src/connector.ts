@@ -97,6 +97,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   
   /**
    * 获取网络客户端（懒加载）
+   * 新架构：直接使用 F2A 实例的方法，不再通过 HTTP
    */
   private get networkClient(): F2ANetworkClient {
     if (!this._networkClient) {
@@ -207,6 +208,52 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
    */
   isInitialized(): boolean {
     return this._initialized;
+  }
+  
+  /**
+   * 获取 F2A 状态（供 tool-handlers 使用）
+   */
+  getF2AStatus(): { running: boolean; peerId?: string; uptime?: number } {
+    if (!this._f2a) {
+      return { running: false };
+    }
+    return {
+      running: true,
+      peerId: this._f2a.peerId,
+      uptime: (this._f2a as any).startTime ? Date.now() - (this._f2a as any).startTime : undefined
+    };
+  }
+  
+  /**
+   * 获取 F2A Client（供 tool-handlers 使用）
+   * 直接访问 F2A 实例的方法
+   */
+  get f2aClient() {
+    return {
+      discoverAgents: async (capability?: string) => {
+        if (!this._f2a) {
+          return { success: false, error: { message: 'F2A 实例未初始化' } };
+        }
+        try {
+          const agents = await this._f2a.discoverAgents(capability);
+          return { success: true, data: agents };
+        } catch (err) {
+          return { success: false, error: { message: err instanceof Error ? err.message : String(err) } };
+        }
+      },
+      getConnectedPeers: async () => {
+        if (!this._f2a) {
+          return { success: false, error: { message: 'F2A 实例未初始化' } };
+        }
+        try {
+          // 从 F2A 实例获取连接的 peers
+          const peers = (this._f2a as any).p2pNetwork?.getConnectedPeers?.() || [];
+          return { success: true, data: peers };
+        } catch (err) {
+          return { success: false, error: { message: err instanceof Error ? err.message : String(err) } };
+        }
+      }
+    };
   }
 
   /**

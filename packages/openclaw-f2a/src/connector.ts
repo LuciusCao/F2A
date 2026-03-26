@@ -558,10 +558,15 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     if (this.api?.runtime?.subagent?.run) {
       debugLog('[F2A Adapter] 使用 Subagent API');
       try {
-        const runResult = await this.api.runtime.subagent.run({
+        // 生成 idempotencyKey（必需参数）
+        const idempotencyKey = `f2a-${fromPeerId.slice(0, 16)}-${Date.now()}`;
+        
+        // 使用 any 绕过类型检查（idempotencyKey 不在类型定义中但 API 需要）
+        const runResult = await (this.api.runtime.subagent.run as any)({
           sessionKey,
           message,
           deliver: false,
+          idempotencyKey,
         });
         
         const waitResult = await this.api.runtime.subagent.waitForRun({

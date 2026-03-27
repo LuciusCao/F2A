@@ -407,8 +407,8 @@ ${peers.map((p: any) => {
     }
     
     // P1-1: 验证 peer_id 格式（对于需要 peer_id 的操作）
-    if (params.peer_id && !isValidPeerId(params.peer_id)) {
-      return { content: `❌ 无效的 peer_id 格式: ${params.peer_id.slice(0, 20)}...` };
+    if (params.peer_id && typeof params.peer_id === 'string' && !isValidPeerId(params.peer_id)) {
+      return { content: `❌ 无效的 peer_id 格式: ${(params.peer_id as string).slice(0, 20)}...` };
     }
     
     const reputationSystem = (this.adapter as unknown as AdapterInternalAccess).reputationSystem;
@@ -927,11 +927,12 @@ ${result.reviews.map((r, i) => {
     }
 
     // P1-1: 验证 peer_id 格式（如果提供了的话）
-    if (params.peer_id && !isValidPeerId(params.peer_id)) {
+    if (params.peer_id && typeof params.peer_id === 'string' && !isValidPeerId(params.peer_id)) {
       // 注意：允许部分匹配（前缀），所以只检查基本格式
       // 基本检查：必须以 12D3KooW 开头
-      if (!params.peer_id.startsWith('12D3KooW')) {
-        return { content: `❌ 无效的 peer_id 格式: ${params.peer_id.slice(0, 20)}...` };
+      const peerIdStr = params.peer_id as string;
+      if (!peerIdStr.startsWith('12D3KooW')) {
+        return { content: `❌ 无效的 peer_id 格式: ${peerIdStr.slice(0, 20)}...` };
       }
     }
 

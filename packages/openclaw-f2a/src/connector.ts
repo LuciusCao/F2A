@@ -178,6 +178,43 @@ function extractErrorMessage(error: unknown): string {
   }
 }
 
+/**
+ * Issue #96: 从 IDENTITY.md 读取 agent 名字
+ * @param workspace - agent workspace 目录
+ * @returns agent 名字，如果读取失败返回 null
+ */
+function readAgentNameFromIdentity(workspace: string | undefined): string | null {
+  if (!workspace) {
+    return null;
+  }
+  
+  try {
+    const identityPath = join(workspace, 'IDENTITY.md');
+    const fs = require('fs');
+    
+    if (!fs.existsSync(identityPath)) {
+      return null;
+    }
+    
+    const content = fs.readFileSync(identityPath, 'utf-8');
+    
+    // 解析 IDENTITY.md 中的 Name 字段
+    // 格式: - **Name:** 猫咕噜 (Cat Guru)
+    const nameMatch = content.match(/-\s*\*\*Name:\*\*\s*(.+?)(?:\s*\([^)]*\))?$/m);
+    
+    if (nameMatch && nameMatch[1]) {
+      const name = nameMatch[1].trim();
+      // 移除可能的英文别名（括号内的内容已在正则中处理）
+      return name;
+    }
+    
+    return null;
+  } catch (err) {
+    // 读取失败，返回 null
+    return null;
+  }
+}
+
 /** OpenClaw API Logger 类型 */
 interface ApiLogger {
   info(message: string, ...args: unknown[]): void;
@@ -639,8 +676,19 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       debugLog(`[F2A Adapter] workspace: ${(this.api?.config as any)?.agents?.defaults?.workspace}`);
       debugLog(`[F2A Adapter] config.dataDir: ${this.config.dataDir}`);
       
+      // Issue #96: 从 IDENTITY.md 读取 agent 名字
+      const workspace = (this.api?.config as any)?.agents?.defaults?.workspace;
+      const identityName = readAgentNameFromIdentity(workspace);
+      
+      // 优先级：IDENTITY.md > config.agentName > 默认值
+      const displayName = identityName || this.config.agentName || 'OpenClaw Agent';
+      
+      if (identityName) {
+        debugLog(`[F2A Adapter] 从 IDENTITY.md 读取 agent 名字: ${identityName}`);
+      }
+      
       this._f2a = await F2A.create({
-        displayName: this.config.agentName || 'OpenClaw Agent',
+        displayName,
         dataDir,
         network: {
           listenPort: this.config.p2pPort || 0,

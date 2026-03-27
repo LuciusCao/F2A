@@ -37,6 +37,11 @@ import { ToolHandlers } from './tool-handlers.js';
 import { ClaimHandlers } from './claim-handlers.js';
 import { ReviewCommittee, F2A } from '@f2a/network';
 
+// Issue #98 & #99: 通讯录和握手机制
+import { ContactManager } from './contact-manager.js';
+import { HandshakeProtocol } from './handshake-protocol.js';
+import { FriendStatus, ContactFilter } from './contact-types.js';
+
 // ============================================================================
 // 安全常量和验证工具
 // ============================================================================
@@ -253,6 +258,10 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   // 处理器实例（延迟初始化）
   private _toolHandlers?: ToolHandlers;
   private _claimHandlers?: ClaimHandlers;
+  
+  // Issue #98 & #99: 通讯录和握手机制
+  private _contactManager?: ContactManager;
+  private _handshakeProtocol?: HandshakeProtocol;
   
   // P1-3: 消息哈希去重缓存，防止恶意节点绕过 echo 检测
   // 存储最近处理过的消息哈希，避免重复处理
@@ -530,6 +539,34 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       this._claimHandlers = new ClaimHandlers(this);
     }
     return this._claimHandlers;
+  }
+  
+  /**
+   * Issue #98: 获取联系人管理器（延迟初始化）
+   */
+  private get contactManager(): ContactManager {
+    if (!this._contactManager) {
+      const dataDir = this.getDefaultDataDir();
+      this._contactManager = new ContactManager(dataDir, this._logger);
+      this._logger?.info('[F2A Adapter] ContactManager 已初始化');
+    }
+    return this._contactManager;
+  }
+  
+  /**
+   * Issue #99: 获取握手协议处理器（延迟初始化）
+   * 依赖 F2A 实例和 ContactManager
+   */
+  private get handshakeProtocol(): HandshakeProtocol {
+    if (!this._handshakeProtocol && this._f2a && this._contactManager) {
+      this._handshakeProtocol = new HandshakeProtocol(
+        this._f2a,
+        this._contactManager,
+        this._logger
+      );
+      this._logger?.info('[F2A Adapter] HandshakeProtocol 已初始化');
+    }
+    return this._handshakeProtocol!;
   }
   
   /**
@@ -1426,6 +1463,157 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           }
         },
         handler: this.toolHandlers.handleGetCapabilities.bind(this.toolHandlers)
+      },
+      // ========== Issue #98 & #99: 通讯录和握手机制工具 ==========
+      {
+        name: 'f2a_contacts',
+        description: '管理通讯录联系人。Actions: list（列出联系人）, get（获取详情）, add（添加）, remove（删除）, update（更新）, block（拉黑）, unblock（解除拉黑）',
+        parameters: {
+          action: {
+            type: 'string',
+            description: '操作类型: list, get, add, remove, update, block, unblock',
+            required: true,
+            enum: ['list', 'get', 'add', 'remove', 'update', 'block', 'unblock']
+          },
+          contact_id: {
+            type: 'string',
+            description: '联系人 ID（get/remove/update/block/unblock 时需要）',
+            required: false
+          },
+          peer_id: {
+            type: 'string',
+            description: 'Peer ID（add 时需要，get/remove 时可选）',
+            required: false
+          },
+          name: {
+            type: 'string',
+            description: '联系人名称（add/update 时需要）',
+            required: false
+          },
+          groups: {
+            type: 'array',
+            description: '分组列表',
+            required: false
+          },
+          tags: {
+            type: 'array',
+            description: '标签列表',
+            required: false
+          },
+          notes: {
+            type: 'string',
+            description: '备注信息',
+            required: false
+          },
+          status: {
+            type: 'string',
+            description: '按状态过滤（list 时可选）: stranger, pending, friend, blocked',
+            required: false,
+            enum: ['stranger', 'pending', 'friend', 'blocked']
+          },
+          group: {
+            type: 'string',
+            description: '按分组过滤（list 时可选）',
+            required: false
+          }
+        },
+        handler: this.handleContacts.bind(this)
+      },
+      {
+        name: 'f2a_contact_groups',
+        description: '管理联系人分组。Actions: list（列出分组）, create（创建）, update（更新）, delete（删除）',
+        parameters: {
+          action: {
+            type: 'string',
+            description: '操作类型: list, create, update, delete',
+            required: true,
+            enum: ['list', 'create', 'update', 'delete']
+          },
+          group_id: {
+            type: 'string',
+            description: '分组 ID（update/delete 时需要）',
+            required: false
+          },
+          name: {
+            type: 'string',
+            description: '分组名称（create/update 时需要）',
+            required: false
+          },
+          description: {
+            type: 'string',
+            description: '分组描述',
+            required: false
+          },
+          color: {
+            type: 'string',
+            description: '分组颜色（十六进制，如 #FF5733）',
+            required: false
+          }
+        },
+        handler: this.handleContactGroups.bind(this)
+      },
+      {
+        name: 'f2a_friend_request',
+        description: '发送好友请求给指定 Agent',
+        parameters: {
+          peer_id: {
+            type: 'string',
+            description: '目标 Agent 的 Peer ID',
+            required: true
+          },
+          message: {
+            type: 'string',
+            description: '附加消息',
+            required: false
+          }
+        },
+        handler: this.handleFriendRequest.bind(this)
+      },
+      {
+        name: 'f2a_pending_requests',
+        description: '查看和处理待处理的好友请求。Actions: list（列出请求）, accept（接受）, reject（拒绝）',
+        parameters: {
+          action: {
+            type: 'string',
+            description: '操作类型: list, accept, reject',
+            required: true,
+            enum: ['list', 'accept', 'reject']
+          },
+          request_id: {
+            type: 'string',
+            description: '请求 ID（accept/reject 时需要）',
+            required: false
+          },
+          reason: {
+            type: 'string',
+            description: '拒绝原因（reject 时可选）',
+            required: false
+          }
+        },
+        handler: this.handlePendingRequests.bind(this)
+      },
+      {
+        name: 'f2a_contacts_export',
+        description: '导出通讯录数据',
+        parameters: {},
+        handler: this.handleContactsExport.bind(this)
+      },
+      {
+        name: 'f2a_contacts_import',
+        description: '导入通讯录数据',
+        parameters: {
+          data: {
+            type: 'object',
+            description: '导入的通讯录数据（JSON 格式）',
+            required: true
+          },
+          merge: {
+            type: 'boolean',
+            description: '是否合并（true）或覆盖（false），默认 true',
+            required: false
+          }
+        },
+        handler: this.handleContactsImport.bind(this)
       }
     ];
   }
@@ -1806,6 +1994,408 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     return fuzzy || null;
   }
 
+  // ============================================================================
+  // Issue #98 & #99: 通讯录和握手机制工具处理方法
+  // ============================================================================
+
+  /**
+   * 处理通讯录工具
+   */
+  private async handleContacts(
+    params: {
+      action: 'list' | 'get' | 'add' | 'remove' | 'update' | 'block' | 'unblock';
+      contact_id?: string;
+      peer_id?: string;
+      name?: string;
+      groups?: string[];
+      tags?: string[];
+      notes?: string;
+      status?: string;
+      group?: string;
+    },
+    _context: SessionContext
+  ): Promise<ToolResult> {
+    try {
+      const cm = this.contactManager;
+      
+      switch (params.action) {
+        case 'list': {
+          const filter: ContactFilter = {};
+          if (params.status) {
+            filter.status = params.status as FriendStatus;
+          }
+          if (params.group) {
+            filter.group = params.group;
+          }
+          const contacts = cm.getContacts(filter, { field: 'name', order: 'asc' });
+          const stats = cm.getStats();
+          
+          return {
+            content: `📋 **通讯录** (${stats.total} 个联系人)\n\n` +
+              contacts.map(c => {
+                const statusIcon = {
+                  [FriendStatus.FRIEND]: '💚',
+                  [FriendStatus.STRANGER]: '⚪',
+                  [FriendStatus.PENDING]: '🟡',
+                  [FriendStatus.BLOCKED]: '🔴',
+                }[c.status];
+                return `${statusIcon} **${c.name}**\n   Peer: ${c.peerId.slice(0, 16)}...\n   信誉: ${c.reputation} | 状态: ${c.status}`;
+              }).join('\n\n') || '暂无联系人'
+          };
+        }
+        
+        case 'get': {
+          let contact;
+          if (params.contact_id) {
+            contact = cm.getContact(params.contact_id);
+          } else if (params.peer_id) {
+            contact = cm.getContactByPeerId(params.peer_id);
+          } else {
+            return { content: '❌ 需要提供 contact_id 或 peer_id' };
+          }
+          
+          if (!contact) {
+            return { content: '❌ 联系人不存在' };
+          }
+          
+          return {
+            content: `👤 **${contact.name}**\n` +
+              `   ID: ${contact.id}\n` +
+              `   Peer ID: ${contact.peerId}\n` +
+              `   状态: ${contact.status}\n` +
+              `   信誉: ${contact.reputation}\n` +
+              `   分组: ${contact.groups.join(', ') || '无'}\n` +
+              `   标签: ${contact.tags.join(', ') || '无'}\n` +
+              `   最后通信: ${contact.lastCommunicationTime ? new Date(contact.lastCommunicationTime).toLocaleString() : '从未'}\n` +
+              (contact.notes ? `   备注: ${contact.notes}` : '')
+          };
+        }
+        
+        case 'add': {
+          if (!params.peer_id || !params.name) {
+            return { content: '❌ 需要提供 peer_id 和 name' };
+          }
+          
+          const contact = cm.addContact({
+            name: params.name,
+            peerId: params.peer_id,
+            groups: params.groups,
+            tags: params.tags,
+            notes: params.notes,
+          });
+          
+          return { content: `✅ 已添加联系人: ${contact.name} (${contact.peerId.slice(0, 16)})` };
+        }
+        
+        case 'remove': {
+          let contactId = params.contact_id;
+          if (!contactId && params.peer_id) {
+            const contact = cm.getContactByPeerId(params.peer_id);
+            contactId = contact?.id;
+          }
+          
+          if (!contactId) {
+            return { content: '❌ 需要提供 contact_id 或 peer_id' };
+          }
+          
+          const success = cm.removeContact(contactId);
+          return { content: success ? '✅ 已删除联系人' : '❌ 联系人不存在' };
+        }
+        
+        case 'update': {
+          let contactId = params.contact_id;
+          if (!contactId && params.peer_id) {
+            const contact = cm.getContactByPeerId(params.peer_id);
+            contactId = contact?.id;
+          }
+          
+          if (!contactId) {
+            return { content: '❌ 需要提供 contact_id 或 peer_id' };
+          }
+          
+          const contact = cm.updateContact(contactId, {
+            name: params.name,
+            groups: params.groups,
+            tags: params.tags,
+            notes: params.notes,
+          });
+          
+          return { content: contact ? `✅ 已更新联系人: ${contact.name}` : '❌ 联系人不存在' };
+        }
+        
+        case 'block': {
+          let contactId = params.contact_id;
+          if (!contactId && params.peer_id) {
+            const contact = cm.getContactByPeerId(params.peer_id);
+            contactId = contact?.id;
+          }
+          
+          if (!contactId) {
+            return { content: '❌ 需要提供 contact_id 或 peer_id' };
+          }
+          
+          const success = cm.blockContact(contactId);
+          return { content: success ? '✅ 已拉黑联系人' : '❌ 联系人不存在' };
+        }
+        
+        case 'unblock': {
+          let contactId = params.contact_id;
+          if (!contactId && params.peer_id) {
+            const contact = cm.getContactByPeerId(params.peer_id);
+            contactId = contact?.id;
+          }
+          
+          if (!contactId) {
+            return { content: '❌ 需要提供 contact_id 或 peer_id' };
+          }
+          
+          const success = cm.unblockContact(contactId);
+          return { content: success ? '✅ 已解除拉黑' : '❌ 联系人不存在' };
+        }
+        
+        default:
+          return { content: '❌ 未知操作' };
+      }
+    } catch (err) {
+      return { content: `❌ 操作失败: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
+
+  /**
+   * 处理分组管理工具
+   */
+  private async handleContactGroups(
+    params: {
+      action: 'list' | 'create' | 'update' | 'delete';
+      group_id?: string;
+      name?: string;
+      description?: string;
+      color?: string;
+    },
+    _context: SessionContext
+  ): Promise<ToolResult> {
+    try {
+      const cm = this.contactManager;
+      
+      switch (params.action) {
+        case 'list': {
+          const groups = cm.getGroups();
+          return {
+            content: `📁 **分组列表** (${groups.length} 个)\n\n` +
+              groups.map(g => `• **${g.name}** (${g.id})\n   ${g.description || '无描述'}`).join('\n\n')
+          };
+        }
+        
+        case 'create': {
+          if (!params.name) {
+            return { content: '❌ 需要提供分组名称' };
+          }
+          
+          const group = cm.createGroup({
+            name: params.name,
+            description: params.description,
+            color: params.color,
+          });
+          
+          return { content: `✅ 已创建分组: ${group.name}` };
+        }
+        
+        case 'update': {
+          if (!params.group_id) {
+            return { content: '❌ 需要提供 group_id' };
+          }
+          
+          const group = cm.updateGroup(params.group_id, {
+            name: params.name,
+            description: params.description,
+            color: params.color,
+          });
+          
+          return { content: group ? `✅ 已更新分组: ${group.name}` : '❌ 分组不存在' };
+        }
+        
+        case 'delete': {
+          if (!params.group_id) {
+            return { content: '❌ 需要提供 group_id' };
+          }
+          
+          const success = cm.deleteGroup(params.group_id);
+          return { content: success ? '✅ 已删除分组' : '❌ 无法删除（分组不存在或为默认分组）' };
+        }
+        
+        default:
+          return { content: '❌ 未知操作' };
+      }
+    } catch (err) {
+      return { content: `❌ 操作失败: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
+
+  /**
+   * 处理好友请求工具
+   */
+  private async handleFriendRequest(
+    params: {
+      peer_id: string;
+      message?: string;
+    },
+    _context: SessionContext
+  ): Promise<ToolResult> {
+    try {
+      if (!this._f2a) {
+        return { content: '❌ F2A 实例未初始化' };
+      }
+      
+      if (!this._contactManager) {
+        // 确保联系人管理器已初始化
+        this.contactManager;
+      }
+      
+      if (!this._handshakeProtocol) {
+        // 初始化握手协议
+        this.handshakeProtocol;
+      }
+      
+      if (!this._handshakeProtocol) {
+        return { content: '❌ 握手协议未初始化' };
+      }
+      
+      const requestId = await this._handshakeProtocol.sendFriendRequest(
+        params.peer_id,
+        params.message
+      );
+      
+      if (requestId) {
+        return { content: `✅ 好友请求已发送\n请求 ID: ${requestId}\n等待对方响应...` };
+      } else {
+        return { content: '❌ 发送好友请求失败' };
+      }
+    } catch (err) {
+      return { content: `❌ 发送失败: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
+
+  /**
+   * 处理待处理请求工具
+   */
+  private async handlePendingRequests(
+    params: {
+      action: 'list' | 'accept' | 'reject';
+      request_id?: string;
+      reason?: string;
+    },
+    _context: SessionContext
+  ): Promise<ToolResult> {
+    try {
+      const cm = this.contactManager;
+      
+      switch (params.action) {
+        case 'list': {
+          const pending = cm.getPendingHandshakes();
+          
+          if (pending.length === 0) {
+            return { content: '📭 暂无待处理的好友请求' };
+          }
+          
+          return {
+            content: `📬 **待处理的好友请求** (${pending.length} 个)\n\n` +
+              pending.map(p => 
+                `• **${p.fromName}**\n   Peer: ${p.from.slice(0, 16)}...\n   请求 ID: ${p.requestId}\n   收到: ${new Date(p.receivedAt).toLocaleString()}` +
+                (p.message ? `\n   消息: ${p.message}` : '')
+              ).join('\n\n')
+          };
+        }
+        
+        case 'accept': {
+          if (!params.request_id) {
+            return { content: '❌ 需要提供 request_id' };
+          }
+          
+          if (!this._handshakeProtocol) {
+            return { content: '❌ 握手协议未初始化' };
+          }
+          
+          const success = await this._handshakeProtocol.acceptRequest(params.request_id);
+          return { content: success ? '✅ 已接受好友请求，双方已成为好友' : '❌ 接受失败' };
+        }
+        
+        case 'reject': {
+          if (!params.request_id) {
+            return { content: '❌ 需要提供 request_id' };
+          }
+          
+          if (!this._handshakeProtocol) {
+            return { content: '❌ 握手协议未初始化' };
+          }
+          
+          const success = await this._handshakeProtocol.rejectRequest(params.request_id, params.reason);
+          return { content: success ? '✅ 已拒绝好友请求' : '❌ 拒绝失败' };
+        }
+        
+        default:
+          return { content: '❌ 未知操作' };
+      }
+    } catch (err) {
+      return { content: `❌ 操作失败: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
+
+  /**
+   * 处理导出通讯录工具
+   */
+  private async handleContactsExport(
+    _params: Record<string, never>,
+    _context: SessionContext
+  ): Promise<ToolResult> {
+    try {
+      const cm = this.contactManager;
+      const data = cm.exportContacts(this._f2a?.peerId);
+      
+      return {
+        content: `📤 **通讯录导出成功**\n\n` +
+          `联系人: ${data.contacts.length} 个\n` +
+          `分组: ${data.groups.length} 个\n` +
+          `导出时间: ${new Date(data.exportedAt).toLocaleString()}\n\n` +
+          '```json\n' + JSON.stringify(data, null, 2) + '\n```',
+        data,
+      };
+    } catch (err) {
+      return { content: `❌ 导出失败: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
+
+  /**
+   * 处理导入通讯录工具
+   */
+  private async handleContactsImport(
+    params: {
+      data: Record<string, unknown>;
+      merge?: boolean;
+    },
+    _context: SessionContext
+  ): Promise<ToolResult> {
+    try {
+      const cm = this.contactManager;
+      const result = cm.importContacts(params.data as any, params.merge ?? true);
+      
+      if (result.success) {
+        return {
+          content: `📥 **通讯录导入完成**\n\n` +
+            `✅ 导入联系人: ${result.importedContacts} 个\n` +
+            `✅ 导入分组: ${result.importedGroups} 个\n` +
+            `⏭️ 跳过联系人: ${result.skippedContacts} 个` +
+            (result.errors.length ? `\n\n⚠️ 错误:\n${result.errors.join('\n')}` : '')
+        };
+      } else {
+        return {
+          content: `❌ 导入失败\n\n错误:\n${result.errors.join('\n')}`
+        };
+      }
+    } catch (err) {
+      return { content: `❌ 导入失败: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
+
   /**
    * 关闭插件，清理资源
    * 只清理已初始化的资源
@@ -1817,6 +2407,20 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
+    }
+    
+    // Issue #99: 关闭握手协议
+    if (this._handshakeProtocol) {
+      this._handshakeProtocol.shutdown();
+      this._logger?.info('[F2A Adapter] HandshakeProtocol 已关闭');
+      this._handshakeProtocol = undefined;
+    }
+    
+    // Issue #98: 刷新通讯录数据
+    if (this._contactManager) {
+      this._contactManager.flush();
+      this._logger?.info('[F2A Adapter] ContactManager 数据已保存');
+      this._contactManager = undefined;
     }
     
     // 停止 F2A 实例（新架构直接管理）

@@ -14,5 +14,13 @@ export { AnnouncementQueue, AnnouncementQueueStats } from './announcement-queue.
 export { TaskGuard, TaskGuardReport, TaskGuardRule, TaskGuardConfig, taskGuard } from './task-guard.js';
 export * from './types.js';
 
+// Issue #98: 通讯录模块
+export { ContactManager } from './contact-manager.js';
+export * from './contact-types.js';
+
+// Issue #99: 握手协议模块
+export { HandshakeProtocol, HANDSHAKE_MESSAGE_TYPES } from './handshake-protocol.js';
+export type { FriendRequestMessage, FriendResponseMessage } from './handshake-protocol.js';
+
 // 默认导出
 export { F2AOpenClawAdapter as default } from './connector.js';

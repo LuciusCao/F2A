@@ -120,6 +120,9 @@ export class HandshakeProtocol {
   
   /** P1-4 修复：shutdown 标志，阻止新请求 */
   private _isShutdown: boolean = false;
+  
+  /** P1 修复：PeerID 格式正则（libp2p 格式：12D3KooW...） */
+  private static readonly PEER_ID_REGEX = /^12D3KooW[A-Za-z0-9]{44}$/;
 
   constructor(
     f2a: F2A,
@@ -381,11 +384,18 @@ export class HandshakeProtocol {
 
   /**
    * 处理好友请求
+   * P1 修复：添加 PeerID 格式验证
    */
   private async handleFriendRequest(
     from: string,
     msg: FriendRequestMessage
   ): Promise<void> {
+    // P1 修复：验证 PeerID 格式
+    if (!HandshakeProtocol.PEER_ID_REGEX.test(from)) {
+      this.logger?.warn(`[HandshakeProtocol] 无效的 PeerID 格式: ${from.slice(0, 16)}...`);
+      return;
+    }
+    
     this.logger?.info(`[HandshakeProtocol] 收到好友请求: ${msg.fromName} (${from.slice(0, 16)})`);
     
     // 检查是否被拉黑
@@ -421,11 +431,18 @@ export class HandshakeProtocol {
 
   /**
    * 处理好友响应
+   * P1 修复：添加 PeerID 格式验证
    */
   private async handleFriendResponse(
     from: string,
     msg: FriendResponseMessage
   ): Promise<void> {
+    // P1 修复：验证 PeerID 格式
+    if (!HandshakeProtocol.PEER_ID_REGEX.test(from)) {
+      this.logger?.warn(`[HandshakeProtocol] 无效的 PeerID 格式: ${from.slice(0, 16)}...`);
+      return;
+    }
+    
     this.logger?.info(`[HandshakeProtocol] 收到好友响应: ${msg.accepted ? 'accepted' : 'rejected'}`);
     
     // 查找对应的请求

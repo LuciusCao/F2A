@@ -98,6 +98,8 @@ export interface ContactCreateParams {
   peerId: string;
   /** Agent ID（可选） */
   agentId?: string;
+  /** 好友状态（可选，默认 STRANGER） */
+  status?: FriendStatus;
   /** 能力列表 */
   capabilities?: ContactCapability[];
   /** 信誉分数（默认 0） */

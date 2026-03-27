@@ -343,6 +343,7 @@ export class ContactManager {
   /**
    * 添加联系人
    * P2-1 修复：添加输入验证
+   * P1 修复：支持传入 status 参数
    * 
    * @param params - 创建参数
    * @returns 新创建的联系人，如果保存失败返回 null
@@ -380,7 +381,7 @@ export class ContactManager {
       name: params.name,
       peerId: params.peerId,
       agentId: params.agentId,
-      status: FriendStatus.STRANGER,
+      status: params.status ?? FriendStatus.STRANGER,  // P1 修复：支持传入 status，默认为 STRANGER
       capabilities: params.capabilities || [],
       reputation: params.reputation ?? 0,
       groups: params.groups || ['default'],
@@ -425,7 +426,7 @@ export class ContactManager {
     }
     
     const contact = this.data.contacts[index];
-    const originalContact = { ...contact }; // 备份用于回滚
+    const originalContact = deepClone(contact); // P1 修复：使用深拷贝备份用于回滚
     
     // P2-1 修复：验证名称
     if (params.name !== undefined && !this.validateName(params.name)) {
@@ -906,24 +907,20 @@ export class ContactManager {
       }
       contact = updated;
     } else {
-      // 创建新联系人
+      // P1 修复：创建新联系人时直接设置 status 为 FRIEND，避免状态不一致
       contact = this.addContact({
         name: pending.fromName,
         peerId: pending.from,
         capabilities: pending.capabilities,
         groups: ['default'],
+        status: FriendStatus.FRIEND,  // 直接设置为好友
       });
-      // P1-2 修复：检查添加是否成功
+      // 检查添加是否成功
       if (!contact) {
         this.logger?.error('[ContactManager] 接受握手失败：添加联系人失败');
         return null;
       }
-      const updated = this.updateContact(contact.id, { status: FriendStatus.FRIEND });
-      if (!updated) {
-        this.logger?.error('[ContactManager] 接受握手失败：更新状态失败');
-        return null;
-      }
-      contact = updated;
+      // 不再需要额外调用 updateContact 设置状态
     }
     
     // P1-2 修复：先保存数据，成功后再移除待处理请求
@@ -1001,12 +998,19 @@ export class ContactManager {
 
   /**
    * 处理收到的握手响应
+   * P1 修复：添加 PeerID 验证，优化状态设置
    * 
    * 当对方接受我们的好友请求时调用
    */
   handleHandshakeResponse(response: HandshakeResponse): boolean {
     if (!response.accepted) {
       this.logger?.info(`[ContactManager] 好友请求被拒绝: ${response.reason || '无原因'}`);
+      return false;
+    }
+    
+    // P1 修复：验证 PeerID 格式
+    if (!this.validatePeerId(response.from)) {
+      this.logger?.warn(`[ContactManager] 无效的 PeerID 格式: ${response.from.slice(0, 16)}...`);
       return false;
     }
     
@@ -1025,22 +1029,18 @@ export class ContactManager {
       }
       contact = updated;
     } else {
+      // P1 修复：创建新联系人时直接设置 status 为 FRIEND
       contact = this.addContact({
         name: response.fromName || 'Unknown',
         peerId: response.from,
         capabilities: response.capabilities || [],
         groups: ['default'],
+        status: FriendStatus.FRIEND,  // 直接设置为好友
       });
       if (!contact) {
         this.logger?.error('[ContactManager] 处理握手响应失败：添加联系人失败');
         return false;
       }
-      const updated = this.updateContact(contact.id, { status: FriendStatus.FRIEND });
-      if (!updated) {
-        this.logger?.error('[ContactManager] 处理握手响应失败：更新状态失败');
-        return false;
-      }
-      contact = updated;
     }
     
     this.logger?.info(`[ContactManager] 好友请求已接受: ${contact!.name}`);

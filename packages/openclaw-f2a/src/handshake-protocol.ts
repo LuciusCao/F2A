@@ -20,7 +20,7 @@ import {
   PendingHandshake,
 } from './contact-types.js';
 import type { ApiLogger } from './connector.js';
-import { DEFAULT_HANDSHAKE_CONFIG, type HandshakeConfig } from './types.js';
+import { DEFAULT_HANDSHAKE_CONFIG, type HandshakeConfig, type F2APublicInterface, type F2AMessageEvent } from './types.js';
 
 // ============================================================================
 // 常量定义
@@ -33,36 +33,6 @@ export const HANDSHAKE_MESSAGE_TYPES = {
   /** 好友请求响应 */
   FRIEND_RESPONSE: 'FRIEND_RESPONSE',
 } as const;
-
-// ============================================================================
-// F2A 接口类型定义
-// ============================================================================
-
-/**
- * P0-1 修复：定义 F2A 实例的消息事件接口
- * 避免使用 as any 绕过类型检查
- */
-interface F2AMessageEvent {
-  from: string;
-  content: string;
-  metadata?: Record<string, unknown>;
-  messageId: string;
-}
-
-/**
- * P0-1 修复：定义 F2A 实例的公共接口
- */
-interface F2APublicInterface {
-  peerId: string;
-  agentInfo?: {
-    displayName?: string;
-    multiaddrs?: string[];
-  };
-  getCapabilities(): Array<{ name: string; description?: string; tools?: string[] }>;
-  on(event: 'message', handler: (msg: F2AMessageEvent) => void): void;
-  on(event: 'peer:connected' | 'peer:disconnected', handler: (event: { peerId: string }) => void): void;
-  sendMessage(to: string, content: string, metadata?: Record<string, unknown>): Promise<{ success: boolean; error?: string }>;
-}
 
 // ============================================================================
 // 握手协议消息接口
@@ -161,11 +131,26 @@ export class HandshakeProtocol {
     this.contactManager = contactManager;
     this.logger = logger;
     
-    // P2-3 修复：合并配置，使用默认值填充
+    // P2-3 修复：配置参数边界检查
+    const timeoutMs = config?.timeoutMs ?? DEFAULT_HANDSHAKE_CONFIG.timeoutMs;
+    const maxRetries = config?.maxRetries ?? DEFAULT_HANDSHAKE_CONFIG.maxRetries;
+    const retryDelayMs = config?.retryDelayMs ?? DEFAULT_HANDSHAKE_CONFIG.retryDelayMs;
+    
+    // timeoutMs 最小值 1000ms
+    if (timeoutMs < 1000) {
+      logger?.warn(`[HandshakeProtocol] timeoutMs (${timeoutMs}) 小于最小值 1000，已自动调整为 1000`);
+    }
+    
+    // maxRetries 最大值 10
+    if (maxRetries > 10) {
+      logger?.warn(`[HandshakeProtocol] maxRetries (${maxRetries}) 大于最大值 10，已自动调整为 10`);
+    }
+    
+    // P2-3 修复：合并配置，使用验证后的值
     this.config = {
-      timeoutMs: config?.timeoutMs ?? DEFAULT_HANDSHAKE_CONFIG.timeoutMs,
-      maxRetries: config?.maxRetries ?? DEFAULT_HANDSHAKE_CONFIG.maxRetries,
-      retryDelayMs: config?.retryDelayMs ?? DEFAULT_HANDSHAKE_CONFIG.retryDelayMs,
+      timeoutMs: Math.max(1000, timeoutMs),
+      maxRetries: Math.min(10, maxRetries),
+      retryDelayMs: Math.max(100, retryDelayMs),
     };
     
     // 绑定消息处理器
@@ -360,6 +345,7 @@ export class HandshakeProtocol {
 
   /**
    * 处理收到的消息
+   * P2-2 修复：JSON 解析失败时记录 warn 日志
    */
   private async handleMessage(
     from: string,
@@ -388,7 +374,8 @@ export class HandshakeProtocol {
           break;
       }
     } catch (err) {
-      // JSON 解析失败，不是我们处理的消息
+      // P2-2 修复：JSON 解析失败时记录 warn 日志
+      this.logger?.warn(`[HandshakeProtocol] JSON 解析失败: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

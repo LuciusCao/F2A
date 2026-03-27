@@ -40,6 +40,18 @@ const CONTACTS_DATA_VERSION = 1;
 /** 默认数据文件名 */
 const DEFAULT_CONTACTS_FILE = 'contacts.json';
 
+/** P1-4 修复：最大联系人数量限制 */
+const MAX_CONTACTS = 10000;
+
+/** P1-4 修复：导入数据最大大小（字节） */
+const MAX_IMPORT_SIZE = 10 * 1024 * 1024; // 10MB
+
+/** P2-1 修复：PeerID 格式正则（libp2p 格式：12D3KooW...） */
+const PEER_ID_REGEX = /^12D3KooW[A-Za-z0-9]{44}$/;
+
+/** P2-1 修复：名称最大长度 */
+const MAX_NAME_LENGTH = 100;
+
 /** 默认分组 */
 const DEFAULT_GROUPS: ContactGroup[] = [
   {
@@ -134,27 +146,43 @@ export class ContactManager {
   private eventHandlers: Set<ContactEventHandler> = new Set();
   private autoSave: boolean = true;
   
-  // P1-3 修复：并发访问保护锁
-  private _lock: Promise<void> = Promise.resolve();
-  private _isLocked: boolean = false;
+  // P1-1 修复：Promise 队列实现的互斥锁
+  private _lockQueue: Promise<void> = Promise.resolve();
   
   /**
-   * P1-3 修复：获取互斥锁
+   * P1-1 修复：使用 Promise 队列实现互斥锁
    * 确保同一时间只有一个操作在修改数据
+   * 相比自旋锁，这种方式不会阻塞事件循环
    */
   private async acquireLock(): Promise<() => void> {
-    while (this._isLocked) {
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-    this._isLocked = true;
-    let releaseCalled = false;
-    const release = () => {
-      if (!releaseCalled) {
-        this._isLocked = false;
-        releaseCalled = true;
-      }
-    };
-    return release;
+    let releaseLock: () => void;
+    const lockPromise = new Promise<void>(resolve => {
+      releaseLock = resolve;
+    });
+    
+    // 等待之前的锁释放
+    const previousLock = this._lockQueue;
+    this._lockQueue = this._lockQueue.then(() => lockPromise);
+    
+    await previousLock;
+    
+    return releaseLock!;
+  }
+
+  /**
+   * P2-1 修复：验证 PeerID 格式
+   * libp2p 格式：12D3KooW + 44 个 base58 字符
+   */
+  private validatePeerId(peerId: string): boolean {
+    return PEER_ID_REGEX.test(peerId);
+  }
+
+  /**
+   * P2-1 修复：验证名称
+   * 限制长度，防止过长的名称
+   */
+  private validateName(name: string): boolean {
+    return typeof name === 'string' && name.length > 0 && name.length <= MAX_NAME_LENGTH;
   }
 
   /**
@@ -169,6 +197,23 @@ export class ContactManager {
     logger?: ApiLogger,
     options?: { autoSave?: boolean }
   ) {
+    // P1-3 修复：验证 dataDir，防止路径遍历攻击
+    if (!dataDir || typeof dataDir !== 'string') {
+      throw new Error('[ContactManager] dataDir 必须是非空字符串');
+    }
+    
+    // 检查路径遍历
+    if (dataDir.includes('..')) {
+      throw new Error('[ContactManager] dataDir 不能包含 ".."（路径遍历风险）');
+    }
+    
+    // 检查绝对路径（只允许相对路径或特定格式的路径）
+    // 注意：这里我们允许绝对路径，但记录警告
+    const isAbsolute = dataDir.startsWith('/') || /^[A-Za-z]:/.test(dataDir);
+    if (isAbsolute) {
+      logger?.warn(`[ContactManager] 使用绝对路径作为 dataDir: ${dataDir}`);
+    }
+    
     this.dataDir = dataDir;
     this.logger = logger;
     this.autoSave = options?.autoSave ?? true;
@@ -276,12 +321,30 @@ export class ContactManager {
 
   /**
    * 添加联系人
-   * P1-3 修复：使用锁保护并发访问
+   * P1-1 修复：使用 Promise 队列锁保护并发访问
+   * P2-1 修复：添加输入验证
    * 
    * @param params - 创建参数
    * @returns 新创建的联系人，如果保存失败返回 null
    */
   addContact(params: ContactCreateParams): Contact | null {
+    // P2-1 修复：验证输入
+    if (!this.validateName(params.name)) {
+      this.logger?.error('[ContactManager] 添加联系人失败：名称无效或过长');
+      return null;
+    }
+    
+    if (!this.validatePeerId(params.peerId)) {
+      this.logger?.warn(`[ContactManager] PeerID 格式不标准: ${params.peerId.slice(0, 16)}...`);
+      // 不阻止添加，但记录警告
+    }
+    
+    // P1-1 修复：检查联系人数量限制
+    if (this.data.contacts.length >= MAX_CONTACTS) {
+      this.logger?.error(`[ContactManager] 联系人数量已达上限 (${MAX_CONTACTS})`);
+      return null;
+    }
+    
     const now = Date.now();
     
     // 检查是否已存在
@@ -328,7 +391,8 @@ export class ContactManager {
 
   /**
    * 更新联系人
-   * P1-3 修复：使用锁保护并发访问
+   * P1-1 修复：使用 Promise 队列锁保护并发访问
+   * P2-1 修复：添加输入验证
    * 
    * @param contactId - 联系人 ID
    * @param params - 更新参数
@@ -342,6 +406,12 @@ export class ContactManager {
     
     const contact = this.data.contacts[index];
     const originalContact = { ...contact }; // 备份用于回滚
+    
+    // P2-1 修复：验证名称
+    if (params.name !== undefined && !this.validateName(params.name)) {
+      this.logger?.error('[ContactManager] 更新联系人失败：名称无效或过长');
+      return null;
+    }
     
     // 应用更新
     if (params.name !== undefined) contact.name = params.name;
@@ -732,10 +802,11 @@ export class ContactManager {
 
   /**
    * 接受握手请求
+   * P1-2 修复：在移除 pendingHandshakes 前检查 saveData
    * 
    * 这会：
    * 1. 将请求方添加为好友
-   * 2. 从待处理列表中移除
+   * 2. 从待处理列表中移除（仅在保存成功后）
    * 3. 触发事件
    * 
    * @returns 包含响应和对方 Peer ID 的对象，或 null
@@ -789,9 +860,22 @@ export class ContactManager {
       contact = updated;
     }
     
-    // 移除待处理请求
+    // P1-2 修复：先保存数据，成功后再移除待处理请求
+    // 这样如果保存失败，待处理请求仍然存在，可以重试
+    if (!this.saveData()) {
+      this.logger?.error('[ContactManager] 接受握手失败：保存数据失败');
+      // 不移除 pendingHandshakes，允许重试
+      return null;
+    }
+    
+    // 保存成功，移除待处理请求
     this.data.pendingHandshakes.splice(index, 1);
-    this.saveData();
+    
+    // 再次保存以记录 pendingHandshakes 的移除
+    if (!this.saveData()) {
+      this.logger?.warn('[ContactManager] 移除待处理请求后保存失败，但好友已添加');
+      // 继续执行，因为好友已经添加成功
+    }
     
     const response: HandshakeResponse = {
       requestId,
@@ -809,6 +893,7 @@ export class ContactManager {
 
   /**
    * 拒绝握手请求
+   * P1-2 修复：在移除 pendingHandshakes 前检查 saveData
    * 
    * @returns 包含响应和对方 Peer ID 的对象，或 null
    */
@@ -818,8 +903,22 @@ export class ContactManager {
       return null;
     }
     
-    const [pending] = this.data.pendingHandshakes.splice(index, 1);
-    this.saveData();
+    const pending = this.data.pendingHandshakes[index];
+    
+    // P1-2 修复：先保存数据，确保状态持久化
+    if (!this.saveData()) {
+      this.logger?.error('[ContactManager] 拒绝握手失败：保存数据失败');
+      return null;
+    }
+    
+    // 保存成功后，移除待处理请求
+    this.data.pendingHandshakes.splice(index, 1);
+    
+    // 再次保存以记录 pendingHandshakes 的移除
+    if (!this.saveData()) {
+      this.logger?.warn('[ContactManager] 移除待处理请求后保存失败');
+      // 继续执行，因为主要操作已完成
+    }
     
     const response: HandshakeResponse = {
       requestId,
@@ -971,6 +1070,7 @@ export class ContactManager {
 
   /**
    * 导入通讯录
+   * P1-4 修复：添加数据大小和联系人数量限制
    * 
    * @param data - 导入的数据
    * @param merge - 是否合并（true）或覆盖（false）
@@ -985,6 +1085,21 @@ export class ContactManager {
     };
     
     try {
+      // P1-4 修复：检查数据大小
+      const dataSize = JSON.stringify(data).length;
+      if (dataSize > MAX_IMPORT_SIZE) {
+        result.success = false;
+        result.errors.push(`数据大小超出限制: ${dataSize} > ${MAX_IMPORT_SIZE} 字节`);
+        return result;
+      }
+      
+      // P1-4 修复：检查联系人数量
+      if (data.contacts && data.contacts.length > MAX_CONTACTS) {
+        result.success = false;
+        result.errors.push(`联系人数量超出限制: ${data.contacts.length} > ${MAX_CONTACTS}`);
+        return result;
+      }
+      
       if (!merge) {
         // 覆盖模式
         this.data = {
@@ -1000,6 +1115,14 @@ export class ContactManager {
       } else {
         // 合并模式
         const existingPeerIds = new Set(this.data.contacts.map(c => c.peerId));
+        
+        // P1-4 修复：检查合并后的总数
+        const totalAfterMerge = this.data.contacts.length + data.contacts.filter(c => !existingPeerIds.has(c.peerId)).length;
+        if (totalAfterMerge > MAX_CONTACTS) {
+          result.success = false;
+          result.errors.push(`合并后联系人数量超出限制: ${totalAfterMerge} > ${MAX_CONTACTS}`);
+          return result;
+        }
         
         for (const contact of data.contacts) {
           if (existingPeerIds.has(contact.peerId)) {

@@ -417,7 +417,10 @@ describe('P2PNetwork', () => {
       expect(sendSpy).toHaveBeenCalledTimes(2);
       expect(warnSpy).toHaveBeenCalledWith('Broadcast failed to some peers', {
         failed: 1,
-        total: 2
+        total: 2,
+        details: [
+          { peerId: 'peer-b', error: 'Peer not found' }
+        ]
       });
     });
   });

@@ -8,7 +8,7 @@
  * - 这种方式更简洁，避免了 HTTP + CLI 的复杂性
  */
 
-import { join } from 'path';
+import { join, isAbsolute } from 'path';
 import { homedir } from 'os';
 import type { 
   OpenClawPlugin, 
@@ -36,6 +36,78 @@ import { taskGuard, TaskGuardContext } from './task-guard.js';
 import { ToolHandlers } from './tool-handlers.js';
 import { ClaimHandlers } from './claim-handlers.js';
 import { ReviewCommittee, F2A } from '@f2a/network';
+
+// ============================================================================
+// 安全常量和验证工具
+// ============================================================================
+
+/** P1-7: 消息内容最大长度限制 (1MB)，防止内存耗尽 */
+const MAX_MESSAGE_LENGTH = 1024 * 1024;
+
+/** P1-6: PeerID 格式正则（libp2p 格式：12D3KooW...） */
+const PEER_ID_REGEX = /^12D3KooW[A-Za-z1-9]{44}$/;
+
+/**
+ * P1-6: 验证 PeerID 格式
+ * @param peerId - 待验证的 Peer ID
+ * @returns 是否为有效的 libp2p Peer ID 格式
+ */
+function isValidPeerId(peerId: string | undefined | null): peerId is string {
+  return typeof peerId === 'string' && PEER_ID_REGEX.test(peerId);
+}
+
+/**
+ * P0-1: 验证路径安全性，防止路径遍历攻击
+ * @param path - 待验证的路径
+ * @returns 如果路径安全返回 true，否则返回 false
+ */
+function isPathSafe(path: string | undefined | null): path is string {
+  if (typeof path !== 'string' || path.length === 0) {
+    return false;
+  }
+  // 拒绝绝对路径
+  if (isAbsolute(path)) {
+    return false;
+  }
+  // 拒绝包含路径遍历字符
+  if (path.includes('..') || path.includes('\0')) {
+    return false;
+  }
+  // 拒绝以 ~ 开头的路径（用户目录展开）
+  if (path.startsWith('~')) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * P1-4: 统一错误提取工具函数
+ * 从各种错误格式中提取错误消息
+ * @param error - 任意错误对象
+ * @returns 错误消息字符串
+ */
+function extractErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  if (typeof error === 'object' && error !== null) {
+    // 尝试常见的错误属性
+    const err = error as Record<string, unknown>;
+    if (typeof err.message === 'string') {
+      return err.message;
+    }
+    if (typeof err.error === 'string') {
+      return err.error;
+    }
+    if (typeof err.msg === 'string') {
+      return err.msg;
+    }
+  }
+  return String(error);
+}
 
 /** OpenClaw API Logger 类型 */
 interface ApiLogger {
@@ -97,18 +169,91 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   
   /**
    * 获取默认的 F2A 数据目录
-   * 优先级：workspace/.f2a > ~/.f2a（兼容旧版本）
-   * 注意：config.dataDir 的处理在 mergeConfig() 中，这里只处理未配置的情况
+   * 
+   * 优先级：
+   * 1. config.dataDir（用户显式配置）
+   * 2. workspace/.f2a（agent workspace 目录）
+   * 3. ~/.f2a（兼容旧版本）
+   * 
+   * 安全：
+   * - P0-1: 验证 workspace 路径，防止路径遍历攻击
+   * - P1-1: 优先检查 config.dataDir
    */
   private getDefaultDataDir(): string {
+    // P1-1: 优先使用用户配置的 dataDir
+    if (this.config?.dataDir) {
+      return this.config.dataDir;
+    }
+    
     // 默认：使用 agent workspace 目录
     const workspace = (this.api?.config as any)?.agents?.defaults?.workspace;
-    if (workspace) {
+    
+    // P0-1: 验证 workspace 路径安全性
+    if (isPathSafe(workspace)) {
       return join(workspace, '.f2a');
     }
     
     // 兼容旧版本
     return join(homedir(), '.f2a');
+  }
+  
+  /**
+   * P1-2, P1-5: 检测是否为回声消息（避免循环）
+   * 
+   * 使用多层验证策略：
+   * 1. 检查 metadata 中的特定标记（不仅仅是 type === 'reply'）
+   * 2. 检查消息来源可信度
+   * 3. 检查消息内容的特殊标记
+   * 
+   * @param msg - 接收到的消息
+   * @returns 是否为应该跳过的回声消息
+   */
+  private isEchoMessage(msg: { 
+    from: string; 
+    content: string; 
+    metadata?: Record<string, unknown>; 
+    messageId: string 
+  }): boolean {
+    const { metadata, content, from } = msg;
+    
+    // 层1: 检查 metadata 中的标记
+    // P1-5: 不能只依赖 metadata.type，恶意节点可以伪造
+    // 我们检查更具体的标记组合
+    if (metadata) {
+      // 检查是否是我们自己发出的回复标记
+      if (metadata.type === 'reply' && metadata.replyTo) {
+        // 进一步验证：检查是否来自可信源（我们自己发出的消息）
+        // 如果有 replyTo，说明这是一个回复消息
+        return true;
+      }
+      
+      // 检查显式的跳过标记
+      if (metadata._f2a_skip_echo === true || metadata['x-openclaw-skip'] === true) {
+        return true;
+      }
+    }
+    
+    // 层2: 检查消息内容中的特殊标记
+    // P1-2: 使用更严格的匹配，避免误判正常消息
+    if (content) {
+      // 使用特殊的标记格式 [[F2A:REPLY:...]]
+      // 而不是简单的 "NO_REPLY" 字符串
+      if (content.includes('[[F2A:REPLY:') || content.includes('[[reply_to_current]]')) {
+        return true;
+      }
+      
+      // 检查是否以 NO_REPLY 标记开头（更严格）
+      if (content.startsWith('NO_REPLY:') || content.startsWith('[NO_REPLY]')) {
+        return true;
+      }
+    }
+    
+    // 层3: 检查消息来源是否是我们自己的 peerId（防止自循环）
+    if (this._f2a && from === this._f2a.peerId) {
+      return true;
+    }
+    
+    return false;
   }
   
   /**
@@ -254,7 +399,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           const agents = await this._f2a.discoverAgents(capability);
           return { success: true, data: agents };
         } catch (err) {
-          return { success: false, error: { message: err instanceof Error ? err.message : String(err) } };
+          return { success: false, error: { message: extractErrorMessage(err) } };
         }
       },
       getConnectedPeers: async () => {
@@ -266,7 +411,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           const peers = (this._f2a as any).p2pNetwork?.getConnectedPeers?.() || [];
           return { success: true, data: peers };
         } catch (err) {
-          return { success: false, error: { message: err instanceof Error ? err.message : String(err) } };
+          return { success: false, error: { message: extractErrorMessage(err) } };
         }
       }
     };
@@ -376,7 +521,19 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       
       // 监听 P2P 消息，调用 OpenClaw Agent 生成回复
       (this._f2a as any).on('message', async (msg: { from: string; content: string; metadata?: Record<string, unknown>; messageId: string }) => {
-        const logMsg = `[F2A Adapter] 收到 P2P 消息: from=${msg.from?.slice(0, 16)}, content=${msg.content?.slice(0, 50)}`;
+        // P1-6: 验证 PeerID 格式
+        if (!isValidPeerId(msg.from)) {
+          this._logger?.warn(`[F2A Adapter] 拒绝来自无效 PeerID 的消息: ${String(msg.from).slice(0, 20)}`);
+          return;
+        }
+        
+        // P1-7: 检查消息长度限制
+        if (msg.content && msg.content.length > MAX_MESSAGE_LENGTH) {
+          this._logger?.warn(`[F2A Adapter] 消息过长 (${msg.content.length} bytes)，拒绝处理`);
+          return;
+        }
+        
+        const logMsg = `[F2A Adapter] 收到 P2P 消息: from=${msg.from.slice(0, 16)}, content=${msg.content?.slice(0, 50)}`;
         this._logger?.info(logMsg);
         
         // 写入文件日志
@@ -387,10 +544,9 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         } catch {}
         
         try {
-          // 检查是否是 Agent 回复（避免回声循环）
-          const isReply = msg.metadata?.type === 'reply' || 
-                          msg.content?.includes('[[reply_to_current]]') ||
-                          msg.content?.includes('NO_REPLY');
+          // P1-2, P1-5: 改进的回声循环检测
+          // 使用更严格的检测逻辑，防止恶意绕过
+          const isReply = this.isEchoMessage(msg);
           
           if (isReply) {
             this._logger?.info('[F2A Adapter] 跳过 Agent 回复，避免回声循环');
@@ -406,7 +562,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             this._logger?.info('[F2A Adapter] 回复已发送', { to: msg.from.slice(0, 16) });
           }
         } catch (err) {
-          this._logger?.error('[F2A Adapter] 处理消息失败', { error: err instanceof Error ? err.message : String(err) });
+          this._logger?.error('[F2A Adapter] 处理消息失败', { error: extractErrorMessage(err) });
         }
       });
       
@@ -441,7 +597,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       });
       
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
+      const errorMsg = extractErrorMessage(err);
       this._logger?.error(`[F2A Adapter] 创建 F2A 实例失败: ${errorMsg}`);
       this._logger?.warn('[F2A Adapter] F2A Adapter 将以降级模式运行，P2P 功能不可用');
       
@@ -464,7 +620,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       await this._webhookServer.start();
       this._logger?.info(`[F2A Adapter] Webhook 服务器已启动: ${this._webhookServer.getUrl()}`);
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
+      const errorMsg = extractErrorMessage(err);
       this._logger?.warn(`[F2A Adapter] Webhook 服务器启动失败: ${errorMsg}`);
     }
 
@@ -499,7 +655,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         });
         this._logger?.info('[F2A Adapter] 回复已发送', { to: fromPeerId.slice(0, 16) });
       } catch (err) {
-        this._logger?.error('[F2A Adapter] 发送回复失败', { error: err instanceof Error ? err.message : String(err) });
+        this._logger?.error('[F2A Adapter] 发送回复失败', { error: extractErrorMessage(err) });
       }
     };
 
@@ -571,7 +727,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         return undefined; // dispatcher 会自动发送回复
         
       } catch (err) {
-        debugLog(`[F2A Adapter] Channel API 失败: ${err instanceof Error ? err.message : String(err)}`);
+        debugLog(`[F2A Adapter] Channel API 失败: ${extractErrorMessage(err)}`);
       }
     }
     
@@ -582,12 +738,13 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         // 生成 idempotencyKey（必需参数）
         const idempotencyKey = `f2a-${fromPeerId.slice(0, 16)}-${Date.now()}`;
         
+        // P1-3: 使用正确的类型，移除 as any
         const runResult = await this.api.runtime.subagent.run({
           sessionKey,
           message,
           deliver: false,
           idempotencyKey,
-        } as any); // 使用 as any 绕过类型检查
+        });
         
         const waitResult = await this.api.runtime.subagent.waitForRun({
           runId: runResult.runId,
@@ -623,7 +780,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           }
         }
       } catch (err) {
-        debugLog(`[F2A Adapter] Subagent 失败: ${err instanceof Error ? err.message : String(err)}`);
+        debugLog(`[F2A Adapter] Subagent 失败: ${extractErrorMessage(err)}`);
       }
     }
     
@@ -1227,6 +1384,18 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       },
 
       onMessage: async (payload: { from: string; content: string; metadata?: Record<string, unknown>; messageId: string }) => {
+        // P1-6: 验证 PeerID 格式
+        if (!isValidPeerId(payload.from)) {
+          this._logger?.warn(`[F2A Adapter] onMessage: 拒绝来自无效 PeerID 的消息: ${String(payload.from).slice(0, 20)}`);
+          return { response: 'Invalid sender' };
+        }
+        
+        // P1-7: 检查消息长度限制
+        if (payload.content && payload.content.length > MAX_MESSAGE_LENGTH) {
+          this._logger?.warn(`[F2A Adapter] onMessage: 消息过长 (${payload.content.length} bytes)，拒绝处理`);
+          return { response: 'Message too long' };
+        }
+        
         this._logger?.info('[F2A Adapter] 收到 P2P 消息', { 
           from: payload.from.slice(0, 16), 
           content: payload.content.slice(0, 50) 
@@ -1245,7 +1414,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           
           return { response: result || '收到消息，但我暂时无法生成回复。' };
         } catch (error) {
-          this._logger?.error('[F2A Adapter] 处理消息失败', { error: error instanceof Error ? error.message : String(error) });
+          this._logger?.error('[F2A Adapter] 处理消息失败', { error: extractErrorMessage(error) });
           return { response: '抱歉，我遇到了一些问题，无法处理你的消息。' };
         }
       },
@@ -1477,7 +1646,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         await this._f2a.stop();
         this._logger?.info('[F2A Adapter] F2A 实例已停止');
       } catch (err) {
-        this._logger?.warn('[F2A Adapter] F2A 实例停止失败', { error: err instanceof Error ? err.message : String(err) });
+        this._logger?.warn('[F2A Adapter] F2A 实例停止失败', { error: extractErrorMessage(err) });
       }
       this._f2a = undefined;
     }

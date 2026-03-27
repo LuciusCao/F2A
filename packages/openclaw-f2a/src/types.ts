@@ -91,7 +91,15 @@ export interface OpenClawPluginApi {
     };
     /** Subagent API for spawning child agents */
     subagent?: {
-      run: (params: { sessionKey: string; message: string; provider?: string; model?: string; deliver?: boolean }) => Promise<{ runId: string }>;
+      run: (params: { 
+        sessionKey: string; 
+        message: string; 
+        provider?: string; 
+        model?: string; 
+        deliver?: boolean;
+        /** P1-3: 幂等性键，防止重复创建会话 */
+        idempotencyKey?: string;
+      }) => Promise<{ runId: string }>;
       waitForRun: (params: { runId: string; timeoutMs?: number }) => Promise<{ status: 'ok' | 'error' | 'timeout'; error?: string }>;
       getSessionMessages: (params: { sessionKey: string; limit?: number }) => Promise<{ messages: unknown[] }>;
     };

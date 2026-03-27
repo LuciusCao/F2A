@@ -556,13 +556,15 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   /**
    * Issue #99: 获取握手协议处理器（延迟初始化）
    * 依赖 F2A 实例和 ContactManager
+   * P2-3 修复：传递握手配置
    */
   private get handshakeProtocol(): HandshakeProtocol {
     if (!this._handshakeProtocol && this._f2a && this._contactManager) {
       this._handshakeProtocol = new HandshakeProtocol(
         this._f2a,
         this._contactManager,
-        this._logger
+        this._logger,
+        this.config.handshake  // P2-3 修复：传递配置
       );
       this._logger?.info('[F2A Adapter] HandshakeProtocol 已初始化');
     }
@@ -2083,6 +2085,11 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             tags: params.tags,
             notes: params.notes,
           });
+          
+          // P1-2 修复：检查添加是否成功
+          if (!contact) {
+            return { content: '❌ 添加联系人失败（可能保存失败或已存在）' };
+          }
           
           return { content: `✅ 已添加联系人: ${contact.name} (${contact.peerId.slice(0, 16)})` };
         }

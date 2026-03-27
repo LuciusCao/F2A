@@ -221,7 +221,7 @@ function readAgentNameFromIdentity(workspace: string | undefined): string | null
 }
 
 /** OpenClaw API Logger 类型 */
-interface ApiLogger {
+export interface ApiLogger {
   info(message: string, ...args: unknown[]): void;
   warn(message: string, ...args: unknown[]): void;
   error(message: string, ...args: unknown[]): void;

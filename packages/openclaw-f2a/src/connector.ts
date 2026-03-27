@@ -2204,6 +2204,9 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             color: params.color,
           });
           
+          if (!group) {
+            return { content: '❌ 创建分组失败' };
+          }
           return { content: `✅ 已创建分组: ${group.name}` };
         }
         

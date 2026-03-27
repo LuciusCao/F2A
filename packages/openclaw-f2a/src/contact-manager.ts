@@ -180,7 +180,7 @@ export class ContactManager {
     
     // 必须字段
     if (typeof c.id !== 'string' || c.id.length === 0) return false;
-    if (!this.validateName(c.name)) return false;
+    if (typeof c.name !== 'string' || !this.validateName(c.name)) return false;
     if (typeof c.peerId !== 'string' || c.peerId.length === 0) return false;
     
     // 可选字段类型检查

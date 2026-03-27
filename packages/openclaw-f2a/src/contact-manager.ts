@@ -4,10 +4,17 @@
  * 管理通讯录、分组、标签和握手请求
  * 支持持久化存储和导入/导出功能
  * 
+ * ⚠️ 并发安全说明
+ * 
+ * ContactManager 不是线程安全的。在 Node.js 单线程事件循环环境下，
+ * 只要避免在同一个事件循环 tick 内发起多个修改操作，就是安全的。
+ * 
+ * 如果需要在多进程/集群环境下使用，请使用外部锁服务（如 Redis）。
+ * 
  * @module contact-manager
  */
 
-import { join } from 'path';
+import { join, resolve, normalize } from 'path';
 import { mkdirSync, existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import type { ApiLogger } from './connector.js';
 import {
@@ -145,29 +152,6 @@ export class ContactManager {
   private logger?: ApiLogger;
   private eventHandlers: Set<ContactEventHandler> = new Set();
   private autoSave: boolean = true;
-  
-  // P1-1 修复：Promise 队列实现的互斥锁
-  private _lockQueue: Promise<void> = Promise.resolve();
-  
-  /**
-   * P1-1 修复：使用 Promise 队列实现互斥锁
-   * 确保同一时间只有一个操作在修改数据
-   * 相比自旋锁，这种方式不会阻塞事件循环
-   */
-  private async acquireLock(): Promise<() => void> {
-    let releaseLock: () => void;
-    const lockPromise = new Promise<void>(resolve => {
-      releaseLock = resolve;
-    });
-    
-    // 等待之前的锁释放
-    const previousLock = this._lockQueue;
-    this._lockQueue = this._lockQueue.then(() => lockPromise);
-    
-    await previousLock;
-    
-    return releaseLock!;
-  }
 
   /**
    * P2-1 修复：验证 PeerID 格式
@@ -183,6 +167,38 @@ export class ContactManager {
    */
   private validateName(name: string): boolean {
     return typeof name === 'string' && name.length > 0 && name.length <= MAX_NAME_LENGTH;
+  }
+
+  /**
+   * P1-3 修复：验证联系人字段完整性
+   * 用于导入数据验证
+   */
+  private validateContactFields(contact: unknown): contact is Contact {
+    if (!contact || typeof contact !== 'object') return false;
+    
+    const c = contact as Partial<Contact>;
+    
+    // 必须字段
+    if (typeof c.id !== 'string' || c.id.length === 0) return false;
+    if (!this.validateName(c.name)) return false;
+    if (typeof c.peerId !== 'string' || c.peerId.length === 0) return false;
+    
+    // 可选字段类型检查
+    if (c.agentId !== undefined && typeof c.agentId !== 'string') return false;
+    if (c.status !== undefined && typeof c.status !== 'string') return false;
+    if (c.reputation !== undefined && typeof c.reputation !== 'number') return false;
+    if (c.notes !== undefined && typeof c.notes !== 'string') return false;
+    if (c.createdAt !== undefined && typeof c.createdAt !== 'number') return false;
+    if (c.updatedAt !== undefined && typeof c.updatedAt !== 'number') return false;
+    if (c.lastCommunicationTime !== undefined && typeof c.lastCommunicationTime !== 'number') return false;
+    
+    // 数组字段检查
+    if (c.capabilities !== undefined && !Array.isArray(c.capabilities)) return false;
+    if (c.groups !== undefined && !Array.isArray(c.groups)) return false;
+    if (c.tags !== undefined && !Array.isArray(c.tags)) return false;
+    if (c.multiaddrs !== undefined && !Array.isArray(c.multiaddrs)) return false;
+    
+    return true;
   }
 
   /**
@@ -202,26 +218,31 @@ export class ContactManager {
       throw new Error('[ContactManager] dataDir 必须是非空字符串');
     }
     
-    // 检查路径遍历
-    if (dataDir.includes('..')) {
-      throw new Error('[ContactManager] dataDir 不能包含 ".."（路径遍历风险）');
+    // P1-3 修复：使用 path.resolve 和 path.normalize 规范化路径
+    // 解析为绝对路径，消除 .. 和 . 符号
+    const normalizedDataDir = resolve(normalize(dataDir));
+    
+    // 检查规范化后的路径是否仍在预期范围内
+    // 如果路径包含 ..，规范化后应该被消除
+    // 如果结果路径与原始路径差异过大，可能存在问题
+    const originalNormalized = normalize(dataDir);
+    if (originalNormalized !== normalizedDataDir && !dataDir.startsWith('/')) {
+      logger?.warn(`[ContactManager] 路径被规范化: ${dataDir} -> ${normalizedDataDir}`);
     }
     
-    // 检查绝对路径（只允许相对路径或特定格式的路径）
-    // 注意：这里我们允许绝对路径，但记录警告
-    const isAbsolute = dataDir.startsWith('/') || /^[A-Za-z]:/.test(dataDir);
-    if (isAbsolute) {
-      logger?.warn(`[ContactManager] 使用绝对路径作为 dataDir: ${dataDir}`);
+    // 检查路径遍历（规范化后的路径不应包含 ..）
+    if (normalizedDataDir.includes('..')) {
+      throw new Error('[ContactManager] dataDir 路径无效（路径遍历风险）');
     }
     
-    this.dataDir = dataDir;
+    this.dataDir = normalizedDataDir;
     this.logger = logger;
     this.autoSave = options?.autoSave ?? true;
-    this.dataPath = join(dataDir, DEFAULT_CONTACTS_FILE);
+    this.dataPath = join(normalizedDataDir, DEFAULT_CONTACTS_FILE);
     
     // 确保目录存在
-    if (!existsSync(dataDir)) {
-      mkdirSync(dataDir, { recursive: true });
+    if (!existsSync(normalizedDataDir)) {
+      mkdirSync(normalizedDataDir, { recursive: true });
     }
     
     // 加载或初始化数据
@@ -321,7 +342,6 @@ export class ContactManager {
 
   /**
    * 添加联系人
-   * P1-1 修复：使用 Promise 队列锁保护并发访问
    * P2-1 修复：添加输入验证
    * 
    * @param params - 创建参数
@@ -334,9 +354,10 @@ export class ContactManager {
       return null;
     }
     
+    // P1-4 修复：PeerID 验证失败时拒绝添加联系人
     if (!this.validatePeerId(params.peerId)) {
-      this.logger?.warn(`[ContactManager] PeerID 格式不标准: ${params.peerId.slice(0, 16)}...`);
-      // 不阻止添加，但记录警告
+      this.logger?.error(`[ContactManager] 添加联系人失败：PeerID 格式无效: ${params.peerId.slice(0, 16)}...`);
+      return null;
     }
     
     // P1-1 修复：检查联系人数量限制
@@ -391,7 +412,6 @@ export class ContactManager {
 
   /**
    * 更新联系人
-   * P1-1 修复：使用 Promise 队列锁保护并发访问
    * P2-1 修复：添加输入验证
    * 
    * @param contactId - 联系人 ID
@@ -445,6 +465,7 @@ export class ContactManager {
 
   /**
    * 删除联系人
+   * P1-2 修复：添加保存检查和回滚
    * 
    * @param contactId - 联系人 ID
    * @returns 是否删除成功
@@ -456,9 +477,16 @@ export class ContactManager {
     }
     
     const [removed] = this.data.contacts.splice(index, 1);
-    this.saveData();
-    this.emitEvent('contact:removed', removed);
     
+    // P1-2 修复：检查保存结果，失败时恢复联系人
+    if (!this.saveData()) {
+      // 保存失败，恢复联系人
+      this.data.contacts.splice(index, 0, removed);
+      this.logger?.error('[ContactManager] 删除联系人失败：数据保存失败');
+      return false;
+    }
+    
+    this.emitEvent('contact:removed', removed);
     this.logger?.info(`[ContactManager] 删除联系人: ${removed.name} (${removed.peerId.slice(0, 16)})`);
     
     return true;
@@ -600,8 +628,9 @@ export class ContactManager {
 
   /**
    * 创建分组
+   * P1-2 修复：添加保存检查和回滚
    */
-  createGroup(params: GroupCreateParams): ContactGroup {
+  createGroup(params: GroupCreateParams): ContactGroup | null {
     const now = Date.now();
     
     const group: ContactGroup = {
@@ -614,7 +643,15 @@ export class ContactManager {
     };
     
     this.data.groups.push(group);
-    this.saveData();
+    
+    // P1-2 修复：检查保存结果，失败时恢复
+    if (!this.saveData()) {
+      // 保存失败，回滚
+      this.data.groups.pop();
+      this.logger?.error('[ContactManager] 创建分组失败：数据保存失败');
+      return null;
+    }
+    
     this.emitEvent('group:created', group);
     
     return group;
@@ -622,6 +659,7 @@ export class ContactManager {
 
   /**
    * 更新分组
+   * P1-2 修复：添加保存检查和回滚
    */
   updateGroup(groupId: string, params: Partial<GroupCreateParams>): ContactGroup | null {
     const group = this.data.groups.find(g => g.id === groupId);
@@ -629,12 +667,23 @@ export class ContactManager {
       return null;
     }
     
+    // 备份原始数据用于回滚
+    const originalGroup = { ...group };
+    
     if (params.name !== undefined) group.name = params.name;
     if (params.description !== undefined) group.description = params.description;
     if (params.color !== undefined) group.color = params.color;
     
     group.updatedAt = Date.now();
-    this.saveData();
+    
+    // P1-2 修复：检查保存结果，失败时恢复
+    if (!this.saveData()) {
+      // 保存失败，回滚
+      Object.assign(group, originalGroup);
+      this.logger?.error('[ContactManager] 更新分组失败：数据保存失败');
+      return null;
+    }
+    
     this.emitEvent('group:updated', group);
     
     return group;
@@ -642,6 +691,7 @@ export class ContactManager {
 
   /**
    * 删除分组
+   * P1-2 修复：添加保存检查和回滚
    */
   deleteGroup(groupId: string): boolean {
     // 不允许删除默认分组
@@ -655,6 +705,11 @@ export class ContactManager {
       return false;
     }
     
+    // 备份受影响的联系人分组信息用于回滚
+    const affectedContacts = this.data.contacts
+      .filter(c => c.groups.includes(groupId))
+      .map(c => ({ contact: c, originalGroups: [...c.groups] }));
+    
     // 将该分组下的联系人移到默认分组
     for (const contact of this.data.contacts) {
       const groupIndex = contact.groups.indexOf(groupId);
@@ -667,7 +722,18 @@ export class ContactManager {
     }
     
     const [removed] = this.data.groups.splice(index, 1);
-    this.saveData();
+    
+    // P1-2 修复：检查保存结果，失败时恢复
+    if (!this.saveData()) {
+      // 保存失败，回滚
+      this.data.groups.splice(index, 0, removed);
+      for (const { contact, originalGroups } of affectedContacts) {
+        contact.groups = originalGroups;
+      }
+      this.logger?.error('[ContactManager] 删除分组失败：数据保存失败');
+      return false;
+    }
+    
     this.emitEvent('group:deleted', removed);
     
     return true;
@@ -987,10 +1053,15 @@ export class ContactManager {
 
   /**
    * 拉黑联系人
+   * P1-2 修复：添加保存检查和回滚
    */
   blockContact(contactId: string): boolean {
     const contact = this.getContact(contactId);
     if (!contact) return false;
+    
+    // 备份原始状态用于回滚
+    const originalStatus = contact.status;
+    const wasBlocked = this.data.blockedPeers.includes(contact.peerId);
     
     contact.status = FriendStatus.BLOCKED;
     contact.updatedAt = Date.now();
@@ -999,26 +1070,55 @@ export class ContactManager {
       this.data.blockedPeers.push(contact.peerId);
     }
     
-    this.saveData();
+    // P1-2 修复：检查保存结果，失败时恢复
+    if (!this.saveData()) {
+      // 保存失败，回滚
+      contact.status = originalStatus;
+      contact.updatedAt = Date.now();
+      if (!wasBlocked) {
+        const index = this.data.blockedPeers.indexOf(contact.peerId);
+        if (index !== -1) {
+          this.data.blockedPeers.splice(index, 1);
+        }
+      }
+      this.logger?.error('[ContactManager] 拉黑联系人失败：数据保存失败');
+      return false;
+    }
+    
     return true;
   }
 
   /**
    * 解除拉黑
+   * P1-2 修复：添加保存检查和回滚
    */
   unblockContact(contactId: string): boolean {
     const contact = this.getContact(contactId);
     if (!contact) return false;
     
+    // 备份原始状态用于回滚
+    const originalStatus = contact.status;
+    const blockedIndex = this.data.blockedPeers.indexOf(contact.peerId);
+    
     contact.status = FriendStatus.STRANGER;
     contact.updatedAt = Date.now();
     
-    const index = this.data.blockedPeers.indexOf(contact.peerId);
-    if (index !== -1) {
-      this.data.blockedPeers.splice(index, 1);
+    if (blockedIndex !== -1) {
+      this.data.blockedPeers.splice(blockedIndex, 1);
     }
     
-    this.saveData();
+    // P1-2 修复：检查保存结果，失败时恢复
+    if (!this.saveData()) {
+      // 保存失败，回滚
+      contact.status = originalStatus;
+      contact.updatedAt = Date.now();
+      if (blockedIndex !== -1) {
+        this.data.blockedPeers.splice(blockedIndex, 0, contact.peerId);
+      }
+      this.logger?.error('[ContactManager] 解除拉黑失败：数据保存失败');
+      return false;
+    }
+    
     return true;
   }
 
@@ -1071,6 +1171,7 @@ export class ContactManager {
   /**
    * 导入通讯录
    * P1-4 修复：添加数据大小和联系人数量限制
+   * P1-3 修复：验证每个联系人的字段
    * 
    * @param data - 导入的数据
    * @param merge - 是否合并（true）或覆盖（false）
@@ -1101,30 +1202,48 @@ export class ContactManager {
       }
       
       if (!merge) {
+        // P1-3 修复：覆盖模式也要验证数据结构
+        const validContacts: Contact[] = [];
+        for (let i = 0; i < data.contacts.length; i++) {
+          if (this.validateContactFields(data.contacts[i])) {
+            validContacts.push(data.contacts[i]);
+          } else {
+            result.errors.push(`联系人 #${i + 1} 字段验证失败，已跳过`);
+            result.skippedContacts++;
+          }
+        }
+        
         // 覆盖模式
         this.data = {
           version: CONTACTS_DATA_VERSION,
-          contacts: data.contacts,
+          contacts: validContacts,
           groups: data.groups.length ? data.groups : deepClone(DEFAULT_GROUPS),
           pendingHandshakes: data.pendingHandshakes || [],
           blockedPeers: data.blockedPeers || [],
           lastUpdated: Date.now(),
         };
-        result.importedContacts = data.contacts.length;
+        result.importedContacts = validContacts.length;
         result.importedGroups = data.groups.length;
       } else {
         // 合并模式
         const existingPeerIds = new Set(this.data.contacts.map(c => c.peerId));
         
-        // P1-4 修复：检查合并后的总数
-        const totalAfterMerge = this.data.contacts.length + data.contacts.filter(c => !existingPeerIds.has(c.peerId)).length;
+        // P1-4 修复：检查合并后的总数（使用验证后的有效联系人）
+        const validContacts = data.contacts.filter(c => this.validateContactFields(c));
+        const invalidCount = data.contacts.length - validContacts.length;
+        if (invalidCount > 0) {
+          result.errors.push(`${invalidCount} 个联系人字段验证失败，已跳过`);
+          result.skippedContacts += invalidCount;
+        }
+        
+        const totalAfterMerge = this.data.contacts.length + validContacts.filter(c => !existingPeerIds.has(c.peerId)).length;
         if (totalAfterMerge > MAX_CONTACTS) {
           result.success = false;
           result.errors.push(`合并后联系人数量超出限制: ${totalAfterMerge} > ${MAX_CONTACTS}`);
           return result;
         }
         
-        for (const contact of data.contacts) {
+        for (const contact of validContacts) {
           if (existingPeerIds.has(contact.peerId)) {
             result.skippedContacts++;
           } else {

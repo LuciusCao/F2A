@@ -213,7 +213,7 @@
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute.
+See [GitHub Issues](https://github.com/LuciusCao/F2A/issues) for how to contribute.
 
 ## License
 

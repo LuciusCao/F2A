@@ -216,7 +216,29 @@ export interface F2APluginConfig {
   webhookPush?: WebhookPushConfig;
   reputation?: ReputationConfig;
   security?: SecurityConfig;
+  /** 握手协议配置 */
+  handshake?: HandshakeConfig;
 }
+
+/**
+ * 握手协议配置
+ * P2-3 修复：将硬编码值移到配置项
+ */
+export interface HandshakeConfig {
+  /** 好友请求超时时间（毫秒），默认 5 分钟 */
+  timeoutMs?: number;
+  /** 发送重试次数，默认 3 */
+  maxRetries?: number;
+  /** 重试延迟（毫秒），默认 1000 */
+  retryDelayMs?: number;
+}
+
+/** 默认握手协议配置 */
+export const DEFAULT_HANDSHAKE_CONFIG: Required<HandshakeConfig> = {
+  timeoutMs: 5 * 60 * 1000,  // 5 分钟
+  maxRetries: 3,
+  retryDelayMs: 1000,
+};
 
 export interface ReputationConfig {
   // 已废弃：reputation 核心参数由程序内部控制

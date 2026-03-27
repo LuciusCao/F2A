@@ -737,12 +737,14 @@ export class ContactManager {
    * 1. 将请求方添加为好友
    * 2. 从待处理列表中移除
    * 3. 触发事件
+   * 
+   * @returns 包含响应和对方 Peer ID 的对象，或 null
    */
   acceptHandshake(
     requestId: string,
     myName: string,
     myCapabilities: ContactCapability[]
-  ): HandshakeResponse | null {
+  ): { response: HandshakeResponse; fromPeerId: string } | null {
     const index = this.data.pendingHandshakes.findIndex(p => p.requestId === requestId);
     if (index === -1) {
       return null;
@@ -802,13 +804,15 @@ export class ContactManager {
     
     this.emitEvent('handshake:accepted', { pending, response });
     
-    return response;
+    return { response, fromPeerId: pending.from };
   }
 
   /**
    * 拒绝握手请求
+   * 
+   * @returns 包含响应和对方 Peer ID 的对象，或 null
    */
-  rejectHandshake(requestId: string, reason?: string): HandshakeResponse | null {
+  rejectHandshake(requestId: string, reason?: string): { response: HandshakeResponse; fromPeerId: string } | null {
     const index = this.data.pendingHandshakes.findIndex(p => p.requestId === requestId);
     if (index === -1) {
       return null;
@@ -827,7 +831,7 @@ export class ContactManager {
     
     this.emitEvent('handshake:rejected', { pending, response });
     
-    return response;
+    return { response, fromPeerId: pending.from };
   }
 
   /**

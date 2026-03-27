@@ -20,6 +20,7 @@ import {
   PendingHandshake,
 } from './contact-types.js';
 import type { ApiLogger } from './connector.js';
+import { DEFAULT_HANDSHAKE_CONFIG, type HandshakeConfig } from './types.js';
 
 // ============================================================================
 // 常量定义
@@ -32,15 +33,6 @@ export const HANDSHAKE_MESSAGE_TYPES = {
   /** 好友请求响应 */
   FRIEND_RESPONSE: 'FRIEND_RESPONSE',
 } as const;
-
-/** 握手请求超时时间（毫秒） */
-const HANDSHAKE_TIMEOUT_MS = 5 * 60 * 1000; // 5 分钟
-
-/** 重试配置 */
-const RETRY_CONFIG = {
-  maxRetries: 3,
-  retryDelayMs: 1000,
-};
 
 // ============================================================================
 // F2A 接口类型定义
@@ -145,6 +137,9 @@ export class HandshakeProtocol {
   private logger?: ApiLogger;
   private eventHandlers: Map<string, Set<(...args: unknown[]) => void>> = new Map();
   
+  /** P2-3 修复：使用配置项 */
+  private config: Required<HandshakeConfig>;
+  
   /** 待响应的请求（我们发出的请求） */
   private outgoingRequests: Map<string, {
     request: HandshakeRequest;
@@ -159,11 +154,19 @@ export class HandshakeProtocol {
   constructor(
     f2a: F2A,
     contactManager: ContactManager,
-    logger?: ApiLogger
+    logger?: ApiLogger,
+    config?: HandshakeConfig
   ) {
     this.f2a = f2a;
     this.contactManager = contactManager;
     this.logger = logger;
+    
+    // P2-3 修复：合并配置，使用默认值填充
+    this.config = {
+      timeoutMs: config?.timeoutMs ?? DEFAULT_HANDSHAKE_CONFIG.timeoutMs,
+      maxRetries: config?.maxRetries ?? DEFAULT_HANDSHAKE_CONFIG.maxRetries,
+      retryDelayMs: config?.retryDelayMs ?? DEFAULT_HANDSHAKE_CONFIG.retryDelayMs,
+    };
     
     // 绑定消息处理器
     this.setupMessageHandler();
@@ -240,7 +243,7 @@ export class HandshakeProtocol {
       // 检查是否已发送过请求
       const existing = Array.from(this.outgoingRequests.values())
         .find(r => r.toPeerId === toPeerId);
-      if (existing && Date.now() - existing.sentAt < HANDSHAKE_TIMEOUT_MS) {
+      if (existing && Date.now() - existing.sentAt < this.config.timeoutMs) {
         this.logger?.warn('[HandshakeProtocol] 已有待响应的请求');
         return existing.request.requestId;
       }
@@ -277,7 +280,7 @@ export class HandshakeProtocol {
       }
       
       let lastError: Error | null = null;
-      for (let i = 0; i < RETRY_CONFIG.maxRetries; i++) {
+      for (let i = 0; i < this.config.maxRetries; i++) {
         try {
           const result = await f2aInterface.sendMessage(
             toPeerId,
@@ -320,10 +323,10 @@ export class HandshakeProtocol {
           }
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err));
-          this.logger?.warn(`[HandshakeProtocol] 发送失败 (尝试 ${i + 1}/${RETRY_CONFIG.maxRetries}): ${lastError.message}`);
+          this.logger?.warn(`[HandshakeProtocol] 发送失败 (尝试 ${i + 1}/${this.config.maxRetries}): ${lastError.message}`);
           
-          if (i < RETRY_CONFIG.maxRetries - 1) {
-            await this.sleep(RETRY_CONFIG.retryDelayMs * (i + 1));
+          if (i < this.config.maxRetries - 1) {
+            await this.sleep(this.config.retryDelayMs * (i + 1));
           }
         }
       }
@@ -338,6 +341,7 @@ export class HandshakeProtocol {
 
   /**
    * 设置请求超时
+   * P2-3 修复：使用配置项
    */
   private setupRequestTimeout(requestId: string): ReturnType<typeof setTimeout> {
     return setTimeout(() => {
@@ -347,7 +351,7 @@ export class HandshakeProtocol {
         this.logger?.info(`[HandshakeProtocol] 请求超时: ${requestId}`);
         this.emit('timeout', { requestId, toPeerId: pending.toPeerId });
       }
-    }, HANDSHAKE_TIMEOUT_MS);
+    }, this.config.timeoutMs);
   }
 
   // ============================================================================
@@ -481,26 +485,29 @@ export class HandshakeProtocol {
    * 接受好友请求
    */
   async acceptRequest(requestId: string): Promise<boolean> {
+    const f2aInterface = this.f2a as unknown as F2APublicInterface;
     const myCapabilities = this.getMyCapabilities();
-    const myName = this.f2a.agentInfo?.displayName || 'OpenClaw Agent';
+    const myName = f2aInterface.agentInfo?.displayName || 'OpenClaw Agent';
     
-    const response = this.contactManager.acceptHandshake(
+    const result = this.contactManager.acceptHandshake(
       requestId,
       myName,
       myCapabilities
     );
     
-    if (!response) {
+    if (!result) {
       this.logger?.warn(`[HandshakeProtocol] 未找到请求: ${requestId}`);
       return false;
     }
     
-    // 发送响应
-    const pending = this.contactManager.getPendingHandshakeFrom(response.from);
-    if (!pending) return false;
+    const { response, fromPeerId } = result;
     
+    // 填充响应的 from 字段
+    response.from = f2aInterface.peerId;
+    
+    // 发送响应
     return await this.sendResponse(
-      pending.from,
+      fromPeerId,
       requestId,
       true,
       undefined,
@@ -513,17 +520,16 @@ export class HandshakeProtocol {
    * 拒绝好友请求
    */
   async rejectRequest(requestId: string, reason?: string): Promise<boolean> {
-    const response = this.contactManager.rejectHandshake(requestId, reason);
+    const result = this.contactManager.rejectHandshake(requestId, reason);
     
-    if (!response) {
+    if (!result) {
       this.logger?.warn(`[HandshakeProtocol] 未找到请求: ${requestId}`);
       return false;
     }
     
-    const pending = this.contactManager.getPendingHandshakeFrom(response.from);
-    if (!pending) return false;
+    const { fromPeerId } = result;
     
-    return await this.sendResponse(pending.from, requestId, false, reason);
+    return await this.sendResponse(fromPeerId, requestId, false, reason);
   }
 
   /**

@@ -376,6 +376,16 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         } catch {}
         
         try {
+          // 检查是否是 Agent 回复（避免回声循环）
+          const isReply = msg.metadata?.type === 'reply' || 
+                          msg.content?.includes('[[reply_to_current]]') ||
+                          msg.content?.includes('NO_REPLY');
+          
+          if (isReply) {
+            this._logger?.info('[F2A Adapter] 跳过 Agent 回复，避免回声循环');
+            return;
+          }
+          
           // 调用 OpenClaw Agent 生成回复
           const reply = await this.invokeOpenClawAgent(msg.from, msg.content, msg.messageId);
           
@@ -484,17 +494,8 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
 
     // 返回 dispatcher 对象，格式与 OpenClaw 兼容
     return {
-      deliver: async (payload: { text?: string } | unknown, _info?: unknown) => {
-        // 安全获取 text，处理各种可能的 payload 格式
-        let text: string;
-        if (typeof payload === 'string') {
-          text = payload;
-        } else if (payload && typeof payload === 'object' && 'text' in payload) {
-          text = String(payload.text ?? '');
-        } else {
-          text = '';
-        }
-        
+      deliver: async (payload: { text?: string }, _info?: unknown) => {
+        const text = payload.text ?? '';
         if (!text.trim()) {
           return;
         }
@@ -571,27 +572,17 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         const idempotencyKey = `f2a-${fromPeerId.slice(0, 16)}-${Date.now()}`;
         debugLog(`[F2A Adapter] Subagent run 开始: sessionKey=${sessionKey}, idempotencyKey=${idempotencyKey}`);
         
-        // 使用 any 绕过类型检查（idempotencyKey 不在类型定义中但 API 需要）
-        const runResult = await (this.api.runtime.subagent.run as any)({
+        const runResult = await this.api.runtime.subagent.run({
           sessionKey,
           message,
           deliver: false,
           idempotencyKey,
-        });
-        
-        debugLog(`[F2A Adapter] Subagent run 结果: ${JSON.stringify(runResult)}`);
-        
-        if (!runResult?.runId) {
-          debugLog('[F2A Adapter] Subagent run 没有返回 runId');
-          throw new Error('Subagent run failed: no runId');
-        }
+        } as any); // 使用 as any 绕过类型检查
         
         const waitResult = await this.api.runtime.subagent.waitForRun({
           runId: runResult.runId,
           timeoutMs: 60000,
         });
-        
-        debugLog(`[F2A Adapter] waitForRun 结果: ${JSON.stringify(waitResult)}`);
         
         if (waitResult.status === 'ok') {
           const messagesResult = await this.api.runtime.subagent.getSessionMessages({
@@ -599,47 +590,27 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             limit: 1,
           });
           
-          debugLog(`[F2A Adapter] getSessionMessages 结果: ${JSON.stringify(messagesResult)}`);
-          
           if (messagesResult.messages && messagesResult.messages.length > 0) {
             const lastMessage = messagesResult.messages[messagesResult.messages.length - 1] as any;
-            debugLog(`[F2A Adapter] lastMessage 类型: ${typeof lastMessage}, keys: ${Object.keys(lastMessage || {}).join(',')}`);
             
-            // 处理不同的消息格式
-            let reply: string | undefined;
-            
+            // 提取回复文本（content 可能是数组或字符串）
+            let reply = '';
             if (Array.isArray(lastMessage?.content)) {
-              // 内容是数组，可能是 OpenAI 格式的消息片段
-              // 提取 text 类型的内容，或 thinking 内容
-              const textParts: string[] = [];
-              for (const part of lastMessage.content) {
-                if (part?.type === 'text' && part?.text) {
-                  textParts.push(part.text);
-                } else if (part?.type === 'thinking' && part?.thinking) {
-                  // 包含思考过程（可选）
-                  textParts.push(`[思考] ${part.thinking}`);
-                }
-              }
-              if (textParts.length > 0) {
-                reply = textParts.join('\n');
-              }
-            } else if (typeof lastMessage?.content === 'string') {
-              reply = lastMessage.content;
-            } else if (lastMessage?.text) {
-              reply = typeof lastMessage.text === 'string' 
-                ? lastMessage.text 
-                : JSON.stringify(lastMessage.text);
+              // 找到 type='text' 的元素
+              const textBlock = lastMessage.content.find((block: any) => block.type === 'text');
+              reply = textBlock?.text || '';
+            } else {
+              reply = lastMessage?.content || lastMessage?.text || '';
             }
             
+            debugLog(`[F2A Adapter] Subagent 回复文本: ${reply?.slice(0, 100)}...`);
+            
             if (reply) {
-              debugLog(`[F2A Adapter] Subagent 回复文本: ${reply.slice(0, 100)}...`);
               // 手动发送回复
               await f2aDispatcher.deliver({ text: reply });
               return undefined;
             }
           }
-        } else {
-          debugLog(`[F2A Adapter] waitForRun 状态异常: ${waitResult.status}`);
         }
       } catch (err) {
         debugLog(`[F2A Adapter] Subagent 失败: ${err instanceof Error ? err.message : String(err)}`);

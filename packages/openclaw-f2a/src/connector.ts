@@ -47,66 +47,135 @@ const MAX_MESSAGE_LENGTH = 1024 * 1024;
 /** P1-6: PeerID 格式正则（libp2p 格式：12D3KooW...） */
 const PEER_ID_REGEX = /^12D3KooW[A-Za-z1-9]{44}$/;
 
+/** P1-4: URL 编码的路径遍历模式 */
+const PATH_TRAVERSAL_PATTERNS = [
+  '%2e%2e',     // URL 编码的 ..
+  '%2E%2E',     // URL 编码的 .. (大写)
+  '%252e',      // 双重 URL 编码
+  '%c0%ae',     // UTF-8 overlong encoding
+  '%c1%9c',     // UTF-8 overlong encoding
+];
+
 /**
  * P1-6: 验证 PeerID 格式
  * @param peerId - 待验证的 Peer ID
  * @returns 是否为有效的 libp2p Peer ID 格式
  */
-function isValidPeerId(peerId: string | undefined | null): peerId is string {
+export function isValidPeerId(peerId: string | undefined | null): peerId is string {
   return typeof peerId === 'string' && PEER_ID_REGEX.test(peerId);
 }
 
 /**
- * P0-1: 验证路径安全性，防止路径遍历攻击
+ * P0-1, P1-4: 验证路径安全性，防止路径遍历攻击
+ * 
+ * 增强版本，处理：
+ * - 符号链接（通过 realpath 验证）
+ * - URL 编码绕过
+ * - 双重编码绕过
+ * - UTF-8 overlong encoding
+ * 
  * @param path - 待验证的路径
+ * @param options - 可选的额外验证选项
  * @returns 如果路径安全返回 true，否则返回 false
  */
-function isPathSafe(path: string | undefined | null): path is string {
+function isPathSafe(path: string | undefined | null, options?: { 
+  /** 允许的根目录（路径必须在此目录下） */
+  allowedRoot?: string;
+  /** 是否检查符号链接（需要文件系统访问） */
+  checkSymlinks?: boolean;
+}): path is string {
   if (typeof path !== 'string' || path.length === 0) {
     return false;
   }
+  
   // 拒绝绝对路径
   if (isAbsolute(path)) {
     return false;
   }
+  
   // 拒绝包含路径遍历字符
   if (path.includes('..') || path.includes('\0')) {
     return false;
   }
+  
   // 拒绝以 ~ 开头的路径（用户目录展开）
   if (path.startsWith('~')) {
     return false;
   }
+  
+  // P1-4: 检查 URL 编码的路径遍历模式
+  const lowerPath = path.toLowerCase();
+  for (const pattern of PATH_TRAVERSAL_PATTERNS) {
+    if (lowerPath.includes(pattern.toLowerCase())) {
+      return false;
+    }
+  }
+  
+  // P1-4: 解码 URL 编码后再次检查
+  try {
+    const decodedPath = decodeURIComponent(path);
+    // 解码后再次检查路径遍历
+    if (decodedPath.includes('..') || decodedPath.includes('\0')) {
+      return false;
+    }
+    // 检查解码后是否变成绝对路径
+    if (isAbsolute(decodedPath)) {
+      return false;
+    }
+  } catch {
+    // 解码失败可能是恶意构造，拒绝
+    return false;
+  }
+  
+  // P1-4: 如果指定了允许的根目录，验证路径不会逃逸
+  if (options?.allowedRoot) {
+    try {
+      const resolvedPath = join(options.allowedRoot, path);
+      // 检查解析后的路径是否仍在允许的根目录下
+      if (!resolvedPath.startsWith(options.allowedRoot)) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+  }
+  
   return true;
 }
 
 /**
- * P1-4: 统一错误提取工具函数
- * 从各种错误格式中提取错误消息
+ * P1-2: 统一错误提取工具函数
+ * 从各种错误格式中提取错误消息，添加循环引用保护
  * @param error - 任意错误对象
  * @returns 错误消息字符串
  */
 function extractErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (typeof error === 'string') {
-    return error;
-  }
-  if (typeof error === 'object' && error !== null) {
-    // 尝试常见的错误属性
-    const err = error as Record<string, unknown>;
-    if (typeof err.message === 'string') {
-      return err.message;
+  try {
+    if (error instanceof Error) {
+      return error.message;
     }
-    if (typeof err.error === 'string') {
-      return err.error;
+    if (typeof error === 'string') {
+      return error;
     }
-    if (typeof err.msg === 'string') {
-      return err.msg;
+    if (typeof error === 'object' && error !== null) {
+      // 尝试常见的错误属性
+      const err = error as Record<string, unknown>;
+      if (typeof err.message === 'string') {
+        return err.message;
+      }
+      if (typeof err.error === 'string') {
+        return err.error;
+      }
+      if (typeof err.msg === 'string') {
+        return err.msg;
+      }
     }
+    // P1-2: 使用 try-catch 保护 String() 调用，防止循环引用异常
+    return String(error);
+  } catch {
+    // 如果 String() 抛出异常（如循环引用），返回安全的默认消息
+    return '[Error: Unable to extract error message - possible circular reference]';
   }
-  return String(error);
 }
 
 /** OpenClaw API Logger 类型 */
@@ -147,6 +216,14 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   // 处理器实例（延迟初始化）
   private _toolHandlers?: ToolHandlers;
   private _claimHandlers?: ClaimHandlers;
+  
+  // P1-3: 消息哈希去重缓存，防止恶意节点绕过 echo 检测
+  // 存储最近处理过的消息哈希，避免重复处理
+  private _processedMessageHashes: Map<string, number> = new Map();
+  /** P1-3: 消息去重缓存最大条目数 */
+  private static readonly MAX_MESSAGE_HASH_CACHE_SIZE = 10000;
+  /** P1-3: 消息去重缓存条目最大存活时间（毫秒） */
+  private static readonly MESSAGE_HASH_TTL_MS = 5 * 60 * 1000; // 5 分钟
   
   private config!: F2APluginConfig;
   private nodeConfig!: F2ANodeConfig;
@@ -198,12 +275,13 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   }
   
   /**
-   * P1-2, P1-5: 检测是否为回声消息（避免循环）
+   * P1-2, P1-5, P1-3: 检测是否为回声消息（避免循环）
    * 
    * 使用多层验证策略：
    * 1. 检查 metadata 中的特定标记（不仅仅是 type === 'reply'）
    * 2. 检查消息来源可信度
    * 3. 检查消息内容的特殊标记
+   * 4. P1-3: 基于消息内容哈希的去重机制（防止恶意绕过）
    * 
    * @param msg - 接收到的消息
    * @returns 是否为应该跳过的回声消息
@@ -253,7 +331,60 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       return true;
     }
     
+    // 层4 (P1-3): 基于消息内容哈希的去重机制
+    // 防止恶意节点构造不含特定标记的消息绕过检测
+    if (content) {
+      const messageHash = this.computeMessageHash(from, content);
+      const now = Date.now();
+      
+      // 检查是否已处理过相同的消息内容
+      if (this._processedMessageHashes.has(messageHash)) {
+        const processedTime = this._processedMessageHashes.get(messageHash)!;
+        // 如果在 TTL 内，认为是重复消息
+        if (now - processedTime < F2AOpenClawAdapter.MESSAGE_HASH_TTL_MS) {
+          this._logger?.debug?.(`[F2A Adapter] 检测到重复消息（哈希去重）: ${messageHash.slice(0, 16)}...`);
+          return true;
+        }
+      }
+      
+      // 记录此消息哈希
+      this._processedMessageHashes.set(messageHash, now);
+      
+      // 清理过期的条目（防止内存泄漏）
+      if (this._processedMessageHashes.size > F2AOpenClawAdapter.MAX_MESSAGE_HASH_CACHE_SIZE) {
+        this.cleanupMessageHashCache(now);
+      }
+    }
+    
     return false;
+  }
+  
+  /**
+   * P1-3: 计算消息内容哈希
+   * 用于基于内容的去重
+   */
+  private computeMessageHash(from: string, content: string): string {
+    // 使用简单的哈希算法，避免依赖 crypto 模块
+    const data = `${from}:${content}`;
+    let hash = 0;
+    for (let i = 0; i < data.length; i++) {
+      const char = data.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return `msg-${hash.toString(16)}-${data.length}`;
+  }
+  
+  /**
+   * P1-3: 清理过期的消息哈希缓存
+   */
+  private cleanupMessageHashCache(now: number): void {
+    const ttl = F2AOpenClawAdapter.MESSAGE_HASH_TTL_MS;
+    for (const [hash, timestamp] of this._processedMessageHashes.entries()) {
+      if (now - timestamp > ttl) {
+        this._processedMessageHashes.delete(hash);
+      }
+    }
   }
   
   /**

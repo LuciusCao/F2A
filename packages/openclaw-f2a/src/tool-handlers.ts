@@ -21,6 +21,8 @@ import type { TaskQueue } from './task-queue.js';
 import type { AnnouncementQueue } from './announcement-queue.js';
 import type { ReviewCommittee, TaskReview, RiskFlag, ReviewResult } from '@f2a/network';
 import { pluginLogger as logger } from './logger.js';
+// P1-1: 导入 isValidPeerId 验证函数
+import { isValidPeerId } from './connector.js';
 
 /** 广播结果类型 */
 interface BroadcastResult {
@@ -402,6 +404,11 @@ ${peers.map((p: any) => {
     if ((params.action === 'view' || params.action === 'block' || params.action === 'unblock') && 
         (!params.peer_id || typeof params.peer_id !== 'string' || params.peer_id.trim() === '')) {
       return { content: '❌ view/block/unblock 操作需要提供 peer_id 参数' };
+    }
+    
+    // P1-1: 验证 peer_id 格式（对于需要 peer_id 的操作）
+    if (params.peer_id && !isValidPeerId(params.peer_id)) {
+      return { content: `❌ 无效的 peer_id 格式: ${params.peer_id.slice(0, 20)}...` };
     }
     
     const reputationSystem = (this.adapter as unknown as AdapterInternalAccess).reputationSystem;
@@ -917,6 +924,15 @@ ${result.reviews.map((r, i) => {
     // 需要提供 peer_id 或 agent_name 其中之一
     if (!params.peer_id && !params.agent_name) {
       return { content: '❌ 请提供 peer_id 或 agent_name 参数' };
+    }
+
+    // P1-1: 验证 peer_id 格式（如果提供了的话）
+    if (params.peer_id && !isValidPeerId(params.peer_id)) {
+      // 注意：允许部分匹配（前缀），所以只检查基本格式
+      // 基本检查：必须以 12D3KooW 开头
+      if (!params.peer_id.startsWith('12D3KooW')) {
+        return { content: `❌ 无效的 peer_id 格式: ${params.peer_id.slice(0, 20)}...` };
+      }
     }
 
     const networkClient = (this.adapter as unknown as AdapterInternalAccess).networkClient;

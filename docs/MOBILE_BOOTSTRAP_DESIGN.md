@@ -117,7 +117,6 @@ services.upnp = upnpNAT();
 
 ## 相关资源
 
-- [Termux 安装指南](./docs/TERMUX.md)（待创建）
 - [libp2p NAT 穿透文档](https://docs.libp2p.io/concepts/nat/)
 
 ---

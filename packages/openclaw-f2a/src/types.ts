@@ -91,7 +91,15 @@ export interface OpenClawPluginApi {
     };
     /** Subagent API for spawning child agents */
     subagent?: {
-      run: (params: { sessionKey: string; message: string; provider?: string; model?: string; deliver?: boolean }) => Promise<{ runId: string }>;
+      run: (params: { 
+        sessionKey: string; 
+        message: string; 
+        provider?: string; 
+        model?: string; 
+        deliver?: boolean;
+        /** P1-3: 幂等性键，防止重复创建会话 */
+        idempotencyKey?: string;
+      }) => Promise<{ runId: string }>;
       waitForRun: (params: { runId: string; timeoutMs?: number }) => Promise<{ status: 'ok' | 'error' | 'timeout'; error?: string }>;
       getSessionMessages: (params: { sessionKey: string; limit?: number }) => Promise<{ messages: unknown[] }>;
     };
@@ -362,19 +370,6 @@ export interface WebhookPushConfig {
  * 
  * 当有 Agent 认领你发布的任务广播时，会通过 webhook 推送此载荷。
  * 包含认领者的信息和认领详情，可用于自动或手动审核认领请求。
- * 
- * @example
- * ```typescript
- * // Webhook 接收到的认领通知
- * const payload: ClaimWebhookPayload = {
- *   announcementId: 'ann-abc123',
- *   claimId: 'claim-xyz789',
- *   claimant: 'f2a-peer-id-xxx',
- *   claimantName: 'MacBook-Pro',
- *   estimatedTime: 600000, // 预计 10 分钟完成
- *   confidence: 0.85 // 85% 信心完成
- * };
- * ```
  */
 export interface ClaimWebhookPayload {
   /** 任务广播 ID，对应 TaskAnnouncement.announcementId */
@@ -389,4 +384,49 @@ export interface ClaimWebhookPayload {
   estimatedTime?: number;
   /** 完成任务的信心程度（0-1，可选） */
   confidence?: number;
+}
+
+// ============================================================================
+// Agent Identity Types
+// ============================================================================
+
+/**
+ * Agent 身份信息
+ * 
+ * Agent 是 F2A 网络中的逻辑实体，独立于物理节点 (Node)。
+ * AgentID 用于标识 Agent，PeerID 用于标识物理节点。
+ */
+export interface AgentIdentity {
+  /** Agent 唯一标识符 */
+  agentId: string;
+  /** Agent 显示名称 */
+  name: string;
+  /** 创建时间戳 */
+  createdAt: number;
+  /** 可选：关联的 PeerID */
+  peerId?: string;
+  /** 可选：公钥（用于验证签名） */
+  publicKey?: string;
+  /** 可选：扩展元数据 */
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Agent 配置
+ */
+export interface AgentConfig {
+  /** Agent ID（可选，不提供则自动生成） */
+  id?: string;
+  /** Agent 名称 */
+  name?: string;
+  /** 数据目录 */
+  dataDir?: string;
+  /** 是否启用 mDNS 发现 */
+  enableMDNS?: boolean;
+  /** P2P 端口 */
+  p2pPort?: number;
+  /** Bootstrap 节点列表 */
+  bootstrapPeers?: string[];
+  /** 可选：扩展配置 */
+  [key: string]: unknown;
 }

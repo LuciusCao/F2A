@@ -61,6 +61,24 @@ export interface P2PNetworkConfig {
   enableNATTraversal?: boolean;
   /** Phase 2: 是否启用 Relay 服务端模式（允许其他节点通过本节点中继） */
   enableRelayServer?: boolean;
+  
+  // ========== P1-5: Relay 服务端访问控制配置 ==========
+  
+  /** Relay 白名单 - 这些 Peer ID 始终允许使用 Relay（跳过其他检查） */
+  relayWhitelist?: string[];
+  /** Relay 黑名单 - 这些 Peer ID 禁止使用 Relay */
+  relayBlacklist?: string[];
+  /** Relay 最低信誉分要求（默认 50） */
+  relayMinReputation?: number;
+  /** 每个节点每分钟最大 Relay 使用次数（默认 10） */
+  relayMaxPerMinute?: number;
+  /** 最大 Relay 预留数（默认 50） */
+  relayMaxReservations?: number;
+  /** 最大 Relay 线路数（默认 100） */
+  relayMaxCircuits?: number;
+  /** Relay 预留间隙（毫秒，默认 5 分钟） */
+  relayReservationGapMs?: number;
+  
   /** 消息处理 URL - 收到自由消息时调用此 URL */
   messageHandlerUrl?: string;
 }

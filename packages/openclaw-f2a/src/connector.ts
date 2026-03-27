@@ -2084,6 +2084,11 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             notes: params.notes,
           });
           
+          // P1-2 修复：检查添加是否成功
+          if (!contact) {
+            return { content: '❌ 添加联系人失败（可能保存失败或已存在）' };
+          }
+          
           return { content: `✅ 已添加联系人: ${contact.name} (${contact.peerId.slice(0, 16)})` };
         }
         

@@ -31,6 +31,14 @@ export const DEFAULT_P2P_NETWORK_CONFIG: Required<P2PNetworkConfig> = {
   enableNATTraversal: false, // Phase 2: 默认禁用，需要用户显式启用
   enableRelayServer: false,  // Phase 2: 默认不提供 Relay 服务
   messageHandlerUrl: '',     // 默认不配置消息处理 URL
+  // P1-5: Relay 访问控制默认配置
+  relayWhitelist: [],
+  relayBlacklist: [],
+  relayMinReputation: 50,
+  relayMaxPerMinute: 10,
+  relayMaxReservations: 50,
+  relayMaxCircuits: 100,
+  relayReservationGapMs: 5 * 60 * 1000, // 5 分钟
 };
 
 // ============================================================================

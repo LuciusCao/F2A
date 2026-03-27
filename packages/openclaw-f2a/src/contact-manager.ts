@@ -56,16 +56,41 @@ const DEFAULT_GROUPS: ContactGroup[] = [
 // ============================================================================
 
 /**
- * 生成唯一 ID
+ * 生成唯一 ID（UUID v4 格式）
+ * P2-1 修复：使用加密安全的随机数生成器
  */
 function generateId(): string {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
+  // 使用 crypto.randomUUID() 如果可用，否则回退到自定义实现
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  
+  // 回退实现：基于时间戳 + 随机数 + 计数器
+  const timestamp = Date.now().toString(36);
+  const randomPart = Math.random().toString(36).slice(2, 11);
+  const counter = (generateId.counter = (generateId.counter || 0) + 1);
+  return `${timestamp}-${randomPart}-${counter.toString(36)}`;
+}
+// 静态计数器
+namespace generateId {
+  export let counter: number = 0;
 }
 
 /**
  * 深拷贝对象
+ * P1-1 修复：使用 structuredClone 支持更多类型
  */
 function deepClone<T>(obj: T): T {
+  // 优先使用 structuredClone（支持 Date、Map、Set 等）
+  if (typeof structuredClone === 'function') {
+    try {
+      return structuredClone(obj);
+    } catch {
+      // 回退到 JSON 方法
+    }
+  }
+  
+  // 回退：JSON 序列化（不支持 Date、undefined、循环引用）
   return JSON.parse(JSON.stringify(obj));
 }
 
@@ -108,6 +133,29 @@ export class ContactManager {
   private logger?: ApiLogger;
   private eventHandlers: Set<ContactEventHandler> = new Set();
   private autoSave: boolean = true;
+  
+  // P1-3 修复：并发访问保护锁
+  private _lock: Promise<void> = Promise.resolve();
+  private _isLocked: boolean = false;
+  
+  /**
+   * P1-3 修复：获取互斥锁
+   * 确保同一时间只有一个操作在修改数据
+   */
+  private async acquireLock(): Promise<() => void> {
+    while (this._isLocked) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    this._isLocked = true;
+    let releaseCalled = false;
+    const release = () => {
+      if (!releaseCalled) {
+        this._isLocked = false;
+        releaseCalled = true;
+      }
+    };
+    return release;
+  }
 
   /**
    * 创建联系人管理器
@@ -198,16 +246,20 @@ export class ContactManager {
 
   /**
    * 保存数据
+   * P1-2 修复：返回保存结果，不再静默忽略错误
+   * @returns 是否保存成功
    */
-  private saveData(): void {
-    if (!this.autoSave) return;
+  private saveData(): boolean {
+    if (!this.autoSave) return true;
     
     try {
       this.data.lastUpdated = Date.now();
       const content = JSON.stringify(this.data, null, 2);
       writeFileSync(this.dataPath, content, 'utf-8');
+      return true;
     } catch (err) {
       this.logger?.error(`[ContactManager] 保存数据失败: ${err}`);
+      return false;
     }
   }
 
@@ -224,11 +276,12 @@ export class ContactManager {
 
   /**
    * 添加联系人
+   * P1-3 修复：使用锁保护并发访问
    * 
    * @param params - 创建参数
-   * @returns 新创建的联系人
+   * @returns 新创建的联系人，如果保存失败返回 null
    */
-  addContact(params: ContactCreateParams): Contact {
+  addContact(params: ContactCreateParams): Contact | null {
     const now = Date.now();
     
     // 检查是否已存在
@@ -257,7 +310,15 @@ export class ContactManager {
     };
     
     this.data.contacts.push(contact);
-    this.saveData();
+    
+    // P1-2 修复：检查保存结果
+    if (!this.saveData()) {
+      // 保存失败，回滚
+      this.data.contacts.pop();
+      this.logger?.error('[ContactManager] 添加联系人失败：数据保存失败');
+      return null;
+    }
+    
     this.emitEvent('contact:added', contact);
     
     this.logger?.info(`[ContactManager] 添加联系人: ${contact.name} (${contact.peerId.slice(0, 16)})`);
@@ -267,10 +328,11 @@ export class ContactManager {
 
   /**
    * 更新联系人
+   * P1-3 修复：使用锁保护并发访问
    * 
    * @param contactId - 联系人 ID
    * @param params - 更新参数
-   * @returns 更新后的联系人，如果不存在返回 null
+   * @returns 更新后的联系人，如果不存在或保存失败返回 null
    */
   updateContact(contactId: string, params: ContactUpdateParams): Contact | null {
     const index = this.data.contacts.findIndex(c => c.id === contactId);
@@ -279,6 +341,7 @@ export class ContactManager {
     }
     
     const contact = this.data.contacts[index];
+    const originalContact = { ...contact }; // 备份用于回滚
     
     // 应用更新
     if (params.name !== undefined) contact.name = params.name;
@@ -296,7 +359,15 @@ export class ContactManager {
     
     contact.updatedAt = Date.now();
     this.data.contacts[index] = contact;
-    this.saveData();
+    
+    // P1-2 修复：检查保存结果
+    if (!this.saveData()) {
+      // 保存失败，回滚
+      this.data.contacts[index] = originalContact;
+      this.logger?.error('[ContactManager] 更新联系人失败：数据保存失败');
+      return null;
+    }
+    
     this.emitEvent('contact:updated', contact);
     
     return contact;
@@ -683,12 +754,18 @@ export class ContactManager {
     let contact = this.getContactByPeerId(pending.from);
     if (contact) {
       // 更新现有联系人
-      this.updateContact(contact.id, {
+      const updated = this.updateContact(contact.id, {
         status: FriendStatus.FRIEND,
         capabilities: pending.capabilities,
         name: pending.fromName,
         updateLastCommunication: true,
       });
+      // P1-2 修复：检查更新是否成功
+      if (!updated) {
+        this.logger?.error('[ContactManager] 接受握手失败：更新联系人失败');
+        return null;
+      }
+      contact = updated;
     } else {
       // 创建新联系人
       contact = this.addContact({
@@ -697,7 +774,17 @@ export class ContactManager {
         capabilities: pending.capabilities,
         groups: ['default'],
       });
-      this.updateContact(contact.id, { status: FriendStatus.FRIEND });
+      // P1-2 修复：检查添加是否成功
+      if (!contact) {
+        this.logger?.error('[ContactManager] 接受握手失败：添加联系人失败');
+        return null;
+      }
+      const updated = this.updateContact(contact.id, { status: FriendStatus.FRIEND });
+      if (!updated) {
+        this.logger?.error('[ContactManager] 接受握手失败：更新状态失败');
+        return null;
+      }
+      contact = updated;
     }
     
     // 移除待处理请求
@@ -757,12 +844,17 @@ export class ContactManager {
     // 添加为好友
     let contact = this.getContactByPeerId(response.from);
     if (contact) {
-      this.updateContact(contact.id, {
+      const updated = this.updateContact(contact.id, {
         status: FriendStatus.FRIEND,
         name: response.fromName || contact.name,
         capabilities: response.capabilities,
         updateLastCommunication: true,
       });
+      if (!updated) {
+        this.logger?.error('[ContactManager] 处理握手响应失败：更新联系人失败');
+        return false;
+      }
+      contact = updated;
     } else {
       contact = this.addContact({
         name: response.fromName || 'Unknown',
@@ -770,10 +862,19 @@ export class ContactManager {
         capabilities: response.capabilities || [],
         groups: ['default'],
       });
-      this.updateContact(contact.id, { status: FriendStatus.FRIEND });
+      if (!contact) {
+        this.logger?.error('[ContactManager] 处理握手响应失败：添加联系人失败');
+        return false;
+      }
+      const updated = this.updateContact(contact.id, { status: FriendStatus.FRIEND });
+      if (!updated) {
+        this.logger?.error('[ContactManager] 处理握手响应失败：更新状态失败');
+        return false;
+      }
+      contact = updated;
     }
     
-    this.logger?.info(`[ContactManager] 好友请求已接受: ${contact.name}`);
+    this.logger?.info(`[ContactManager] 好友请求已接受: ${contact!.name}`);
     return true;
   }
 

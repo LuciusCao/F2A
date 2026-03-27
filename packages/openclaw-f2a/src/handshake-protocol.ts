@@ -43,6 +43,36 @@ const RETRY_CONFIG = {
 };
 
 // ============================================================================
+// F2A 接口类型定义
+// ============================================================================
+
+/**
+ * P0-1 修复：定义 F2A 实例的消息事件接口
+ * 避免使用 as any 绕过类型检查
+ */
+interface F2AMessageEvent {
+  from: string;
+  content: string;
+  metadata?: Record<string, unknown>;
+  messageId: string;
+}
+
+/**
+ * P0-1 修复：定义 F2A 实例的公共接口
+ */
+interface F2APublicInterface {
+  peerId: string;
+  agentInfo?: {
+    displayName?: string;
+    multiaddrs?: string[];
+  };
+  getCapabilities(): Array<{ name: string; description?: string; tools?: string[] }>;
+  on(event: 'message', handler: (msg: F2AMessageEvent) => void): void;
+  on(event: 'peer:connected' | 'peer:disconnected', handler: (event: { peerId: string }) => void): void;
+  sendMessage(to: string, content: string, metadata?: Record<string, unknown>): Promise<{ success: boolean; error?: string }>;
+}
+
+// ============================================================================
 // 握手协议消息接口
 // ============================================================================
 
@@ -122,6 +152,9 @@ export class HandshakeProtocol {
     sentAt: number;
     timeout?: ReturnType<typeof setTimeout>;
   }> = new Map();
+  
+  /** P1-4 修复：shutdown 标志，阻止新请求 */
+  private _isShutdown: boolean = false;
 
   constructor(
     f2a: F2A,
@@ -142,19 +175,31 @@ export class HandshakeProtocol {
 
   /**
    * 设置消息处理器
+   * P0-1 修复：添加类型检查和错误处理
    */
   private setupMessageHandler(): void {
-    // 监听来自 F2A 的消息
-    (this.f2a as any).on('message', async (msg: {
-      from: string;
-      content: string;
-      metadata?: Record<string, unknown>;
-      messageId: string;
-    }) => {
-      await this.handleMessage(msg.from, msg.content, msg.metadata);
-    });
+    // P0-1 修复：验证 F2A 实例是否支持 on 方法
+    const f2aInterface = this.f2a as unknown as F2APublicInterface;
     
-    this.logger?.info('[HandshakeProtocol] 消息处理器已设置');
+    if (typeof f2aInterface.on !== 'function') {
+      this.logger?.error('[HandshakeProtocol] F2A 实例不支持 on 方法，消息处理无法启动');
+      return;
+    }
+    
+    // 监听来自 F2A 的消息
+    try {
+      f2aInterface.on('message', async (msg: F2AMessageEvent) => {
+        // P1-4 修复：检查 shutdown 状态
+        if (this._isShutdown) {
+          return;
+        }
+        await this.handleMessage(msg.from, msg.content, msg.metadata);
+      });
+      
+      this.logger?.info('[HandshakeProtocol] 消息处理器已设置');
+    } catch (err) {
+      this.logger?.error(`[HandshakeProtocol] 设置消息处理器失败: ${err}`);
+    }
   }
 
   // ============================================================================
@@ -163,6 +208,7 @@ export class HandshakeProtocol {
 
   /**
    * 发送好友请求
+   * P0-2 修复：使用类型安全的接口
    * 
    * @param toPeerId - 目标 Peer ID
    * @param message - 附加消息
@@ -172,6 +218,12 @@ export class HandshakeProtocol {
     toPeerId: string,
     message?: string
   ): Promise<string | null> {
+    // P1-4 修复：检查 shutdown 状态
+    if (this._isShutdown) {
+      this.logger?.warn('[HandshakeProtocol] 协议已关闭，拒绝发送请求');
+      return null;
+    }
+    
     try {
       // 检查是否已是好友
       if (this.contactManager.isFriend(toPeerId)) {
@@ -193,12 +245,15 @@ export class HandshakeProtocol {
         return existing.request.requestId;
       }
       
+      // P0-2 修复：使用类型安全的接口
+      const f2aInterface = this.f2a as unknown as F2APublicInterface;
+      
       // 创建请求
       const myCapabilities = this.getMyCapabilities();
       const request: HandshakeRequest = {
         requestId: this.generateRequestId(),
-        from: this.f2a.peerId,
-        fromName: this.f2a.agentInfo?.displayName || 'OpenClaw Agent',
+        from: f2aInterface.peerId,
+        fromName: f2aInterface.agentInfo?.displayName || 'OpenClaw Agent',
         capabilities: myCapabilities,
         timestamp: Date.now(),
         message,
@@ -215,15 +270,22 @@ export class HandshakeProtocol {
       };
       
       // 发送消息（带重试）
+      // P0-2 修复：验证 sendMessage 方法存在
+      if (typeof f2aInterface.sendMessage !== 'function') {
+        this.logger?.error('[HandshakeProtocol] F2A 实例不支持 sendMessage 方法');
+        return null;
+      }
+      
       let lastError: Error | null = null;
       for (let i = 0; i < RETRY_CONFIG.maxRetries; i++) {
         try {
-          const result = await (this.f2a as any).sendMessage(
+          const result = await f2aInterface.sendMessage(
             toPeerId,
             JSON.stringify(msg),
             { type: 'handshake' }
           );
           
+          // P0-2 修复：检查返回值的 success 字段
           if (result?.success !== false) {
             // 记录待响应请求
             this.outgoingRequests.set(request.requestId, {
@@ -244,13 +306,17 @@ export class HandshakeProtocol {
                 name: 'Pending Request',
                 peerId: toPeerId,
               });
-              this.contactManager.updateContact(contact.id, {
-                status: FriendStatus.PENDING,
-              });
+              if (contact) {
+                this.contactManager.updateContact(contact.id, {
+                  status: FriendStatus.PENDING,
+                });
+              }
             }
             
             this.logger?.info(`[HandshakeProtocol] 好友请求已发送: ${toPeerId.slice(0, 16)}`);
             return request.requestId;
+          } else {
+            lastError = new Error(result.error || '发送失败');
           }
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err));
@@ -462,6 +528,7 @@ export class HandshakeProtocol {
 
   /**
    * 发送响应消息
+   * P0-2 修复：使用类型安全的接口
    */
   private async sendResponse(
     toPeerId: string,
@@ -482,12 +549,21 @@ export class HandshakeProtocol {
     };
     
     try {
-      await (this.f2a as any).sendMessage(
+      // P0-2 修复：使用类型安全的接口
+      const f2aInterface = this.f2a as unknown as F2APublicInterface;
+      
+      if (typeof f2aInterface.sendMessage !== 'function') {
+        this.logger?.error('[HandshakeProtocol] F2A 实例不支持 sendMessage 方法');
+        return false;
+      }
+      
+      const result = await f2aInterface.sendMessage(
         toPeerId,
         JSON.stringify(msg),
         { type: 'handshake' }
       );
-      return true;
+      
+      return result?.success !== false;
     } catch (err) {
       this.logger?.error(`[HandshakeProtocol] 发送响应失败: ${err}`);
       return false;
@@ -500,9 +576,17 @@ export class HandshakeProtocol {
 
   /**
    * 获取自己的能力列表
+   * P0-2 修复：使用类型安全的接口
    */
   private getMyCapabilities(): ContactCapability[] {
-    const caps = this.f2a.getCapabilities();
+    const f2aInterface = this.f2a as unknown as F2APublicInterface;
+    
+    // 验证方法存在
+    if (typeof f2aInterface.getCapabilities !== 'function') {
+      return [];
+    }
+    
+    const caps = f2aInterface.getCapabilities();
     return caps.map(cap => ({
       name: cap.name,
       description: cap.description,
@@ -567,8 +651,12 @@ export class HandshakeProtocol {
 
   /**
    * 清理资源
+   * P1-4 修复：添加 shutdown 标志，阻止新请求
    */
   shutdown(): void {
+    // 设置 shutdown 标志
+    this._isShutdown = true;
+    
     // 清除所有超时定时器
     for (const pending of this.outgoingRequests.values()) {
       if (pending.timeout) {

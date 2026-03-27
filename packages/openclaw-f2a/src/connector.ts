@@ -96,6 +96,22 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   }
   
   /**
+   * 获取默认的 F2A 数据目录
+   * 优先级：workspace/.f2a > ~/.f2a（兼容旧版本）
+   * 注意：config.dataDir 的处理在 mergeConfig() 中，这里只处理未配置的情况
+   */
+  private getDefaultDataDir(): string {
+    // 默认：使用 agent workspace 目录
+    const workspace = (this.api?.config as any)?.agents?.defaults?.workspace;
+    if (workspace) {
+      return join(workspace, '.f2a');
+    }
+    
+    // 兼容旧版本
+    return join(homedir(), '.f2a');
+  }
+  
+  /**
    * 获取网络客户端（懒加载）
    * 新架构：直接使用 F2A 实例的方法，不再通过 HTTP
    */
@@ -112,7 +128,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
    */
   private get taskQueue(): TaskQueue {
     if (!this._taskQueue) {
-      const dataDir = this.config.dataDir || './f2a-data';
+      const dataDir = this.getDefaultDataDir();
       this._taskQueue = new TaskQueue({
         maxSize: this.config.maxQueuedTasks || 100,
         maxAgeMs: 24 * 60 * 60 * 1000, // 24小时
@@ -137,7 +153,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           minScoreForService: INTERNAL_REPUTATION_CONFIG.minScoreForService,
           decayRate: INTERNAL_REPUTATION_CONFIG.decayRate,
         },
-        this.config.dataDir || './f2a-data'
+        this.getDefaultDataDir()
       );
     }
     return this._reputationSystem;
@@ -329,13 +345,8 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
 
     // 直接创建 F2A 实例（新架构）
     try {
-      // 使用绝对路径，避免相对路径问题
-      // 默认使用 ~/.f2a 以复用已有的 identity
-      const dataDir = this.nodeConfig.dataDir 
-        ? (this.nodeConfig.dataDir.startsWith('/') || this.nodeConfig.dataDir.startsWith('~')
-            ? this.nodeConfig.dataDir 
-            : join(homedir(), this.nodeConfig.dataDir.replace(/^\.\/?/, '')))
-        : join(homedir(), '.f2a');
+      // 使用统一的默认数据目录计算方法
+      const dataDir = this.getDefaultDataDir();
       
       // 文件日志确保不被丢失
       const debugLog = (msg: string) => {
@@ -349,7 +360,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       };
       
       debugLog(`[F2A Adapter] 使用数据目录: ${dataDir}`);
-      debugLog(`[F2A Adapter] nodeConfig.dataDir: ${this.nodeConfig.dataDir}`);
+      debugLog(`[F2A Adapter] workspace: ${(this.api?.config as any)?.agents?.defaults?.workspace}`);
       debugLog(`[F2A Adapter] config.dataDir: ${this.config.dataDir}`);
       
       this._f2a = await F2A.create({
@@ -568,16 +579,11 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     if (this.api?.runtime?.subagent?.run) {
       debugLog('[F2A Adapter] 使用 Subagent API');
       try {
-        // 生成 idempotencyKey（必需参数）
-        const idempotencyKey = `f2a-${fromPeerId.slice(0, 16)}-${Date.now()}`;
-        debugLog(`[F2A Adapter] Subagent run 开始: sessionKey=${sessionKey}, idempotencyKey=${idempotencyKey}`);
-        
         const runResult = await this.api.runtime.subagent.run({
           sessionKey,
           message,
           deliver: false,
-          idempotencyKey,
-        } as any); // 使用 as any 绕过类型检查
+        });
         
         const waitResult = await this.api.runtime.subagent.waitForRun({
           runId: runResult.runId,
@@ -1293,7 +1299,8 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       p2pPort: config.p2pPort as number | undefined,
       enableMDNS: config.enableMDNS as boolean | undefined,
       bootstrapPeers: config.bootstrapPeers as string[] | undefined,
-      dataDir: (config.dataDir as string) || './f2a-data',
+      // dataDir 只保存用户显式配置的值，默认值在 getDefaultDataDir() 中处理
+      dataDir: config.dataDir as string | undefined,
       maxQueuedTasks: (config.maxQueuedTasks as number) || 100,
       pollInterval: config.pollInterval as number | undefined,
       // 保留 webhookPush 配置（修复：之前丢失导致 webhook 推送被禁用）

@@ -69,9 +69,9 @@ f2a config
 
 ## 下一步
 
-- [配置说明](./docs/configuration.md)
-- [加入现有网络](./docs/join-network.md)
-- [开发指南](./docs/development.md)
+- [完整文档](./README.md)
+- [协议规范](./docs/F2A-PROTOCOL.md)
+- [信誉系统指南](./docs/reputation-guide.md)
 
 ---
 

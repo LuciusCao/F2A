@@ -246,6 +246,28 @@ describe('F2APlugin', () => {
       plugin = new F2APlugin();
       expect(plugin.isInitialized()).toBe(false);
     });
+
+    it('多次启用不应该报错', async () => {
+      plugin = new F2APlugin();
+      
+      const mockApi = {
+        config: {
+          agents: {
+            defaults: {
+              workspace: tempDir,
+            },
+          },
+        },
+      };
+
+      await plugin.initialize({
+        api: mockApi as any,
+        config: {},
+      });
+
+      await plugin.enable();
+      await plugin.enable();
+    });
   });
 
   describe('shutdown', () => {

@@ -93,10 +93,7 @@ describe('HandshakeProtocol 集成测试（网络模拟）', () => {
       expect(friends1[0].name).toBe('Node2');
     }, 10000);
 
-    // TODO: 此测试有 bug - rejectRequest 后 pendingHandshakes 没有被正确清理
-    // 根因：network-mock.ts 的消息传递机制导致消息被反复处理
-    // 需要重新设计 MockMessageQueue 的实现
-    it.skip('应该完成发送-接收-拒绝流程', async () => {
+    it('应该完成发送-接收-拒绝流程', async () => {
       const peerId2 = mockPair.f2a2.peerId;
       
       // 1. 发送好友请求

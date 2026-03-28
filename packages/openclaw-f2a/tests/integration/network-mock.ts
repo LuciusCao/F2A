@@ -81,28 +81,25 @@ export function createMockConnectionPair(): MockConnectionPair {
   const node1to2 = new MockMessageQueue();
   const node2to1 = new MockMessageQueue();
 
-  // 连接两个队列 - Node1 发送的消息被 Node2 接收
-  // 关键：使用 'message' 事件而不是 'receive'
-  node1to2.on('message', (msg) => {
-    // 模拟网络延迟，直接传递消息
-    setImmediate(() => node2to1.emit('message', msg));
-  });
-
-  node2to1.on('message', (msg) => {
-    setImmediate(() => node1to2.emit('message', msg));
-  });
+  // 消息传递逻辑：
+  // - Node1 发送消息 → node1to2.send() → node1to2 触发 'message' 事件 → Node2 接收
+  // - Node2 发送消息 → node2to1.send() → node2to1 触发 'message' 事件 → Node1 接收
+  // 
+  // 关键：两个队列是独立的，不需要互相转发！
 
   return {
     node1to2,
     node2to1,
     node1: {
       send: (msg) => node1to2.send(msg),
+      // Node1 接收来自 Node2 的消息：监听 node2to1
       onMessage: (handler) => node2to1.on('message', handler),
       close: () => { node1to2.close(); node2to1.close(); },
       reset: () => { node1to2.reset(); node2to1.reset(); },
     },
     node2: {
       send: (msg) => node2to1.send(msg),
+      // Node2 接收来自 Node1 的消息：监听 node1to2
       onMessage: (handler) => node1to2.on('message', handler),
       close: () => { node1to2.close(); node2to1.close(); },
       reset: () => { node1to2.reset(); node2to1.reset(); },

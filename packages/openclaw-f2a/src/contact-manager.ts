@@ -54,8 +54,8 @@ const MAX_CONTACTS = 10000;
 /** P1-4 修复：导入数据最大大小（字节） */
 const MAX_IMPORT_SIZE = 10 * 1024 * 1024; // 10MB
 
-/** P2-1 修复：PeerID 格式正则（libp2p 格式：12D3KooW...） */
-const PEER_ID_REGEX = /^12D3KooW[A-Za-z0-9]{44}$/;
+/** P2-1 修复：PeerID 格式正则（libp2p 格式：12D3KooW...，base58btc 不含 0） */
+const PEER_ID_REGEX = /^12D3KooW[A-Za-z1-9]{44}$/;
 
 /** P2-1 修复：名称最大长度 */
 const MAX_NAME_LENGTH = 100;

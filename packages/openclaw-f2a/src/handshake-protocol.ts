@@ -122,8 +122,8 @@ export class HandshakeProtocol {
   /** P1-4 修复：shutdown 标志，阻止新请求 */
   private _isShutdown: boolean = false;
   
-  /** P1 修复：PeerID 格式正则（libp2p 格式：12D3KooW...） */
-  private static readonly PEER_ID_REGEX = /^12D3KooW[A-Za-z0-9]{44}$/;
+  /** P1 修复：PeerID 格式正则（libp2p 格式：12D3KooW...，base58btc 不含 0） */
+  private static readonly PEER_ID_REGEX = /^12D3KooW[A-Za-z1-9]{44}$/;
 
   constructor(
     f2a: F2A,

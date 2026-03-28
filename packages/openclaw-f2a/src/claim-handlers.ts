@@ -76,6 +76,20 @@ export class ClaimHandlers {
       return { content: '❌ 请提供有效的 description 参数' };
     }
     
+    // P2-Round2 修复：验证 required_capabilities 数组元素类型
+    if (params.required_capabilities !== undefined) {
+      if (!Array.isArray(params.required_capabilities)) {
+        return { content: '❌ required_capabilities 必须是数组' };
+      }
+      // 检查每个元素是否是非空字符串
+      for (let i = 0; i < params.required_capabilities.length; i++) {
+        const cap = params.required_capabilities[i];
+        if (typeof cap !== 'string' || cap.trim() === '') {
+          return { content: `❌ required_capabilities[${i}] 必须是非空字符串` };
+        }
+      }
+    }
+    
     // estimated_complexity 验证：必须在 1-10 之间
     if (params.estimated_complexity !== undefined) {
       if (typeof params.estimated_complexity !== 'number' || !Number.isFinite(params.estimated_complexity)) {

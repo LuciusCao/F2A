@@ -160,7 +160,7 @@ export class AgentManager {
     const data = JSON.stringify(identity, null, 2);
     
     writeFileSync(filePath, data, { mode: 0o600 }); // 仅所有者可读写
-    logger.debug('[F2A:Agent] 身份已保存到: %s', filePath);
+    logger.debug?.('[F2A:Agent] 身份已保存到: %s', filePath);
   }
 
   /**

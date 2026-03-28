@@ -9,13 +9,8 @@ import path from 'path';
 import fs from 'fs';
 import { randomUUID } from 'crypto';
 
-/** Logger 接口 */
-interface Logger {
-  info(message: string, ...args: unknown[]): void;
-  warn(message: string, ...args: unknown[]): void;
-  error(message: string, ...args: unknown[]): void;
-  debug?(message: string, ...args: unknown[]): void;
-}
+// P1-8 修复：统一使用 logger.ts 的 Logger 接口
+import type { Logger } from './logger.js';
 
 export interface QueuedTask extends TaskRequest {
   status: 'pending' | 'processing' | 'completed' | 'failed';
@@ -213,22 +208,25 @@ export class TaskQueue {
    * 从数据库恢复任务
    * 
    * P1 修复：尝试逐条恢复有效数据，避免数据库损坏时丢失所有任务
+   * P1-Round2 修复：使用事务包装整个 restore 操作，确保状态一致性
    */
   private restore(): void {
     if (!this.db) return;
 
-    try {
-      // 恢复时将 processing 状态的任务重置为 pending，避免僵尸任务
-      // 这些任务在崩溃前正在处理，但未完成，需要重新执行
-      this.db.exec(`
-        UPDATE tasks SET status = 'pending' WHERE status = 'processing'
-      `);
+    // P1-Round2 修复：使用事务包装整个恢复操作
+    const restoreTransaction = this.db.transaction(() => {
+      try {
+        // 恢复时将 processing 状态的任务重置为 pending，避免僵尸任务
+        // 这些任务在崩溃前正在处理，但未完成，需要重新执行
+        this.db.exec(`
+          UPDATE tasks SET status = 'pending' WHERE status = 'processing'
+        `);
 
-      const rows = this.db.prepare(`
-        SELECT * FROM tasks 
-        WHERE status IN ('pending', 'processing')
-        ORDER BY created_at ASC
-      `).all() as TaskRow[];
+        const rows = this.db.prepare(`
+          SELECT * FROM tasks 
+          WHERE status IN ('pending', 'processing')
+          ORDER BY created_at ASC
+        `).all() as TaskRow[];
 
       let recoveredCount = 0;
       let skippedCount = 0;
@@ -283,51 +281,59 @@ export class TaskQueue {
       }
 
       if (skippedCount > 0) {
-        this.logger.info('[F2A:Queue] 恢复完成: recovered=%d, skipped=%d', recoveredCount, skippedCount);
-      } else {
-        this.logger.info('[F2A:Queue] 从持久化恢复任务: count=%d', this.tasks.size);
-      }
-    } catch (e) {
-      // P1 修复：数据库损坏时不清空所有任务，而是尝试逐条恢复
-      this.logger.warn('[F2A:Queue] 批量恢复失败，尝试逐条恢复: error=%s', e);
-      
-      try {
-        // 尝试逐条读取并恢复
-        const rows = this.db.prepare(`SELECT * FROM tasks WHERE status IN ('pending', 'processing')`).all() as TaskRow[];
-        
-        for (const row of rows) {
-          try {
-            if (row.id && row.created_at) {
-              const task: QueuedTask = {
-                taskId: row.id as string,
-                taskType: (row.task_type as string) || '',
-                description: (row.description as string) || '',
-                parameters: this.safeJsonParse(row.parameters) as Record<string, unknown> | undefined,
-                from: (row.from as string) || '',
-                timestamp: (row.timestamp as number) || Date.now(),
-                timeout: (row.timeout as number) || 60000,
-                status: 'pending', // 恢复时默认设为 pending
-                createdAt: row.created_at as number,
-                updatedAt: (row.updated_at as number) || undefined,
-                result: this.safeJsonParse(row.result),
-                error: (row.error as string) || undefined,
-                latency: (row.latency as number) || undefined,
-                webhookPushed: row.webhook_pushed === 1
-              };
-              this.tasks.set(task.taskId, task);
-            }
-          } catch (rowError) {
-            // 单条记录恢复失败，跳过并继续
-            this.logger.warn('[F2A:Queue] 单条记录恢复失败: id=%s, error=%s', row?.id, rowError);
-          }
+          this.logger.info('[F2A:Queue] 恢复完成: recovered=%d, skipped=%d', recoveredCount, skippedCount);
+        } else {
+          this.logger.info('[F2A:Queue] 从持久化恢复任务: count=%d', this.tasks.size);
         }
+      } catch (e) {
+        // P1 修复：数据库损坏时不清空所有任务，而是尝试逐条恢复
+        this.logger.warn('[F2A:Queue] 批量恢复失败，尝试逐条恢复: error=%s', e);
         
-        this.logger.info('[F2A:Queue] 逐条恢复完成: count=%d', this.tasks.size);
-      } catch (recoverError) {
-        // 所有恢复尝试都失败，记录错误但不清空内存
-        this.logger.error('[F2A:Queue] 所有恢复尝试失败，将使用空内存队列: error=%s', recoverError);
-        // 注意：这里不清空 this.tasks，保留任何可能已部分恢复的数据
+        try {
+          // 尝试逐条读取并恢复
+          const rows = this.db.prepare(`SELECT * FROM tasks WHERE status IN ('pending', 'processing')`).all() as TaskRow[];
+          
+          for (const row of rows) {
+            try {
+              if (row.id && row.created_at) {
+                const task: QueuedTask = {
+                  taskId: row.id as string,
+                  taskType: (row.task_type as string) || '',
+                  description: (row.description as string) || '',
+                  parameters: this.safeJsonParse(row.parameters) as Record<string, unknown> | undefined,
+                  from: (row.from as string) || '',
+                  timestamp: (row.timestamp as number) || Date.now(),
+                  timeout: (row.timeout as number) || 60000,
+                  status: 'pending', // 恢复时默认设为 pending
+                  createdAt: row.created_at as number,
+                  updatedAt: (row.updated_at as number) || undefined,
+                  result: this.safeJsonParse(row.result),
+                  error: (row.error as string) || undefined,
+                  latency: (row.latency as number) || undefined,
+                  webhookPushed: row.webhook_pushed === 1
+                };
+                this.tasks.set(task.taskId, task);
+              }
+            } catch (rowError) {
+              // 单条记录恢复失败，跳过并继续
+              this.logger.warn('[F2A:Queue] 单条记录恢复失败: id=%s, error=%s', row?.id, rowError);
+            }
+          }
+          
+          this.logger.info('[F2A:Queue] 逐条恢复完成: count=%d', this.tasks.size);
+        } catch (recoverError) {
+          // 所有恢复尝试都失败，记录错误但不清空内存
+          this.logger.error('[F2A:Queue] 所有恢复尝试失败，将使用空内存队列: error=%s', recoverError);
+          // 注意：这里不清空 this.tasks，保留任何可能已部分恢复的数据
+        }
       }
+    });
+    
+    // P1-Round2 修复：在事务外执行恢复
+    try {
+      restoreTransaction();
+    } catch (e) {
+      this.logger.error('[F2A:Queue] 恢复事务执行失败: error=%s', e);
     }
   }
 
@@ -413,16 +419,23 @@ export class TaskQueue {
     }
 
     // 检查是否为重复添加（保留原 createdAt）
-    const existingTask = this.tasks.get(request.taskId);
-    const preservedCreatedAt = existingTask?.createdAt ?? Date.now();
+    // P0-1 修复：将 existingTask 检查移入事务内，解决竞态条件
+    const preservedCreatedAt = Date.now();
 
     // 使用事务确保原子性（解决竞态条件）
     if (this.db) {
       const insertTask = this.db!.transaction(() => {
+        // P0-1 修复：在事务开始时重新获取 existingTask，避免竞态
+        const existingTaskInTransaction = this.tasks.get(request.taskId);
+        const actualCreatedAt = existingTaskInTransaction?.createdAt ?? Date.now();
+
         // 在事务内检查队列大小（原子操作）
-        const count = this.db!.prepare('SELECT COUNT(*) as count FROM tasks').get() as { count: number };
-        if (count.count >= this.maxSize && !existingTask) {
-          throw new Error('Task queue is full');
+        // 只有新任务才需要检查容量
+        if (!existingTaskInTransaction) {
+          const count = this.db!.prepare('SELECT COUNT(*) as count FROM tasks').get() as { count: number };
+          if (count.count >= this.maxSize) {
+            throw new Error('Task queue is full');
+          }
         }
 
         const task: QueuedTask = {
@@ -431,7 +444,7 @@ export class TaskQueue {
           timestamp,
           timeout,
           status: 'pending',
-          createdAt: preservedCreatedAt,
+          createdAt: actualCreatedAt,
           webhookPushed: false
         };
 
@@ -458,8 +471,10 @@ export class TaskQueue {
     }
 
     // 无 DB 时，在内存中检查队列是否已满
+    // 先检查是否已存在（原子操作）
+    const existingTaskMemory = this.tasks.get(request.taskId);
     // 注意：对于新任务才检查容量限制
-    if (!existingTask && this.tasks.size >= this.maxSize) {
+    if (!existingTaskMemory && this.tasks.size >= this.maxSize) {
       throw new Error('Task queue is full');
     }
 
@@ -469,7 +484,7 @@ export class TaskQueue {
       timestamp,
       timeout,
       status: 'pending',
-      createdAt: preservedCreatedAt,
+      createdAt: existingTaskMemory?.createdAt ?? preservedCreatedAt,
       webhookPushed: false
     };
 
@@ -668,24 +683,30 @@ export class TaskQueue {
     // 如果队列接近满，清理已完成和失败的任务
     const highWatermark = Math.floor(this.maxSize * 0.9);
     if (this.tasks.size >= highWatermark) {
-      const completedAndFailed: string[] = [];
+      // P2-Round2 修复：创建快照后再排序，避免并发修改问题
+      // 先收集已完成/失败的任务信息
+      const completedAndFailedSnapshot: Array<{ id: string; updatedAt: number; createdAt: number }> = [];
       
       for (const [id, task] of this.tasks) {
         if (task.status === 'completed' || task.status === 'failed') {
-          completedAndFailed.push(id);
+          // P2-Round2 修复：处理 undefined 情况，使用安全默认值
+          const updatedAt = task.updatedAt ?? task.createdAt ?? 0;
+          const createdAt = task.createdAt ?? 0;
+          completedAndFailedSnapshot.push({ id, updatedAt, createdAt });
         }
       }
       
       // 按更新时间排序，优先删除旧的已完成/失败任务
-      completedAndFailed.sort((a, b) => {
-        const taskA = this.tasks.get(a);
-        const taskB = this.tasks.get(b);
-        return (taskA?.updatedAt || taskA?.createdAt || 0) - (taskB?.updatedAt || taskB?.createdAt || 0);
+      // 在快照上排序，避免并发问题
+      completedAndFailedSnapshot.sort((a, b) => {
+        // P2-Round2 修复：已在收集时处理 undefined，这里直接使用
+        return a.updatedAt - b.updatedAt;
       });
       
       // 删除足够多的任务以腾出空间
       const targetSize = Math.floor(this.maxSize * 0.7);
-      const toRemove = completedAndFailed.slice(0, Math.max(0, this.tasks.size - targetSize));
+      const toRemoveCount = Math.max(0, this.tasks.size - targetSize);
+      const toRemove = completedAndFailedSnapshot.slice(0, toRemoveCount).map(item => item.id);
       
       for (const id of toRemove) {
         this.tasks.delete(id);

@@ -496,15 +496,30 @@ ${peers.map((p: any) => {
       tasks = taskQueue.getAll().filter((t: QueuedTask) => t.status === params.status);
     } else {
       // 默认返回待处理任务，并标记为 processing（防止重复执行）
-      tasks = taskQueue.getPending(params.limit || 10);
+      const pendingTasks = taskQueue.getPending(params.limit || 10);
       
-      // 将返回的任务标记为 processing，防止重复获取
-      for (const task of tasks) {
-        taskQueue.markProcessing(task.taskId);
+      // P0-3/4 修复：检查 markProcessing() 返回值，处理竞态条件
+      // 如果任务已被其他处理者标记为 processing，则跳过
+      tasks = [];
+      const skippedIds: string[] = [];
+      
+      for (const task of pendingTasks) {
+        const markedTask = taskQueue.markProcessing(task.taskId);
+        if (markedTask) {
+          // 成功标记为 processing
+          tasks.push(markedTask);
+        } else {
+          // 任务已被其他处理者获取或不存在，跳过并记录警告
+          skippedIds.push(task.taskId);
+          logger.warn('[F2A:Tools] 任务已被其他处理者获取，跳过: taskId=%s', task.taskId.slice(0, 16));
+        }
       }
       
       if (tasks.length > 0) {
         logger.info(`已将 ${tasks.length} 个任务标记为 processing`);
+      }
+      if (skippedIds.length > 0) {
+        logger.warn('[F2A:Tools] 跳过 %d 个已被获取的任务', skippedIds.length);
       }
     }
 

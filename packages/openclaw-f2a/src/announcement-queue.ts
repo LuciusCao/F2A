@@ -10,14 +10,8 @@
 import type { TaskAnnouncement, TaskClaim } from './types.js';
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'eventemitter3';
-
-/** Logger 接口 */
-interface Logger {
-  info(message: string, ...args: unknown[]): void;
-  warn(message: string, ...args: unknown[]): void;
-  error(message: string, ...args: unknown[]): void;
-  debug?(message: string, ...args: unknown[]): void;
-}
+// P1-8 修复：统一使用 logger.ts 的 Logger 接口
+import type { Logger } from './logger.js';
 
 /**
  * 任务广播队列统计信息

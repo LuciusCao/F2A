@@ -147,11 +147,13 @@ function normalizePath(path: string): string {
 /**
  * 检测变量替换绕过
  * P1 修复：增加更多危险模式检测
+ * P1-5 修复：使用 text.matchAll() 或每次调用前重置 lastIndex，避免全局正则 bug
  */
 function detectVariableSubstitution(text: string): string[] {
   const detected: string[] = [];
   
   // 环境变量模式: $VAR, ${VAR}, %VAR%
+  // P1-5 修复：使用 matchAll 替代 exec 循环，避免 lastIndex bug
   const envPatterns = [
     /\$([A-Za-z_][A-Za-z0-9_]*)/g,           // $VAR
     /\$\{([^}]+)\}/g,                         // ${VAR}
@@ -159,28 +161,29 @@ function detectVariableSubstitution(text: string): string[] {
   ];
   
   for (const pattern of envPatterns) {
-    let match;
-    while ((match = pattern.exec(text)) !== null) {
+    // P1-5 修复：使用 matchAll 替代 exec 循环
+    const matches = [...text.matchAll(pattern)];
+    for (const match of matches) {
       detected.push(`变量替换: ${match[0]}`);
     }
   }
   
   // P1 修复：检测算术表达式 $((expression))
-  const arithmeticPattern = /\$\(\(([^)]+)\)\)/g;
-  let arithmeticMatch;
-  while ((arithmeticMatch = arithmeticPattern.exec(text)) !== null) {
-    detected.push(`算术表达式: ${arithmeticMatch[0]}`);
+  // P1-5 修复：使用 matchAll
+  const arithmeticMatches = [...text.matchAll(/\$\(\(([^)]+)\)\)/g)];
+  for (const match of arithmeticMatches) {
+    detected.push(`算术表达式: ${match[0]}`);
   }
   
   // P1 修复：检测数组引用 ${array[@]}, ${array[*]}
-  const arrayPattern = /\$\{[A-Za-z_][A-Za-z0-9_]*\[@?\*?\]\}/g;
-  let arrayMatch;
-  while ((arrayMatch = arrayPattern.exec(text)) !== null) {
-    detected.push(`数组引用: ${arrayMatch[0]}`);
+  // P1-5 修复：使用 matchAll
+  const arrayMatches = [...text.matchAll(/\$\{[A-Za-z_][A-Za-z0-9_]*\[@?\*?\]\}/g)];
+  for (const match of arrayMatches) {
+    detected.push(`数组引用: ${match[0]}`);
   }
   
   // P1 修复：检测特殊变量: $?, $$, $!, $0, $1-$9, $#, $@, $*, $-
-  // 注意：使用 text.match(pattern) 而非 pattern.test(text) 避免 lastIndex bug
+  // P1-5 修复：使用 text.match() 替代 pattern.test()，避免 lastIndex bug
   const specialVars = [
     { pattern: /\$\?/g, name: '退出状态($?)' },
     { pattern: /\$\$/g, name: '进程ID($$)' },
@@ -193,8 +196,8 @@ function detectVariableSubstitution(text: string): string[] {
   ];
   
   for (const { pattern, name } of specialVars) {
-    // P0 修复：使用 text.match(pattern) 避免 lastIndex bug
-    // 全局正则的 test() 会更新 lastIndex，导致后续调用结果不一致
+    // P1-5 修复：使用 text.match() 避免 lastIndex bug
+    // text.match() 会创建新的匹配结果，不影响原 pattern 的 lastIndex
     if (text.match(pattern)) {
       detected.push(`特殊变量: ${name}`);
     }
@@ -202,12 +205,12 @@ function detectVariableSubstitution(text: string): string[] {
   
   // P1 修复：检测命令替换的变体
   // ${command} - bash 命令替换
-  const bashCommandPattern = /\$\(([^)]+)\)/g;
-  let bashMatch;
-  while ((bashMatch = bashCommandPattern.exec(text)) !== null) {
+  // P1-5 修复：使用 matchAll 替代 exec 循环
+  const bashCommandMatches = [...text.matchAll(/\$\(([^)]+)\)/g)];
+  for (const match of bashCommandMatches) {
     // 排除已检测的算术表达式
-    if (!bashMatch[0].startsWith('$((')) {
-      detected.push(`命令替换: ${bashMatch[0]}`);
+    if (!match[0].startsWith('$((')) {
+      detected.push(`命令替换: ${match[0]}`);
     }
   }
   
@@ -413,7 +416,7 @@ export class TaskGuard {
       fs.renameSync(tempPath, this.persistFilePath);
       
       this.hasUnsavedChanges = false;
-      logger.debug('persistence-saved: entries=%d', this.recentTasks.size);
+      logger.debug?.('persistence-saved: entries=%d', this.recentTasks.size);
     } catch (error) {
       logger.error('persistence-save-failed: error=%s', error);
     }
@@ -468,7 +471,7 @@ export class TaskGuard {
     };
 
     const taskId = 'taskId' in task ? task.taskId : task.announcementId;
-    logger.debug('check: taskId=%s, from=%s, rules=%d', taskId, task.from, this.rules.filter(r => r.enabled).length);
+    logger.debug?.('check: taskId=%s, from=%s, rules=%d', taskId, task.from, this.rules.filter(r => r.enabled).length);
 
     const results: TaskGuardResult[] = [];
 
@@ -511,7 +514,7 @@ export class TaskGuard {
     );
 
     const passed = blocks.length === 0;
-    logger.debug('check-result: taskId=%s, passed=%s, blocks=%d, warnings=%d, requiresConfirmation=%s', 
+    logger.debug?.('check-result: taskId=%s, passed=%s, blocks=%d, warnings=%d, requiresConfirmation=%s', 
       taskId, passed, blocks.length, warnings.length, requiresConfirmation);
 
     return {
@@ -534,7 +537,7 @@ export class TaskGuard {
   ): boolean {
     const report = this.check(task, context);
     const taskId = 'taskId' in task ? task.taskId : task.announcementId;
-    logger.debug('quickCheck: taskId=%s, passed=%s', taskId, report.passed);
+    logger.debug?.('quickCheck: taskId=%s, passed=%s', taskId, report.passed);
     return report.passed;
   }
 
@@ -686,14 +689,17 @@ export class TaskGuard {
         enabled: true,
         severity: 'warn',
         check: (task, context) => {
+          // P1-Round2 修复：无信誉记录时的逻辑矛盾
+          // 无信誉记录时返回 passed: false + needsConfirmation: true
+          // 这表示需要人工确认，而非自动通过或自动拒绝
           if (!context.requesterReputation) {
-            // 无信誉记录时返回 warn，而非直接通过
-            // 新 peer 首次任务需要谨慎处理
             return {
-              passed: true,
+              passed: false,
               severity: 'warn',
               ruleId: 'reputation',
-              message: '无信誉记录，首次任务建议谨慎处理'
+              message: '无信誉记录，首次任务需要人工确认',
+              // 通过 details 标记需要确认
+              details: { needsConfirmation: true, reason: 'no_reputation_record' }
             };
           }
 

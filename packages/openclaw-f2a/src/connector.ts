@@ -57,6 +57,9 @@ import {
 } from './connector-helpers.js';
 import { ContactToolHandlers } from './contact-tool-handlers.js';
 
+// 重构：工具定义
+import { getNetworkTools, getTaskTools, getContactTools } from './tools/index.js';
+
 // ============================================================================
 export interface ApiLogger {
   info(message: string, ...args: unknown[]): void;
@@ -981,500 +984,44 @@ export class F2APlugin implements OpenClawPlugin {
    * 获取插件提供的 Tools
    */
   getTools(): Tool[] {
-    return [
-      {
-        name: 'f2a_discover',
-        description: '发现 F2A 网络中的 Agents，可以按能力过滤',
-        parameters: {
-          capability: {
-            type: 'string',
-            description: '按能力过滤，如 code-generation, file-operation',
-            required: false
-          },
-          min_reputation: {
-            type: 'number',
-            description: '最低信誉分数 (0-100)',
-            required: false
-          }
-        },
-        handler: this.toolHandlers.handleDiscover.bind(this.toolHandlers)
-      },
-      {
-        name: 'f2a_delegate',
-        description: '委托任务给网络中的特定 Agent',
-        parameters: {
-          agent: {
-            type: 'string',
-            description: '目标 Agent ID、名称或 #索引 (如 #1)',
-            required: true
-          },
-          task: {
-            type: 'string',
-            description: '任务描述',
-            required: true
-          },
-          context: {
-            type: 'string',
-            description: '任务上下文或附件',
-            required: false
-          },
-          timeout: {
-            type: 'number',
-            description: '超时时间（毫秒）',
-            required: false
-          }
-        },
-        handler: this.toolHandlers.handleDelegate.bind(this.toolHandlers)
-      },
-      {
-        name: 'f2a_broadcast',
-        description: '广播任务给所有具备某能力的 Agents（并行执行）',
-        parameters: {
-          capability: {
-            type: 'string',
-            description: '所需能力',
-            required: true
-          },
-          task: {
-            type: 'string',
-            description: '任务描述',
-            required: true
-          },
-          min_responses: {
-            type: 'number',
-            description: '最少响应数',
-            required: false
-          }
-        },
-        handler: this.toolHandlers.handleBroadcast.bind(this.toolHandlers)
-      },
-      {
-        name: 'f2a_status',
-        description: '查看 F2A 网络状态和已连接 Peers',
-        parameters: {},
-        handler: this.toolHandlers.handleStatus.bind(this.toolHandlers)
-      },
-      {
-        name: 'f2a_reputation',
-        description: '查看或管理 Peer 信誉',
-        parameters: {
-          action: {
-            type: 'string',
-            description: '操作: list, view, block, unblock',
-            required: true,
-            enum: ['list', 'view', 'block', 'unblock']
-          },
-          peer_id: {
-            type: 'string',
-            description: 'Peer ID',
-            required: false
-          }
-        },
-        handler: this.toolHandlers.handleReputation.bind(this.toolHandlers)
-      },
-      // 新增：任务队列相关工具
-      {
-        name: 'f2a_poll_tasks',
-        description: '查询本节点收到的远程任务队列（待 OpenClaw 执行）',
-        parameters: {
-          limit: {
-            type: 'number',
-            description: '最大返回任务数',
-            required: false
-          },
-          status: {
-            type: 'string',
-            description: '任务状态过滤: pending, processing, completed, failed',
-            required: false,
-            enum: ['pending', 'processing', 'completed', 'failed']
-          }
-        },
-        handler: this.toolHandlers.handlePollTasks.bind(this.toolHandlers)
-      },
-      {
-        name: 'f2a_submit_result',
-        description: '提交远程任务的执行结果，发送给原节点',
-        parameters: {
-          task_id: {
-            type: 'string',
-            description: '任务ID',
-            required: true
-          },
-          result: {
-            type: 'string',
-            description: '任务执行结果',
-            required: true
-          },
-          status: {
-            type: 'string',
-            description: '执行状态: success 或 error',
-            required: true,
-            enum: ['success', 'error']
-          }
-        },
-        handler: this.toolHandlers.handleSubmitResult.bind(this.toolHandlers)
-      },
-      {
-        name: 'f2a_task_stats',
-        description: '查看任务队列统计信息',
-        parameters: {},
-        handler: this.toolHandlers.handleTaskStats.bind(this.toolHandlers)
-      },
-      // 认领模式工具
-      {
-        name: 'f2a_announce',
-        description: '广播任务到 F2A 网络，等待其他 Agent 认领（认领模式）',
-        parameters: {
-          task_type: {
-            type: 'string',
-            description: '任务类型',
-            required: true
-          },
-          description: {
-            type: 'string',
-            description: '任务描述',
-            required: true
-          },
-          required_capabilities: {
-            type: 'array',
-            description: '所需能力列表',
-            required: false
-          },
-          estimated_complexity: {
-            type: 'number',
-            description: '预估复杂度 (1-10)',
-            required: false
-          },
-          reward: {
-            type: 'number',
-            description: '任务奖励',
-            required: false
-          },
-          timeout: {
-            type: 'number',
-            description: '超时时间（毫秒）',
-            required: false
-          }
-        },
-        handler: this.claimHandlers.handleAnnounce.bind(this.claimHandlers)
-      },
-      {
-        name: 'f2a_list_announcements',
-        description: '查看当前开放的任务广播（可认领）',
-        parameters: {
-          capability: {
-            type: 'string',
-            description: '按能力过滤',
-            required: false
-          },
-          limit: {
-            type: 'number',
-            description: '最大返回数量',
-            required: false
-          }
-        },
-        handler: this.claimHandlers.handleListAnnouncements.bind(this.claimHandlers)
-      },
-      {
-        name: 'f2a_claim',
-        description: '认领一个开放的任务广播',
-        parameters: {
-          announcement_id: {
-            type: 'string',
-            description: '广播ID',
-            required: true
-          },
-          estimated_time: {
-            type: 'number',
-            description: '预计完成时间（毫秒）',
-            required: false
-          },
-          confidence: {
-            type: 'number',
-            description: '信心指数 (0-1)',
-            required: false
-          }
-        },
-        handler: this.claimHandlers.handleClaim.bind(this.claimHandlers)
-      },
-      {
-        name: 'f2a_manage_claims',
-        description: '管理我的任务广播的认领（接受/拒绝）',
-        parameters: {
-          announcement_id: {
-            type: 'string',
-            description: '广播ID',
-            required: true
-          },
-          action: {
-            type: 'string',
-            description: '操作: list, accept, reject',
-            required: true,
-            enum: ['list', 'accept', 'reject']
-          },
-          claim_id: {
-            type: 'string',
-            description: '认领ID（accept/reject 时需要）',
-            required: false
-          }
-        },
-        handler: this.claimHandlers.handleManageClaims.bind(this.claimHandlers)
-      },
-      {
-        name: 'f2a_my_claims',
-        description: '查看我提交的任务认领状态',
-        parameters: {
-          status: {
-            type: 'string',
-            description: '状态过滤: pending, accepted, rejected, all',
-            required: false,
-            enum: ['pending', 'accepted', 'rejected', 'all']
-          }
-        },
-        handler: this.claimHandlers.handleMyClaims.bind(this.claimHandlers)
-      },
-      {
-        name: 'f2a_announcement_stats',
-        description: '查看任务广播统计',
-        parameters: {},
-        handler: this.claimHandlers.handleAnnouncementStats.bind(this.claimHandlers)
-      },
-      // 任务评估相关工具
-      {
-        name: 'f2a_estimate_task',
-        description: '评估任务成本（工作量、复杂度、预估时间）',
-        parameters: {
-          task_type: {
-            type: 'string',
-            description: '任务类型',
-            required: true
-          },
-          description: {
-            type: 'string',
-            description: '任务描述',
-            required: true
-          },
-          required_capabilities: {
-            type: 'array',
-            description: '所需能力列表',
-            required: false
-          }
-        },
-        handler: this.toolHandlers.handleEstimateTask.bind(this.toolHandlers)
-      },
-      {
-        name: 'f2a_review_task',
-        description: '作为评审者评审任务的工作量和价值',
-        parameters: {
-          task_id: {
-            type: 'string',
-            description: '任务ID',
-            required: true
-          },
-          workload: {
-            type: 'number',
-            description: '工作量评估 (0-100)',
-            required: true
-          },
-          value: {
-            type: 'number',
-            description: '价值评估 (-100 ~ 100)',
-            required: true
-          },
-          risk_flags: {
-            type: 'array',
-            description: '风险标记: dangerous, malicious, spam, invalid',
-            required: false
-          },
-          comment: {
-            type: 'string',
-            description: '评审意见',
-            required: false
-          }
-        },
-        handler: this.toolHandlers.handleReviewTask.bind(this.toolHandlers)
-      },
-      {
-        name: 'f2a_get_reviews',
-        description: '获取任务的评审汇总结果',
-        parameters: {
-          task_id: {
-            type: 'string',
-            description: '任务ID',
-            required: true
-          }
-        },
-        handler: this.toolHandlers.handleGetReviews.bind(this.toolHandlers)
-      },
-      {
-        name: 'f2a_get_capabilities',
-        description: '获取指定 Agent 的能力列表',
-        parameters: {
-          peer_id: {
-            type: 'string',
-            description: 'Agent 的 Peer ID 或名称',
-            required: false
-          }
-        },
-        handler: this.toolHandlers.handleGetCapabilities.bind(this.toolHandlers)
-      },
-      // ========== Issue #98 & #99: 通讯录和握手机制工具 ==========
-      {
-        name: 'f2a_contacts',
-        description: '管理通讯录联系人。Actions: list（列出联系人）, get（获取详情）, add（添加）, remove（删除）, update（更新）, block（拉黑）, unblock（解除拉黑）',
-        parameters: {
-          action: {
-            type: 'string',
-            description: '操作类型: list, get, add, remove, update, block, unblock',
-            required: true,
-            enum: ['list', 'get', 'add', 'remove', 'update', 'block', 'unblock']
-          },
-          contact_id: {
-            type: 'string',
-            description: '联系人 ID（get/remove/update/block/unblock 时需要）',
-            required: false
-          },
-          peer_id: {
-            type: 'string',
-            description: 'Peer ID（add 时需要，get/remove 时可选）',
-            required: false
-          },
-          name: {
-            type: 'string',
-            description: '联系人名称（add/update 时需要）',
-            required: false
-          },
-          groups: {
-            type: 'array',
-            description: '分组列表',
-            required: false
-          },
-          tags: {
-            type: 'array',
-            description: '标签列表',
-            required: false
-          },
-          notes: {
-            type: 'string',
-            description: '备注信息',
-            required: false
-          },
-          status: {
-            type: 'string',
-            description: '按状态过滤（list 时可选）: stranger, pending, friend, blocked',
-            required: false,
-            enum: ['stranger', 'pending', 'friend', 'blocked']
-          },
-          group: {
-            type: 'string',
-            description: '按分组过滤（list 时可选）',
-            required: false
-          }
-        },
-        handler: this.contactToolHandlers.handleContacts.bind(this.contactToolHandlers)
-      },
-      {
-        name: 'f2a_contact_groups',
-        description: '管理联系人分组。Actions: list（列出分组）, create（创建）, update（更新）, delete（删除）',
-        parameters: {
-          action: {
-            type: 'string',
-            description: '操作类型: list, create, update, delete',
-            required: true,
-            enum: ['list', 'create', 'update', 'delete']
-          },
-          group_id: {
-            type: 'string',
-            description: '分组 ID（update/delete 时需要）',
-            required: false
-          },
-          name: {
-            type: 'string',
-            description: '分组名称（create/update 时需要）',
-            required: false
-          },
-          description: {
-            type: 'string',
-            description: '分组描述',
-            required: false
-          },
-          color: {
-            type: 'string',
-            description: '分组颜色（十六进制，如 #FF5733）',
-            required: false
-          }
-        },
-        handler: this.contactToolHandlers.handleContactGroups.bind(this.contactToolHandlers)
-      },
-      {
-        name: 'f2a_friend_request',
-        description: '发送好友请求给指定 Agent',
-        parameters: {
-          peer_id: {
-            type: 'string',
-            description: '目标 Agent 的 Peer ID',
-            required: true
-          },
-          message: {
-            type: 'string',
-            description: '附加消息',
-            required: false
-          }
-        },
-        handler: this.contactToolHandlers.handleFriendRequest.bind(this.contactToolHandlers)
-      },
-      {
-        name: 'f2a_pending_requests',
-        description: '查看和处理待处理的好友请求。Actions: list（列出请求）, accept（接受）, reject（拒绝）',
-        parameters: {
-          action: {
-            type: 'string',
-            description: '操作类型: list, accept, reject',
-            required: true,
-            enum: ['list', 'accept', 'reject']
-          },
-          request_id: {
-            type: 'string',
-            description: '请求 ID（accept/reject 时需要）',
-            required: false
-          },
-          reason: {
-            type: 'string',
-            description: '拒绝原因（reject 时可选）',
-            required: false
-          }
-        },
-        handler: this.contactToolHandlers.handlePendingRequests.bind(this.contactToolHandlers)
-      },
-      {
-        name: 'f2a_contacts_export',
-        description: '导出通讯录数据',
-        parameters: {},
-        handler: this.contactToolHandlers.handleContactsExport.bind(this.contactToolHandlers)
-      },
-      {
-        name: 'f2a_contacts_import',
-        description: '导入通讯录数据',
-        parameters: {
-          data: {
-            type: 'object',
-            description: '导入的通讯录数据（JSON 格式）',
-            required: true
-          },
-          merge: {
-            type: 'boolean',
-            description: '是否合并（true）或覆盖（false），默认 true',
-            required: false
-          }
-        },
-        handler: this.contactToolHandlers.handleContactsImport.bind(this.contactToolHandlers)
-      }
-    ];
-  }
+    // 网络、状态、信誉工具
+    const networkTools = getNetworkTools({
+      handleDiscover: this.toolHandlers.handleDiscover.bind(this.toolHandlers),
+      handleDelegate: this.toolHandlers.handleDelegate.bind(this.toolHandlers),
+      handleBroadcast: this.toolHandlers.handleBroadcast.bind(this.toolHandlers),
+      handleStatus: this.toolHandlers.handleStatus.bind(this.toolHandlers),
+      handleReputation: this.toolHandlers.handleReputation.bind(this.toolHandlers),
+    });
 
-  /**
-   * 创建 Webhook 处理器
-   */
+    // 任务工具
+    const taskTools = getTaskTools({
+      handlePollTasks: this.toolHandlers.handlePollTasks.bind(this.toolHandlers),
+      handleSubmitResult: this.toolHandlers.handleSubmitResult.bind(this.toolHandlers),
+      handleTaskStats: this.toolHandlers.handleTaskStats.bind(this.toolHandlers),
+      handleAnnounce: this.claimHandlers.handleAnnounce.bind(this.claimHandlers),
+      handleListAnnouncements: this.claimHandlers.handleListAnnouncements.bind(this.claimHandlers),
+      handleClaim: this.claimHandlers.handleClaim.bind(this.claimHandlers),
+      handleManageClaims: this.claimHandlers.handleManageClaims.bind(this.claimHandlers),
+      handleMyClaims: this.claimHandlers.handleMyClaims.bind(this.claimHandlers),
+      handleAnnouncementStats: this.claimHandlers.handleAnnouncementStats.bind(this.claimHandlers),
+      handleEstimateTask: this.toolHandlers.handleEstimateTask.bind(this.toolHandlers),
+      handleReviewTask: this.toolHandlers.handleReviewTask.bind(this.toolHandlers),
+      handleGetReviews: this.toolHandlers.handleGetReviews.bind(this.toolHandlers),
+      handleGetCapabilities: this.toolHandlers.handleGetCapabilities.bind(this.toolHandlers),
+    });
+
+    // 通讯录工具
+    const contactTools = getContactTools({
+      handleContacts: this.contactToolHandlers.handleContacts.bind(this.contactToolHandlers),
+      handleContactGroups: this.contactToolHandlers.handleContactGroups.bind(this.contactToolHandlers),
+      handleFriendRequest: this.contactToolHandlers.handleFriendRequest.bind(this.contactToolHandlers),
+      handlePendingRequests: this.contactToolHandlers.handlePendingRequests.bind(this.contactToolHandlers),
+      handleContactsExport: this.contactToolHandlers.handleContactsExport.bind(this.contactToolHandlers),
+      handleContactsImport: this.contactToolHandlers.handleContactsImport.bind(this.contactToolHandlers),
+    });
+
+    return [...networkTools, ...taskTools, ...contactTools];
+  }
   private createWebhookHandler(): WebhookHandler {
     return {
       onDiscover: async (payload: DiscoverWebhookPayload) => {

@@ -380,11 +380,39 @@ describe('ToolHandlers', () => {
     });
   });
 
-  describe('handleStatus', () => {
-    it('应该返回 F2A 状态', async () => {
-      const result = await handlers.handleStatus({});
+  // 追加测试到最后
+describe('handleBroadcast', () => {
+    it('应该广播任务给所有具备某能力的 Agents', async () => {
+      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+        success: true,
+        data: [
+          { peerId: '12D3KooW' + 'A'.repeat(44), displayName: 'Agent1' },
+          { peerId: '12D3KooW' + 'B'.repeat(44), displayName: 'Agent2' },
+        ],
+      });
+      mockAdapter.networkClient.sendMessage.mockResolvedValue({ success: true });
 
-      expect(result.content).toBeDefined();
+      const result = await handlers.handleBroadcast({
+        capability: 'code-generation',
+        task: 'Review code',
+      });
+
+      // 验证调用了 discoverAgents
+      expect(mockAdapter.networkClient.discoverAgents).toHaveBeenCalled();
+    });
+
+    it('应该处理没有 Agents 具备所需能力的情况', async () => {
+      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+        success: true,
+        data: [],
+      });
+
+      const result = await handlers.handleBroadcast({
+        capability: 'nonexistent-capability',
+        task: 'Test task',
+      });
+
+      expect(result.content).toContain('未发现');
     });
   });
 });

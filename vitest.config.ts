@@ -13,11 +13,12 @@ export default defineConfig({
         '**/*.d.ts',
         'src/utils/benchmark.ts',
         'src/utils/middleware.ts',
-        'src/utils/signature.ts'
+        'src/utils/signature.ts',
+        'src/index.ts',  // 只是导出文件，不需要测试
       ],
       thresholds: {
         statements: 60,
-        branches: 55,  // 调整为 55%（当前 56.68%）
+        branches: 55,  // 调整为 55%（当前 57.71%）
         functions: 65,
         lines: 60
       }

@@ -39,6 +39,16 @@ const createMockPlugin = (contactManager: ContactManager, handshakeProtocol?: an
     discoverAgents: async () => ({ success: false, error: { message: 'Not implemented' } }),
     getConnectedPeers: async () => ({ success: false, error: { message: 'Not implemented' } }),
     sendMessage: async () => ({ success: false, error: 'Not implemented' }),
+    // P1-3 修复：添加握手协议方法
+    sendFriendRequest: async (peerId: string, message?: string) => {
+      return handshakeProtocol?.sendFriendRequest?.(peerId, message) ?? null;
+    },
+    acceptFriendRequest: async (requestId: string) => {
+      return handshakeProtocol?.acceptRequest?.(requestId) ?? false;
+    },
+    rejectFriendRequest: async (requestId: string, reason?: string) => {
+      return handshakeProtocol?.rejectRequest?.(requestId, reason) ?? false;
+    },
     // 兼容旧的直接属性访问
     contactManager,
     _handshakeProtocol: handshakeProtocol,

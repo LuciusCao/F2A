@@ -92,6 +92,8 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
   
   // F2A 实例（直接管理模式）
   private _f2a?: F2A;
+  /** F2A 启动时间（用于计算 uptime） */
+  private _f2aStartTime?: number;
   
   // 处理器实例（延迟初始化）
   private _toolHandlers?: ToolHandlers;
@@ -476,8 +478,51 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
     return {
       running: true,
       peerId: this._f2a.peerId,
-      uptime: (this._f2a as any).startTime ? Date.now() - (this._f2a as any).startTime : undefined
+      uptime: this._f2aStartTime ? Date.now() - this._f2aStartTime : undefined
     };
+  }
+  
+  /**
+   * 获取 F2A 实例（供 contact-tool-handlers 使用）
+   * 返回 F2A 实例供需要直接访问的场景使用
+   */
+  getF2A(): unknown {
+    return this._f2a;
+  }
+  
+  // ========== 握手协议方法 ==========
+  
+  /**
+   * 发送好友请求（实现 F2APluginPublicInterface）
+   */
+  async sendFriendRequest(peerId: string, message?: string): Promise<string | null> {
+    if (!this._handshakeProtocol) {
+      this._logger?.warn('[F2A] 握手协议未初始化');
+      return null;
+    }
+    return this._handshakeProtocol.sendFriendRequest(peerId, message);
+  }
+  
+  /**
+   * 接受好友请求（实现 F2APluginPublicInterface）
+   */
+  async acceptFriendRequest(requestId: string): Promise<boolean> {
+    if (!this._handshakeProtocol) {
+      this._logger?.warn('[F2A] 握手协议未初始化');
+      return false;
+    }
+    return this._handshakeProtocol.acceptRequest(requestId);
+  }
+  
+  /**
+   * 拒绝好友请求（实现 F2APluginPublicInterface）
+   */
+  async rejectFriendRequest(requestId: string, reason?: string): Promise<boolean> {
+    if (!this._handshakeProtocol) {
+      this._logger?.warn('[F2A] 握手协议未初始化');
+      return false;
+    }
+    return this._handshakeProtocol.rejectRequest(requestId, reason);
   }
   
   /**
@@ -794,6 +839,9 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
         multiaddrs: this._f2a.agentInfo?.multiaddrs?.length || 0
       });
       
+      // 记录启动时间（用于计算 uptime）
+      this._f2aStartTime = Date.now();
+      
       // 初始化 ContactManager 和 HandshakeProtocol 以接收消息
       this.contactManager; // 触发延迟初始化
       this.handshakeProtocol; // 触发延迟初始化
@@ -812,6 +860,7 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
           this._logger?.debug?.('[F2A] F2A 实例停止失败（清理阶段）');
         }
         this._f2a = undefined;
+        this._f2aStartTime = undefined;
       }
     }
 
@@ -1401,6 +1450,7 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
         this._logger?.warn('[F2A] F2A 实例停止失败', { error: extractErrorMessage(err) });
       }
       this._f2a = undefined;
+      this._f2aStartTime = undefined;
     }
     
     // 停止 Webhook 服务器（只有已启动时才关闭）

@@ -554,30 +554,30 @@ export interface F2APluginPublicInterface {
   
   // ========== 核心组件访问 ==========
   
-  /** 获取网络客户端 */
+  /** 获取网络客户端（返回 F2ANetworkClient 类型） */
   getNetworkClient(): unknown;
   
-  /** 获取信誉系统 */
+  /** 获取信誉系统（返回 ReputationSystem 类型） */
   getReputationSystem(): unknown;
   
-  /** 获取节点管理器 */
+  /** 获取节点管理器（返回 F2ANodeManager 类型） */
   getNodeManager(): unknown;
   
-  /** 获取任务队列 */
+  /** 获取任务队列（返回 TaskQueue 类型） */
   getTaskQueue(): unknown;
   
-  /** 获取公告队列 */
+  /** 获取公告队列（返回 AnnouncementQueue 类型） */
   getAnnouncementQueue(): unknown;
   
-  /** 获取评审委员会 */
+  /** 获取评审委员会（返回 ReviewCommittee 类型） */
   getReviewCommittee(): unknown | undefined;
   
   // ========== 通讯录和握手 ==========
   
-  /** 获取联系人管理器 */
+  /** 获取联系人管理器（返回 ContactManager 类型） */
   getContactManager(): unknown;
   
-  /** 获取握手协议处理器 */
+  /** 获取握手协议处理器（返回 HandshakeProtocol 类型） */
   getHandshakeProtocol(): unknown;
   
   // ========== F2A 实例访问 ==========
@@ -593,4 +593,20 @@ export interface F2APluginPublicInterface {
   
   /** 发送消息 */
   sendMessage(to: string, content: string, metadata?: Record<string, unknown>): Promise<{ success: boolean; error?: string }>;
+  
+  // ========== F2A 实例直接访问 ==========
+  
+  /** 获取 F2A 实例（返回 F2A 类型） */
+  getF2A(): unknown;
+  
+  // ========== 握手协议方法 ==========
+  
+  /** 发送好友请求 */
+  sendFriendRequest(peerId: string, message?: string): Promise<string | null>;
+  
+  /** 接受好友请求 */
+  acceptFriendRequest(requestId: string): Promise<boolean>;
+  
+  /** 拒绝好友请求 */
+  rejectFriendRequest(requestId: string, reason?: string): Promise<boolean>;
 }

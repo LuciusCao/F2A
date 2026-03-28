@@ -167,7 +167,11 @@ export class F2AComponentRegistry {
         this.initializingFlags.nodeManager = false;
       }
     }
-    return this._nodeManager!;
+    // P1-4 修复：添加 undefined 检查替代非空断言
+    if (!this._nodeManager) {
+      throw new Error('F2ANodeManager 初始化失败');
+    }
+    return this._nodeManager;
   }
 
   /**
@@ -200,7 +204,11 @@ export class F2AComponentRegistry {
         this.initializingFlags.taskQueue = false;
       }
     }
-    return this._taskQueue!;
+    // P1-4 修复：添加 undefined 检查替代非空断言
+    if (!this._taskQueue) {
+      throw new Error('TaskQueue 初始化失败');
+    }
+    return this._taskQueue;
   }
 
   /**
@@ -281,7 +289,11 @@ export class F2AComponentRegistry {
         this.initializingFlags.contactManager = false;
       }
     }
-    return this._contactManager!;
+    // P1-4 修复：添加 undefined 检查替代非空断言
+    if (!this._contactManager) {
+      throw new Error('ContactManager 初始化失败');
+    }
+    return this._contactManager;
   }
 
   /**
@@ -303,7 +315,11 @@ export class F2AComponentRegistry {
         this.initializingFlags.handshakeProtocol = false;
       }
     }
-    return this._handshakeProtocol!;
+    // P1-4 修复：添加 undefined 检查替代非空断言
+    if (!this._handshakeProtocol) {
+      throw new Error('HandshakeProtocol 初始化失败（可能 F2A 或 ContactManager 未就绪）');
+    }
+    return this._handshakeProtocol;
   }
 
   // ========== F2A 实例管理 ==========
@@ -402,6 +418,14 @@ export class F2AComponentRegistry {
     };
   }
 
+  /**
+   * 获取 F2A 实例（公共接口）
+   * 返回 F2A 实例供需要直接访问的场景使用
+   */
+  getF2A(): unknown {
+    return this._f2a;
+  }
+
   // ========== 清理 ==========
 
   /**
@@ -421,9 +445,6 @@ export class F2AComponentRegistry {
     this._capabilityDetector = undefined;
     this._announcementQueue = undefined;
     this._reviewCommittee = undefined;
-    this._toolHandlers = undefined;
-    this._claimHandlers = undefined;
-    this._contactToolHandlers = undefined;
     this._contactManager = undefined;
     this._handshakeProtocol = undefined;
     this._f2a = undefined;

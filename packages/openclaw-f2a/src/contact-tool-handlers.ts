@@ -278,7 +278,7 @@ export class ContactToolHandlers {
     _context: SessionContext
   ): Promise<ToolResult> {
     try {
-      const f2a = this.plugin.getF2AStatus().running ? (this.plugin as any).getF2A?.() : null;
+      const f2a = this.plugin.getF2AStatus().running ? this.plugin.getF2A() : null;
       
       if (!f2a) {
         return { content: '❌ F2A 实例未初始化' };
@@ -305,7 +305,7 @@ export class ContactToolHandlers {
         return { content: `❌ 无效的 Peer ID 格式: ${targetPeerId.slice(0, 20)}...` };
       }
       
-      const requestId = await (this.handshakeProtocol as any).sendFriendRequest(
+      const requestId = await this.plugin.sendFriendRequest(
         targetPeerId,
         params.message
       );
@@ -356,11 +356,7 @@ export class ContactToolHandlers {
             return { content: '❌ 需要提供 request_id' };
           }
           
-          if (!this.handshakeProtocol) {
-            return { content: '❌ 握手协议未初始化' };
-          }
-          
-          const success = await (this.handshakeProtocol as any).acceptRequest(params.request_id);
+          const success = await this.plugin.acceptFriendRequest(params.request_id);
           return { content: success ? '✅ 已接受好友请求，双方已成为好友' : '❌ 接受失败' };
         }
         
@@ -369,11 +365,7 @@ export class ContactToolHandlers {
             return { content: '❌ 需要提供 request_id' };
           }
           
-          if (!this.handshakeProtocol) {
-            return { content: '❌ 握手协议未初始化' };
-          }
-          
-          const success = await (this.handshakeProtocol as any).rejectRequest(params.request_id, params.reason);
+          const success = await this.plugin.rejectFriendRequest(params.request_id, params.reason);
           return { content: success ? '✅ 已拒绝好友请求' : '❌ 拒绝失败' };
         }
         

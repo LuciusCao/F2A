@@ -50,7 +50,7 @@ export class SkillExchangeManager extends EventEmitter<SkillExchangeEvents> {
 
   private createMessage(type: F2AMessage['type'], payload: unknown): F2AMessage {
     return {
-      id: `skill-${Date.now()}-${randomBytes(4).toString('hex')}`,
+      id: `skill-${Date.now()}-${randomBytes(8).toString('hex')}`,
       type,
       from: this.peerId,
       timestamp: Date.now(),

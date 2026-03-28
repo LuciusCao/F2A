@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { ToolHandlers } from '../src/tool-handlers.js';
-import type { F2APlugin } from '../src/connector.js';
+import type { F2APluginPublicInterface } from '../src/types.js';
 
 // 创建模拟适配器
 function createMockAdapter() {
@@ -27,6 +27,7 @@ function createMockAdapter() {
     unblockPeer: vi.fn(() => true),
     recordSuccess: vi.fn(),
     recordFailure: vi.fn(),
+    isAllowed: vi.fn(() => true),
   };
 
   const mockNetworkClient = {
@@ -66,6 +67,32 @@ function createMockAdapter() {
   };
 
   return {
+    // F2APluginPublicInterface 方法
+    getConfig: () => ({
+      minReputation: 0,
+    }),
+    getApi: () => ({
+      config: {
+        agents: {
+          defaults: {
+            workspace: '/test/workspace',
+          },
+        },
+      },
+    }),
+    getNetworkClient: () => mockNetworkClient,
+    getReputationSystem: () => mockReputationSystem,
+    getNodeManager: () => null,
+    getTaskQueue: () => mockTaskQueue,
+    getAnnouncementQueue: () => mockAnnouncementQueue,
+    getReviewCommittee: () => undefined,
+    getContactManager: () => null,
+    getHandshakeProtocol: () => null,
+    getF2AStatus: () => ({ running: true, peerId: 'test-peer-id' }),
+    discoverAgents: mockNetworkClient.discoverAgents,
+    getConnectedPeers: () => mockNetworkClient.getConnectedPeers(),
+    sendMessage: mockNetworkClient.sendMessage,
+    // 兼容旧的直接属性访问（测试中仍有使用）
     reputationSystem: mockReputationSystem,
     networkClient: mockNetworkClient,
     taskQueue: mockTaskQueue,
@@ -82,7 +109,6 @@ function createMockAdapter() {
         },
       },
     },
-    getF2AStatus: () => ({ running: true, peerId: 'test-peer-id' }),
   };
 }
 
@@ -92,7 +118,7 @@ describe('ToolHandlers', () => {
 
   beforeEach(() => {
     mockAdapter = createMockAdapter();
-    handlers = new ToolHandlers(mockAdapter as unknown as F2APlugin);
+    handlers = new ToolHandlers(mockAdapter as unknown as F2APluginPublicInterface);
   });
 
   afterEach(() => {

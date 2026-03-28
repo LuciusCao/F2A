@@ -12,7 +12,7 @@ import type {
   F2APluginConfig,
   OpenClawPluginApi
 } from './types.js';
-import type { F2APlugin } from './connector.js';
+import type { F2APluginPublicInterface } from './types.js';
 import type { QueuedTask } from './task-queue.js';
 import type { ReputationSystem } from './reputation.js';
 import type { F2ANetworkClient } from './network-client.js';
@@ -30,27 +30,6 @@ interface BroadcastResult {
   success: boolean;
   error?: string;
   latency?: number;
-}
-
-/**
- * Adapter 内部接口 - 用于类型安全的属性访问
- */
-interface AdapterInternalAccess {
-  networkClient: F2ANetworkClient;
-  reputationSystem: ReputationSystem;
-  nodeManager: F2ANodeManager;
-  taskQueue: TaskQueue;
-  announcementQueue: AnnouncementQueue;
-  config: F2APluginConfig;
-  api?: OpenClawPluginApi;
-  reviewCommittee?: ReviewCommittee;
-  // 新架构：直接访问 F2A 实例
-  f2aClient?: {
-    discoverAgents: (capability?: string) => Promise<{ success: boolean; data?: AgentInfo[]; error?: { message: string } }>;
-    getConnectedPeers: () => Promise<{ success: boolean; data?: any[]; error?: { message: string } }>;
-  };
-  // 获取 F2A 状态
-  getF2AStatus?: () => { running: boolean; peerId?: string; uptime?: number };
 }
 
 /**
@@ -97,9 +76,39 @@ export interface TaskEstimation {
 /**
  * 工具处理器类
  * 包含所有核心工具的处理逻辑
+ * 
+ * Issue #106: 使用 F2APluginPublicInterface 解除循环依赖
  */
 export class ToolHandlers {
-  constructor(private adapter: F2APlugin) {}
+  constructor(private adapter: F2APluginPublicInterface) {}
+  
+  /**
+   * 类型安全的内部访问 getter
+   * 避免在每个方法中重复类型转换
+   */
+  private get networkClient(): F2ANetworkClient {
+    return this.adapter.getNetworkClient() as F2ANetworkClient;
+  }
+  
+  private get reputationSystem(): ReputationSystem {
+    return this.adapter.getReputationSystem() as ReputationSystem;
+  }
+  
+  private get taskQueue(): TaskQueue {
+    return this.adapter.getTaskQueue() as TaskQueue;
+  }
+  
+  private get reviewCommittee(): ReviewCommittee | undefined {
+    return this.adapter.getReviewCommittee() as ReviewCommittee | undefined;
+  }
+  
+  private get config(): F2APluginConfig {
+    return this.adapter.getConfig();
+  }
+  
+  private get api(): OpenClawPluginApi | undefined {
+    return this.adapter.getApi();
+  }
 
   /**
    * 处理 f2a_discover 工具
@@ -109,17 +118,10 @@ export class ToolHandlers {
     params: ToolHandlerParams['discover'],
     context: SessionContext
   ): Promise<ToolResult> {
-    const adapter = this.adapter as unknown as AdapterInternalAccess;
-    const reputationSystem = adapter.reputationSystem;
+    const reputationSystem = this.reputationSystem;
     
-    // 新架构：优先使用 f2aClient（直接访问 F2A 实例）
-    let result;
-    if (adapter.f2aClient) {
-      result = await adapter.f2aClient.discoverAgents(params.capability);
-    } else {
-      // 降级：使用旧的 HTTP 方式
-      result = await adapter.networkClient.discoverAgents(params.capability);
-    }
+    // 新架构：优先使用 discoverAgents 方法
+    let result = await this.adapter.discoverAgents(params.capability);
     
     if (!result.success) {
       const errorMsg = result.error?.message || String(result.error) || 'Unknown error';

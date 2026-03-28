@@ -70,7 +70,7 @@ describe('F2APlugin', () => {
   let plugin: F2APlugin;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), 'f2a-plugin-test-'));
+    tempDir = mkdtempSync(join(tmpdir(), `f2a-plugin-test-${Date.now()}-`));
     
     // 创建 IDENTITY.md
     writeFileSync(
@@ -84,7 +84,11 @@ describe('F2APlugin', () => {
 
   afterEach(async () => {
     if (plugin) {
-      await plugin.shutdown();
+      try {
+        await plugin.shutdown();
+      } catch (e) {
+        // 忽略关闭错误
+      }
     }
     if (existsSync(tempDir)) {
       rmSync(tempDir, { recursive: true, force: true });
@@ -118,7 +122,7 @@ describe('F2APlugin', () => {
       expect(plugin).toBeDefined();
     });
 
-    it('应该在初始化时创建数据目录', async () => {
+    it('应该能够使用自定义配置初始化', async () => {
       plugin = new F2APlugin();
       
       const mockApi = {
@@ -133,19 +137,21 @@ describe('F2APlugin', () => {
 
       await plugin.initialize({
         api: mockApi as any,
-        config: {},
+        config: {
+          minReputation: 50,
+        },
       });
 
-      // 检查 .f2a 目录是否创建
-      const f2aDir = join(tempDir, '.f2a');
-      // 注意：目录可能在延迟初始化时才创建
+      expect(plugin).toBeDefined();
     });
   });
 
   describe('工具注册', () => {
-    it('应该返回工具列表', async () => {
+    beforeEach(() => {
       plugin = new F2APlugin();
-      
+    });
+
+    it('应该返回工具列表', () => {
       const tools = plugin.getTools();
       
       expect(tools).toBeDefined();
@@ -153,9 +159,7 @@ describe('F2APlugin', () => {
       expect(tools.length).toBeGreaterThan(0);
     });
 
-    it('应该包含核心工具', async () => {
-      plugin = new F2APlugin();
-      
+    it('应该包含核心工具', () => {
       const tools = plugin.getTools();
       const toolNames = tools.map(t => t.name);
       
@@ -164,15 +168,53 @@ describe('F2APlugin', () => {
       expect(toolNames).toContain('f2a_status');
     });
 
-    it('应该包含通讯录工具', async () => {
-      plugin = new F2APlugin();
-      
+    it('应该包含通讯录工具', () => {
       const tools = plugin.getTools();
       const toolNames = tools.map(t => t.name);
       
       expect(toolNames).toContain('f2a_contacts');
       expect(toolNames).toContain('f2a_friend_request');
       expect(toolNames).toContain('f2a_pending_requests');
+    });
+
+    it('应该包含信誉管理工具', () => {
+      const tools = plugin.getTools();
+      const toolNames = tools.map(t => t.name);
+      
+      expect(toolNames).toContain('f2a_reputation');
+    });
+
+    it('应该包含任务管理工具', () => {
+      const tools = plugin.getTools();
+      const toolNames = tools.map(t => t.name);
+      
+      expect(toolNames).toContain('f2a_poll_tasks');
+      expect(toolNames).toContain('f2a_submit_result');
+      expect(toolNames).toContain('f2a_task_stats');
+    });
+
+    it('应该包含公告工具', () => {
+      const tools = plugin.getTools();
+      const toolNames = tools.map(t => t.name);
+      
+      expect(toolNames).toContain('f2a_announce');
+      expect(toolNames).toContain('f2a_list_announcements');
+      expect(toolNames).toContain('f2a_claim');
+    });
+
+    it('工具应该有正确的描述', () => {
+      const tools = plugin.getTools();
+      const discoverTool = tools.find(t => t.name === 'f2a_discover');
+      
+      expect(discoverTool?.description).toBeDefined();
+      expect(discoverTool?.description.length).toBeGreaterThan(0);
+    });
+
+    it('工具应该有参数定义', () => {
+      const tools = plugin.getTools();
+      const delegateTool = tools.find(t => t.name === 'f2a_delegate');
+      
+      expect(delegateTool?.parameters).toBeDefined();
     });
   });
 
@@ -196,8 +238,6 @@ describe('F2APlugin', () => {
       });
 
       await plugin.shutdown();
-      
-      // 关闭后不应该崩溃
     });
 
     it('应该能够多次调用 shutdown', async () => {
@@ -206,8 +246,11 @@ describe('F2APlugin', () => {
       await plugin.shutdown();
       await plugin.shutdown();
       await plugin.shutdown();
-      
-      // 不应该抛出异常
+    });
+
+    it('未初始化时也能关闭', async () => {
+      plugin = new F2APlugin();
+      await plugin.shutdown();
     });
   });
 });

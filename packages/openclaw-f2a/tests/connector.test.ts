@@ -218,6 +218,36 @@ describe('F2APlugin', () => {
     });
   });
 
+  describe('启用和禁用', () => {
+    it('应该能够启用插件', async () => {
+      plugin = new F2APlugin();
+      
+      const mockApi = {
+        config: {
+          agents: {
+            defaults: {
+              workspace: tempDir,
+            },
+          },
+        },
+      };
+
+      await plugin.initialize({
+        api: mockApi as any,
+        config: {},
+      });
+
+      await plugin.enable();
+      
+      expect(plugin.isInitialized()).toBe(true);
+    });
+
+    it('应该能够检查初始化状态', () => {
+      plugin = new F2APlugin();
+      expect(plugin.isInitialized()).toBe(false);
+    });
+  });
+
   describe('shutdown', () => {
     it('应该能够正常关闭', async () => {
       plugin = new F2APlugin();
@@ -251,6 +281,30 @@ describe('F2APlugin', () => {
     it('未初始化时也能关闭', async () => {
       plugin = new F2APlugin();
       await plugin.shutdown();
+    });
+  });
+
+  describe('工具执行', () => {
+    it('应该能够获取 F2A 状态', async () => {
+      plugin = new F2APlugin();
+      
+      const mockApi = {
+        config: {
+          agents: {
+            defaults: {
+              workspace: tempDir,
+            },
+          },
+        },
+      };
+
+      await plugin.initialize({
+        api: mockApi as any,
+        config: {},
+      });
+
+      const status = plugin.getF2AStatus();
+      expect(status).toBeDefined();
     });
   });
 });

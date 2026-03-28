@@ -54,7 +54,7 @@ export interface F2APublicInterface {
   on(event: 'message', handler: (msg: F2AMessageEvent) => void): void;
   on(event: 'peer:connected' | 'peer:disconnected', handler: (event: { peerId: string }) => void): void;
   /** 发送消息 */
-  sendMessage(to: string, content: string, metadata?: Record<string, unknown>): Promise<{ success: boolean; error?: string }>;
+  sendMessage(to: string, content: string, metadata?: Record<string, unknown>): Promise<{ success: boolean; error?: { code: string; message: string } | string }>;
 }
 
 // ============================================================================

@@ -93,10 +93,8 @@ function isPathSafe(path: string | undefined | null, options?: {
     return false;
   }
   
-  // 拒绝绝对路径
-  if (isAbsolute(path)) {
-    return false;
-  }
+  // 允许绝对路径（workspace 配置通常是绝对路径）
+  // 但仍然检查路径遍历字符
   
   // 拒绝包含路径遍历字符
   if (path.includes('..') || path.includes('\0')) {
@@ -123,10 +121,7 @@ function isPathSafe(path: string | undefined | null, options?: {
     if (decodedPath.includes('..') || decodedPath.includes('\0')) {
       return false;
     }
-    // 检查解码后是否变成绝对路径
-    if (isAbsolute(decodedPath)) {
-      return false;
-    }
+    // 注意：允许解码后的绝对路径
   } catch {
     // 解码失败可能是恶意构造，拒绝
     return false;
@@ -236,7 +231,7 @@ interface BroadcastResult {
   latency?: number;
 }
 
-export class F2AOpenClawAdapter implements OpenClawPlugin {
+export class F2APlugin implements OpenClawPlugin {
   name = 'f2a-openclaw-f2a';
   version = '0.3.0';
 
@@ -387,8 +382,8 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       if (this._processedMessageHashes.has(messageHash)) {
         const processedTime = this._processedMessageHashes.get(messageHash)!;
         // 如果在 TTL 内，认为是重复消息
-        if (now - processedTime < F2AOpenClawAdapter.MESSAGE_HASH_TTL_MS) {
-          this._logger?.debug?.(`[F2A Adapter] 检测到重复消息（哈希去重）: ${messageHash.slice(0, 16)}...`);
+        if (now - processedTime < F2APlugin.MESSAGE_HASH_TTL_MS) {
+          this._logger?.debug?.(`[F2A] 检测到重复消息（哈希去重）: ${messageHash.slice(0, 16)}...`);
           return true;
         }
       }
@@ -397,7 +392,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       this._processedMessageHashes.set(messageHash, now);
       
       // 清理过期的条目（防止内存泄漏）
-      if (this._processedMessageHashes.size > F2AOpenClawAdapter.MAX_MESSAGE_HASH_CACHE_SIZE) {
+      if (this._processedMessageHashes.size > F2APlugin.MAX_MESSAGE_HASH_CACHE_SIZE) {
         this.cleanupMessageHashCache(now);
       }
     }
@@ -425,7 +420,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
    * P1-3: 清理过期的消息哈希缓存
    */
   private cleanupMessageHashCache(now: number): void {
-    const ttl = F2AOpenClawAdapter.MESSAGE_HASH_TTL_MS;
+    const ttl = F2APlugin.MESSAGE_HASH_TTL_MS;
     for (const [hash, timestamp] of this._processedMessageHashes.entries()) {
       if (now - timestamp > ttl) {
         this._processedMessageHashes.delete(hash);
@@ -458,7 +453,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         persistEnabled: true,
         logger: this._logger
       });
-      this._logger?.info('[F2A Adapter] TaskQueue 已初始化（懒加载）');
+      this._logger?.info('[F2A] TaskQueue 已初始化（懒加载）');
     }
     return this._taskQueue;
   }
@@ -548,7 +543,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     if (!this._contactManager) {
       const dataDir = this.getDefaultDataDir();
       this._contactManager = new ContactManager(dataDir, this._logger);
-      this._logger?.info('[F2A Adapter] ContactManager 已初始化');
+      this._logger?.info('[F2A] ContactManager 已初始化');
     }
     return this._contactManager;
   }
@@ -566,7 +561,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         this._logger,
         this.config.handshake  // P2-3 修复：传递配置
       );
-      this._logger?.info('[F2A Adapter] HandshakeProtocol 已初始化');
+      this._logger?.info('[F2A] HandshakeProtocol 已初始化');
     }
     return this._handshakeProtocol!;
   }
@@ -635,7 +630,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
   async initialize(config: Record<string, unknown> & { _api?: OpenClawPluginApi }): Promise<void> {
     // 保存 OpenClaw logger（统一日志格式）
     this._logger = config._api?.logger;
-    this._logger?.info('[F2A Adapter] 初始化（延迟模式）...');
+    this._logger?.info('[F2A] 初始化（延迟模式）...');
 
     // 保存 API 引用（用于触发心跳等）
     this.api = config._api;
@@ -655,7 +650,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     // 初始化 Webhook 推送器（如果配置了）
     if (this.config.webhookPush?.enabled !== false && this.config.webhookPush?.url) {
       this._webhookPusher = new WebhookPusher(this.config.webhookPush, this._logger);
-      this._logger?.info('[F2A Adapter] Webhook 推送已配置');
+      this._logger?.info('[F2A] Webhook 推送已配置');
     }
 
     // 检测能力（基于配置，不依赖 OpenClaw 会话）
@@ -671,10 +666,10 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     // 注意：registerCleanupHandlers() 移到 enable() 中调用
     // 因为它注册 process.on 事件处理器，会阻止 CLI 进程退出
 
-    this._logger?.info('[F2A Adapter] 初始化完成（延迟模式）');
-    this._logger?.info(`[F2A Adapter] Agent 名称: ${this.config.agentName}`);
-    this._logger?.info(`[F2A Adapter] 能力数: ${this.capabilities.length}`);
-    this._logger?.info('[F2A Adapter] 资源将在首次使用时初始化（TaskQueue/WebhookServer 等）');
+    this._logger?.info('[F2A] 初始化完成（延迟模式）');
+    this._logger?.info(`[F2A] Agent 名称: ${this.config.agentName}`);
+    this._logger?.info(`[F2A] 能力数: ${this.capabilities.length}`);
+    this._logger?.info('[F2A] 资源将在首次使用时初始化（TaskQueue/WebhookServer 等）');
   }
 
   /**
@@ -685,11 +680,11 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
    */
   async enable(): Promise<void> {
     if (this._initialized) {
-      this._logger?.info('[F2A Adapter] 适配器已启用，跳过');
+      this._logger?.info('[F2A] 适配器已启用，跳过');
       return;
     }
     
-    this._logger?.info('[F2A Adapter] 启用适配器（直接管理模式）...');
+    this._logger?.info('[F2A] 启用适配器（直接管理模式）...');
     this._initialized = true;
     
     // 注册清理处理器
@@ -711,9 +706,9 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         this._logger?.info(msg);
       };
       
-      debugLog(`[F2A Adapter] 使用数据目录: ${dataDir}`);
-      debugLog(`[F2A Adapter] workspace: ${(this.api?.config as any)?.agents?.defaults?.workspace}`);
-      debugLog(`[F2A Adapter] config.dataDir: ${this.config.dataDir}`);
+      debugLog(`[F2A] 使用数据目录: ${dataDir}`);
+      debugLog(`[F2A] workspace: ${(this.api?.config as any)?.agents?.defaults?.workspace}`);
+      debugLog(`[F2A] config.dataDir: ${this.config.dataDir}`);
       
       // Issue #96: 从 IDENTITY.md 读取 agent 名字
       const workspace = (this.api?.config as any)?.agents?.defaults?.workspace;
@@ -723,7 +718,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       const displayName = identityName || this.config.agentName || 'OpenClaw Agent';
       
       if (identityName) {
-        debugLog(`[F2A Adapter] 从 IDENTITY.md 读取 agent 名字: ${identityName}`);
+        debugLog(`[F2A] 从 IDENTITY.md 读取 agent 名字: ${identityName}`);
       }
       
       this._f2a = await F2A.create({
@@ -741,17 +736,17 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       (this._f2a as any).on('message', async (msg: { from: string; content: string; metadata?: Record<string, unknown>; messageId: string }) => {
         // P1-6: 验证 PeerID 格式
         if (!isValidPeerId(msg.from)) {
-          this._logger?.warn(`[F2A Adapter] 拒绝来自无效 PeerID 的消息: ${String(msg.from).slice(0, 20)}`);
+          this._logger?.warn(`[F2A] 拒绝来自无效 PeerID 的消息: ${String(msg.from).slice(0, 20)}`);
           return;
         }
         
         // P1-7: 检查消息长度限制
         if (msg.content && msg.content.length > MAX_MESSAGE_LENGTH) {
-          this._logger?.warn(`[F2A Adapter] 消息过长 (${msg.content.length} bytes)，拒绝处理`);
+          this._logger?.warn(`[F2A] 消息过长 (${msg.content.length} bytes)，拒绝处理`);
           return;
         }
         
-        const logMsg = `[F2A Adapter] 收到 P2P 消息: from=${msg.from.slice(0, 16)}, content=${msg.content?.slice(0, 50)}`;
+        const logMsg = `[F2A] 收到 P2P 消息: from=${msg.from.slice(0, 16)}, content=${msg.content?.slice(0, 50)}`;
         this._logger?.info(logMsg);
         
         // 写入文件日志
@@ -767,7 +762,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           const isReply = this.isEchoMessage(msg);
           
           if (isReply) {
-            this._logger?.info('[F2A Adapter] 跳过 Agent 回复，避免回声循环');
+            this._logger?.info('[F2A] 跳过 Agent 回复，避免回声循环');
             return;
           }
           
@@ -777,20 +772,20 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           // 发送回复
           if (reply && this._f2a) {
             await (this._f2a as any).sendMessage(msg.from, reply, { type: 'reply', replyTo: msg.messageId });
-            this._logger?.info('[F2A Adapter] 回复已发送', { to: msg.from.slice(0, 16) });
+            this._logger?.info('[F2A] 回复已发送', { to: msg.from.slice(0, 16) });
           }
         } catch (err) {
-          this._logger?.error('[F2A Adapter] 处理消息失败', { error: extractErrorMessage(err) });
+          this._logger?.error('[F2A] 处理消息失败', { error: extractErrorMessage(err) });
         }
       });
       
       // 监听其他事件
       this._f2a.on('peer:connected', (event: { peerId: string }) => {
-        this._logger?.info('[F2A Adapter] Peer 连接', { peerId: event.peerId.slice(0, 16) });
+        this._logger?.info('[F2A] Peer 连接', { peerId: event.peerId.slice(0, 16) });
       });
       
       this._f2a.on('peer:disconnected', (event: { peerId: string }) => {
-        this._logger?.info('[F2A Adapter] Peer 断开', { peerId: event.peerId.slice(0, 16) });
+        this._logger?.info('[F2A] Peer 断开', { peerId: event.peerId.slice(0, 16) });
       });
       
       // 启动 F2A（带超时保护，避免阻塞 Gateway）
@@ -809,15 +804,19 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         throw new Error(`F2A 启动失败: ${result.error}`);
       }
       
-      this._logger?.info('[F2A Adapter] F2A 实例已启动', { 
+      this._logger?.info('[F2A] F2A 实例已启动', { 
         peerId: this._f2a.peerId?.slice(0, 16),
         multiaddrs: this._f2a.agentInfo?.multiaddrs?.length || 0
       });
       
+      // 初始化 ContactManager 和 HandshakeProtocol 以接收消息
+      this.contactManager; // 触发延迟初始化
+      this.handshakeProtocol; // 触发延迟初始化
+      
     } catch (err) {
       const errorMsg = extractErrorMessage(err);
-      this._logger?.error(`[F2A Adapter] 创建 F2A 实例失败: ${errorMsg}`);
-      this._logger?.warn('[F2A Adapter] F2A Adapter 将以降级模式运行，P2P 功能不可用');
+      this._logger?.error(`[F2A] 创建 F2A 实例失败: ${errorMsg}`);
+      this._logger?.warn('[F2A] F2A Adapter 将以降级模式运行，P2P 功能不可用');
       
       // 清理失败的实例
       if (this._f2a) {
@@ -836,17 +835,17 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         { logger: this._logger }
       );
       await this._webhookServer.start();
-      this._logger?.info(`[F2A Adapter] Webhook 服务器已启动: ${this._webhookServer.getUrl()}`);
+      this._logger?.info(`[F2A] Webhook 服务器已启动: ${this._webhookServer.getUrl()}`);
     } catch (err) {
       const errorMsg = extractErrorMessage(err);
-      this._logger?.warn(`[F2A Adapter] Webhook 服务器启动失败: ${errorMsg}`);
+      this._logger?.warn(`[F2A] Webhook 服务器启动失败: ${errorMsg}`);
     }
 
     // 启动兜底轮询
     this.startFallbackPolling();
     
     if (this._f2a) {
-      this._logger?.info(`[F2A Adapter] P2P 已就绪，Peer ID: ${this._f2a.peerId?.slice(0, 20)}...`);
+      this._logger?.info(`[F2A] P2P 已就绪，Peer ID: ${this._f2a.peerId?.slice(0, 20)}...`);
     }
   }
 
@@ -871,9 +870,9 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           type: 'reply',
           replyTo: messageId,
         });
-        this._logger?.info('[F2A Adapter] 回复已发送', { to: fromPeerId.slice(0, 16) });
+        this._logger?.info('[F2A] 回复已发送', { to: fromPeerId.slice(0, 16) });
       } catch (err) {
-        this._logger?.error('[F2A Adapter] 发送回复失败', { error: extractErrorMessage(err) });
+        this._logger?.error('[F2A] 发送回复失败', { error: extractErrorMessage(err) });
       }
     };
 
@@ -911,15 +910,15 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       this._logger?.info(msg);
     };
     
-    debugLog(`[F2A Adapter] invokeOpenClawAgent: sessionKey=${sessionKey}`);
-    debugLog(`[F2A Adapter] API: hasApi=${!!this.api}, hasChannel=${!!this.api?.channel}`);
+    debugLog(`[F2A] invokeOpenClawAgent: sessionKey=${sessionKey}`);
+    debugLog(`[F2A] API: hasApi=${!!this.api}, hasChannel=${!!this.api?.channel}`);
     
     // 创建 F2A 回复 dispatcher
     const f2aDispatcher = this.createF2AReplyDispatcher(fromPeerId, replyToMessageId);
     
     // 使用 OpenClaw Channel API (参考飞书插件)
     if (this.api?.channel?.reply?.dispatchReplyFromConfig) {
-      debugLog('[F2A Adapter] 使用 Channel API');
+      debugLog('[F2A] 使用 Channel API');
       try {
         const route = this.api.channel.routing.resolveAgentRoute({
           peerId: sessionKey,
@@ -941,17 +940,17 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           dispatcher: f2aDispatcher,
         });
         
-        debugLog(`[F2A Adapter] Channel API 完成: ${JSON.stringify(result)}`);
+        debugLog(`[F2A] Channel API 完成: ${JSON.stringify(result)}`);
         return undefined; // dispatcher 会自动发送回复
         
       } catch (err) {
-        debugLog(`[F2A Adapter] Channel API 失败: ${extractErrorMessage(err)}`);
+        debugLog(`[F2A] Channel API 失败: ${extractErrorMessage(err)}`);
       }
     }
     
     // 降级：使用 subagent API
     if (this.api?.runtime?.subagent?.run) {
-      debugLog('[F2A Adapter] 使用 Subagent API');
+      debugLog('[F2A] 使用 Subagent API');
       try {
         // 生成 idempotencyKey（必需参数）
         const idempotencyKey = `f2a-${fromPeerId.slice(0, 16)}-${Date.now()}`;
@@ -988,7 +987,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
               reply = lastMessage?.content || lastMessage?.text || '';
             }
             
-            debugLog(`[F2A Adapter] Subagent 回复文本: ${reply?.slice(0, 100)}...`);
+            debugLog(`[F2A] Subagent 回复文本: ${reply?.slice(0, 100)}...`);
             
             if (reply) {
               // 手动发送回复
@@ -998,12 +997,12 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           }
         }
       } catch (err) {
-        debugLog(`[F2A Adapter] Subagent 失败: ${extractErrorMessage(err)}`);
+        debugLog(`[F2A] Subagent 失败: ${extractErrorMessage(err)}`);
       }
     }
     
     // 最终降级
-    debugLog('[F2A Adapter] 使用降级回复');
+    debugLog('[F2A] 使用降级回复');
     const fallbackReply = `收到你的消息："${message.slice(0, 30)}"。我是 ${this.config.agentName || 'OpenClaw Agent'}，很高兴与你交流！`;
     await f2aDispatcher.deliver({ text: fallbackReply });
     return undefined;
@@ -1018,7 +1017,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       if (this._f2a) {
         try {
           await this._f2a.stop();
-          this._logger?.info('[F2A Adapter] F2A 实例已停止');
+          this._logger?.info('[F2A] F2A 实例已停止');
         } catch {}
       }
       
@@ -1073,7 +1072,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         const pending = this._taskQueue.getWebhookPending();
         
         if (pending.length > 0) {
-          this._logger?.info(`[F2A Adapter] 兜底轮询: ${pending.length} 个待推送任务`);
+          this._logger?.info(`[F2A] 兜底轮询: ${pending.length} 个待推送任务`);
           
           for (const task of pending) {
             const result = await this._webhookPusher.pushTask(task);
@@ -1083,7 +1082,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           }
         }
       } catch (error) {
-        this._logger?.error('[F2A Adapter] 兜底轮询失败:', error);
+        this._logger?.error('[F2A] 兜底轮询失败:', error);
       }
     }, interval);
     
@@ -1117,7 +1116,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         const processingTime = now - (task.updatedAt || task.createdAt);
         
         if (processingTime > maxAllowedTime) {
-          this._logger?.warn(`[F2A Adapter] 检测到僵尸任务 ${task.taskId.slice(0, 8)}... (processing ${Math.round(processingTime / 1000)}s)，重置为 pending`);
+          this._logger?.warn(`[F2A] 检测到僵尸任务 ${task.taskId.slice(0, 8)}... (processing ${Math.round(processingTime / 1000)}s)，重置为 pending`);
           // 将任务重置为 pending 状态
           this._taskQueue.resetProcessingTask(task.taskId);
         }
@@ -1695,7 +1694,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         if (!taskGuardReport.passed) {
           // 任务被阻止
           const blockReasons = taskGuardReport.blocks.map(b => b.message).join('; ');
-          this._logger?.warn(`[F2A Adapter] TaskGuard 阻止任务 ${payload.taskId}: ${blockReasons}`);
+          this._logger?.warn(`[F2A] TaskGuard 阻止任务 ${payload.taskId}: ${blockReasons}`);
           return {
             accepted: false,
             taskId: payload.taskId,
@@ -1706,7 +1705,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         if (taskGuardReport.requiresConfirmation) {
           // 任务需要确认（警告但不阻止）
           const warnReasons = taskGuardReport.warnings.map(w => w.message).join('; ');
-          this._logger?.warn(`[F2A Adapter] TaskGuard 警告 ${payload.taskId}: ${warnReasons}`);
+          this._logger?.warn(`[F2A] TaskGuard 警告 ${payload.taskId}: ${warnReasons}`);
           // 未来可以扩展为请求用户确认
           // 目前记录警告但继续处理任务
         }
@@ -1730,9 +1729,9 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
             const result = await this._webhookPusher.pushTask(task);
             if (result.success) {
               this.taskQueue.markWebhookPushed(task.taskId);
-              this._logger?.info(`[F2A Adapter] 任务 ${task.taskId} 已通过 webhook 推送 (${result.latency}ms)`);
+              this._logger?.info(`[F2A] 任务 ${task.taskId} 已通过 webhook 推送 (${result.latency}ms)`);
             } else {
-              this._logger?.info(`[F2A Adapter] Webhook 推送失败: ${result.error}，任务将在轮询时处理`);
+              this._logger?.info(`[F2A] Webhook 推送失败: ${result.error}，任务将在轮询时处理`);
             }
           }
           
@@ -1755,17 +1754,17 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       onMessage: async (payload: { from: string; content: string; metadata?: Record<string, unknown>; messageId: string }) => {
         // P1-6: 验证 PeerID 格式
         if (!isValidPeerId(payload.from)) {
-          this._logger?.warn(`[F2A Adapter] onMessage: 拒绝来自无效 PeerID 的消息: ${String(payload.from).slice(0, 20)}`);
+          this._logger?.warn(`[F2A] onMessage: 拒绝来自无效 PeerID 的消息: ${String(payload.from).slice(0, 20)}`);
           return { response: 'Invalid sender' };
         }
         
         // P1-7: 检查消息长度限制
         if (payload.content && payload.content.length > MAX_MESSAGE_LENGTH) {
-          this._logger?.warn(`[F2A Adapter] onMessage: 消息过长 (${payload.content.length} bytes)，拒绝处理`);
+          this._logger?.warn(`[F2A] onMessage: 消息过长 (${payload.content.length} bytes)，拒绝处理`);
           return { response: 'Message too long' };
         }
         
-        this._logger?.info('[F2A Adapter] 收到 P2P 消息', { 
+        this._logger?.info('[F2A] 收到 P2P 消息', { 
           from: payload.from.slice(0, 16), 
           content: payload.content.slice(0, 50) 
         });
@@ -1783,7 +1782,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
           
           return { response: result || '收到消息，但我暂时无法生成回复。' };
         } catch (error) {
-          this._logger?.error('[F2A Adapter] 处理消息失败', { error: extractErrorMessage(error) });
+          this._logger?.error('[F2A] 处理消息失败', { error: extractErrorMessage(error) });
           return { response: '抱歉，我遇到了一些问题，无法处理你的消息。' };
         }
       },
@@ -1882,21 +1881,21 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       const execAsync = promisify(exec);
       
       const { stdout } = await execAsync('f2a version', { timeout: 5000 });
-      this._logger?.info(`[F2A Adapter] F2A CLI 已安装: ${stdout.trim()}`);
+      this._logger?.info(`[F2A] F2A CLI 已安装: ${stdout.trim()}`);
       return true;
     } catch (error) {
       // 如果是命令不存在，说明 CLI 未安装
       if (error instanceof Error && (error.message.includes('ENOENT') || error.message.includes('not found'))) {
-        this._logger?.debug?.('[F2A Adapter] F2A CLI 未安装');
+        this._logger?.debug?.('[F2A] F2A CLI 未安装');
         return false;
       }
       // P2-3 修复：timeout 也视为 CLI 未安装（CLI 可能存在但响应慢）
       if (error instanceof Error && error.message.includes('ETIMEDOUT')) {
-        this._logger?.debug?.('[F2A Adapter] F2A CLI 响应超时，视为未安装');
+        this._logger?.debug?.('[F2A] F2A CLI 响应超时，视为未安装');
         return false;
       }
       // 其他错误，可能是 CLI 已安装但有问题
-      this._logger?.debug?.(`[F2A Adapter] F2A CLI 检测异常: ${error instanceof Error ? error.message : String(error)}`);
+      this._logger?.debug?.(`[F2A] F2A CLI 检测异常: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
   }
@@ -1910,14 +1909,14 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
       const { spawn } = await import('child_process');
       
       return new Promise((resolve) => {
-        this._logger?.info('[F2A Adapter] 执行: f2a daemon -d');
+        this._logger?.info('[F2A] 执行: f2a daemon -d');
         
         // 设置 messageHandlerUrl 环境变量，让 daemon 将消息推送到 adapter 的 webhook
         const env = { ...process.env };
         if (this._webhookServer) {
           const webhookUrl = `${this._webhookServer.getUrl()}/message`;
           env.F2A_MESSAGE_HANDLER_URL = webhookUrl;
-          this._logger?.info(`[F2A Adapter] 配置消息处理 URL: ${webhookUrl}`);
+          this._logger?.info(`[F2A] 配置消息处理 URL: ${webhookUrl}`);
         }
         
         const proc = spawn('f2a', ['daemon', '-d'], {
@@ -1930,7 +1929,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         proc.unref();
         
         proc.on('error', (err) => {
-          this._logger?.error(`[F2A Adapter] 启动 daemon 失败: ${err.message}`);
+          this._logger?.error(`[F2A] 启动 daemon 失败: ${err.message}`);
           resolve(false);
         });
         
@@ -1939,17 +1938,17 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         setTimeout(async () => {
           const running = await this._nodeManager?.isRunning();
           if (running) {
-            this._logger?.info('[F2A Adapter] F2A daemon 服务已就绪');
+            this._logger?.info('[F2A] F2A daemon 服务已就绪');
             resolve(true);
           } else {
-            this._logger?.warn('[F2A Adapter] F2A daemon 启动超时，请检查日志: ~/.f2a/daemon.log');
+            this._logger?.warn('[F2A] F2A daemon 启动超时，请检查日志: ~/.f2a/daemon.log');
             resolve(false);
           }
         }, 5000);
       });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
-      this._logger?.error(`[F2A Adapter] 启动 daemon 失败: ${errMsg}`);
+      this._logger?.error(`[F2A] 启动 daemon 失败: ${errMsg}`);
       return false;
     }
   }
@@ -2270,8 +2269,19 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
         return { content: '❌ 握手协议未初始化' };
       }
       
+      // 自动匹配截断的 peer ID
+      let targetPeerId = params.peer_id;
+      if (params.peer_id.length < 50) {
+        // 可能是截断的 peer ID，尝试从已连接 peers 中查找
+        const peers = this._f2a.getConnectedPeers();
+        const matched = peers.find(p => p.peerId.startsWith(params.peer_id));
+        if (matched) {
+          targetPeerId = matched.peerId;
+        }
+      }
+      
       const requestId = await this._handshakeProtocol.sendFriendRequest(
-        params.peer_id,
+        targetPeerId,
         params.message
       );
       
@@ -2411,7 +2421,7 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
    * 只清理已初始化的资源
    */
   async shutdown(): Promise<void> {
-    this._logger?.info('[F2A Adapter] 正在关闭...');
+    this._logger?.info('[F2A] 正在关闭...');
     
     // 停止轮询定时器
     if (this.pollTimer) {
@@ -2422,14 +2432,14 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     // Issue #99: 关闭握手协议
     if (this._handshakeProtocol) {
       this._handshakeProtocol.shutdown();
-      this._logger?.info('[F2A Adapter] HandshakeProtocol 已关闭');
+      this._logger?.info('[F2A] HandshakeProtocol 已关闭');
       this._handshakeProtocol = undefined;
     }
     
     // Issue #98: 刷新通讯录数据
     if (this._contactManager) {
       this._contactManager.flush();
-      this._logger?.info('[F2A Adapter] ContactManager 数据已保存');
+      this._logger?.info('[F2A] ContactManager 数据已保存');
       this._contactManager = undefined;
     }
     
@@ -2437,9 +2447,9 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     if (this._f2a) {
       try {
         await this._f2a.stop();
-        this._logger?.info('[F2A Adapter] F2A 实例已停止');
+        this._logger?.info('[F2A] F2A 实例已停止');
       } catch (err) {
-        this._logger?.warn('[F2A Adapter] F2A 实例停止失败', { error: extractErrorMessage(err) });
+        this._logger?.warn('[F2A] F2A 实例停止失败', { error: extractErrorMessage(err) });
       }
       this._f2a = undefined;
     }
@@ -2447,36 +2457,36 @@ export class F2AOpenClawAdapter implements OpenClawPlugin {
     // 停止 Webhook 服务器（只有已启动时才关闭）
     if (this._webhookServer) {
       await this._webhookServer.stop?.();
-      this._logger?.info('[F2A Adapter] Webhook 服务器已停止');
+      this._logger?.info('[F2A] Webhook 服务器已停止');
     }
     
     // P1 修复：关闭前刷新信誉系统数据，确保持久化
     if (this._reputationSystem) {
       this._reputationSystem.flush();
-      this._logger?.info('[F2A Adapter] 信誉系统数据已保存');
+      this._logger?.info('[F2A] 信誉系统数据已保存');
     }
     
     // P1 修复：关闭 TaskGuard，停止持久化定时器并保存最终状态
     taskGuard.shutdown();
-    this._logger?.info('[F2A Adapter] TaskGuard 已关闭');
+    this._logger?.info('[F2A] TaskGuard 已关闭');
     
     // 停止 F2A Node（只有已启动时才关闭）
     if (this._nodeManager) {
       await this._nodeManager.stop();
-      this._logger?.info('[F2A Adapter] F2A Node 管理器已停止');
+      this._logger?.info('[F2A] F2A Node 管理器已停止');
     }
     
     // 关闭任务队列连接（只有已初始化时才关闭）
     // 保留持久化数据，不删除任务，这样重启后可以恢复未完成的任务
     if (this._taskQueue) {
       this._taskQueue.close();
-      this._logger?.info('[F2A Adapter] 任务队列已关闭，持久化数据已保留');
+      this._logger?.info('[F2A] 任务队列已关闭，持久化数据已保留');
     }
     
     this._initialized = false;
-    this._logger?.info('[F2A Adapter] 已关闭');
+    this._logger?.info('[F2A] 已关闭');
   }
 }
 
 // 默认导出
-export default F2AOpenClawAdapter;
+export default F2APlugin;

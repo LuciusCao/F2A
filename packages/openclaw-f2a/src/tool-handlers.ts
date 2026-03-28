@@ -12,7 +12,7 @@ import type {
   F2APluginConfig,
   OpenClawPluginApi
 } from './types.js';
-import type { F2AOpenClawAdapter } from './connector.js';
+import type { F2APlugin } from './connector.js';
 import type { QueuedTask } from './task-queue.js';
 import type { ReputationSystem } from './reputation.js';
 import type { F2ANetworkClient } from './network-client.js';
@@ -99,7 +99,7 @@ export interface TaskEstimation {
  * 包含所有核心工具的处理逻辑
  */
 export class ToolHandlers {
-  constructor(private adapter: F2AOpenClawAdapter) {}
+  constructor(private adapter: F2APlugin) {}
 
   /**
    * 处理 f2a_discover 工具
@@ -146,7 +146,7 @@ export class ToolHandlers {
 ${agents.map((a: AgentInfo, i: number) => {
   const rep = reputationSystem.getReputation(a.peerId);
   return `${i + 1}. ${a.displayName} (信誉: ${rep.score})
-   ID: ${a.peerId.slice(0, 20)}...
+   ID: ${a.peerId}
    能力: ${a.capabilities?.map(c => c.name).join(', ') || '无'}`;
 }).join('\n\n')}
 

@@ -3,7 +3,7 @@
  * OpenClaw 适配器，用于接入 F2A P2P Agent 网络
  */
 
-export { F2AOpenClawAdapter } from './connector.js';
+export { F2APlugin } from './connector.js';
 export { F2ANodeManager } from './node-manager.js';
 export { F2ANetworkClient } from './network-client.js';
 export { WebhookServer, WebhookHandler } from './webhook-server.js';
@@ -23,4 +23,4 @@ export { HandshakeProtocol, HANDSHAKE_MESSAGE_TYPES } from './handshake-protocol
 export type { FriendRequestMessage, FriendResponseMessage } from './handshake-protocol.js';
 
 // 默认导出
-export { F2AOpenClawAdapter as default } from './connector.js';
+export { F2APlugin as default } from './connector.js';

@@ -9,7 +9,7 @@ import type {
   F2APluginConfig,
   OpenClawPluginApi
 } from './types.js';
-import type { F2AOpenClawAdapter } from './connector.js';
+import type { F2APlugin } from './connector.js';
 import type { AnnouncementQueue } from './announcement-queue.js';
 import { pluginLogger as logger } from './logger.js';
 
@@ -58,7 +58,7 @@ export interface ClaimHandlerParams {
  * 包含所有认领相关工具的处理逻辑
  */
 export class ClaimHandlers {
-  constructor(private adapter: F2AOpenClawAdapter) {}
+  constructor(private adapter: F2APlugin) {}
 
   /**
    * 处理 f2a_announce 工具

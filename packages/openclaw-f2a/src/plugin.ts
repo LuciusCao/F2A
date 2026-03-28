@@ -10,14 +10,14 @@
  */
 
 import type { OpenClawPluginApi } from './types.js';
-import { F2AOpenClawAdapter } from './connector.js';
+import { F2APlugin } from './connector.js';
 
 /**
  * OpenClaw 插件注册函数
  * 这是 OpenClaw 加载插件时调用的入口
  */
 export default async function register(api: OpenClawPluginApi) {
-  const plugin = new F2AOpenClawAdapter();
+  const plugin = new F2APlugin();
   
   // 从 OpenClaw 配置中获取插件配置
   const pluginsConfig = api.config.plugins;
@@ -131,7 +131,7 @@ export default async function register(api: OpenClawPluginApi) {
 }
 
 // 重新导出主要类，供外部使用
-export { F2AOpenClawAdapter } from './connector.js';
+export { F2APlugin } from './connector.js';
 export * from './types.js';
 export { TaskQueue, QueuedTask, TaskQueueStats } from './task-queue.js';
 export { AnnouncementQueue, AnnouncementQueueStats } from './announcement-queue.js';

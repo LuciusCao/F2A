@@ -307,7 +307,11 @@ export class HandshakeProtocol {
             this.logger?.info(`[HandshakeProtocol] 好友请求已发送: ${toPeerId.slice(0, 16)}`);
             return request.requestId;
           } else {
-            lastError = new Error(result.error || '发送失败');
+            lastError = new Error(
+              typeof result.error === 'object' && result.error?.message 
+                ? result.error.message 
+                : String(result.error) || '发送失败'
+            );
           }
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err));

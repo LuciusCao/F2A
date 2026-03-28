@@ -291,7 +291,7 @@ export class ContactToolHandlers {
       }
       
       // 自动匹配截断的 peer ID
-      let targetPeerId = params.peer_id;
+      let targetPeerId: string = params.peer_id;
       if (params.peer_id.length < 50) {
         const peers = f2a.getConnectedPeers?.() || [];
         const matched = peers.find((p: any) => p.peerId.startsWith(params.peer_id));
@@ -301,8 +301,11 @@ export class ContactToolHandlers {
       }
       
       // P1-2 修复：验证最终 Peer ID 格式
+      // 注意：使用 params.peer_id 显示错误，避免 targetPeerId 在类型守卫后的 never 类型问题
       if (!isValidPeerId(targetPeerId)) {
-        return { content: `❌ 无效的 Peer ID 格式: ${targetPeerId.slice(0, 20)}...` };
+        const originalPeerId = params.peer_id;
+        const displayPeerId = originalPeerId.length > 20 ? originalPeerId.slice(0, 20) : originalPeerId;
+        return { content: `❌ 无效的 Peer ID 格式: ${displayPeerId}...` };
       }
       
       const requestId = await this.plugin.sendFriendRequest(
@@ -386,7 +389,9 @@ export class ContactToolHandlers {
   ): Promise<ToolResult> {
     try {
       const cm = this.contactManager;
-      const data = cm.exportContacts(this.plugin.getF2AStatus().peerId);
+      const f2aStatus = this.plugin.getF2AStatus();
+      const peerId = f2aStatus.peerId || 'unknown';
+      const data = cm.exportContacts(peerId);
       
       return {
         content: `📤 **通讯录导出成功**\n\n` +

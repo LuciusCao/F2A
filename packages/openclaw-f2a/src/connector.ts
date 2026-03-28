@@ -24,6 +24,16 @@ import type {
   DelegateWebhookPayload,
   ApiLogger,
   F2APluginPublicInterface,
+  F2ANetworkClientLike,
+  ReputationSystemLike,
+  NodeManagerLike,
+  TaskQueueLike,
+  AnnouncementQueueLike,
+  ReviewCommitteeLike,
+  ContactManagerLike,
+  HandshakeProtocolLike,
+  F2APublicInterface,
+  PeerInfoLike,
 } from './types.js';
 import { F2ANodeManager } from './node-manager.js';
 import { F2ANetworkClient } from './network-client.js';
@@ -486,8 +496,8 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
    * 获取 F2A 实例（供 contact-tool-handlers 使用）
    * 返回 F2A 实例供需要直接访问的场景使用
    */
-  getF2A(): unknown {
-    return this._f2a;
+  getF2A(): F2APublicInterface | undefined {
+    return this._f2a as unknown as F2APublicInterface | undefined;
   }
   
   // ========== 握手协议方法 ==========
@@ -605,43 +615,43 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
   }
   
   /** 公开网络客户端访问 */
-  getNetworkClient(): unknown {
-    return this.networkClient;
+  getNetworkClient(): F2ANetworkClientLike {
+    return this.networkClient as unknown as F2ANetworkClientLike;
   }
   
   /** 公开信誉系统访问 */
-  getReputationSystem(): unknown {
-    return this.reputationSystem;
+  getReputationSystem(): ReputationSystemLike {
+    return this.reputationSystem as unknown as ReputationSystemLike;
   }
   
   /** 公开节点管理器访问 */
-  getNodeManager(): unknown {
-    return this.nodeManager;
+  getNodeManager(): NodeManagerLike {
+    return this.nodeManager as unknown as NodeManagerLike;
   }
   
   /** 公开任务队列访问 */
-  getTaskQueue(): unknown {
-    return this.taskQueue;
+  getTaskQueue(): TaskQueueLike {
+    return this.taskQueue as unknown as TaskQueueLike;
   }
   
   /** 公开公告队列访问 */
-  getAnnouncementQueue(): unknown {
-    return this.announcementQueue;
+  getAnnouncementQueue(): AnnouncementQueueLike {
+    return this.announcementQueue as unknown as AnnouncementQueueLike;
   }
   
   /** 公开评审委员会访问 */
-  getReviewCommittee(): unknown | undefined {
-    return this.reviewCommittee;
+  getReviewCommittee(): ReviewCommitteeLike | undefined {
+    return this.reviewCommittee as unknown as ReviewCommitteeLike | undefined;
   }
   
   /** 公开联系人管理器访问 */
-  getContactManager(): unknown {
-    return this.contactManager;
+  getContactManager(): ContactManagerLike {
+    return this.contactManager as unknown as ContactManagerLike;
   }
   
   /** 公开握手协议处理器访问 */
-  getHandshakeProtocol(): unknown {
-    return this.handshakeProtocol;
+  getHandshakeProtocol(): HandshakeProtocolLike {
+    return this.handshakeProtocol as unknown as HandshakeProtocolLike;
   }
 
   /**

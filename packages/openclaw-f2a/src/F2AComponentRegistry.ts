@@ -15,6 +15,15 @@ import type {
   F2ANodeConfig, 
   OpenClawPluginApi,
   OpenClawConfig,
+  F2ANetworkClientLike,
+  ReputationSystemLike,
+  NodeManagerLike,
+  TaskQueueLike,
+  AnnouncementQueueLike,
+  ReviewCommitteeLike,
+  ContactManagerLike,
+  HandshakeProtocolLike,
+  F2APublicInterface,
 } from './types.js';
 import { INTERNAL_REPUTATION_CONFIG } from './types.js';
 import { F2ANodeManager } from './node-manager.js';
@@ -331,13 +340,6 @@ export class F2AComponentRegistry {
     this._f2a = f2a;
   }
 
-  /**
-   * 获取 F2A 实例
-   */
-  getF2A(): F2A | undefined {
-    return this._f2a;
-  }
-
   // ========== Logger 管理 ==========
 
   /**
@@ -348,61 +350,69 @@ export class F2AComponentRegistry {
   }
 
   // ========== 公共接口 getter（F2APluginPublicInterface 实现） ==========
+  // P2-1 修复：返回简化接口类型，使用类型断言避免严格的类型匹配问题
 
   /**
    * 获取网络客户端（公共接口）
+   * @throws Error 如果组件初始化失败
    */
-  getNetworkClient(): unknown {
-    return this.networkClient;
+  getNetworkClient(): F2ANetworkClientLike {
+    return this.networkClient as unknown as F2ANetworkClientLike;
   }
 
   /**
    * 获取信誉系统（公共接口）
+   * @throws Error 如果组件初始化失败
    */
-  getReputationSystem(): unknown {
-    return this.reputationSystem;
+  getReputationSystem(): ReputationSystemLike {
+    return this.reputationSystem as unknown as ReputationSystemLike;
   }
 
   /**
    * 获取节点管理器（公共接口）
+   * @throws Error 如果组件初始化失败
    */
-  getNodeManager(): unknown {
-    return this.nodeManager;
+  getNodeManager(): NodeManagerLike {
+    return this.nodeManager as unknown as NodeManagerLike;
   }
 
   /**
    * 获取任务队列（公共接口）
+   * @throws Error 如果组件初始化失败
    */
-  getTaskQueue(): unknown {
-    return this.taskQueue;
+  getTaskQueue(): TaskQueueLike {
+    return this.taskQueue as unknown as TaskQueueLike;
   }
 
   /**
    * 获取公告队列（公共接口）
+   * @throws Error 如果组件初始化失败
    */
-  getAnnouncementQueue(): unknown {
-    return this.announcementQueue;
+  getAnnouncementQueue(): AnnouncementQueueLike {
+    return this.announcementQueue as unknown as AnnouncementQueueLike;
   }
 
   /**
    * 获取评审委员会（公共接口）
    */
-  getReviewCommittee(): unknown | undefined {
-    return this._reviewCommittee;
+  getReviewCommittee(): ReviewCommitteeLike | undefined {
+    return this._reviewCommittee as unknown as ReviewCommitteeLike | undefined;
   }
 
   /**
    * 获取联系人管理器（公共接口）
+   * @throws Error 如果组件初始化失败
    */
-  getContactManager(): unknown {
-    return this.contactManager;
+  getContactManager(): ContactManagerLike {
+    return this.contactManager as unknown as ContactManagerLike;
   }
 
   /**
    * 获取握手协议处理器（公共接口）
+   * @throws Error 如果 F2A 或 ContactManager 未就绪
    */
-  getHandshakeProtocol(): unknown {
-    return this.handshakeProtocol;
+  getHandshakeProtocol(): HandshakeProtocolLike {
+    return this.handshakeProtocol as unknown as HandshakeProtocolLike;
   }
 
   /**
@@ -420,10 +430,11 @@ export class F2AComponentRegistry {
 
   /**
    * 获取 F2A 实例（公共接口）
-   * 返回 F2A 实例供需要直接访问的场景使用
+   * 返回 F2A 公共接口供需要直接访问的场景使用。
+   * 注意：返回 undefined 表示 F2A 实例未初始化。
    */
-  getF2A(): unknown {
-    return this._f2a;
+  getF2A(): F2APublicInterface | undefined {
+    return this._f2a as unknown as F2APublicInterface | undefined;
   }
 
   // ========== 清理 ==========

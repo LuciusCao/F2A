@@ -2,6 +2,7 @@
  * 技能交换管理器
  */
 
+import { randomBytes } from 'crypto';
 import { EventEmitter } from 'eventemitter3';
 import type { F2AMessage } from '../types/index.js';
 import type {
@@ -49,7 +50,7 @@ export class SkillExchangeManager extends EventEmitter<SkillExchangeEvents> {
 
   private createMessage(type: F2AMessage['type'], payload: unknown): F2AMessage {
     return {
-      id: `skill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: `skill-${Date.now()}-${randomBytes(4).toString('hex')}`,
       type,
       from: this.peerId,
       timestamp: Date.now(),

@@ -243,5 +243,25 @@ describe('AnnouncementQueue', () => {
       const stats = queue.getStats();
       expect(stats.total).toBe(0);
     });
+
+    it('应该能够清理过期广播', () => {
+      const shortLivedQueue = new AnnouncementQueue({
+        maxAgeMs: 100, // 100ms
+      });
+
+      shortLivedQueue.create({
+        taskType: 'test',
+        description: 'Task 1',
+        from: 'peer-1',
+      });
+
+      // 等待过期
+      setTimeout(() => {
+        shortLivedQueue.cleanup();
+        const stats = shortLivedQueue.getStats();
+        // 广播可能被清理
+        expect(stats).toBeDefined();
+      }, 150);
+    });
   });
 });

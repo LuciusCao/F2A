@@ -128,5 +128,25 @@ describe('ReputationSystem', () => {
       const all = reputation.getAllReputations();
       expect(all.length).toBe(2);
     });
+
+    it('应该返回空列表如果没有条目', () => {
+      const all = reputation.getAllReputations();
+      expect(all.length).toBe(0);
+    });
+  });
+
+  describe('flush', () => {
+    it('应该能够刷新数据', () => {
+      reputation.recordSuccess('test-peer-1', 'task-1', 100);
+      
+      // 刷新不应该报错
+      reputation.flush();
+    });
+
+    it('多次刷新不应该报错', () => {
+      reputation.flush();
+      reputation.flush();
+      reputation.flush();
+    });
   });
 });

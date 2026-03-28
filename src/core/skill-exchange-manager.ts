@@ -60,8 +60,11 @@ export class SkillExchangeManager extends EventEmitter<SkillExchangeEvents> {
 
   start(): void {
     if (this.config.enableAnnounce) {
-      this.announceTimer = setInterval(() => this.announceSkills(), this.config.announceInterval * 1000);
-      this.announceSkills();
+      this.announceTimer = setInterval(
+        () => this.announceSkills().catch(err => this.logger.error('announceSkills failed in timer', { error: err })),
+        this.config.announceInterval * 1000
+      );
+      this.announceSkills().catch(err => this.logger.error('announceSkills failed', { error: err }));
     }
     this.logger.info('Started');
   }

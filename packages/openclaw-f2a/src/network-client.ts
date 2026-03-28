@@ -13,14 +13,8 @@ import type {
 } from './types.js';
 import { Result, failure, success, createError } from './types.js';
 import { ensureError, getErrorMessage } from '@f2a/network';
-
-/** Logger 接口 */
-interface Logger {
-  info(message: string, ...args: unknown[]): void;
-  warn(message: string, ...args: unknown[]): void;
-  error(message: string, ...args: unknown[]): void;
-  debug?(message: string, ...args: unknown[]): void;
-}
+// P1-8 修复：统一使用 logger.ts 的 Logger 接口
+import type { Logger } from './logger.js';
 
 /** 默认请求超时（毫秒） */
 const DEFAULT_TIMEOUT_MS = 30000;

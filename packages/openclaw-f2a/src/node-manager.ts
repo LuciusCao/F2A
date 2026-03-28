@@ -4,20 +4,16 @@
  */
 
 import { spawn, ChildProcess } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'fs';
+import * as fs from 'fs';
 import { join } from 'path';
 import { promisify } from 'util';
 import type { F2ANodeConfig, Result } from './types.js';
 import { getErrorMessage } from '@f2a/network';
 import { generateToken } from './connector-helpers.js'; // P1-1 修复：导入加密安全的 token 生成函数
 
-/** Logger 接口 */
-interface Logger {
-  info(message: string, ...args: unknown[]): void;
-  warn(message: string, ...args: unknown[]): void;
-  error(message: string, ...args: unknown[]): void;
-  debug?(message: string, ...args: unknown[]): void;
-}
+// P1-8 修复：统一使用 logger.ts 的 Logger 接口
+import type { Logger } from './logger.js';
 
 const sleep = promisify(setTimeout);
 
@@ -56,6 +52,8 @@ export class F2ANodeManager {
   private consecutiveRestarts: number = 0;
   private lastRestartTime: number = 0;
   private isRestarting: boolean = false;
+  // P0-2 修复：添加重启超时追踪，强制恢复 isRestarting 状态
+  private restartStartTime: number = 0;
 
   constructor(config: Partial<F2ANodeConfig>, logger?: Logger) {
     this.config = {
@@ -77,6 +75,7 @@ export class F2ANodeManager {
   /**
    * 清理孤儿进程
    * 检查 PID 文件中记录的进程是否仍在运行，如果是则尝试清理
+   * P2-Round2 修复：检查文件创建时间，避免终止刚启动的实例
    */
   private cleanupOrphanProcesses(): void {
     if (!existsSync(this.pidFilePath)) {
@@ -84,6 +83,17 @@ export class F2ANodeManager {
     }
 
     try {
+      // P2-Round2 修复：检查文件创建时间，避免终止刚启动的实例
+      // 如果文件是最近 5 秒内创建的，可能是刚启动的实例，不清理
+      const fileStats = fs.statSync(this.pidFilePath);
+      const fileAgeMs = Date.now() - fileStats.mtimeMs;
+      const startupGracePeriodMs = 5000; // 5 秒启动窗口
+      
+      if (fileAgeMs < startupGracePeriodMs) {
+        this.logger.info('[F2A:Node] PID 文件刚创建，跳过清理（可能刚启动）: ageMs=%d', fileAgeMs);
+        return;
+      }
+      
       const pidStr = readFileSync(this.pidFilePath, 'utf-8').trim();
       const pid = parseInt(pidStr, 10);
 
@@ -194,13 +204,8 @@ export class F2ANodeManager {
         stdio: ['ignore', 'pipe', 'pipe']
       });
 
-      // 记录子进程 PID
-      const pid = this.process.pid;
-      if (pid) {
-        this.savePid(pid);
-      }
-
-      // 监听进程退出事件
+      // P1-Round2 修复：spawn 后立即注册监听器，减少竞态窗口
+      // 不要放在其他操作之后，避免在事件触发前未注册监听器
       this.process.on('exit', (code, signal) => {
         this.logger.info('[F2A:Node] Node 进程退出: code=%s, signal=%s', code, signal);
         this.removePidFile();
@@ -211,6 +216,12 @@ export class F2ANodeManager {
         this.logger.error('[F2A:Node] Node 进程错误: error=%s', getErrorMessage(err));
         this.removePidFile();
       });
+
+      // 记录子进程 PID
+      const pid = this.process.pid;
+      if (pid) {
+        this.savePid(pid);
+      }
 
       this.process.unref();
 
@@ -372,9 +383,28 @@ export class F2ANodeManager {
    * 启动健康检查
    * 
    * P1 修复：添加重启次数限制和冷却期，防止无限重启循环
+   * P0-2 修复：添加超时机制强制恢复 isRestarting 状态，防止死锁
    */
   private startHealthCheck(): void {
     this.healthCheckInterval = setInterval(async () => {
+      const now = Date.now();
+      
+      // P0-2 修复：检查 isRestarting 超时，强制恢复状态
+      // 如果重启操作超过 cooldownMaxMs + 10000，强制恢复 isRestarting 状态
+      // 这可以防止因异常导致的死锁（如网络超时、进程崩溃等）
+      if (this.isRestarting && this.restartStartTime > 0) {
+        const restartTimeoutMs = this.restartConfig.cooldownMaxMs + 10000;
+        if (now - this.restartStartTime > restartTimeoutMs) {
+          this.logger.error(
+            '[F2A:Node] 重启超时，强制恢复 isRestarting 状态: timeoutMs=%d, elapsedMs=%d',
+            restartTimeoutMs,
+            now - this.restartStartTime
+          );
+          this.isRestarting = false;
+          this.restartStartTime = 0;
+        }
+      }
+      
       // 如果正在重启，跳过本次检查
       if (this.isRestarting) {
         return;
@@ -383,7 +413,6 @@ export class F2ANodeManager {
       const isHealthy = await this.isRunning();
       if (!isHealthy && this.process) {
         // 检查是否达到重启限制
-        const now = Date.now();
         
         // 如果距离上次重启超过重置窗口，重置计数
         if (now - this.lastRestartTime > this.restartConfig.resetWindowMs) {
@@ -413,7 +442,9 @@ export class F2ANodeManager {
           Math.round(cooldownMs / 1000)
         );
         
+        // P0-2 修复：记录重启开始时间，用于超时检测
         this.isRestarting = true;
+        this.restartStartTime = now;
         this.consecutiveRestarts++;
         this.lastRestartTime = now;
         
@@ -424,7 +455,9 @@ export class F2ANodeManager {
         } catch (error) {
           this.logger.error('[F2A:Node] 重启失败: error=%s', getErrorMessage(error));
         } finally {
+          // P0-2 修复：重置重启状态和时间
           this.isRestarting = false;
+          this.restartStartTime = 0;
         }
       }
     }, 30000); // 每 30 秒检查一次

@@ -12,13 +12,8 @@ import type {
   TaskResponse 
 } from './types.js';
 
-/** Logger 接口 */
-interface Logger {
-  info(message: string, ...args: unknown[]): void;
-  warn(message: string, ...args: unknown[]): void;
-  error(message: string, ...args: unknown[]): void;
-  debug?(message: string, ...args: unknown[]): void;
-}
+// P1-8 修复：统一使用 logger.ts 的 Logger 接口
+import type { Logger } from './logger.js';
 
 /** 默认请求体大小限制 (64KB) - 元数据交换足够，防止 DoS */
 const DEFAULT_MAX_BODY_SIZE = 64 * 1024;
@@ -225,17 +220,27 @@ export class WebhookServer {
   /**
    * 解析请求体
    * 带大小限制，防止 DoS 攻击
+   * 
+   * P1-6 修复：添加 rejected 标志防止 end 事件执行
    */
   private parseBody(req: IncomingMessage): Promise<unknown> {
     return new Promise((resolve, reject) => {
       let body = '';
       let size = 0;
+      // P1-6 修复：添加 rejected 标志，防止请求体超限后 end 事件仍执行
+      let rejected = false;
       
       req.on('data', (chunk) => {
+        // P1-6 修复：如果已 rejected，不再处理数据
+        if (rejected) {
+          return;
+        }
+        
         size += chunk.length;
         
         // 检查请求体大小
         if (size > this.maxBodySize) {
+          rejected = true;
           req.destroy();
           reject(new Error(`Request body too large: ${size} bytes (max: ${this.maxBodySize})`));
           return;
@@ -245,6 +250,11 @@ export class WebhookServer {
       });
       
       req.on('end', () => {
+        // P1-6 修复：检查 rejected 标志，避免超限后仍解析 body
+        if (rejected) {
+          return;
+        }
+        
         try {
           resolve(JSON.parse(body));
         } catch (e) {
@@ -252,7 +262,11 @@ export class WebhookServer {
         }
       });
       
-      req.on('error', reject);
+      req.on('error', (err) => {
+        // P1-6 修复：设置 rejected 标志
+        rejected = true;
+        reject(err);
+      });
     });
   }
 

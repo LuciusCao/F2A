@@ -23,6 +23,18 @@ interface DebounceConfig {
   maxWaitMs: number;
 }
 
+/** P1-Round2 修复：保存重试配置 */
+interface SaveRetryConfig {
+  /** 最大重试次数 */
+  maxRetries: number;
+  /** 当前重试次数 */
+  retryCount: number;
+  /** 基础延迟时间（毫秒） */
+  baseDelayMs: number;
+  /** 最大延迟时间（毫秒） */
+  maxDelayMs: number;
+}
+
 export class ReputationSystem {
   private config: ReputationConfig;
   private entries: Map<string, ReputationEntry> = new Map();
@@ -35,6 +47,14 @@ export class ReputationSystem {
   private debounceConfig: DebounceConfig = {
     delayMs: 100,    // 100ms 防抖延迟
     maxWaitMs: 1000  // 最多等待 1 秒
+  };
+  
+  // P1-Round2 修复：添加保存重试计数器，防止无限重试
+  private saveRetryConfig: SaveRetryConfig = {
+    maxRetries: 3,       // 最大重试 3 次
+    retryCount: 0,       // 当前重试次数
+    baseDelayMs: 100,    // 基础延迟 100ms
+    maxDelayMs: 1000     // 最大延迟 1000ms（指数退避上限）
   };
 
   constructor(config: ReputationConfig, dataDir: string) {
@@ -320,16 +340,102 @@ export class ReputationSystem {
   }
 
   /**
+   * P2-Round2 修复：验证信誉条目数据结构
+   * 确保从持久化加载的数据符合预期格式
+   */
+  private validateEntry(entry: unknown): ReputationEntry | null {
+    // 检查是否是对象
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return null;
+    }
+    
+    const obj = entry as Record<string, unknown>;
+    
+    // 检查必要字段
+    if (!obj.peerId || typeof obj.peerId !== 'string') {
+      return null;
+    }
+    
+    // 检查 score 字段
+    if (typeof obj.score !== 'number' || !Number.isFinite(obj.score) || obj.score < 0 || obj.score > 100) {
+      // score 无效，使用默认值
+      obj.score = INTERNAL_REPUTATION_CONFIG.initialScore;
+    }
+    
+    // 检查计数值字段
+    if (typeof obj.successfulTasks !== 'number' || !Number.isFinite(obj.successfulTasks) || obj.successfulTasks < 0) {
+      obj.successfulTasks = 0;
+    }
+    if (typeof obj.failedTasks !== 'number' || !Number.isFinite(obj.failedTasks) || obj.failedTasks < 0) {
+      obj.failedTasks = 0;
+    }
+    if (typeof obj.totalTasks !== 'number' || !Number.isFinite(obj.totalTasks) || obj.totalTasks < 0) {
+      obj.totalTasks = 0;
+    }
+    
+    // 检查 avgResponseTime 字段
+    if (typeof obj.avgResponseTime !== 'number' || !Number.isFinite(obj.avgResponseTime) || obj.avgResponseTime < 0) {
+      obj.avgResponseTime = 0;
+    }
+    
+    // 检查 lastInteraction 字段
+    if (typeof obj.lastInteraction !== 'number' || !Number.isFinite(obj.lastInteraction) || obj.lastInteraction < 0) {
+      obj.lastInteraction = 0;
+    }
+    
+    // 检查 history 字段（必须是数组）
+    if (!Array.isArray(obj.history)) {
+      obj.history = [];
+    }
+    
+    // 返回验证后的条目
+    return {
+      peerId: obj.peerId,
+      score: obj.score,
+      successfulTasks: obj.successfulTasks,
+      failedTasks: obj.failedTasks,
+      totalTasks: obj.totalTasks,
+      avgResponseTime: obj.avgResponseTime,
+      lastInteraction: obj.lastInteraction,
+      history: obj.history
+    } as ReputationEntry;
+  }
+
+  /**
    * 加载数据
+   * P2-Round2 修复：加载时验证数据结构
    */
   private load(): void {
     if (existsSync(this.dataPath)) {
       try {
         const data = JSON.parse(readFileSync(this.dataPath, 'utf-8'));
-        for (const entry of data) {
-          this.entries.set(entry.peerId, entry);
+        
+        // P2-Round2 修复：验证数据是否是数组
+        if (!Array.isArray(data)) {
+          logger.error('加载信誉数据失败: 数据格式无效（非数组）');
+          return;
         }
-        logger.info('加载了 %d 条信誉记录', this.entries.size);
+        
+        let validCount = 0;
+        let invalidCount = 0;
+        
+        for (const entry of data) {
+          // P2-Round2 修复：验证每个条目
+          const validatedEntry = this.validateEntry(entry);
+          if (validatedEntry) {
+            this.entries.set(validatedEntry.peerId, validatedEntry);
+            validCount++;
+          } else {
+            invalidCount++;
+            logger.warn('跳过无效的信誉条目: peerId=%s', (entry as any)?.peerId || 'unknown');
+          }
+        }
+        
+        if (invalidCount > 0) {
+          logger.warn('加载信誉数据: valid=%d, invalid=%d', validCount, invalidCount);
+        } else {
+          logger.info('加载了 %d 条信誉记录', validCount);
+        }
       } catch (e) {
         logger.error('加载信誉数据失败: error=%s', e);
       }
@@ -377,17 +483,32 @@ export class ReputationSystem {
   
   /**
    * 执行实际的保存操作（异步）
+   * 
+   * P1-7 修复：在 setImmediate 回调中检查 savePending，避免竞态
+   * P1-Round2 修复：添加重试计数器和最大重试次数限制，防止无限重试
    */
   private doSave(): void {
+    // P1-7 修复：立即清除标志，防止其他操作重复触发
+    // 注意：这里需要在 setImmediate 之前清除，而不是在回调中
+    const shouldSave = this.savePending;
     this.savePending = false;
     this.saveTimer = undefined;
     this.lastSaveTime = Date.now();
+    
+    // P1-7 修复：如果没有数据需要保存，跳过
+    if (!shouldSave) {
+      return;
+    }
     
     const tempPath = `${this.dataPath}.tmp`;
     
     // 使用 setImmediate 将文件操作移到下一个事件循环
     // 避免阻塞当前操作
     setImmediate(() => {
+      // P1-7 修复：在回调中再次检查是否有更新数据
+      // 如果在等待期间有新数据更新，需要重新触发保存
+      const hasNewData = this.savePending;
+      
       try {
         const data = Array.from(this.entries.values());
         const jsonContent = JSON.stringify(data, null, 2);
@@ -397,6 +518,14 @@ export class ReputationSystem {
         
         // 2. 原子重命名（在 POSIX 系统上是原子操作）
         renameSync(tempPath, this.dataPath);
+        
+        // P1-Round2 修复：保存成功，重置重试计数器
+        this.saveRetryConfig.retryCount = 0;
+        
+        // P1-7 修复：如果有新数据，重新触发保存
+        if (hasNewData) {
+          this.save();
+        }
       } catch (e) {
         logger.error('保存信誉数据失败: error=%s', e);
         
@@ -407,6 +536,39 @@ export class ReputationSystem {
           }
         } catch {
           // 忽略清理错误
+        }
+        
+        // P1-Round2 修复：使用指数退避重试，限制最大重试次数
+        this.saveRetryConfig.retryCount++;
+        
+        if (this.saveRetryConfig.retryCount < this.saveRetryConfig.maxRetries) {
+          // 计算指数退避延迟
+          const delayMs = Math.min(
+            this.saveRetryConfig.baseDelayMs * Math.pow(2, this.saveRetryConfig.retryCount - 1),
+            this.saveRetryConfig.maxDelayMs
+          );
+          
+          logger.warn(
+            '保存失败，将重试: retryCount=%d/%d, delayMs=%d',
+            this.saveRetryConfig.retryCount,
+            this.saveRetryConfig.maxRetries,
+            delayMs
+          );
+          
+          // 设置延迟重试
+          setTimeout(() => {
+            if (hasNewData || this.savePending) {
+              this.save();
+            }
+          }, delayMs);
+        } else {
+          // 达到最大重试次数，记录错误不再重试
+          logger.error(
+            '保存信誉数据达到最大重试次数，放弃保存: maxRetries=%d',
+            this.saveRetryConfig.maxRetries
+          );
+          // 重置计数器，允许后续新的保存操作重新尝试
+          this.saveRetryConfig.retryCount = 0;
         }
       }
     });

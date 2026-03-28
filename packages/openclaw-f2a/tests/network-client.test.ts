@@ -110,4 +110,18 @@ describe('F2ANetworkClient', () => {
       expect(result.success).toBe(true);
     });
   });
+
+  describe('错误处理', () => {
+    it('应该处理连接失败', async () => {
+      // 创建一个连接到无效端口的客户端
+      const badClient = new F2ANetworkClient({
+        controlPort: 1, // 无效端口
+        controlToken: 'test-token',
+        timeoutMs: 100, // 短超时
+      });
+
+      const result = await badClient.discoverAgents();
+      expect(result.success).toBe(false);
+    });
+  });
 });

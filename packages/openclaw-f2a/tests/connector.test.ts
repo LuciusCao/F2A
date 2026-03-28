@@ -328,5 +328,29 @@ describe('F2APlugin', () => {
       const status = plugin.getF2AStatus();
       expect(status).toBeDefined();
     });
+
+    it('应该能够解析 Agent 引用', async () => {
+      plugin = new F2APlugin();
+      
+      const mockApi = {
+        config: {
+          agents: {
+            defaults: {
+              workspace: tempDir,
+            },
+          },
+        },
+      };
+
+      await plugin.initialize({
+        api: mockApi as any,
+        config: {},
+      });
+
+      // resolveAgent 需要 networkClient
+      // 如果没有初始化，应该返回 null
+      const result = await plugin.resolveAgent('test-agent');
+      expect(result).toBeNull();
+    });
   });
 });

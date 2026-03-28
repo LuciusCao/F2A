@@ -5,7 +5,7 @@
  */
 
 import { existsSync, readFileSync, realpathSync } from 'fs';
-import { join, resolve, relative } from 'path';
+import { join, resolve, relative, isAbsolute } from 'path';
 import { randomBytes } from 'crypto';
 import type { F2ANodeConfig, Result, F2APluginConfig, AgentInfo } from './types.js';
 
@@ -85,15 +85,35 @@ export function isPathSafe(path: string | undefined | null, options?: {
     }
   }
   
-  // 解码 URL 编码后再次检查
-  try {
-    const decodedPath = decodeURIComponent(path);
+  // P1-3 修复：循环解码 URL 编码直到无变化，防止多层编码绕过
+  // 例如：'%252e%252e' -> '%2e%2e' -> '..'
+  let decodedPath = path;
+  let prevPath = '';
+  let maxIterations = 10; // 防止无限循环
+  let iterations = 0;
+  
+  while (decodedPath !== prevPath && iterations < maxIterations) {
+    prevPath = decodedPath;
+    try {
+      decodedPath = decodeURIComponent(decodedPath);
+    } catch {
+      // 解码失败可能是恶意构造，拒绝
+      return false;
+    }
+    iterations++;
+    
+    // 每次解码后检查路径遍历
     if (decodedPath.includes('..') || decodedPath.includes('\0')) {
       return false;
     }
-  } catch {
-    // 解码失败可能是恶意构造，拒绝
-    return false;
+    
+    // 每次解码后检查 URL 编码模式（防止编码绕过）
+    const lowerDecoded = decodedPath.toLowerCase();
+    for (const pattern of PATH_TRAVERSAL_PATTERNS) {
+      if (lowerDecoded.includes(pattern.toLowerCase())) {
+        return false;
+      }
+    }
   }
   
   // P2-1 修复：实现 allowedRoot 验证逻辑
@@ -105,8 +125,15 @@ export function isPathSafe(path: string | undefined | null, options?: {
     // 计算相对路径，检查是否在允许范围内
     const relativePath = relative(absoluteRoot, absolutePath);
     
-    // 如果相对路径以 '..' 开头或为绝对路径，说明不在允许范围内
-    if (relativePath.startsWith('..') || relativePath.startsWith('/')) {
+    // P1-4 修复：检查 relativePath 是否是绝对路径（使用 isAbsolute()）
+    // Windows 上跨盘符路径如 "D:\..." 会返回绝对路径而非 ".." 开头
+    // 例如：relative("C:\root", "D:\escape") => "D:\escape"（绝对路径）
+    if (isAbsolute(relativePath)) {
+      return false;
+    }
+    
+    // 如果相对路径以 '..' 开头，说明不在允许范围内
+    if (relativePath.startsWith('..')) {
       return false;
     }
     
@@ -221,16 +248,11 @@ export function mergeConfig(config: Record<string, unknown> & { _api?: unknown }
  * 
  * P1-1 修复：使用 crypto.randomBytes() 替代 Math.random()
  * 确保生成加密安全的随机 Token
+ * P2-7 优化：改用 hex 编码，简洁且无需替换逻辑
  */
 export function generateToken(): string {
-  const bytes = randomBytes(24); // 24 bytes = 32 base64 字符（去掉填充）
-  // 使用 Base64 编码，去掉填充字符（=），得到 32 字符的 token
-  return bytes.toString('base64').replace(/[+/=]/g, (char) => {
-    // 将 base64 的 +/ 替换为字母，去掉 =
-    if (char === '+') return 'A';
-    if (char === '/') return 'B';
-    return ''; // 移除 '='
-  }).slice(0, 32);
+  const bytes = randomBytes(16); // 16 bytes = 32 hex chars
+  return bytes.toString('hex'); // 直接使用 hex 编码，无需手动替换
 }
 
 // ============================================================================

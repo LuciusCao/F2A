@@ -111,6 +111,8 @@ export class F2APlugin implements OpenClawPlugin {
   private static readonly MAX_MESSAGE_HASH_CACHE_SIZE = 10000;
   /** P1-3: 消息去重缓存条目最大存活时间（毫秒） */
   private static readonly MESSAGE_HASH_TTL_MS = 5 * 60 * 1000; // 5 分钟
+  /** P2-6: 消息哈希去重阈值，短消息不计算哈希（性能优化） */
+  private static readonly MESSAGE_HASH_THRESHOLD = 100; // 仅对超过 100 字符的消息启用哈希
   
   private config!: F2APluginConfig;
   private nodeConfig!: F2ANodeConfig;
@@ -241,8 +243,8 @@ export class F2APlugin implements OpenClawPlugin {
     }
     
     // 层4 (P1-3): 基于消息内容哈希的去重机制
-    // 防止恶意节点构造不含特定标记的消息绕过检测
-    if (content) {
+    // P2-6 性能优化：仅对超过阈值的长消息启用哈希去重
+    if (content && content.length > F2APlugin.MESSAGE_HASH_THRESHOLD) {
       const messageHash = this.computeMessageHash(from, content);
       const now = Date.now();
       

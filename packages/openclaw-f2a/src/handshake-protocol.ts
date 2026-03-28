@@ -21,6 +21,7 @@ import {
 } from './contact-types.js';
 import type { ApiLogger } from './connector.js';
 import { DEFAULT_HANDSHAKE_CONFIG, type HandshakeConfig, type F2APublicInterface, type F2AMessageEvent } from './types.js';
+import { randomBytes } from 'crypto'; // P1-2 修复：导入 crypto 模块用于生成安全的请求 ID
 
 // ============================================================================
 // 常量定义
@@ -614,9 +615,11 @@ export class HandshakeProtocol {
 
   /**
    * 生成请求 ID
+   * P1-2 修复：使用 crypto.randomBytes() 替代 Math.random()
    */
   private generateRequestId(): string {
-    return `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+    const randomPart = randomBytes(4).toString('hex'); // 4 bytes = 8 hex chars
+    return `req-${Date.now().toString(36)}-${randomPart}`;
   }
 
   /**

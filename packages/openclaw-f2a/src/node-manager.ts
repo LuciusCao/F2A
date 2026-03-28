@@ -9,6 +9,7 @@ import { join } from 'path';
 import { promisify } from 'util';
 import type { F2ANodeConfig, Result } from './types.js';
 import { getErrorMessage } from '@f2a/network';
+import { generateToken } from './connector-helpers.js'; // P1-1 修复：导入加密安全的 token 生成函数
 
 /** Logger 接口 */
 interface Logger {
@@ -437,13 +438,12 @@ export class F2ANodeManager {
   /**
    * 生成随机 Token
    */
+  /**
+   * 生成 Token
+   * P1-1 修复：使用 connector-helpers 中加密安全的 generateToken()
+   */
   private generateToken(): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let token = 'f2a-';
-    for (let i = 0; i < 32; i++) {
-      token += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return token;
+    return `f2a-${generateToken()}`;
   }
 
   getConfig(): F2ANodeConfig {

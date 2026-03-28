@@ -16,6 +16,7 @@
 
 import { join, resolve, normalize } from 'path';
 import { mkdirSync, existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { randomBytes } from 'crypto'; // P2-5 修复：导入 crypto 模块
 import type { ApiLogger } from './connector.js';
 import {
   Contact,
@@ -77,16 +78,17 @@ const DEFAULT_GROUPS: ContactGroup[] = [
 /**
  * 生成唯一 ID（UUID v4 格式）
  * P2-1 修复：使用加密安全的随机数生成器
+ * P2-5 修复：回退实现改用 crypto.randomBytes()
  */
 function generateId(): string {
-  // 使用 crypto.randomUUID() 如果可用，否则回退到自定义实现
+  // 使用 crypto.randomUUID() 如果可用
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
   }
   
-  // 回退实现：基于时间戳 + 随机数 + 计数器
+  // P2-5 修复：回退实现使用 crypto.randomBytes() 替代 Math.random()
   const timestamp = Date.now().toString(36);
-  const randomPart = Math.random().toString(36).slice(2, 11);
+  const randomPart = randomBytes(6).toString('hex'); // 6 bytes = 12 hex chars
   const counter = (generateId.counter = (generateId.counter || 0) + 1);
   return `${timestamp}-${randomPart}-${counter.toString(36)}`;
 }

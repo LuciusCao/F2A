@@ -22,6 +22,8 @@ import type {
   AgentCapability,
   DiscoverWebhookPayload,
   DelegateWebhookPayload,
+  ApiLogger,
+  F2APluginPublicInterface,
 } from './types.js';
 import { F2ANodeManager } from './node-manager.js';
 import { F2ANetworkClient } from './network-client.js';
@@ -61,12 +63,8 @@ import { ContactToolHandlers } from './contact-tool-handlers.js';
 import { getNetworkTools, getTaskTools, getContactTools } from './tools/index.js';
 
 // ============================================================================
-export interface ApiLogger {
-  info(message: string, ...args: unknown[]): void;
-  warn(message: string, ...args: unknown[]): void;
-  error(message: string, ...args: unknown[]): void;
-  debug?(message: string, ...args: unknown[]): void;
-}
+// 内部类型定义
+// ============================================================================
 
 /** 广播结果类型 */
 interface BroadcastResult {
@@ -76,7 +74,7 @@ interface BroadcastResult {
   latency?: number;
 }
 
-export class F2APlugin implements OpenClawPlugin {
+export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
   name = 'f2a-openclaw-f2a';
   version = '0.3.0';
 
@@ -512,6 +510,93 @@ export class F2APlugin implements OpenClawPlugin {
         }
       }
     };
+  }
+  
+  // ========== F2APluginPublicInterface 公开方法 ==========
+  
+  /**
+   * 发现 Agents（公开接口）
+   * @param capability 能力过滤（可选）
+   */
+  async discoverAgents(capability?: string): Promise<{ success: boolean; data?: AgentInfo[]; error?: { message: string } }> {
+    return this.f2aClient.discoverAgents(capability);
+  }
+  
+  /**
+   * 获取连接的 Peers（公开接口）
+   */
+  async getConnectedPeers(): Promise<{ success: boolean; data?: unknown[]; error?: { message: string } }> {
+    return this.f2aClient.getConnectedPeers();
+  }
+  
+  /**
+   * 发送消息（公开接口）
+   * @param to 目标 Peer ID
+   * @param content 消息内容
+   * @param metadata 消息元数据（可选）
+   */
+  async sendMessage(to: string, content: string, metadata?: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
+    if (!this._f2a) {
+      return { success: false, error: 'F2A 实例未初始化' };
+    }
+    try {
+      await (this._f2a as any).sendMessage(to, content, metadata);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: extractErrorMessage(err) };
+    }
+  }
+  
+  // ========== F2APluginPublicInterface 公开 getter ==========
+  
+  /** 公开配置访问 */
+  getConfig(): F2APluginConfig {
+    return this.config;
+  }
+  
+  /** 公开 API 访问 */
+  getApi(): OpenClawPluginApi | undefined {
+    return this.api;
+  }
+  
+  /** 公开网络客户端访问 */
+  getNetworkClient(): unknown {
+    return this.networkClient;
+  }
+  
+  /** 公开信誉系统访问 */
+  getReputationSystem(): unknown {
+    return this.reputationSystem;
+  }
+  
+  /** 公开节点管理器访问 */
+  getNodeManager(): unknown {
+    return this.nodeManager;
+  }
+  
+  /** 公开任务队列访问 */
+  getTaskQueue(): unknown {
+    return this.taskQueue;
+  }
+  
+  /** 公开公告队列访问 */
+  getAnnouncementQueue(): unknown {
+    return this.announcementQueue;
+  }
+  
+  /** 公开评审委员会访问 */
+  getReviewCommittee(): unknown | undefined {
+    return this.reviewCommittee;
+  }
+  
+  /** 公开联系人管理器访问 */
+  getContactManager(): unknown {
+    return this.contactManager;
+  }
+  
+  /** 公开握手协议处理器访问 */
+  getHandshakeProtocol(): unknown {
+    return this.handshakeProtocol;
   }
 
   /**

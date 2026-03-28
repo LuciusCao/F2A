@@ -10,8 +10,35 @@
 // 统一 Result 类型（从核心库 re-export）
 // ============================================================================
 
-// 导入 SecurityConfig 供本地使用
-import type { SecurityConfig } from '@f2a/network';
+// 导入 SecurityConfig 和 AgentInfo 供本地使用
+import type { SecurityConfig, AgentInfo } from '@f2a/network';
+
+// ============================================================================
+// Logger Types（Issue #106: 从 connector.ts 移入，解决循环依赖）
+// ============================================================================
+
+/**
+ * API Logger 接口
+ * 
+ * 定义插件和组件使用的日志接口。
+ * 此接口与 OpenClaw Plugin API 的 logger 接口兼容。
+ * 
+ * @example
+ * ```typescript
+ * const logger: ApiLogger = {
+ *   info: (msg) => console.log(msg),
+ *   warn: (msg) => console.warn(msg),
+ *   error: (msg) => console.error(msg),
+ *   debug: (msg) => console.debug(msg),
+ * };
+ * ```
+ */
+export interface ApiLogger {
+  info(message: string, ...args: unknown[]): void;
+  warn(message: string, ...args: unknown[]): void;
+  error(message: string, ...args: unknown[]): void;
+  debug?(message: string, ...args: unknown[]): void;
+}
 
 // 重新导出核心 Result 类型，确保整个项目使用统一的错误处理模式
 export type { Result, F2AError, ErrorCode, SecurityConfig } from '@f2a/network';
@@ -491,4 +518,79 @@ export interface AgentConfig {
   bootstrapPeers?: string[];
   /** 可选：扩展配置 */
   [key: string]: unknown;
+}
+
+// ============================================================================
+// F2A Plugin Public Interface（Issue #106: Handler 依赖解耦）
+// ============================================================================
+
+/**
+ * F2A 插件公开接口
+ * 
+ * 定义 Handler 需要访问的公开方法和属性。
+ * 此接口用于解耦 Handler 和 F2APlugin 具体实现，提高类型安全性。
+ * 
+ * @example
+ * ```typescript
+ * // Handler 通过接口接收依赖
+ * class ToolHandlers {
+ *   constructor(private adapter: F2APluginPublicInterface) {}
+ *   
+ *   async handleDiscover() {
+ *     const agents = await this.adapter.discoverAgents('code-generation');
+ *     // ...
+ *   }
+ * }
+ * ```
+ */
+export interface F2APluginPublicInterface {
+  // ========== 配置访问 ==========
+  
+  /** 获取插件配置 */
+  getConfig(): F2APluginConfig;
+  
+  /** 获取 OpenClaw API */
+  getApi(): OpenClawPluginApi | undefined;
+  
+  // ========== 核心组件访问 ==========
+  
+  /** 获取网络客户端 */
+  getNetworkClient(): unknown;
+  
+  /** 获取信誉系统 */
+  getReputationSystem(): unknown;
+  
+  /** 获取节点管理器 */
+  getNodeManager(): unknown;
+  
+  /** 获取任务队列 */
+  getTaskQueue(): unknown;
+  
+  /** 获取公告队列 */
+  getAnnouncementQueue(): unknown;
+  
+  /** 获取评审委员会 */
+  getReviewCommittee(): unknown | undefined;
+  
+  // ========== 通讯录和握手 ==========
+  
+  /** 获取联系人管理器 */
+  getContactManager(): unknown;
+  
+  /** 获取握手协议处理器 */
+  getHandshakeProtocol(): unknown;
+  
+  // ========== F2A 实例访问 ==========
+  
+  /** 获取 F2A 状态 */
+  getF2AStatus(): { running: boolean; peerId?: string; uptime?: number };
+  
+  /** 发现 Agents */
+  discoverAgents(capability?: string): Promise<{ success: boolean; data?: AgentInfo[]; error?: { message: string } }>;
+  
+  /** 获取连接的 Peers */
+  getConnectedPeers(): Promise<{ success: boolean; data?: unknown[]; error?: { message: string } }>;
+  
+  /** 发送消息 */
+  sendMessage(to: string, content: string, metadata?: Record<string, unknown>): Promise<{ success: boolean; error?: string }>;
 }

@@ -2,10 +2,11 @@
  * F2A 通讯录工具处理器
  * 
  * 处理通讯录、分组、好友请求相关的工具调用。
+ * 
+ * Issue #106: 使用 F2APluginPublicInterface 解除循环依赖
  */
 
-import type { F2APlugin } from './connector.js';
-import type { ToolResult, SessionContext } from './types.js';
+import type { F2APluginPublicInterface, ToolResult, SessionContext } from './types.js';
 import { FriendStatus, type ContactFilter } from './contact-types.js';
 import { extractErrorMessage, isValidPeerId } from './connector-helpers.js';
 
@@ -13,7 +14,18 @@ import { extractErrorMessage, isValidPeerId } from './connector-helpers.js';
  * 通讯录工具处理器
  */
 export class ContactToolHandlers {
-  constructor(private plugin: F2APlugin) {}
+  constructor(private plugin: F2APluginPublicInterface) {}
+  
+  /**
+   * 类型安全的内部访问 getter
+   */
+  private get contactManager() {
+    return this.plugin.getContactManager();
+  }
+  
+  private get handshakeProtocol() {
+    return this.plugin.getHandshakeProtocol();
+  }
 
   /**
    * 处理通讯录管理工具
@@ -33,7 +45,7 @@ export class ContactToolHandlers {
     _context: SessionContext
   ): Promise<ToolResult> {
     try {
-      const cm = (this.plugin as any).contactManager;
+      const cm = this.contactManager;
       
       switch (params.action) {
         case 'list': {
@@ -196,7 +208,7 @@ export class ContactToolHandlers {
     _context: SessionContext
   ): Promise<ToolResult> {
     try {
-      const cm = (this.plugin as any).contactManager;
+      const cm = this.contactManager;
       
       switch (params.action) {
         case 'list': {
@@ -266,25 +278,22 @@ export class ContactToolHandlers {
     _context: SessionContext
   ): Promise<ToolResult> {
     try {
-      const plugin = this.plugin as any;
+      const f2a = this.plugin.getF2AStatus().running ? (this.plugin as any).getF2A?.() : null;
       
-      if (!plugin._f2a) {
+      if (!f2a) {
         return { content: '❌ F2A 实例未初始化' };
       }
       
       // 确保握手协议已初始化
-      if (!plugin._handshakeProtocol) {
-        plugin.handshakeProtocol;
-      }
-      
-      if (!plugin._handshakeProtocol) {
+      const handshake = this.handshakeProtocol;
+      if (!handshake) {
         return { content: '❌ 握手协议未初始化' };
       }
       
       // 自动匹配截断的 peer ID
       let targetPeerId = params.peer_id;
       if (params.peer_id.length < 50) {
-        const peers = plugin._f2a.getConnectedPeers();
+        const peers = f2a.getConnectedPeers?.() || [];
         const matched = peers.find((p: any) => p.peerId.startsWith(params.peer_id));
         if (matched) {
           targetPeerId = matched.peerId;
@@ -296,7 +305,7 @@ export class ContactToolHandlers {
         return { content: `❌ 无效的 Peer ID 格式: ${targetPeerId.slice(0, 20)}...` };
       }
       
-      const requestId = await plugin._handshakeProtocol.sendFriendRequest(
+      const requestId = await (this.handshakeProtocol as any).sendFriendRequest(
         targetPeerId,
         params.message
       );
@@ -323,8 +332,7 @@ export class ContactToolHandlers {
     _context: SessionContext
   ): Promise<ToolResult> {
     try {
-      const plugin = this.plugin as any;
-      const cm = plugin.contactManager;
+      const cm = this.contactManager;
       
       switch (params.action) {
         case 'list': {
@@ -348,11 +356,11 @@ export class ContactToolHandlers {
             return { content: '❌ 需要提供 request_id' };
           }
           
-          if (!plugin._handshakeProtocol) {
+          if (!this.handshakeProtocol) {
             return { content: '❌ 握手协议未初始化' };
           }
           
-          const success = await plugin._handshakeProtocol.acceptRequest(params.request_id);
+          const success = await (this.handshakeProtocol as any).acceptRequest(params.request_id);
           return { content: success ? '✅ 已接受好友请求，双方已成为好友' : '❌ 接受失败' };
         }
         
@@ -361,11 +369,11 @@ export class ContactToolHandlers {
             return { content: '❌ 需要提供 request_id' };
           }
           
-          if (!plugin._handshakeProtocol) {
+          if (!this.handshakeProtocol) {
             return { content: '❌ 握手协议未初始化' };
           }
           
-          const success = await plugin._handshakeProtocol.rejectRequest(params.request_id, params.reason);
+          const success = await (this.handshakeProtocol as any).rejectRequest(params.request_id, params.reason);
           return { content: success ? '✅ 已拒绝好友请求' : '❌ 拒绝失败' };
         }
         
@@ -385,9 +393,8 @@ export class ContactToolHandlers {
     _context: SessionContext
   ): Promise<ToolResult> {
     try {
-      const plugin = this.plugin as any;
-      const cm = plugin.contactManager;
-      const data = cm.exportContacts(plugin._f2a?.peerId);
+      const cm = this.contactManager;
+      const data = cm.exportContacts(this.plugin.getF2AStatus().peerId);
       
       return {
         content: `📤 **通讯录导出成功**\n\n` +
@@ -495,8 +502,7 @@ export class ContactToolHandlers {
         }
       }
       
-      const plugin = this.plugin as any;
-      const cm = plugin.contactManager;
+      const cm = this.contactManager;
       const result = cm.importContacts(params.data as any, params.merge ?? true);
       
       if (result.success) {

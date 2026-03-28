@@ -12,15 +12,39 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-// Mock F2APlugin
-const createMockPlugin = (contactManager: ContactManager, handshakeProtocol?: any, f2a?: any) => ({
-  contactManager,
-  _handshakeProtocol: handshakeProtocol,
-  _f2a: f2a ?? (handshakeProtocol ? {
+// Mock F2APluginPublicInterface
+const createMockPlugin = (contactManager: ContactManager, handshakeProtocol?: any, f2a?: any) => {
+  const defaultF2A = handshakeProtocol ? {
     getConnectedPeers: () => [],
     peerId: '12D3KooWTestPeerId12345678901234567890123456789012345678',
-  } : undefined),
-});
+  } : undefined;
+  
+  return {
+    // F2APluginPublicInterface 方法
+    getConfig: () => ({}),
+    getApi: () => undefined,
+    getNetworkClient: () => null,
+    getReputationSystem: () => null,
+    getNodeManager: () => null,
+    getTaskQueue: () => null,
+    getAnnouncementQueue: () => null,
+    getReviewCommittee: () => undefined,
+    getContactManager: () => contactManager,
+    getHandshakeProtocol: () => handshakeProtocol,
+    getF2AStatus: () => ({ 
+      running: !!(f2a ?? defaultF2A), 
+      peerId: f2a?.peerId ?? defaultF2A?.peerId 
+    }),
+    getF2A: () => f2a ?? defaultF2A,
+    discoverAgents: async () => ({ success: false, error: { message: 'Not implemented' } }),
+    getConnectedPeers: async () => ({ success: false, error: { message: 'Not implemented' } }),
+    sendMessage: async () => ({ success: false, error: 'Not implemented' }),
+    // 兼容旧的直接属性访问
+    contactManager,
+    _handshakeProtocol: handshakeProtocol,
+    _f2a: f2a ?? defaultF2A,
+  };
+};
 
 // Mock SessionContext
 const mockContext = {} as any;

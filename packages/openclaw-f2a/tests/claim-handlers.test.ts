@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { ClaimHandlers } from '../src/claim-handlers.js';
-import type { F2APlugin } from '../src/connector.js';
+import type { F2APluginPublicInterface } from '../src/types.js';
 
 // 创建模拟适配器
 function createMockAdapter() {
@@ -44,6 +44,30 @@ function createMockAdapter() {
   };
 
   return {
+    // F2APluginPublicInterface 方法
+    getConfig: () => ({}),
+    getApi: () => ({
+      config: {
+        agents: {
+          defaults: {
+            workspace: '/test/workspace',
+          },
+        },
+      },
+    }),
+    getNetworkClient: () => null,
+    getReputationSystem: () => null,
+    getNodeManager: () => null,
+    getTaskQueue: () => null,
+    getAnnouncementQueue: () => mockAnnouncementQueue,
+    getReviewCommittee: () => undefined,
+    getContactManager: () => null,
+    getHandshakeProtocol: () => null,
+    getF2AStatus: () => ({ running: false }),
+    discoverAgents: async () => ({ success: false, error: { message: 'Not implemented' } }),
+    getConnectedPeers: async () => ({ success: false, error: { message: 'Not implemented' } }),
+    sendMessage: async () => ({ success: false, error: 'Not implemented' }),
+    // 兼容旧的直接属性访问
     announcementQueue: mockAnnouncementQueue,
     config: {},
     api: {
@@ -64,7 +88,7 @@ describe('ClaimHandlers', () => {
 
   beforeEach(() => {
     mockAdapter = createMockAdapter();
-    handlers = new ClaimHandlers(mockAdapter as unknown as F2APlugin);
+    handlers = new ClaimHandlers(mockAdapter as unknown as F2APluginPublicInterface);
   });
 
   afterEach(() => {

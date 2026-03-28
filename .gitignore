@@ -148,3 +148,6 @@ test-tmp-persistence-*
 # F2A runtime data
 f2a-data/
 test-tmp-*/
+
+# Refactor plans
+REFACTOR_PLAN.md

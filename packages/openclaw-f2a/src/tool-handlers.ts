@@ -22,7 +22,7 @@ import type { AnnouncementQueue } from './announcement-queue.js';
 import type { ReviewCommittee, TaskReview, RiskFlag, ReviewResult } from '@f2a/network';
 import { pluginLogger as logger } from './logger.js';
 // P1-1: 导入 isValidPeerId 验证函数
-import { isValidPeerId } from './connector.js';
+import { isValidPeerId } from './connector-helpers.js';
 
 /** 广播结果类型 */
 interface BroadcastResult {

@@ -42,180 +42,22 @@ import { ContactManager } from './contact-manager.js';
 import { HandshakeProtocol } from './handshake-protocol.js';
 import { FriendStatus, ContactFilter } from './contact-types.js';
 
+// 重构：辅助函数和通讯录处理器
+import { 
+  isValidPeerId, 
+  isPathSafe, 
+  extractErrorMessage, 
+  readAgentNameFromIdentity,
+  mergeConfig,
+  generateToken,
+  checkF2AInstalled,
+  formatBroadcastResults,
+  resolveAgent,
+  MAX_MESSAGE_LENGTH,
+} from './connector-helpers.js';
+import { ContactToolHandlers } from './contact-tool-handlers.js';
+
 // ============================================================================
-// 安全常量和验证工具
-// ============================================================================
-
-/** P1-7: 消息内容最大长度限制 (1MB)，防止内存耗尽 */
-const MAX_MESSAGE_LENGTH = 1024 * 1024;
-
-/** P1-6: PeerID 格式正则（libp2p 格式：12D3KooW...） */
-const PEER_ID_REGEX = /^12D3KooW[A-Za-z1-9]{44}$/;
-
-/** P1-4: URL 编码的路径遍历模式 */
-const PATH_TRAVERSAL_PATTERNS = [
-  '%2e%2e',     // URL 编码的 ..
-  '%2E%2E',     // URL 编码的 .. (大写)
-  '%252e',      // 双重 URL 编码
-  '%c0%ae',     // UTF-8 overlong encoding
-  '%c1%9c',     // UTF-8 overlong encoding
-];
-
-/**
- * P1-6: 验证 PeerID 格式
- * @param peerId - 待验证的 Peer ID
- * @returns 是否为有效的 libp2p Peer ID 格式
- */
-export function isValidPeerId(peerId: string | undefined | null): peerId is string {
-  return typeof peerId === 'string' && PEER_ID_REGEX.test(peerId);
-}
-
-/**
- * P0-1, P1-4: 验证路径安全性，防止路径遍历攻击
- * 
- * 增强版本，处理：
- * - 符号链接（通过 realpath 验证）
- * - URL 编码绕过
- * - 双重编码绕过
- * - UTF-8 overlong encoding
- * 
- * @param path - 待验证的路径
- * @param options - 可选的额外验证选项
- * @returns 如果路径安全返回 true，否则返回 false
- */
-function isPathSafe(path: string | undefined | null, options?: { 
-  /** 允许的根目录（路径必须在此目录下） */
-  allowedRoot?: string;
-  /** 是否检查符号链接（需要文件系统访问） */
-  checkSymlinks?: boolean;
-}): path is string {
-  if (typeof path !== 'string' || path.length === 0) {
-    return false;
-  }
-  
-  // 允许绝对路径（workspace 配置通常是绝对路径）
-  // 但仍然检查路径遍历字符
-  
-  // 拒绝包含路径遍历字符
-  if (path.includes('..') || path.includes('\0')) {
-    return false;
-  }
-  
-  // 拒绝以 ~ 开头的路径（用户目录展开）
-  if (path.startsWith('~')) {
-    return false;
-  }
-  
-  // P1-4: 检查 URL 编码的路径遍历模式
-  const lowerPath = path.toLowerCase();
-  for (const pattern of PATH_TRAVERSAL_PATTERNS) {
-    if (lowerPath.includes(pattern.toLowerCase())) {
-      return false;
-    }
-  }
-  
-  // P1-4: 解码 URL 编码后再次检查
-  try {
-    const decodedPath = decodeURIComponent(path);
-    // 解码后再次检查路径遍历
-    if (decodedPath.includes('..') || decodedPath.includes('\0')) {
-      return false;
-    }
-    // 注意：允许解码后的绝对路径
-  } catch {
-    // 解码失败可能是恶意构造，拒绝
-    return false;
-  }
-  
-  // P1-4: 如果指定了允许的根目录，验证路径不会逃逸
-  if (options?.allowedRoot) {
-    try {
-      const resolvedPath = join(options.allowedRoot, path);
-      // 检查解析后的路径是否仍在允许的根目录下
-      if (!resolvedPath.startsWith(options.allowedRoot)) {
-        return false;
-      }
-    } catch {
-      return false;
-    }
-  }
-  
-  return true;
-}
-
-/**
- * P1-2: 统一错误提取工具函数
- * 从各种错误格式中提取错误消息，添加循环引用保护
- * @param error - 任意错误对象
- * @returns 错误消息字符串
- */
-function extractErrorMessage(error: unknown): string {
-  try {
-    if (error instanceof Error) {
-      return error.message;
-    }
-    if (typeof error === 'string') {
-      return error;
-    }
-    if (typeof error === 'object' && error !== null) {
-      // 尝试常见的错误属性
-      const err = error as Record<string, unknown>;
-      if (typeof err.message === 'string') {
-        return err.message;
-      }
-      if (typeof err.error === 'string') {
-        return err.error;
-      }
-      if (typeof err.msg === 'string') {
-        return err.msg;
-      }
-    }
-    // P1-2: 使用 try-catch 保护 String() 调用，防止循环引用异常
-    return String(error);
-  } catch {
-    // 如果 String() 抛出异常（如循环引用），返回安全的默认消息
-    return '[Error: Unable to extract error message - possible circular reference]';
-  }
-}
-
-/**
- * Issue #96: 从 IDENTITY.md 读取 agent 名字
- * @param workspace - agent workspace 目录
- * @returns agent 名字，如果读取失败返回 null
- */
-function readAgentNameFromIdentity(workspace: string | undefined): string | null {
-  if (!workspace) {
-    return null;
-  }
-  
-  try {
-    const identityPath = join(workspace, 'IDENTITY.md');
-    const fs = require('fs');
-    
-    if (!fs.existsSync(identityPath)) {
-      return null;
-    }
-    
-    const content = fs.readFileSync(identityPath, 'utf-8');
-    
-    // 解析 IDENTITY.md 中的 Name 字段
-    // 格式: - **Name:** 猫咕噜 (Cat Guru)
-    const nameMatch = content.match(/-\s*\*\*Name:\*\*\s*(.+?)(?:\s*\([^)]*\))?$/m);
-    
-    if (nameMatch && nameMatch[1]) {
-      const name = nameMatch[1].trim();
-      // 移除可能的英文别名（括号内的内容已在正则中处理）
-      return name;
-    }
-    
-    return null;
-  } catch (err) {
-    // 读取失败，返回 null
-    return null;
-  }
-}
-
-/** OpenClaw API Logger 类型 */
 export interface ApiLogger {
   info(message: string, ...args: unknown[]): void;
   warn(message: string, ...args: unknown[]): void;
@@ -257,6 +99,7 @@ export class F2APlugin implements OpenClawPlugin {
   // Issue #98 & #99: 通讯录和握手机制
   private _contactManager?: ContactManager;
   private _handshakeProtocol?: HandshakeProtocol;
+  private _contactToolHandlers?: ContactToolHandlers;
   
   // P1-3: 消息哈希去重缓存，防止恶意节点绕过 echo 检测
   // 存储最近处理过的消息哈希，避免重复处理
@@ -537,6 +380,16 @@ export class F2APlugin implements OpenClawPlugin {
   }
   
   /**
+   * 通讯录工具处理器（延迟初始化）
+   */
+  private get contactToolHandlers(): ContactToolHandlers {
+    if (!this._contactToolHandlers) {
+      this._contactToolHandlers = new ContactToolHandlers(this);
+    }
+    return this._contactToolHandlers;
+  }
+  
+  /**
    * Issue #98: 获取联系人管理器（延迟初始化）
    */
   private get contactManager(): ContactManager {
@@ -636,11 +489,11 @@ export class F2APlugin implements OpenClawPlugin {
     this.api = config._api;
     
     // 合并配置（只保存，不初始化资源）
-    this.config = this.mergeConfig(config);
+    this.config = mergeConfig(config);
     this.nodeConfig = {
       nodePath: this.config.f2aPath || './F2A',
       controlPort: this.config.controlPort || 9001,
-      controlToken: this.config.controlToken || this.generateToken(),
+      controlToken: this.config.controlToken || generateToken(),
       p2pPort: this.config.p2pPort || 9000,
       enableMDNS: this.config.enableMDNS ?? true,
       bootstrapPeers: this.config.bootstrapPeers || [],
@@ -1518,7 +1371,7 @@ export class F2APlugin implements OpenClawPlugin {
             required: false
           }
         },
-        handler: this.handleContacts.bind(this)
+        handler: this.contactToolHandlers.handleContacts.bind(this.contactToolHandlers)
       },
       {
         name: 'f2a_contact_groups',
@@ -1551,7 +1404,7 @@ export class F2APlugin implements OpenClawPlugin {
             required: false
           }
         },
-        handler: this.handleContactGroups.bind(this)
+        handler: this.contactToolHandlers.handleContactGroups.bind(this.contactToolHandlers)
       },
       {
         name: 'f2a_friend_request',
@@ -1568,7 +1421,7 @@ export class F2APlugin implements OpenClawPlugin {
             required: false
           }
         },
-        handler: this.handleFriendRequest.bind(this)
+        handler: this.contactToolHandlers.handleFriendRequest.bind(this.contactToolHandlers)
       },
       {
         name: 'f2a_pending_requests',
@@ -1591,13 +1444,13 @@ export class F2APlugin implements OpenClawPlugin {
             required: false
           }
         },
-        handler: this.handlePendingRequests.bind(this)
+        handler: this.contactToolHandlers.handlePendingRequests.bind(this.contactToolHandlers)
       },
       {
         name: 'f2a_contacts_export',
         description: '导出通讯录数据',
         parameters: {},
-        handler: this.handleContactsExport.bind(this)
+        handler: this.contactToolHandlers.handleContactsExport.bind(this.contactToolHandlers)
       },
       {
         name: 'f2a_contacts_import',
@@ -1614,7 +1467,7 @@ export class F2APlugin implements OpenClawPlugin {
             required: false
           }
         },
-        handler: this.handleContactsImport.bind(this)
+        handler: this.contactToolHandlers.handleContactsImport.bind(this.contactToolHandlers)
       }
     ];
   }
@@ -1827,598 +1680,6 @@ export class F2APlugin implements OpenClawPlugin {
 
   /**
    * 合并配置（公开方法供处理器使用）
-   */
-  mergeConfig(config: Record<string, unknown> & { _api?: unknown }): F2APluginConfig {
-    return {
-      autoStart: (config.autoStart as boolean) ?? true,
-      webhookPort: (config.webhookPort as number) || 9002,
-      agentName: (config.agentName as string) || 'OpenClaw Agent',
-      capabilities: (config.capabilities as string[]) || [],
-      f2aPath: config.f2aPath as string | undefined,
-      controlPort: config.controlPort as number | undefined,
-      controlToken: config.controlToken as string | undefined,
-      p2pPort: config.p2pPort as number | undefined,
-      enableMDNS: config.enableMDNS as boolean | undefined,
-      bootstrapPeers: config.bootstrapPeers as string[] | undefined,
-      // dataDir 只保存用户显式配置的值，默认值在 getDefaultDataDir() 中处理
-      dataDir: config.dataDir as string | undefined,
-      maxQueuedTasks: (config.maxQueuedTasks as number) || 100,
-      pollInterval: config.pollInterval as number | undefined,
-      // 保留 webhookPush 配置（修复：之前丢失导致 webhook 推送被禁用）
-      webhookPush: config.webhookPush as { enabled?: boolean; url: string; token: string; timeout?: number } | undefined,
-      reputation: {
-        enabled: ((config.reputation as Record<string, unknown>)?.enabled as boolean) ?? INTERNAL_REPUTATION_CONFIG.enabled,
-        initialScore: ((config.reputation as Record<string, unknown>)?.initialScore as number) || INTERNAL_REPUTATION_CONFIG.initialScore,
-        minScoreForService: ((config.reputation as Record<string, unknown>)?.minScoreForService as number) || INTERNAL_REPUTATION_CONFIG.minScoreForService,
-        decayRate: ((config.reputation as Record<string, unknown>)?.decayRate as number) || INTERNAL_REPUTATION_CONFIG.decayRate
-      },
-      security: {
-        requireConfirmation: ((config.security as Record<string, unknown>)?.requireConfirmation as boolean) ?? false,
-        whitelist: ((config.security as Record<string, unknown>)?.whitelist as string[]) || [],
-        blacklist: ((config.security as Record<string, unknown>)?.blacklist as string[]) || [],
-        maxTasksPerMinute: ((config.security as Record<string, unknown>)?.maxTasksPerMinute as number) || 10
-      }
-    };
-  }
-
-  private generateToken(): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let token = 'f2a-';
-    for (let i = 0; i < 32; i++) {
-      token += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return token;
-  }
-
-  /**
-   * 检查 F2A CLI 是否已安装
-   * 通过执行 `f2a version` 命令来检测
-   */
-  private async checkF2AInstalled(): Promise<boolean> {
-    try {
-      const { exec } = await import('child_process');
-      const { promisify } = await import('util');
-      const execAsync = promisify(exec);
-      
-      const { stdout } = await execAsync('f2a version', { timeout: 5000 });
-      this._logger?.info(`[F2A] F2A CLI 已安装: ${stdout.trim()}`);
-      return true;
-    } catch (error) {
-      // 如果是命令不存在，说明 CLI 未安装
-      if (error instanceof Error && (error.message.includes('ENOENT') || error.message.includes('not found'))) {
-        this._logger?.debug?.('[F2A] F2A CLI 未安装');
-        return false;
-      }
-      // P2-3 修复：timeout 也视为 CLI 未安装（CLI 可能存在但响应慢）
-      if (error instanceof Error && error.message.includes('ETIMEDOUT')) {
-        this._logger?.debug?.('[F2A] F2A CLI 响应超时，视为未安装');
-        return false;
-      }
-      // 其他错误，可能是 CLI 已安装但有问题
-      this._logger?.debug?.(`[F2A] F2A CLI 检测异常: ${error instanceof Error ? error.message : String(error)}`);
-      return false;
-    }
-  }
-
-  /**
-   * 通过 CLI 启动 F2A daemon
-   * 执行 `f2a daemon -d` 命令（后台模式）
-   */
-  private async startDaemonViaCLI(): Promise<boolean> {
-    try {
-      const { spawn } = await import('child_process');
-      
-      return new Promise((resolve) => {
-        this._logger?.info('[F2A] 执行: f2a daemon -d');
-        
-        // 设置 messageHandlerUrl 环境变量，让 daemon 将消息推送到 adapter 的 webhook
-        const env = { ...process.env };
-        if (this._webhookServer) {
-          const webhookUrl = `${this._webhookServer.getUrl()}/message`;
-          env.F2A_MESSAGE_HANDLER_URL = webhookUrl;
-          this._logger?.info(`[F2A] 配置消息处理 URL: ${webhookUrl}`);
-        }
-        
-        const proc = spawn('f2a', ['daemon', '-d'], {
-          detached: true,  // P1-1 修复：让 daemon 独立运行，不随父进程退出
-          stdio: 'ignore',  // P1-2 修复：ignore stdio 配合 detached 使用
-          env  // 传递环境变量
-        });
-        
-        // P1-2 修复：detached + ignore stdio 后，需要 unref 让父进程可以独立退出
-        proc.unref();
-        
-        proc.on('error', (err) => {
-          this._logger?.error(`[F2A] 启动 daemon 失败: ${err.message}`);
-          resolve(false);
-        });
-        
-        // P2-1 修复：daemon 启动后 CLI 会自动等待服务就绪后退出
-        // 我们只需要等待一段时间后检查 daemon 是否真的在运行
-        setTimeout(async () => {
-          const running = await this._nodeManager?.isRunning();
-          if (running) {
-            this._logger?.info('[F2A] F2A daemon 服务已就绪');
-            resolve(true);
-          } else {
-            this._logger?.warn('[F2A] F2A daemon 启动超时，请检查日志: ~/.f2a/daemon.log');
-            resolve(false);
-          }
-        }, 5000);
-      });
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      this._logger?.error(`[F2A] 启动 daemon 失败: ${errMsg}`);
-      return false;
-    }
-  }
-
-  /**
-   * 格式化广播结果（公共方法，供测试和外部调用）
-   */
-  formatBroadcastResults(results: BroadcastResult[]): string {
-    return results.map(r => {
-      const icon = r.success ? '✅' : '❌';
-      const latency = r.latency ? ` (${r.latency}ms)` : '';
-      return `${icon} ${r.agent}${latency}\n   ${r.success ? '完成' : `失败: ${r.error}`}`;
-    }).join('\n\n');
-  }
-
-  /**
-   * 解析 Agent 引用（公共方法，供测试和外部调用）
-   */
-  async resolveAgent(agentRef: string): Promise<AgentInfo | null> {
-    const result = await this.networkClient?.discoverAgents();
-    if (!result?.success) return null;
-
-    const agents = result.data || [];
-
-    // #索引格式
-    if (agentRef.startsWith('#')) {
-      const index = parseInt(agentRef.slice(1)) - 1;
-      return agents[index] || null;
-    }
-
-    // 精确匹配
-    const exact = agents.find((a: AgentInfo) => 
-      a.peerId === agentRef || 
-      a.displayName === agentRef
-    );
-    if (exact) return exact;
-
-    // 模糊匹配
-    const fuzzy = agents.find((a: AgentInfo) => 
-      a.peerId.startsWith(agentRef) ||
-      (a.displayName?.toLowerCase().includes(agentRef.toLowerCase()) ?? false)
-    );
-
-    return fuzzy || null;
-  }
-
-  // ============================================================================
-  // Issue #98 & #99: 通讯录和握手机制工具处理方法
-  // ============================================================================
-
-  /**
-   * 处理通讯录工具
-   */
-  private async handleContacts(
-    params: {
-      action: 'list' | 'get' | 'add' | 'remove' | 'update' | 'block' | 'unblock';
-      contact_id?: string;
-      peer_id?: string;
-      name?: string;
-      groups?: string[];
-      tags?: string[];
-      notes?: string;
-      status?: string;
-      group?: string;
-    },
-    _context: SessionContext
-  ): Promise<ToolResult> {
-    try {
-      const cm = this.contactManager;
-      
-      switch (params.action) {
-        case 'list': {
-          const filter: ContactFilter = {};
-          if (params.status) {
-            filter.status = params.status as FriendStatus;
-          }
-          if (params.group) {
-            filter.group = params.group;
-          }
-          const contacts = cm.getContacts(filter, { field: 'name', order: 'asc' });
-          const stats = cm.getStats();
-          
-          return {
-            content: `📋 **通讯录** (${stats.total} 个联系人)\n\n` +
-              contacts.map(c => {
-                const statusIcon = {
-                  [FriendStatus.FRIEND]: '💚',
-                  [FriendStatus.STRANGER]: '⚪',
-                  [FriendStatus.PENDING]: '🟡',
-                  [FriendStatus.BLOCKED]: '🔴',
-                }[c.status];
-                return `${statusIcon} **${c.name}**\n   Peer: ${c.peerId.slice(0, 16)}...\n   信誉: ${c.reputation} | 状态: ${c.status}`;
-              }).join('\n\n') || '暂无联系人'
-          };
-        }
-        
-        case 'get': {
-          let contact;
-          if (params.contact_id) {
-            contact = cm.getContact(params.contact_id);
-          } else if (params.peer_id) {
-            contact = cm.getContactByPeerId(params.peer_id);
-          } else {
-            return { content: '❌ 需要提供 contact_id 或 peer_id' };
-          }
-          
-          if (!contact) {
-            return { content: '❌ 联系人不存在' };
-          }
-          
-          return {
-            content: `👤 **${contact.name}**\n` +
-              `   ID: ${contact.id}\n` +
-              `   Peer ID: ${contact.peerId}\n` +
-              `   状态: ${contact.status}\n` +
-              `   信誉: ${contact.reputation}\n` +
-              `   分组: ${contact.groups.join(', ') || '无'}\n` +
-              `   标签: ${contact.tags.join(', ') || '无'}\n` +
-              `   最后通信: ${contact.lastCommunicationTime ? new Date(contact.lastCommunicationTime).toLocaleString() : '从未'}\n` +
-              (contact.notes ? `   备注: ${contact.notes}` : '')
-          };
-        }
-        
-        case 'add': {
-          if (!params.peer_id || !params.name) {
-            return { content: '❌ 需要提供 peer_id 和 name' };
-          }
-          
-          const contact = cm.addContact({
-            name: params.name,
-            peerId: params.peer_id,
-            groups: params.groups,
-            tags: params.tags,
-            notes: params.notes,
-          });
-          
-          // P1-2 修复：检查添加是否成功
-          if (!contact) {
-            return { content: '❌ 添加联系人失败（可能保存失败或已存在）' };
-          }
-          
-          return { content: `✅ 已添加联系人: ${contact.name} (${contact.peerId.slice(0, 16)})` };
-        }
-        
-        case 'remove': {
-          let contactId = params.contact_id;
-          if (!contactId && params.peer_id) {
-            const contact = cm.getContactByPeerId(params.peer_id);
-            contactId = contact?.id;
-          }
-          
-          if (!contactId) {
-            return { content: '❌ 需要提供 contact_id 或 peer_id' };
-          }
-          
-          const success = cm.removeContact(contactId);
-          return { content: success ? '✅ 已删除联系人' : '❌ 联系人不存在' };
-        }
-        
-        case 'update': {
-          let contactId = params.contact_id;
-          if (!contactId && params.peer_id) {
-            const contact = cm.getContactByPeerId(params.peer_id);
-            contactId = contact?.id;
-          }
-          
-          if (!contactId) {
-            return { content: '❌ 需要提供 contact_id 或 peer_id' };
-          }
-          
-          const contact = cm.updateContact(contactId, {
-            name: params.name,
-            groups: params.groups,
-            tags: params.tags,
-            notes: params.notes,
-          });
-          
-          return { content: contact ? `✅ 已更新联系人: ${contact.name}` : '❌ 联系人不存在' };
-        }
-        
-        case 'block': {
-          let contactId = params.contact_id;
-          if (!contactId && params.peer_id) {
-            const contact = cm.getContactByPeerId(params.peer_id);
-            contactId = contact?.id;
-          }
-          
-          if (!contactId) {
-            return { content: '❌ 需要提供 contact_id 或 peer_id' };
-          }
-          
-          const success = cm.blockContact(contactId);
-          return { content: success ? '✅ 已拉黑联系人' : '❌ 联系人不存在' };
-        }
-        
-        case 'unblock': {
-          let contactId = params.contact_id;
-          if (!contactId && params.peer_id) {
-            const contact = cm.getContactByPeerId(params.peer_id);
-            contactId = contact?.id;
-          }
-          
-          if (!contactId) {
-            return { content: '❌ 需要提供 contact_id 或 peer_id' };
-          }
-          
-          const success = cm.unblockContact(contactId);
-          return { content: success ? '✅ 已解除拉黑' : '❌ 联系人不存在' };
-        }
-        
-        default:
-          return { content: '❌ 未知操作' };
-      }
-    } catch (err) {
-      return { content: `❌ 操作失败: ${err instanceof Error ? err.message : String(err)}` };
-    }
-  }
-
-  /**
-   * 处理分组管理工具
-   */
-  private async handleContactGroups(
-    params: {
-      action: 'list' | 'create' | 'update' | 'delete';
-      group_id?: string;
-      name?: string;
-      description?: string;
-      color?: string;
-    },
-    _context: SessionContext
-  ): Promise<ToolResult> {
-    try {
-      const cm = this.contactManager;
-      
-      switch (params.action) {
-        case 'list': {
-          const groups = cm.getGroups();
-          return {
-            content: `📁 **分组列表** (${groups.length} 个)\n\n` +
-              groups.map(g => `• **${g.name}** (${g.id})\n   ${g.description || '无描述'}`).join('\n\n')
-          };
-        }
-        
-        case 'create': {
-          if (!params.name) {
-            return { content: '❌ 需要提供分组名称' };
-          }
-          
-          const group = cm.createGroup({
-            name: params.name,
-            description: params.description,
-            color: params.color,
-          });
-          
-          if (!group) {
-            return { content: '❌ 创建分组失败' };
-          }
-          return { content: `✅ 已创建分组: ${group.name}` };
-        }
-        
-        case 'update': {
-          if (!params.group_id) {
-            return { content: '❌ 需要提供 group_id' };
-          }
-          
-          const group = cm.updateGroup(params.group_id, {
-            name: params.name,
-            description: params.description,
-            color: params.color,
-          });
-          
-          return { content: group ? `✅ 已更新分组: ${group.name}` : '❌ 分组不存在' };
-        }
-        
-        case 'delete': {
-          if (!params.group_id) {
-            return { content: '❌ 需要提供 group_id' };
-          }
-          
-          const success = cm.deleteGroup(params.group_id);
-          return { content: success ? '✅ 已删除分组' : '❌ 无法删除（分组不存在或为默认分组）' };
-        }
-        
-        default:
-          return { content: '❌ 未知操作' };
-      }
-    } catch (err) {
-      return { content: `❌ 操作失败: ${err instanceof Error ? err.message : String(err)}` };
-    }
-  }
-
-  /**
-   * 处理好友请求工具
-   */
-  private async handleFriendRequest(
-    params: {
-      peer_id: string;
-      message?: string;
-    },
-    _context: SessionContext
-  ): Promise<ToolResult> {
-    try {
-      if (!this._f2a) {
-        return { content: '❌ F2A 实例未初始化' };
-      }
-      
-      if (!this._contactManager) {
-        // 确保联系人管理器已初始化
-        this.contactManager;
-      }
-      
-      if (!this._handshakeProtocol) {
-        // 初始化握手协议
-        this.handshakeProtocol;
-      }
-      
-      if (!this._handshakeProtocol) {
-        return { content: '❌ 握手协议未初始化' };
-      }
-      
-      // 自动匹配截断的 peer ID
-      let targetPeerId = params.peer_id;
-      if (params.peer_id.length < 50) {
-        // 可能是截断的 peer ID，尝试从已连接 peers 中查找
-        const peers = this._f2a.getConnectedPeers();
-        const matched = peers.find(p => p.peerId.startsWith(params.peer_id));
-        if (matched) {
-          targetPeerId = matched.peerId;
-        }
-      }
-      
-      const requestId = await this._handshakeProtocol.sendFriendRequest(
-        targetPeerId,
-        params.message
-      );
-      
-      if (requestId) {
-        return { content: `✅ 好友请求已发送\n请求 ID: ${requestId}\n等待对方响应...` };
-      } else {
-        return { content: '❌ 发送好友请求失败' };
-      }
-    } catch (err) {
-      return { content: `❌ 发送失败: ${err instanceof Error ? err.message : String(err)}` };
-    }
-  }
-
-  /**
-   * 处理待处理请求工具
-   */
-  private async handlePendingRequests(
-    params: {
-      action: 'list' | 'accept' | 'reject';
-      request_id?: string;
-      reason?: string;
-    },
-    _context: SessionContext
-  ): Promise<ToolResult> {
-    try {
-      const cm = this.contactManager;
-      
-      switch (params.action) {
-        case 'list': {
-          const pending = cm.getPendingHandshakes();
-          
-          if (pending.length === 0) {
-            return { content: '📭 暂无待处理的好友请求' };
-          }
-          
-          return {
-            content: `📬 **待处理的好友请求** (${pending.length} 个)\n\n` +
-              pending.map(p => 
-                `• **${p.fromName}**\n   Peer: ${p.from.slice(0, 16)}...\n   请求 ID: ${p.requestId}\n   收到: ${new Date(p.receivedAt).toLocaleString()}` +
-                (p.message ? `\n   消息: ${p.message}` : '')
-              ).join('\n\n')
-          };
-        }
-        
-        case 'accept': {
-          if (!params.request_id) {
-            return { content: '❌ 需要提供 request_id' };
-          }
-          
-          if (!this._handshakeProtocol) {
-            return { content: '❌ 握手协议未初始化' };
-          }
-          
-          const success = await this._handshakeProtocol.acceptRequest(params.request_id);
-          return { content: success ? '✅ 已接受好友请求，双方已成为好友' : '❌ 接受失败' };
-        }
-        
-        case 'reject': {
-          if (!params.request_id) {
-            return { content: '❌ 需要提供 request_id' };
-          }
-          
-          if (!this._handshakeProtocol) {
-            return { content: '❌ 握手协议未初始化' };
-          }
-          
-          const success = await this._handshakeProtocol.rejectRequest(params.request_id, params.reason);
-          return { content: success ? '✅ 已拒绝好友请求' : '❌ 拒绝失败' };
-        }
-        
-        default:
-          return { content: '❌ 未知操作' };
-      }
-    } catch (err) {
-      return { content: `❌ 操作失败: ${err instanceof Error ? err.message : String(err)}` };
-    }
-  }
-
-  /**
-   * 处理导出通讯录工具
-   */
-  private async handleContactsExport(
-    _params: Record<string, never>,
-    _context: SessionContext
-  ): Promise<ToolResult> {
-    try {
-      const cm = this.contactManager;
-      const data = cm.exportContacts(this._f2a?.peerId);
-      
-      return {
-        content: `📤 **通讯录导出成功**\n\n` +
-          `联系人: ${data.contacts.length} 个\n` +
-          `分组: ${data.groups.length} 个\n` +
-          `导出时间: ${new Date(data.exportedAt).toLocaleString()}\n\n` +
-          '```json\n' + JSON.stringify(data, null, 2) + '\n```',
-        data,
-      };
-    } catch (err) {
-      return { content: `❌ 导出失败: ${err instanceof Error ? err.message : String(err)}` };
-    }
-  }
-
-  /**
-   * 处理导入通讯录工具
-   */
-  private async handleContactsImport(
-    params: {
-      data: Record<string, unknown>;
-      merge?: boolean;
-    },
-    _context: SessionContext
-  ): Promise<ToolResult> {
-    try {
-      const cm = this.contactManager;
-      const result = cm.importContacts(params.data as any, params.merge ?? true);
-      
-      if (result.success) {
-        return {
-          content: `📥 **通讯录导入完成**\n\n` +
-            `✅ 导入联系人: ${result.importedContacts} 个\n` +
-            `✅ 导入分组: ${result.importedGroups} 个\n` +
-            `⏭️ 跳过联系人: ${result.skippedContacts} 个` +
-            (result.errors.length ? `\n\n⚠️ 错误:\n${result.errors.join('\n')}` : '')
-        };
-      } else {
-        return {
-          content: `❌ 导入失败\n\n错误:\n${result.errors.join('\n')}`
-        };
-      }
-    } catch (err) {
-      return { content: `❌ 导入失败: ${err instanceof Error ? err.message : String(err)}` };
-    }
-  }
-
-  /**
-   * 关闭插件，清理资源
-   * 只清理已初始化的资源
    */
   async shutdown(): Promise<void> {
     this._logger?.info('[F2A] 正在关闭...');

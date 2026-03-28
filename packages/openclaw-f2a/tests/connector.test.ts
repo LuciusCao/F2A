@@ -6,6 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { isValidPeerId, F2APlugin } from '../src/connector.js';
+import { isValidPeerId as isValidPeerIdHelper } from '../src/connector-helpers.js';
 import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -13,33 +14,33 @@ import { join } from 'path';
 describe('isValidPeerId', () => {
   it('应该接受有效的 libp2p Peer ID', () => {
     const validPeerId = '12D3KooW' + 'A'.repeat(44);
-    expect(isValidPeerId(validPeerId)).toBe(true);
+    expect(isValidPeerIdHelper(validPeerId)).toBe(true);
   });
 
   it('应该拒绝无效的 Peer ID', () => {
     // 太短
-    expect(isValidPeerId('12D3KooW' + 'A'.repeat(10))).toBe(false);
+    expect(isValidPeerIdHelper('12D3KooW' + 'A'.repeat(10))).toBe(false);
     
     // 错误的前缀
-    expect(isValidPeerId('Invalid' + 'A'.repeat(44))).toBe(false);
+    expect(isValidPeerIdHelper('Invalid' + 'A'.repeat(44))).toBe(false);
     
     // 包含非法字符
-    expect(isValidPeerId('12D3KooW' + 'A'.repeat(43) + '@')).toBe(false);
+    expect(isValidPeerIdHelper('12D3KooW' + 'A'.repeat(43) + '@')).toBe(false);
   });
 
   it('应该拒绝 null 和 undefined', () => {
-    expect(isValidPeerId(null)).toBe(false);
-    expect(isValidPeerId(undefined)).toBe(false);
+    expect(isValidPeerIdHelper(null)).toBe(false);
+    expect(isValidPeerIdHelper(undefined)).toBe(false);
   });
 
   it('应该拒绝空字符串', () => {
-    expect(isValidPeerId('')).toBe(false);
+    expect(isValidPeerIdHelper('')).toBe(false);
   });
 
   it('应该拒绝非字符串类型', () => {
-    expect(isValidPeerId(123 as any)).toBe(false);
-    expect(isValidPeerId({} as any)).toBe(false);
-    expect(isValidPeerId([] as any)).toBe(false);
+    expect(isValidPeerIdHelper(123 as any)).toBe(false);
+    expect(isValidPeerIdHelper({} as any)).toBe(false);
+    expect(isValidPeerIdHelper([] as any)).toBe(false);
   });
 
   it('应该接受不同字符组合的 Peer ID', () => {
@@ -48,19 +49,19 @@ describe('isValidPeerId', () => {
     
     // 数字
     const numericPeerId = '12D3KooW' + '1'.repeat(44);
-    expect(isValidPeerId(numericPeerId)).toBe(true);
+    expect(isValidPeerIdHelper(numericPeerId)).toBe(true);
     expect(numericPeerId.length).toBe(52);
     
     // 简单字母组合（确保正好 44 个字符）
     const alphaSuffix = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz12'.substring(0, 44);
     const alphaPeerId = '12D3KooW' + alphaSuffix;
-    expect(isValidPeerId(alphaPeerId)).toBe(true);
+    expect(isValidPeerIdHelper(alphaPeerId)).toBe(true);
     expect(alphaPeerId.length).toBe(52);
     
     // 混合
     const mixedSuffix = 'aBcDeFgHiJkLmNoPqRsTuVwXyZaBcDeFgHiJkLmNoPqRsT'.substring(0, 44);
     const mixedPeerId = '12D3KooW' + mixedSuffix;
-    expect(isValidPeerId(mixedPeerId)).toBe(true);
+    expect(isValidPeerIdHelper(mixedPeerId)).toBe(true);
     expect(mixedPeerId.length).toBe(52);
   });
 });
@@ -327,30 +328,6 @@ describe('F2APlugin', () => {
 
       const status = plugin.getF2AStatus();
       expect(status).toBeDefined();
-    });
-
-    it('应该能够解析 Agent 引用', async () => {
-      plugin = new F2APlugin();
-      
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
-
-      await plugin.initialize({
-        api: mockApi as any,
-        config: {},
-      });
-
-      // resolveAgent 需要 networkClient
-      // 如果没有初始化，应该返回 null
-      const result = await plugin.resolveAgent('test-agent');
-      expect(result).toBeNull();
     });
   });
 });

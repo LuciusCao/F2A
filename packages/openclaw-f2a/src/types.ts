@@ -1,0 +1,494 @@
+/**
+ * F2A OpenClaw Connector - Core Types
+ * 
+ * 统一类型定义入口文件
+ * - 基础类型定义在此文件
+ * - Result 类型从 src/types/result.ts 重新导出（统一错误处理模式）
+ */
+
+// ============================================================================
+// 统一 Result 类型（从核心库 re-export）
+// ============================================================================
+
+// 导入 SecurityConfig 供本地使用
+import type { SecurityConfig } from '@f2a/network';
+
+// 重新导出核心 Result 类型，确保整个项目使用统一的错误处理模式
+export type { Result, F2AError, ErrorCode, SecurityConfig } from '@f2a/network';
+export { success, failure, failureFromError, createError } from '@f2a/network';
+
+// ============================================================================
+// F2A 接口类型（P2-4 修复：从 handshake-protocol.ts 移入）
+// ============================================================================
+
+/**
+ * F2A 消息事件接口
+ * 定义 F2A 实例接收到的消息格式
+ */
+export interface F2AMessageEvent {
+  /** 发送方 Peer ID */
+  from: string;
+  /** 消息内容 */
+  content: string;
+  /** 消息元数据 */
+  metadata?: Record<string, unknown>;
+  /** 消息 ID */
+  messageId: string;
+}
+
+/**
+ * F2A 公共接口
+ * 定义 F2A 实例对外暴露的方法和属性
+ */
+export interface F2APublicInterface {
+  /** 本节点的 Peer ID */
+  peerId: string;
+  /** Agent 信息 */
+  agentInfo?: {
+    displayName?: string;
+    multiaddrs?: string[];
+  };
+  /** 获取本节点的能力列表 */
+  getCapabilities(): Array<{ name: string; description?: string; tools?: string[] }>;
+  /** 监听事件 */
+  on(event: 'message', handler: (msg: F2AMessageEvent) => void): void;
+  on(event: 'peer:connected' | 'peer:disconnected', handler: (event: { peerId: string }) => void): void;
+  /** 发送消息 */
+  sendMessage(to: string, content: string, metadata?: Record<string, unknown>): Promise<{ success: boolean; error?: { code: string; message: string } | string }>;
+}
+
+// ============================================================================
+// OpenClaw 配置类型（扩展以支持插件配置访问）
+// ============================================================================
+
+/**
+ * OpenClaw 完整配置结构
+ * 
+ * 注意：此接口定义了 OpenClaw 配置的已知结构。
+ * 实际配置可能包含更多字段，插件应使用可选链访问。
+ */
+export interface OpenClawConfig extends Record<string, unknown> {
+  /** 插件配置容器 */
+  plugins?: {
+    /** 插件条目映射 */
+    entries?: Record<string, { config?: Record<string, unknown> }>;
+  };
+  /** Agent 配置 */
+  agents?: {
+    /** 默认 Agent 配置 */
+    defaults?: {
+      /** 工作空间路径 */
+      workspace?: string;
+    };
+  };
+}
+
+// ============================================================================
+// OpenClaw Plugin SDK Types
+// ============================================================================
+export interface OpenClawPlugin {
+  name: string;
+  version: string;
+  initialize(config: Record<string, unknown>): Promise<void>;
+  getTools(): Tool[];
+  shutdown?(): Promise<void>;
+  onEvent?(event: string, payload: unknown): Promise<void>;
+}
+
+// OpenClaw Plugin API (外部插件可用接口)
+export interface OpenClawPluginApi {
+  id: string;
+  name: string;
+  version?: string;
+  description?: string;
+  source: string;
+  config: OpenClawConfig;
+  pluginConfig?: Record<string, unknown>;
+  runtime: {
+    version: string;
+    config: {
+      loadConfig: (path?: string) => Promise<Record<string, unknown>>;
+      writeConfigFile: (path: string, config: unknown) => Promise<void>;
+    };
+    system: {
+      enqueueSystemEvent: (event: string, payload?: unknown) => void;
+      requestHeartbeatNow: () => void;
+      runCommandWithTimeout: (command: string, timeoutMs: number) => Promise<{ stdout: string; stderr: string }>;
+    };
+    media: {
+      loadWebMedia: (url: string) => Promise<Buffer>;
+      detectMime: (data: Buffer) => string;
+    };
+    tts: {
+      textToSpeechTelephony: (options: { text: string; cfg: unknown }) => Promise<{ audio: Buffer; sampleRate: number }>;
+    };
+    stt: {
+      transcribeAudioFile: (options: { filePath: string; cfg: unknown; mime?: string }) => Promise<{ text?: string }>;
+    };
+    logging: {
+      shouldLogVerbose: () => boolean;
+      getChildLogger: (bindings?: Record<string, unknown>) => unknown;
+    };
+    /** Subagent API for spawning child agents */
+    subagent?: {
+      run: (params: { 
+        sessionKey: string; 
+        message: string; 
+        provider?: string; 
+        model?: string; 
+        deliver?: boolean;
+        /** P1-3: 幂等性键，防止重复创建会话 */
+        idempotencyKey?: string;
+      }) => Promise<{ runId: string }>;
+      waitForRun: (params: { runId: string; timeoutMs?: number }) => Promise<{ status: 'ok' | 'error' | 'timeout'; error?: string }>;
+      getSessionMessages: (params: { sessionKey: string; limit?: number }) => Promise<{ messages: unknown[] }>;
+    };
+  };
+  /** Channel API - 参考 feishu 插件实现 */
+  channel?: {
+    routing: {
+      resolveAgentRoute: (params: { 
+        sessionKey?: string; 
+        agentId?: string;
+        peerId?: string;
+        lane?: string;
+      }) => { sessionKey: string; agentId?: string };
+      buildAgentSessionKey: (params: { peerId: string; lane?: string }) => string;
+    };
+    reply: {
+      dispatchReplyFromConfig: (params: {
+        ctx: unknown;
+        cfg: unknown;
+        dispatcher?: unknown;
+        replyOptions?: unknown;
+      }) => Promise<{ queuedFinal: boolean; counts: { final: number } }>;
+      formatAgentEnvelope: (params: {
+        body: string;
+        options?: unknown;
+      }) => unknown;
+      finalizeInboundContext: (params: {
+        SessionKey: string;
+        AgentId?: string;
+        PeerId?: string;
+        ReplyTo?: string;
+        ChannelType?: string;
+        InboundId?: string;
+        Sender?: string;
+        SenderId?: string;
+        SenderName?: string;
+        ExtraContext?: Record<string, unknown>;
+      }) => unknown;
+      resolveEnvelopeFormatOptions: (cfg: unknown) => unknown;
+    };
+  };
+  logger: {
+    debug?: (message: string) => void;
+    info: (message: string) => void;
+    warn: (message: string) => void;
+    error: (message: string) => void;
+  };
+  registerTool?: (tool: unknown, opts?: { optional?: boolean }) => void;
+  registerService?: (service: { id: string; start: () => void | Promise<void>; stop?: () => void | Promise<void> }) => void;
+}
+
+export interface Tool {
+  name: string;
+  description: string;
+  parameters: Record<string, ParameterSchema>;
+  handler: (params: any, context: SessionContext) => Promise<ToolResult>;
+}
+
+export interface ParameterSchema {
+  type: string;
+  description: string;
+  required?: boolean;
+  enum?: string[];
+}
+
+export interface SessionContext {
+  sessionId: string;
+  workspace: string;
+  toJSON(): Record<string, unknown>;
+}
+
+export interface ToolResult {
+  content: string;
+  data?: unknown;
+}
+
+// F2A Network Types
+export interface F2ANodeConfig {
+  nodePath: string;
+  controlPort: number;
+  controlToken: string;
+  p2pPort: number;
+  enableMDNS: boolean;
+  bootstrapPeers: string[];
+  dataDir?: string;
+  /** 请求超时（毫秒），默认 30000 */
+  timeoutMs?: number;
+  /** 最大重试次数，默认 3 */
+  maxRetries?: number;
+  /** 重试基础延迟（毫秒），默认 1000 */
+  retryDelayMs?: number;
+}
+
+// F2A Plugin Configuration
+export interface F2APluginConfig {
+  autoStart?: boolean;
+  webhookPort?: number;
+  webhookToken?: string;
+  agentName?: string;
+  capabilities?: string[];
+  f2aPath?: string;
+  controlPort?: number;
+  controlToken?: string;
+  p2pPort?: number;
+  enableMDNS?: boolean;
+  bootstrapPeers?: string[];
+  dataDir?: string;
+  maxQueuedTasks?: number;
+  /** 兜底轮询间隔（毫秒），默认 60 秒 */
+  pollInterval?: number;
+  /** P1 修复：processing 任务超时时间（毫秒），超过此时间将被重置为 pending，默认 5 分钟 */
+  processingTimeoutMs?: number;
+  /** Webhook 推送配置 */
+  webhookPush?: WebhookPushConfig;
+  reputation?: ReputationConfig;
+  security?: SecurityConfig;
+  /** 握手协议配置 */
+  handshake?: HandshakeConfig;
+}
+
+/**
+ * 握手协议配置
+ * P2-3 修复：将硬编码值移到配置项
+ */
+export interface HandshakeConfig {
+  /** 好友请求超时时间（毫秒），默认 5 分钟 */
+  timeoutMs?: number;
+  /** 发送重试次数，默认 3 */
+  maxRetries?: number;
+  /** 重试延迟（毫秒），默认 1000 */
+  retryDelayMs?: number;
+}
+
+/** 默认握手协议配置 */
+export const DEFAULT_HANDSHAKE_CONFIG: Required<HandshakeConfig> = {
+  timeoutMs: 5 * 60 * 1000,  // 5 分钟
+  maxRetries: 3,
+  retryDelayMs: 1000,
+};
+
+export interface ReputationConfig {
+  // 已废弃：reputation 核心参数由程序内部控制
+  // 不再允许用户配置 enabled、initialScore、minScoreForService、decayRate
+  // 这些是核心经济机制参数，必须统一管理
+}
+
+/**
+ * 程序内部控制的信誉配置
+ * 用户不可配置，防止作弊
+ */
+export const INTERNAL_REPUTATION_CONFIG = {
+  enabled: true,                    // 强制启用
+  initialScore: 30,                 // 新用户低分起步
+  minScoreForService: 50,           // 低于此分无法接任务
+  decayRate: 0.01,                  // 每小时衰减率
+  reviewReward: 3,                  // 评审奖励
+  reviewPenalty: 5,                 // 评审惩罚
+  minScoreForReview: 40,            // 评审最低信誉
+} as const;
+
+// ============================================================================
+// F2A 核心类型（从 @f2a/network 重新导出，避免重复定义）
+// ============================================================================
+export type { AgentInfo, AgentCapability, PeerInfo } from '@f2a/network';
+
+// Task Types
+export interface TaskRequest {
+  taskId: string;
+  taskType: string;
+  description: string;
+  parameters?: Record<string, unknown>;
+  from: string;
+  timestamp: number;
+  timeout: number;
+}
+
+export interface TaskResponse {
+  taskId: string;
+  status: 'success' | 'error' | 'rejected' | 'timeout';
+  result?: unknown;
+  error?: string;
+  latency?: number;
+}
+
+export interface DelegateOptions {
+  peerId: string;
+  taskType: string;
+  description: string;
+  parameters?: Record<string, unknown>;
+  timeout?: number;
+}
+
+// Webhook Types
+export interface WebhookEvent {
+  type: 'discover' | 'delegate' | 'status' | 'reputation_update';
+  payload: unknown;
+  timestamp: number;
+  signature?: string;
+}
+
+export interface DiscoverWebhookPayload {
+  query: {
+    capability?: string;
+    minReputation?: number;
+  };
+  requester: string;
+}
+
+export interface DelegateWebhookPayload extends TaskRequest {
+  // TaskRequest 本身已包含所有字段
+}
+
+// Result 类型已从核心库 re-export，见文件顶部
+
+// Reputation Types
+export interface ReputationEntry {
+  peerId: string;
+  score: number;
+  successfulTasks: number;
+  failedTasks: number;
+  totalTasks: number;
+  avgResponseTime: number;
+  lastInteraction: number;
+  history: ReputationEvent[];
+}
+
+export interface ReputationEvent {
+  type: 'task_success' | 'task_failure' | 'task_rejected' | 'timeout' | 'malicious' | 'review_reward' | 'review_penalty';
+  taskId?: string;
+  delta: number;
+  timestamp: number;
+  reason?: string;
+}
+
+// Claim Types - 认领模式
+export interface TaskAnnouncement {
+  announcementId: string;
+  taskType: string;
+  description: string;
+  requiredCapabilities?: string[];
+  estimatedComplexity?: number;
+  reward?: number;
+  timeout: number;
+  from: string;
+  timestamp: number;
+  status: 'open' | 'claimed' | 'delegated' | 'expired';
+  claims?: TaskClaim[];
+}
+
+export interface TaskClaim {
+  claimId: string;
+  announcementId: string;
+  claimant: string;
+  claimantName?: string;
+  estimatedTime?: number;
+  confidence?: number;
+  timestamp: number;
+  status: 'pending' | 'accepted' | 'rejected';
+}
+
+/**
+ * Webhook 推送配置
+ * 
+ * 用于配置 F2A 向 OpenClaw 推送事件通知的参数。
+ * 当任务状态变化、收到认领请求等事件发生时，会通过此配置推送通知。
+ * 
+ * @example
+ * ```typescript
+ * const config: WebhookPushConfig = {
+ *   url: 'https://openclaw.example.com/webhook/f2a',
+ *   token: 'secret-token-xxx',
+ *   timeout: 5000,
+ *   enabled: true
+ * };
+ * ```
+ */
+export interface WebhookPushConfig {
+  /** OpenClaw webhook URL，用于接收推送通知 */
+  url: string;
+  /** Webhook 认证 token，用于验证推送请求的合法性 */
+  token: string;
+  /** 推送超时时间（毫秒），默认 30000ms */
+  timeout?: number;
+  /** 是否启用 webhook 推送，默认 false */
+  enabled?: boolean;
+}
+
+/**
+ * 认领 Webhook 载荷
+ * 
+ * 当有 Agent 认领你发布的任务广播时，会通过 webhook 推送此载荷。
+ * 包含认领者的信息和认领详情，可用于自动或手动审核认领请求。
+ */
+export interface ClaimWebhookPayload {
+  /** 任务广播 ID，对应 TaskAnnouncement.announcementId */
+  announcementId: string;
+  /** 认领 ID，唯一标识此次认领 */
+  claimId: string;
+  /** 认领者的 F2A Peer ID */
+  claimant: string;
+  /** 认领者的显示名称（可选） */
+  claimantName?: string;
+  /** 预估完成时间（毫秒，可选） */
+  estimatedTime?: number;
+  /** 完成任务的信心程度（0-1，可选） */
+  confidence?: number;
+}
+
+// ============================================================================
+// Agent Identity Types
+// ============================================================================
+
+/**
+ * Agent 身份信息
+ * 
+ * Agent 是 F2A 网络中的逻辑实体，独立于物理节点 (Node)。
+ * AgentID 用于标识 Agent，PeerID 用于标识物理节点。
+ */
+export interface AgentIdentity {
+  /** Agent 唯一标识符 */
+  agentId: string;
+  /** Agent 显示名称 */
+  name: string;
+  /** 创建时间戳 */
+  createdAt: number;
+  /** 可选：关联的 PeerID */
+  peerId?: string;
+  /** 可选：公钥（用于验证签名） */
+  publicKey?: string;
+  /** 可选：扩展元数据 */
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Agent 配置
+ */
+export interface AgentConfig {
+  /** Agent ID（可选，不提供则自动生成） */
+  id?: string;
+  /** Agent 名称 */
+  name?: string;
+  /** 数据目录 */
+  dataDir?: string;
+  /** 是否启用 mDNS 发现 */
+  enableMDNS?: boolean;
+  /** P2P 端口 */
+  p2pPort?: number;
+  /** Bootstrap 节点列表 */
+  bootstrapPeers?: string[];
+  /** 可选：扩展配置 */
+  [key: string]: unknown;
+}

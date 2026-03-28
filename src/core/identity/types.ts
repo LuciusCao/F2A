@@ -23,7 +23,13 @@ export const IDENTITY_FILE = 'identity.json';
  * Persisted identity data structure
  */
 export interface PersistedIdentity {
-  /** libp2p PeerId (Ed25519) protobuf encoded (base64) */
+  /** 
+   * Ed25519 private key (protobuf encoded, base64) - SENSITIVE
+   * 
+   * Note: Despite the field name "peerId", this field stores the PRIVATE KEY,
+   * not the public PeerId. The naming is preserved for backward compatibility
+   * with existing identity files.
+   */
   peerId: string;
   /** E2EE private key (X25519, base64) */
   e2eePrivateKey: string;
@@ -74,4 +80,182 @@ export interface EncryptedIdentity {
   iv: string;
   authTag: string;
   ciphertext: string;
+}
+
+// ============================================================================
+// Node Identity - 持久化身份，代表物理设备
+// ============================================================================
+
+/** Node Identity 文件名 */
+export const NODE_IDENTITY_FILE = 'node-identity.json';
+
+/**
+ * Node Identity 配置选项
+ */
+export interface NodeIdentityOptions {
+  /** 数据目录（默认 ~/.f2a/） */
+  dataDir?: string;
+  /** 加密密码（可选，用于加密存储） */
+  password?: string;
+}
+
+/**
+ * 持久化的 Node Identity 数据结构
+ */
+export interface PersistedNodeIdentity {
+  /** Node ID (PeerId 字符串) */
+  nodeId: string;
+  /** 
+   * Ed25519 private key (protobuf encoded, base64) - SENSITIVE
+   * 
+   * Note: Despite the field name "peerId", this field stores the PRIVATE KEY,
+   * not the public PeerId. The naming is preserved for backward compatibility
+   * with existing identity files.
+   */
+  peerId: string;
+  /** E2EE 私钥 (X25519, base64) */
+  e2eePrivateKey: string;
+  /** E2EE 公钥 (X25519, base64) */
+  e2eePublicKey: string;
+  /** 创建时间 (ISO string) */
+  createdAt: string;
+  /** 最后使用时间 (ISO string) */
+  lastUsedAt: string;
+}
+
+/**
+ * 导出的 Node Identity 信息
+ * 
+ * WARNING: 包含敏感的私钥材料。
+ * 请谨慎处理，避免日志记录或暴露此数据。
+ */
+export interface ExportedNodeIdentity {
+  /** Node ID (PeerId 字符串) */
+  nodeId: string;
+  /** libp2p PeerId */
+  peerId: string;
+  /** libp2p 私钥 (protobuf encoded, base64) - 敏感 */
+  privateKey: string;
+  /** E2EE 密钥对 */
+  e2eeKeyPair: {
+    publicKey: string;
+    privateKey: string; // 敏感
+  };
+  /** 创建时间 */
+  createdAt: Date;
+}
+
+// ============================================================================
+// Agent Identity - 由 Node 委派的身份，可迁移
+// ============================================================================
+
+/** Agent Identity 文件名 */
+export const AGENT_IDENTITY_FILE = 'agent-identity.json';
+
+/**
+ * Agent Identity 配置选项
+ */
+export interface AgentIdentityOptions {
+  /** Agent ID (UUID)，可选，不提供则自动生成 */
+  id?: string;
+  /** Agent 名称 */
+  name: string;
+  /** 能力标签列表 */
+  capabilities?: string[];
+  /** 过期时间（可选） */
+  expiresAt?: Date;
+}
+
+/**
+ * Agent Identity 数据结构
+ * 这是 Agent 的完整身份信息，包含签名
+ */
+export interface AgentIdentity {
+  /** Agent ID (UUID) */
+  id: string;
+  /** Agent 名称 */
+  name: string;
+  /** 能力标签列表 */
+  capabilities: string[];
+  /** 所属 Node ID */
+  nodeId: string;
+  /** Agent Ed25519 公钥 (base64) */
+  publicKey: string;
+  /** Node 对 Agent 的签名 (base64) */
+  signature: string;
+  /** 创建时间 (ISO string) */
+  createdAt: string;
+  /** 过期时间 (ISO string, 可选) */
+  expiresAt?: string;
+}
+
+/**
+ * 持久化的 Agent Identity（包含私钥）
+ * 用于本地存储，包含敏感的私钥材料
+ */
+export interface PersistedAgentIdentity extends AgentIdentity {
+  /** Agent Ed25519 私钥 (base64) - 敏感 */
+  privateKey: string;
+}
+
+/**
+ * 导出的 Agent Identity 信息
+ * 
+ * WARNING: 包含敏感的私钥材料。
+ */
+export interface ExportedAgentIdentity extends AgentIdentity {
+  /** Agent Ed25519 私钥 (base64) - 敏感 */
+  privateKey: string;
+}
+
+/**
+ * Agent 签名载荷（用于签名验证）
+ */
+export interface AgentSignaturePayload {
+  /** Agent ID */
+  id: string;
+  /** Agent 名称 */
+  name: string;
+  /** 能力标签 */
+  capabilities: string[];
+  /** Node ID */
+  nodeId: string;
+  /** Agent 公钥 */
+  publicKey: string;
+  /** 创建时间 */
+  createdAt: string;
+  /** 过期时间 */
+  expiresAt?: string;
+}
+
+// ============================================================================
+// Identity Delegation - 身份委派
+// ============================================================================
+
+/**
+ * Identity Delegator 配置选项
+ */
+export interface IdentityDelegatorOptions {
+  /** 数据目录 */
+  dataDir?: string;
+}
+
+/**
+ * 委派结果
+ */
+export interface DelegationResult {
+  /** Agent Identity（不包含私钥） */
+  agentIdentity: AgentIdentity;
+  /** Agent 私钥 (base64) - 仅创建时返回一次 */
+  agentPrivateKey: string;
+}
+
+/**
+ * Agent 迁移结果
+ */
+export interface MigrationResult {
+  /** 新的 Agent Identity */
+  agentIdentity: AgentIdentity;
+  /** 新的签名 */
+  signature: string;
 }

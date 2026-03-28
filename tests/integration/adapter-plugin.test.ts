@@ -8,8 +8,8 @@ import { spawn, ChildProcess } from 'child_process';
 import { existsSync, rmSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { F2AOpenClawAdapter } from '../../packages/openclaw-adapter/src/connector.js';
-import { F2ANodeManager } from '../../packages/openclaw-adapter/src/node-manager.js';
+import { F2AOpenClawAdapter } from '../../packages/openclaw-f2a/src/connector.js';
+import { F2ANodeManager } from '../../packages/openclaw-f2a/src/node-manager.js';
 
 describe('F2A OpenClaw Adapter Plugin', () => {
   const testDir = join(tmpdir(), `f2a-adapter-test-${Date.now()}`);
@@ -53,7 +53,7 @@ describe('F2A OpenClaw Adapter Plugin', () => {
       await adapter.initialize(config);
       
       const tools = adapter.getTools();
-      expect(tools).toHaveLength(18);
+      expect(tools).toHaveLength(24);
       expect(tools.map(t => t.name)).toContain('f2a_status');
       expect(tools.map(t => t.name)).toContain('f2a_discover');
       expect(tools.map(t => t.name)).toContain('f2a_delegate');
@@ -157,7 +157,7 @@ describe('F2A OpenClaw Adapter Plugin', () => {
       
       // 应该仍然能获取工具（降级模式）
       const tools = adapter.getTools();
-      expect(tools).toHaveLength(18);
+      expect(tools).toHaveLength(24);
     });
   });
 

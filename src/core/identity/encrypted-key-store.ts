@@ -8,16 +8,46 @@ import type { PersistedIdentity, EncryptedIdentity } from './types.js';
 import { AES_KEY_SIZE, AES_IV_SIZE, SCRYPT_N, SCRYPT_R, SCRYPT_P, SALT_SIZE } from './types.js';
 import { isValidBase64 } from '../../utils/crypto-utils.js';
 
+/** Minimum password length for encryption */
+export const MIN_PASSWORD_LENGTH = 8;
+
+/**
+ * Validate password strength
+ * @throws Error if password is too weak
+ */
+export function validatePasswordStrength(password: string): void {
+  if (typeof password !== 'string') {
+    throw new Error('Password must be a string');
+  }
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    throw new Error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters long`);
+  }
+  // Check for at least one uppercase, one lowercase, one digit
+  const hasUppercase = /[A-Z]/.test(password);
+  const hasLowercase = /[a-z]/.test(password);
+  const hasDigit = /[0-9]/.test(password);
+  
+  if (!hasUppercase || !hasLowercase || !hasDigit) {
+    throw new Error('Password must contain at least one uppercase letter, one lowercase letter, and one digit');
+  }
+}
+
 /**
  * Encrypt identity data
  * 
  * Security note: Uses scrypt with N=16384 for key derivation,
  * which provides strong resistance against brute-force attacks.
+ * 
+ * @param identity The identity data to encrypt
+ * @param password The encryption password (must be at least 8 characters with mixed case and digit)
+ * @throws Error if password is too weak
  */
 export function encryptIdentity(
   identity: PersistedIdentity, 
   password: string
 ): EncryptedIdentity {
+  // P1 修复：密码强度验证
+  validatePasswordStrength(password);
   // Generate random salt
   const salt = randomBytes(SALT_SIZE);
   // Derive key using scrypt with secure parameters

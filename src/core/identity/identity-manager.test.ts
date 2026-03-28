@@ -7,8 +7,8 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { IdentityManager } from './identity-manager.js';
-import { unmarshalPrivateKey } from '@libp2p/crypto/keys';
-import { createFromPrivKey } from '@libp2p/peer-id-factory';
+import { privateKeyFromProtobuf } from '@libp2p/crypto/keys';
+import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 
 describe('IdentityManager', () => {
   let tempDir: string;
@@ -87,7 +87,7 @@ describe('IdentityManager', () => {
     it('should encrypt identity with password', async () => {
       const manager = new IdentityManager({ 
         dataDir: tempDir, 
-        password: 'secure-password-123' 
+        password: 'Secure-password-123' 
       });
       const result = await manager.loadOrCreate();
 
@@ -105,7 +105,7 @@ describe('IdentityManager', () => {
     });
 
     it('should decrypt identity with correct password', async () => {
-      const password = 'secure-password-123';
+      const password = 'Secure-password-123';
       
       // 创建加密的身份
       const manager1 = new IdentityManager({ dataDir: tempDir, password });
@@ -125,7 +125,7 @@ describe('IdentityManager', () => {
     });
 
     it('should fail to decrypt with wrong password', async () => {
-      const password = 'correct-password';
+      const password = 'Correct-password-123';
       
       // 创建加密的身份
       const manager1 = new IdentityManager({ dataDir: tempDir, password });
@@ -136,7 +136,7 @@ describe('IdentityManager', () => {
       const originalPeerId = result1.data.peerId;
 
       // 使用错误密码尝试解密
-      const manager2 = new IdentityManager({ dataDir: tempDir, password: 'wrong-password' });
+      const manager2 = new IdentityManager({ dataDir: tempDir, password: 'Wrong-password-456' });
       const result2 = await manager2.loadOrCreate();
       
       // P0-2/P1-1: 现在应该返回 IDENTITY_DECRYPT_FAILED 错误，而不是创建新身份
@@ -146,7 +146,7 @@ describe('IdentityManager', () => {
     });
 
     it('should return IDENTITY_PASSWORD_REQUIRED when encrypted file has no password', async () => {
-      const password = 'secure-password';
+      const password = 'Secure-password-123';
       
       // 创建加密的身份
       const manager1 = new IdentityManager({ dataDir: tempDir, password });
@@ -261,10 +261,10 @@ describe('IdentityManager', () => {
       
       // 验证可以反序列化私钥
       const privateKeyBytes = Buffer.from(exported.privateKey, 'base64');
-      const privateKey = await unmarshalPrivateKey(privateKeyBytes);
-      
+      const privateKey = await privateKeyFromProtobuf(privateKeyBytes);
+
       // 验证可以从私钥创建 PeerId
-      const peerId = await createFromPrivKey(privateKey);
+      const peerId = peerIdFromPrivateKey(privateKey);
       expect(peerId.toString()).toBe(exported.peerId);
     });
   });
@@ -289,7 +289,7 @@ describe('IdentityManager', () => {
     it('should encrypt with non-empty password', async () => {
       const manager = new IdentityManager({ 
         dataDir: tempDir, 
-        password: 'non-empty-password' 
+        password: 'Non-empty-password-1' 
       });
       const result = await manager.loadOrCreate();
 
@@ -369,7 +369,7 @@ describe('IdentityManager', () => {
     });
 
     it('should handle concurrent calls with password protection', async () => {
-      const password = 'test-password-123';
+      const password = 'Test-password-123';
       const manager = new IdentityManager({ dataDir: tempDir, password });
       
       // 并发调用
@@ -416,7 +416,7 @@ describe('IdentityManager', () => {
     it('should set correct permissions for encrypted identity file', async () => {
       const manager = new IdentityManager({ 
         dataDir: tempDir, 
-        password: 'secure-password' 
+        password: 'Secure-password-1' 
       });
       await manager.loadOrCreate();
       

@@ -5,8 +5,9 @@
 
 import { request, RequestOptions } from 'http';
 import { existsSync, readFileSync, statSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
+import { fileURLToPath } from 'url';
 import {
   startForeground,
   startBackground,
@@ -17,8 +18,22 @@ import {
 } from './daemon.js';
 import { configureCommand, listConfig, getConfigValue, setConfigValue } from './configure.js';
 import { getConfigPath } from './config.js';
+import { showIdentityStatus, exportIdentity, importIdentity, showIdentityHelp } from './identity.js';
 
 const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
+
+// 获取版本号（从 package.json 读取）
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+function getVersion(): string {
+  try {
+    const packageJsonPath = join(__dirname, '..', '..', 'package.json');
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
+    return packageJson.version || '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
 
 /**
  * 获取控制 Token
@@ -99,6 +114,7 @@ interface Args {
   helpTarget?: string;
   configKey?: string;
   configValue?: string;
+  filePath?: string;  // identity export/import 路径
 }
 
 /**
@@ -114,6 +130,11 @@ function parseArgs(): Args {
 
   const command = args[0];
   
+  // P0-1 修复：检查是否是 -v/--version 标志或 version 命令
+  if (command === '-v' || command === '--version' || command === 'version') {
+    return { command: 'version' };
+  }
+  
   // 检查是否是 help 命令或 -h/--help 标志
   if (command === '-h' || command === '--help') {
     return { command: 'help' };
@@ -123,9 +144,9 @@ function parseArgs(): Args {
     return { command: 'help', helpTarget: args[1] };
   }
 
-  // 解析子命令（daemon 和 config）
+  // 解析子命令（daemon, config, identity）
   let subcommand: string | undefined;
-  if ((command === 'daemon' || command === 'config') && args[1]) {
+  if ((command === 'daemon' || command === 'config' || command === 'identity') && args[1]) {
     // 检查是否是 help 请求
     if (args[1] === '-h' || args[1] === '--help') {
       return { command: 'help', helpTarget: command };
@@ -174,7 +195,18 @@ function parseArgs(): Args {
     }
   }
 
-  return { command, subcommand, idOrIndex, capability, reason, detach, configKey, configValue };
+  // 解析 identity 子命令的文件路径
+  let filePath: string | undefined;
+  if (command === 'identity' && subcommand) {
+    if (subcommand === 'export' && args[2]) {
+      filePath = args[2];
+    }
+    if (subcommand === 'import' && args[2]) {
+      filePath = args[2];
+    }
+  }
+
+  return { command, subcommand, idOrIndex, capability, reason, detach, configKey, configValue, filePath };
 }
 
 /**
@@ -189,6 +221,7 @@ Usage: f2a [command] [options]
 Commands:
   configure            交互式配置向导
   config               配置管理 (get/set/list)
+  identity             身份管理 (status/export/import)
   status               查看节点状态
   peers                查看已连接的 Peers
   discover [options]   发现网络中的 Agents
@@ -196,13 +229,23 @@ Commands:
   confirm [id|index]   确认连接请求
   reject [id|index]    拒绝连接请求
   daemon [subcommand]  启动和管理 daemon 服务
+  version              显示版本信息
   help [command]       显示帮助信息
+
+Options:
+  -v, --version        显示版本信息
+  -h, --help           显示帮助信息
 
 Use "f2a help [command]" for more information about a command.
 
 Configuration:
   配置文件: ~/.f2a/config.json
   运行 f2a configure 进行交互式配置
+
+Identity:
+  节点身份: ~/.f2a/node-identity.json
+  Agent身份: ~/.f2a/agent-identity.json
+  运行 f2a identity status 查看身份状态
 
 Environment Variables:
   F2A_CONTROL_PORT     控制服务器端口 (默认: 9001)
@@ -343,6 +386,10 @@ ${getCommandDescription(command)}
 `);
       break;
 
+    case 'identity':
+      showIdentityHelp();
+      break;
+
     default:
       console.log(`
 Unknown command: ${command}
@@ -380,8 +427,12 @@ function showDeprecatedInit(): void {
 
 /**
  * 敏感字段列表
+ * P2-2 修复：扩展敏感字段列表，包含更多常见敏感字段
  */
-const SENSITIVE_FIELDS = ['token', 'password', 'secret', 'key', 'credential', 'auth'];
+const SENSITIVE_FIELDS = [
+  'token', 'password', 'secret', 'key', 'credential', 'auth',
+  'privateKey', 'secretKey', 'apiKey', 'accessToken', 'refreshToken'
+];
 
 /**
  * 过滤响应中的敏感信息
@@ -417,10 +468,11 @@ function sanitizeResponse(response: Record<string, unknown>): Record<string, unk
  * 发送控制命令到 F2A Daemon
  * @param action - 命令动作
  * @param params - 命令参数（可选）
+ * @param isRetry - 是否为重试请求（P1-2 修复：内部使用）
  * @returns Promise，命令执行完成后 resolve
  * @throws 当网络请求失败时 reject
  */
-async function sendCommand(action: string, params?: Record<string, unknown>): Promise<void> {
+async function sendCommand(action: string, params?: Record<string, unknown>, isRetry: boolean = false): Promise<void> {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify({ action, ...params });
 
@@ -446,16 +498,32 @@ async function sendCommand(action: string, params?: Record<string, unknown>): Pr
             // 过滤敏感信息后输出
             const sanitizedResponse = sanitizeResponse(response);
             console.log(JSON.stringify(sanitizedResponse, null, 2));
+            resolve();
           } else {
             if (res.statusCode === 401) {
+              // P1-2 修复：认证失败时强制刷新 token 并重试一次
+              if (!isRetry) {
+                // 强制重新加载 token
+                _controlToken = undefined;
+                _tokenFileMtime = undefined;
+                
+                // 重试请求
+                sendCommand(action, params, true)
+                  .then(resolve)
+                  .catch(retryErr => {
+                    console.error('❌ Authentication failed after token refresh. Please check your F2A_CONTROL_TOKEN.');
+                    reject(retryErr);
+                  });
+                return;
+              }
               console.error('❌ Authentication failed. Please check your F2A_CONTROL_TOKEN.');
             } else {
               // 错误响应也过滤敏感信息
               const sanitizedError = sanitizeResponse(response);
               console.error('Error:', sanitizedError.error || sanitizedError);
             }
+            resolve();
           }
-          resolve();
         } catch {
           // JSON 解析失败时，尝试过滤敏感信息后输出
           try {
@@ -477,8 +545,14 @@ async function sendCommand(action: string, params?: Record<string, unknown>): Pr
     });
 
     req.on('error', (err) => {
+      // P1-1 修复：提供详细的排查建议
       console.error('Failed to connect to F2A daemon:', err.message);
-      console.log('Make sure the daemon is running (f2a daemon)');
+      console.log('');
+      console.log('Troubleshooting:');
+      console.log('  1. Check if daemon is running: f2a daemon status');
+      console.log('  2. Start daemon: f2a daemon -d');
+      console.log('  3. Check logs: cat ~/.f2a/daemon.log');
+      console.log(`  4. Verify port: lsof -i :${CONTROL_PORT}`);
       reject(err);
     });
 
@@ -505,6 +579,12 @@ async function main(): Promise<void> {
     return;
   }
 
+  // P0-1 修复：处理 version 命令
+  if (args.command === 'version') {
+    console.log(`@f2a/network v${getVersion()}`);
+    return;
+  }
+
   switch (args.command) {
     case 'init':
       showDeprecatedInit();
@@ -517,6 +597,10 @@ async function main(): Promise<void> {
 
     case 'config':
       await handleConfigCommand(args);
+      break;
+
+    case 'identity':
+      await handleIdentityCommand(args);
       break;
 
     case 'status':
@@ -652,6 +736,45 @@ async function handleDaemonCommand(args: Args): Promise<void> {
     default:
       console.error(`[F2A] Unknown daemon subcommand: ${args.subcommand}`);
       console.error('Usage: f2a daemon [stop|restart|status|-d|--detach]');
+      process.exit(1);
+  }
+}
+
+/**
+ * 处理 identity 命令
+ * @param args - 解析后的参数
+ */
+async function handleIdentityCommand(args: Args): Promise<void> {
+  const subcommand = args.subcommand;
+
+  switch (subcommand) {
+    case 'status':
+    case undefined:
+      // f2a identity 或 f2a identity status
+      await showIdentityStatus();
+      break;
+
+    case 'export':
+      await exportIdentity(args.filePath);
+      break;
+
+    case 'import':
+      if (!args.filePath) {
+        console.error('[F2A] Error: File path is required for import');
+        console.error('Usage: f2a identity import <path>');
+        process.exit(1);
+      }
+      await importIdentity(args.filePath);
+      break;
+
+    case '-h':
+    case '--help':
+      showIdentityHelp();
+      break;
+
+    default:
+      console.error(`[F2A] Unknown identity subcommand: ${subcommand}`);
+      console.error('Usage: f2a identity [status|export|import]');
       process.exit(1);
   }
 }

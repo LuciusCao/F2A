@@ -1,18 +1,42 @@
 /**
  * F2A P2P 网络核心类型定义
  * 基于 libp2p 的 Agent 协作网络
+ * 
+ * 注意：核心配置类型已迁移到 src/config/types.ts
+ * 本文件保持向后兼容，从配置中心重导出
  */
 
 import { Multiaddr } from '@multiformats/multiaddr';
 import { EventEmitter } from 'eventemitter3';
 
 // ============================================================================
-// 基础类型
+// 核心配置类型（从配置中心导入）
 // ============================================================================
 
-export type SecurityLevel = 'low' | 'medium' | 'high';
+// 从配置中心导入核心配置类型，避免重复定义
+export type {
+  SecurityLevel,
+  LogLevel,
+  P2PNetworkConfig,
+  SecurityConfig,
+  F2AOptions,
+  WebhookConfig,
+  TaskRetryOptions,
+  TaskDelegateOptions,
+  RateLimitConfig,
+} from '../config/types.js';
 
-export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+// 重导出默认配置（便于使用）
+export {
+  DEFAULT_P2P_NETWORK_CONFIG,
+  DEFAULT_SECURITY_CONFIG,
+  DEFAULT_LOG_LEVEL,
+  DEFAULT_F2A_OPTIONS,
+} from '../config/defaults.js';
+
+// ============================================================================
+// 基础类型（保留在此文件中）
+// ============================================================================
 
 // ============================================================================
 // Agent 能力与身份
@@ -55,63 +79,12 @@ export interface AgentInfo {
   multiaddrs: string[];
   /** 端到端加密公钥 (base64) */
   encryptionPublicKey?: string;
-}
-
-// ============================================================================
-// P2P 网络配置
-// ============================================================================
-
-export interface P2PNetworkConfig {
-  /** 监听端口 */
-  listenPort?: number;
-  /** 监听地址 */
-  listenAddresses?: string[];
-  /** 引导节点列表 */
-  bootstrapPeers?: string[];
-  /** 引导节点指纹映射 - key为multiaddr或peerId，value为预期的PeerID */
-  bootstrapPeerFingerprints?: Record<string, string>;
-  /** 信任的 Peer 白名单（不会被清理） */
-  trustedPeers?: string[];
-  /** 是否启用 MDNS 本地发现 */
-  enableMDNS?: boolean;
-  /** 是否启用 DHT (默认 true) */
-  enableDHT?: boolean;
-  /** DHT 服务器模式 (默认 false，即客户端模式) */
-  dhtServerMode?: boolean;
-}
-
-export interface F2AOptions {
-  /** 节点可读名称 */
-  displayName?: string;
-  /** Agent 类型 */
-  agentType?: string;
-  /** P2P 网络配置 */
-  network?: P2PNetworkConfig;
-  /** 安全级别 */
-  security?: SecurityConfig;
-  /** 日志级别 */
-  logLevel?: LogLevel;
-  /** 数据目录 */
-  dataDir?: string;
-}
-
-export interface SecurityConfig {
-  level: SecurityLevel;
-  /** 是否要求确认连接 */
-  requireConfirmation: boolean;
-  /** 是否验证签名 */
-  verifySignatures: boolean;
-  /** 白名单 */
-  whitelist?: Set<string>;
-  /** 黑名单 */
-  blacklist?: Set<string>;
-  /** 速率限制 */
-  rateLimit?: RateLimitConfig;
-}
-
-export interface RateLimitConfig {
-  maxRequests: number;
-  windowMs: number;
+  /** 
+   * Agent ID (Phase 1)
+   * 独立于 PeerID 的 Agent 身份标识
+   * 格式: UUID 或类似 agent-{timestamp}-{random}
+   */
+  agentId?: string;
 }
 
 // ============================================================================
@@ -128,7 +101,16 @@ export type F2AMessageType =
   | 'TASK_DELEGATE' // 任务转委托
   | 'DECRYPT_FAILED' // 解密失败通知
   | 'PING'          // 心跳
-  | 'PONG';         // 心跳响应
+  | 'PONG'          // 心跳响应
+  // 技能交换
+  | 'SKILL_ANNOUNCE'      // 技能公告
+  | 'SKILL_QUERY'         // 技能查询
+  | 'SKILL_QUERY_RESPONSE' // 技能查询响应
+  | 'SKILL_INVOKE'        // 技能调用
+  | 'SKILL_INVOKE_RESPONSE' // 技能调用响应
+  | 'SKILL_RESULT'       // 技能执行结果
+  // 自由消息
+  | 'MESSAGE';       // Agent 自由通信（自然语言）
 
 export interface F2AMessage {
   /** 消息ID */
@@ -193,6 +175,26 @@ export interface TaskResponsePayload {
   delegatedTo?: string;
 }
 
+// 自由消息（Agent 之间的自然语言通信）
+export interface MessagePayload {
+  /** 消息内容（自然语言） */
+  content: string;
+  /** 可选元数据 */
+  metadata?: Record<string, unknown>;
+  /** 消息引用（回复某条消息时使用） */
+  replyTo?: string;
+}
+
+// 消息响应
+export interface MessageResponsePayload {
+  /** 原消息ID */
+  originalMessageId: string;
+  /** 响应内容 */
+  content: string;
+  /** 可选元数据 */
+  metadata?: Record<string, unknown>;
+}
+
 // ============================================================================
 // 事件定义
 // ============================================================================
@@ -243,6 +245,7 @@ export interface F2AEvents {
   'network:started': (event: NetworkStartedEvent) => void;
   'network:stopped': () => void;
   'error': (error: Error) => void;
+  'message': (event: { from: string; content: string; metadata?: Record<string, unknown>; messageId: string }) => void;
 }
 
 export type F2AEventEmitter = EventEmitter<F2AEvents>;
@@ -254,48 +257,10 @@ export type F2AEventEmitter = EventEmitter<F2AEvents>;
 // Result 和 AsyncResult 从 ./result 导出
 
 // ============================================================================
-// Webhook 配置
+// 任务委托结果（注意：TaskDelegateOptions 已移到 config/types.ts）
 // ============================================================================
 
-export interface WebhookConfig {
-  url: string;
-  token: string;
-  timeout?: number;
-  retries?: number;
-  retryDelay?: number;
-}
-
-// ============================================================================
-// 任务委托
-// ============================================================================
-
-/** 任务委托重试选项 */
-export interface TaskRetryOptions {
-  /** 最大重试次数（默认 3） */
-  maxRetries?: number;
-  /** 重试间隔毫秒（默认 1000） */
-  retryDelayMs?: number;
-  /** 发现超时毫秒（默认 5000） */
-  discoverTimeoutMs?: number;
-}
-
-export interface TaskDelegateOptions {
-  /** 目标能力 */
-  capability: string;
-  /** 任务描述 */
-  description: string;
-  /** 任务参数 */
-  parameters?: Record<string, unknown>;
-  /** 超时时间（秒） */
-  timeout?: number;
-  /** 是否允许多方并行执行 */
-  parallel?: boolean;
-  /** 最少响应数（parallel=true时） */
-  minResponses?: number;
-  /** 重试选项 */
-  retryOptions?: TaskRetryOptions;
-}
-
+/** 任务委托结果 */
 export interface TaskDelegateResult {
   taskId: string;
   results: {
@@ -350,3 +315,4 @@ export * from './result.js';
 // ============================================================================
 
 export * from './capability-quant.js';
+export * from './skill-exchange.js';

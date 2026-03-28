@@ -5,12 +5,11 @@
  */
 
 import { promises as fs } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
-import { generateKeyPair, unmarshalPrivateKey, marshalPrivateKey } from '@libp2p/crypto/keys';
-import { peerIdFromKeys } from '@libp2p/peer-id';
-import type { PeerId } from '@libp2p/interface';
-import type { PrivateKey } from '@libp2p/interface';
+import { join, resolve } from 'path';
+import { homedir, tmpdir } from 'os';
+import { generateKeyPair, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys';
+import { peerIdFromPrivateKey } from '@libp2p/peer-id';
+import type { PeerId, PrivateKey } from '@libp2p/interface';
 import { x25519 } from '@noble/curves/ed25519.js';
 import { Logger } from '../../utils/logger.js';
 import { success, failure, failureFromError, Result, createError } from '../../types/index.js';
@@ -35,10 +34,10 @@ function isEncryptedIdentity(obj: unknown): obj is EncryptedIdentity {
   const record = obj as Record<string, unknown>;
   return (
     record.encrypted === true &&
-    typeof record.salt === 'string' &&
-    typeof record.iv === 'string' &&
-    typeof record.authTag === 'string' &&
-    typeof record.ciphertext === 'string'
+    typeof record.salt === 'string' && record.salt.length > 0 &&
+    typeof record.iv === 'string' && record.iv.length > 0 &&
+    typeof record.authTag === 'string' && record.authTag.length > 0 &&
+    typeof record.ciphertext === 'string' && record.ciphertext.length > 0
   );
 }
 
@@ -74,9 +73,34 @@ export class IdentityManager {
   private static readonly EXPORT_MAX_CALLS_WARN = 10;
 
   constructor(options: IdentityManagerOptions = {}) {
-    this.dataDir = options.dataDir || join(homedir(), DEFAULT_DATA_DIR);
-    this.password = options.password;
+    // 先初始化 logger
     this.logger = new Logger({ component: 'Identity' });
+    
+    // P1 修复：路径遍历保护 - 验证和清理路径
+    let dataDir = options.dataDir || join(homedir(), DEFAULT_DATA_DIR);
+    
+    // 解析为绝对路径，防止相对路径遍历
+    dataDir = resolve(dataDir);
+    
+    // 允许的路径前缀
+    const systemTmpDir = resolve(tmpdir());
+    const homeDir = homedir();
+    
+    // 检查路径是否包含可疑的遍历模式或不在允许的目录下
+    if (dataDir.includes('..')) {
+      this.logger.warn('Suspicious path traversal detected', { path: dataDir });
+      dataDir = join(homedir(), DEFAULT_DATA_DIR);
+    } else if (!dataDir.startsWith(homeDir) && !dataDir.startsWith(systemTmpDir)) {
+      // 允许 home 目录和系统临时目录
+      this.logger.warn('dataDir is outside home and system temp directory', { 
+        path: dataDir,
+        hint: 'Path should be under home directory or system temp'
+      });
+      // 不强制重定向，只记录警告
+    }
+    
+    this.dataDir = dataDir;
+    this.password = options.password;
   }
 
   /**
@@ -247,8 +271,10 @@ export class IdentityManager {
 
   /**
    * Load identity from persisted data
+   * 
+   * P1-1 修复: 从 private 改为 protected，允许子类访问
    */
-  private async loadPersistedIdentity(persisted: PersistedIdentity): Promise<void> {
+  protected async loadPersistedIdentity(persisted: PersistedIdentity): Promise<void> {
     // P4 修复：验证字段是否为有效的 base64
     if (!isValidBase64(persisted.peerId)) {
       throw new Error('Invalid persisted identity: peerId is not valid base64');
@@ -262,11 +288,8 @@ export class IdentityManager {
     
     // Restore private key and PeerId
     const privateKeyBytes = Buffer.from(persisted.peerId, 'base64');
-    this.privateKey = await unmarshalPrivateKey(privateKeyBytes);
-    this.peerId = await peerIdFromKeys(
-      this.privateKey.public.bytes,
-      this.privateKey.bytes
-    );
+    this.privateKey = await privateKeyFromProtobuf(privateKeyBytes);
+    this.peerId = peerIdFromPrivateKey(this.privateKey);
 
     // Securely wipe temporary private key bytes after use
     secureWipe(privateKeyBytes);
@@ -290,10 +313,7 @@ export class IdentityManager {
     try {
       // Generate Ed25519 key pair for libp2p PeerId
       this.privateKey = await generateKeyPair('Ed25519');
-      this.peerId = await peerIdFromKeys(
-        this.privateKey.public.bytes,
-        this.privateKey.bytes
-      );
+      this.peerId = peerIdFromPrivateKey(this.privateKey);
       
       // Generate X25519 key pair for E2EE
       this.e2eePrivateKey = x25519.utils.randomSecretKey();
@@ -324,7 +344,7 @@ export class IdentityManager {
     }
     
     const persisted: PersistedIdentity = {
-      peerId: Buffer.from(marshalPrivateKey(this.privateKey)).toString('base64'),
+      peerId: Buffer.from(privateKeyToProtobuf(this.privateKey)).toString('base64'),
       e2eePrivateKey: Buffer.from(this.e2eePrivateKey).toString('base64'),
       e2eePublicKey: Buffer.from(this.e2eePublicKey).toString('base64'),
       createdAt: this.createdAt.toISOString(),
@@ -359,16 +379,28 @@ export class IdentityManager {
 
   /**
    * Export identity information (internal version, no rate limiting)
-   * 用于内部调用，不触发频率限制和审计日志
+   * 
+   * 用于内部调用，不触发频率限制。
+   * 
+   * 安全考虑：
+   * - 此方法是私有的，不会被外部直接调用
+   * - 仅在 loadOrCreate 返回结果时使用，确保调用者获得完整的身份信息
+   * - 结果不会被记录或存储，直接返回给调用者
+   * - 如果需要追踪，可以在此处添加 DEBUG 级别日志（不含私钥内容）
    */
   private exportIdentityInternal(): ExportedIdentity {
     if (!this.peerId || !this.privateKey || !this.e2eePublicKey || !this.e2eePrivateKey || !this.createdAt) {
       throw new Error('Identity not initialized');
     }
     
+    // P2 修复：添加 DEBUG 级别审计日志（不含敏感数据）
+    this.logger.debug('exportIdentityInternal called (internal use)', {
+      peerId: this.peerId.toString().slice(0, 16)
+    });
+    
     return {
       peerId: this.peerId.toString(),
-      privateKey: Buffer.from(marshalPrivateKey(this.privateKey)).toString('base64'),
+      privateKey: Buffer.from(privateKeyToProtobuf(this.privateKey)).toString('base64'),
       e2eeKeyPair: {
         publicKey: Buffer.from(this.e2eePublicKey).toString('base64'),
         privateKey: Buffer.from(this.e2eePrivateKey).toString('base64')
@@ -441,7 +473,7 @@ export class IdentityManager {
     
     return {
       peerId: this.peerId.toString(),
-      privateKey: Buffer.from(marshalPrivateKey(this.privateKey)).toString('base64'),
+      privateKey: Buffer.from(privateKeyToProtobuf(this.privateKey)).toString('base64'),
       e2eeKeyPair: {
         publicKey: Buffer.from(this.e2eePublicKey).toString('base64'),
         privateKey: Buffer.from(this.e2eePrivateKey).toString('base64')
@@ -481,6 +513,13 @@ export class IdentityManager {
    */
   getE2EEKeyPair(): { publicKey: Uint8Array; privateKey: Uint8Array } | null {
     if (!this.e2eePublicKey || !this.e2eePrivateKey) return null;
+    
+    // P2 修复：添加审计日志
+    this.logger.warn('SECURITY: getE2EEKeyPair called - private key material accessed', {
+      peerId: this.peerId?.toString().slice(0, 16),
+      timestamp: new Date().toISOString()
+    });
+    
     return {
       publicKey: this.e2eePublicKey,
       privateKey: this.e2eePrivateKey
@@ -523,7 +562,7 @@ export class IdentityManager {
       // Securely wipe libp2p Ed25519 private key bytes
       if (this.privateKey) {
         // Access the raw bytes of the Ed25519 private key and wipe them
-        const privateKeyBytes = this.privateKey.bytes;
+        const privateKeyBytes = this.privateKey.raw;
         if (privateKeyBytes) {
           secureWipe(privateKeyBytes);
         }
@@ -535,6 +574,10 @@ export class IdentityManager {
       this.e2eePublicKey = null;
       this.e2eePrivateKey = null;
       this.createdAt = null;
+      
+      // P2 修复：清除频率限制状态
+      this.exportCallCount = 0;
+      this.exportTimestamps = [];
       
       this.logger.warn('Identity deleted and memory cleared');
       return success(undefined);

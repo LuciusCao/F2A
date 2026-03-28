@@ -147,25 +147,29 @@ describe('CLI Integration', () => {
 
       const { stdout } = await execCLI(['status']);
       
-      // 解析 JSON 输出 - 尝试找到有效的 JSON 行
-      const lines = stdout.trim().split('\n');
+      // 解析 JSON 输出 - 尝试提取 JSON 对象
+      // JSON 可能是 pretty-printed（多行），需要找到完整的 JSON
       let status: any = null;
       
-      for (const line of lines) {
-        const trimmedLine = line.trim();
-        if (trimmedLine.startsWith('{') && trimmedLine.endsWith('}')) {
+      // 尝试直接解析整个输出
+      try {
+        status = JSON.parse(stdout.trim());
+      } catch {
+        // 如果失败，尝试找到 JSON 的起始和结束位置
+        const startIndex = stdout.indexOf('{');
+        const lastEndIndex = stdout.lastIndexOf('}');
+        if (startIndex !== -1 && lastEndIndex !== -1 && lastEndIndex > startIndex) {
+          const jsonStr = stdout.slice(startIndex, lastEndIndex + 1);
           try {
-            status = JSON.parse(trimmedLine);
-            if (status.success !== undefined) {
-              break; // 找到有效的状态响应
-            }
+            status = JSON.parse(jsonStr);
           } catch {
-            // 不是有效的 JSON，继续尝试下一行
+            // JSON 解析失败
           }
         }
       }
       
       expect(status).toBeDefined();
+      expect(status).not.toBeNull();
       expect(status.success).toBe(true);
       expect(status.peerId).toBeDefined();
     }, 15000);

@@ -25,9 +25,9 @@ export const ParameterSchemaSchema = z.object({
 });
 
 export const AgentCapabilitySchema = z.object({
-  name: z.string().min(1).max(64).regex(/^[a-z0-9-]+$/),
-  description: z.string().min(1).max(256),
-  tools: z.array(z.string()).max(32),
+  name: z.string().trim().min(1).max(64).regex(/^[a-z0-9-]+$/),
+  description: z.string().trim().min(1).max(256),
+  tools: z.array(z.string().trim().min(1)).max(32),
   parameters: z.record(ParameterSchemaSchema).optional()
 });
 
@@ -39,25 +39,28 @@ export const P2PNetworkConfigSchema = z.object({
   listenPort: z.number().int().min(0).max(65535).optional(),
   listenAddresses: z.array(z.string()).optional(),
   bootstrapPeers: z.array(z.string()).optional(),
+  bootstrapPeerFingerprints: z.record(z.string(), z.string()).optional(),
+  trustedPeers: z.array(z.string()).optional(),
   enableMDNS: z.boolean().optional(),
   enableDHT: z.boolean().optional(),
   dhtServerMode: z.boolean().optional()
 });
 
 export const SecurityConfigSchema = z.object({
-  level: SecurityLevelSchema,
-  requireConfirmation: z.boolean(),
-  verifySignatures: z.boolean(),
-  whitelist: z.set(z.string()).optional(),
-  blacklist: z.set(z.string()).optional(),
+  level: SecurityLevelSchema.optional(),
+  requireConfirmation: z.boolean().optional(),
+  verifySignatures: z.boolean().optional(),
+  whitelist: z.array(z.string()).optional(),
+  blacklist: z.array(z.string()).optional(),
   rateLimit: z.object({
     maxRequests: z.number().int().positive(),
     windowMs: z.number().int().positive()
-  }).optional()
+  }).optional(),
+  maxTasksPerMinute: z.number().int().positive().optional()
 });
 
 export const F2AOptionsSchema = z.object({
-  displayName: z.string().min(1).max(64).optional(),
+  displayName: z.string().trim().min(1).max(64).optional(),
   agentType: z.enum(['openclaw', 'claude-code', 'codex', 'custom']).optional(),
   network: P2PNetworkConfigSchema.optional(),
   security: SecurityConfigSchema.optional(),
@@ -70,8 +73,8 @@ export const F2AOptionsSchema = z.object({
 // ============================================================================
 
 export const TaskDelegateOptionsSchema = z.object({
-  capability: z.string().min(1).max(64),
-  description: z.string().min(1).max(1024),
+  capability: z.string().trim().min(1).max(64),
+  description: z.string().trim().min(1).max(1024),
   parameters: z.record(z.unknown()).optional(),
   timeout: z.number().int().min(1000).max(300000).optional(), // 1s - 5min
   parallel: z.boolean().optional(),
@@ -82,6 +85,8 @@ export const TaskDelegateOptionsSchema = z.object({
 // 消息协议 Schema
 // ============================================================================
 
+// P2-3 修复：添加 DECRYPT_FAILED 消息类型
+// P3-3 修复：添加 MESSAGE 和 SKILL_* 类型的 JSDoc 注释
 export const F2AMessageTypeSchema = z.enum([
   'DISCOVER',
   'DISCOVER_RESP',
@@ -90,8 +95,23 @@ export const F2AMessageTypeSchema = z.enum([
   'TASK_REQUEST',
   'TASK_RESPONSE',
   'TASK_DELEGATE',
+  'DECRYPT_FAILED',
   'PING',
-  'PONG'
+  'PONG',
+  /** 技能公告：Agent 向网络广播自己提供的技能 */
+  'SKILL_ANNOUNCE',
+  /** 技能查询：查询网络中具备特定技能的 Agent */
+  'SKILL_QUERY',
+  /** 技能查询响应：响应技能查询请求 */
+  'SKILL_QUERY_RESPONSE',
+  /** 技能调用：请求 Agent 执行特定技能 */
+  'SKILL_INVOKE',
+  /** 技能调用响应：响应技能调用请求 */
+  'SKILL_INVOKE_RESPONSE',
+  /** 技能执行结果：返回技能执行的最终结果 */
+  'SKILL_RESULT',
+  /** 自由消息：Agent 之间的自然语言通信，无需预定义协议 */
+  'MESSAGE'
 ]);
 
 export const F2AMessageSchema = z.object({

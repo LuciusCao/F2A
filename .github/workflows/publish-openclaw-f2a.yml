@@ -1,0 +1,39 @@
+name: Publish OpenClaw F2A to NPM
+
+on:
+  push:
+    tags:
+      - 'openclaw-f2a@v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      
+      # 在根目录安装所有依赖
+      - run: npm install
+      
+      # 先 build 根目录（@f2a/network）
+      - run: npm run build
+      
+      # 进入 openclaw-f2a 目录，安装其特定依赖
+      - run: npm install
+        working-directory: packages/openclaw-f2a
+      
+      # build openclaw-f2a
+      - run: npm run build
+        working-directory: packages/openclaw-f2a
+      
+      - run: npm publish
+        working-directory: packages/openclaw-f2a

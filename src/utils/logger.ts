@@ -74,6 +74,7 @@ export class Logger {
 
   /**
    * 初始化文件写入流（带重试机制）
+   * P2-3 修复：设置日志文件权限为 600
    */
   private initFileStream(): void {
     if (!this.filePath) return;
@@ -90,12 +91,23 @@ export class Logger {
         const dir = path.dirname(this.filePath!);
         if (!fs.existsSync(dir)) {
           fs.mkdirSync(dir, { recursive: true });
+          // P2-3 修复：设置目录权限为 700
+          fs.chmodSync(dir, 0o700);
         }
 
         // 创建写入流（追加模式）
         this.fileStream = fs.createWriteStream(this.filePath!, {
           flags: 'a',
           encoding: 'utf8'
+        });
+        
+        // P2-3 修复：文件打开后设置权限为 600（仅所有者可读写）
+        this.fileStream.on('open', () => {
+          try {
+            fs.chmodSync(this.filePath!, 0o600);
+          } catch {
+            // 忽略权限设置错误（某些文件系统可能不支持）
+          }
         });
 
         this.fileStream.on('error', (err) => {

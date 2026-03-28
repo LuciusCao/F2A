@@ -7,10 +7,13 @@ F2A (Friend-to-Agent) 是一个用于 OpenClaw Agents 的 P2P 网络协议。
 ```
 F2A/
 ├── packages/                     # 子包目录
-│   └── openclaw-adapter/         # OpenClaw 插件
+│   ├── openclaw-f2a/         # OpenClaw 插件
+│   │   ├── package.json
+│   │   ├── tsconfig.json
+│   │   ├── README.md
+│   │   └── src/
+│   └── dashboard/            # Web 可视化面板
 │       ├── package.json
-│       ├── tsconfig.json
-│       ├── README.md
 │       └── src/
 ├── src/                          # F2A 核心代码
 │   ├── core/                     # 核心 P2P 网络
@@ -27,7 +30,8 @@ F2A/
 | 包 | 路径 | 说明 |
 |----|------|------|
 | `f2a-network` | `./` | F2A P2P 网络核心 |
-| `@f2a/openclaw-adapter` | `./packages/openclaw-adapter` | OpenClaw 插件 |
+| `@f2a/openclaw-f2a` | `./packages/openclaw-f2a` | OpenClaw 插件 |
+| `@f2a/dashboard` | `./packages/dashboard` | Web 可视化面板 |
 
 ## 开发
 
@@ -42,7 +46,7 @@ npm run build:all
 npm run test:all
 
 # 构建特定包
-cd packages/openclaw-adapter
+cd packages/openclaw-f2a
 npm run build
 ```
 
@@ -53,6 +57,6 @@ npm run build
 npm publish
 
 # 发布子包
-cd packages/openclaw-adapter
+cd packages/openclaw-f2a
 npm publish --access public
 ```

@@ -3,6 +3,7 @@ import { existsSync, readFileSync, rmSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { F2ADaemon } from '../src/daemon/index.js';
+import getPort from 'get-port';
 
 /**
  * Daemon 真实启动测试
@@ -31,7 +32,7 @@ describe('Daemon Real Startup', () => {
   });
 
   it('should generate control token on startup', async () => {
-    const controlPort = 19001; // 使用高位端口避免冲突
+    const controlPort = await getPort(); // 使用动态端口避免冲突
     
     daemon = new F2ADaemon({
       controlPort,
@@ -49,7 +50,7 @@ describe('Daemon Real Startup', () => {
   });
 
   it('should create log file on startup', async () => {
-    const controlPort = 19002;
+    const controlPort = await getPort();
     
     daemon = new F2ADaemon({
       controlPort,
@@ -64,7 +65,7 @@ describe('Daemon Real Startup', () => {
   });
 
   it('should start HTTP control server on specified port', async () => {
-    const controlPort = 19003;
+    const controlPort = await getPort();
     
     daemon = new F2ADaemon({
       controlPort,
@@ -83,7 +84,7 @@ describe('Daemon Real Startup', () => {
   });
 
   it('should respond to status endpoint with auth', async () => {
-    const controlPort = 19004;
+    const controlPort = await getPort();
     
     daemon = new F2ADaemon({
       controlPort,
@@ -108,7 +109,7 @@ describe('Daemon Real Startup', () => {
   });
 
   it('should reject status request without token', async () => {
-    const controlPort = 19005;
+    const controlPort = await getPort();
     
     daemon = new F2ADaemon({
       controlPort,

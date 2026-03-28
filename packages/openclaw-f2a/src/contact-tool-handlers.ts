@@ -7,7 +7,7 @@
 import type { F2APlugin } from './connector.js';
 import type { ToolResult, SessionContext } from './types.js';
 import { FriendStatus, type ContactFilter } from './contact-types.js';
-import { extractErrorMessage } from './connector-helpers.js';
+import { extractErrorMessage, isValidPeerId } from './connector-helpers.js';
 
 /**
  * 通讯录工具处理器
@@ -291,6 +291,11 @@ export class ContactToolHandlers {
         }
       }
       
+      // P1-2 修复：验证最终 Peer ID 格式
+      if (!isValidPeerId(targetPeerId)) {
+        return { content: `❌ 无效的 Peer ID 格式: ${targetPeerId.slice(0, 20)}...` };
+      }
+      
       const requestId = await plugin._handshakeProtocol.sendFriendRequest(
         targetPeerId,
         params.message
@@ -399,6 +404,7 @@ export class ContactToolHandlers {
 
   /**
    * 处理导入通讯录工具
+   * P2-4 修复：添加导入数据格式验证
    */
   async handleContactsImport(
     params: {
@@ -408,6 +414,87 @@ export class ContactToolHandlers {
     _context: SessionContext
   ): Promise<ToolResult> {
     try {
+      // P2-4 修复：添加 schema 验证
+      const data = params.data;
+      
+      // 基本结构验证
+      if (!data || typeof data !== 'object') {
+        return { content: '❌ 导入数据格式无效：必须为对象' };
+      }
+      
+      // 验证必需字段
+      if (!Array.isArray(data.contacts)) {
+        return { content: '❌ 导入数据格式无效：contacts 必须为数组' };
+      }
+      
+      if (!Array.isArray(data.groups)) {
+        return { content: '❌ 导入数据格式无效：groups 必须为数组' };
+      }
+      
+      if (typeof data.exportedAt !== 'number' || data.exportedAt <= 0) {
+        return { content: '❌ 导入数据格式无效：exportedAt 必须为有效时间戳' };
+      }
+      
+      // 验证 contacts 数组中的每个元素
+      for (const contact of data.contacts) {
+        if (!contact || typeof contact !== 'object') {
+          return { content: '❌ 导入数据格式无效：contacts 包含非对象元素' };
+        }
+        
+        // 验证必需字段
+        if (!contact.id || typeof contact.id !== 'string') {
+          return { content: '❌ 导入数据格式无效：contact.id 必须为字符串' };
+        }
+        
+        if (!contact.peerId || typeof contact.peerId !== 'string') {
+          return { content: '❌ 导入数据格式无效：contact.peerId 必须为字符串' };
+        }
+        
+        if (!contact.name || typeof contact.name !== 'string') {
+          return { content: '❌ 导入数据格式无效：contact.name 必须为字符串' };
+        }
+        
+        // 验证可选字段类型
+        if (contact.status !== undefined && typeof contact.status !== 'string') {
+          return { content: '❌ 导入数据格式无效：contact.status 必须为字符串' };
+        }
+        
+        if (contact.reputation !== undefined && typeof contact.reputation !== 'number') {
+          return { content: '❌ 导入数据格式无效：contact.reputation 必须为数字' };
+        }
+        
+        if (contact.groups !== undefined && !Array.isArray(contact.groups)) {
+          return { content: '❌ 导入数据格式无效：contact.groups 必须为数组' };
+        }
+        
+        if (contact.tags !== undefined && !Array.isArray(contact.tags)) {
+          return { content: '❌ 导入数据格式无效：contact.tags 必须为数组' };
+        }
+        
+        if (contact.createdAt !== undefined && typeof contact.createdAt !== 'number') {
+          return { content: '❌ 导入数据格式无效：contact.createdAt 必须为数字' };
+        }
+        
+        if (contact.updatedAt !== undefined && typeof contact.updatedAt !== 'number') {
+          return { content: '❌ 导入数据格式无效：contact.updatedAt 必须为数字' };
+        }
+      }
+      
+      // 验证 groups 数组中的每个元素
+      for (const group of data.groups) {
+        if (!group || typeof group !== 'object') {
+          return { content: '❌ 导入数据格式无效：groups 包含非对象元素' };
+        }
+        
+        if (!group.id || typeof group.id !== 'string') {
+          return { content: '❌ 导入数据格式无效：group.id 必须为字符串' };
+        }
+        
+        if (!group.name || typeof group.name !== 'string') {
+          return { content: '❌ 导入数据格式无效：group.name 必须为字符串' };
+        }
+      }
+      
       const plugin = this.plugin as any;
       const cm = plugin.contactManager;
       const result = cm.importContacts(params.data as any, params.merge ?? true);

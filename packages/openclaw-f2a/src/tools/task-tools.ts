@@ -102,6 +102,11 @@ export function getTaskTools(
           type: 'array',
           description: '所需能力列表',
           required: false,
+          // P2-5 修复：添加 items 类型验证
+          items: {
+            type: 'string',
+            description: '能力名称',
+          },
         },
         estimated_complexity: {
           type: 'number',
@@ -210,6 +215,11 @@ export function getTaskTools(
           type: 'array',
           description: '所需能力列表',
           required: false,
+          // P2-5 修复：添加 items 类型验证
+          items: {
+            type: 'string',
+            description: '能力名称',
+          },
         },
       },
       handler: handlers.handleEstimateTask,
@@ -242,6 +252,12 @@ export function getTaskTools(
           type: 'array',
           description: '风险标记: dangerous, malicious, spam, invalid',
           required: false,
+          // P2-5 修复 + P3-2 修复：添加 items enum 约束
+          items: {
+            type: 'string',
+            enum: ['dangerous', 'malicious', 'spam', 'invalid'],
+            description: '风险标记类型',
+          },
         },
       },
       handler: handlers.handleReviewTask,

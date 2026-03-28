@@ -4,8 +4,9 @@
  * 提供验证、错误处理、路径安全等工具函数。
  */
 
-import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync, realpathSync } from 'fs';
+import { join, resolve, relative } from 'path';
+import { randomBytes } from 'crypto';
 import type { F2ANodeConfig, Result, F2APluginConfig, AgentInfo } from './types.js';
 
 // ============================================================================
@@ -49,7 +50,10 @@ export function isValidPeerId(peerId: string | undefined | null): peerId is stri
 /**
  * 检查路径是否安全
  * 
+ * P2-1 修复：实现 allowedRoot 验证逻辑
+ * 
  * 允许绝对路径，但拒绝包含路径遍历字符的路径。
+ * 如果提供了 allowedRoot，则路径必须在该根目录范围内。
  */
 export function isPathSafe(path: string | undefined | null, options?: { 
   /** 允许的根目录（路径必须在此目录下） */
@@ -90,6 +94,39 @@ export function isPathSafe(path: string | undefined | null, options?: {
   } catch {
     // 解码失败可能是恶意构造，拒绝
     return false;
+  }
+  
+  // P2-1 修复：实现 allowedRoot 验证逻辑
+  if (options?.allowedRoot) {
+    // 规范化路径（解析为绝对路径）
+    const absolutePath = resolve(path);
+    const absoluteRoot = resolve(options.allowedRoot);
+    
+    // 计算相对路径，检查是否在允许范围内
+    const relativePath = relative(absoluteRoot, absolutePath);
+    
+    // 如果相对路径以 '..' 开头或为绝对路径，说明不在允许范围内
+    if (relativePath.startsWith('..') || relativePath.startsWith('/')) {
+      return false;
+    }
+    
+    // 如果配置了检查符号链接，验证符号链接不指向外部
+    if (options.checkSymlinks) {
+      try {
+        // 获取真实路径（解析符号链接）
+        const realPath = realpathSync(absolutePath);
+        const realRoot = realpathSync(absoluteRoot);
+        
+        const realRelative = relative(realRoot, realPath);
+        if (realRelative.startsWith('..') || realRelative.startsWith('/')) {
+          return false;
+        }
+      } catch {
+        // 文件不存在时无法验证符号链接，保持谨慎
+        // 如果文件不存在，路径仍然可能是安全的（用于创建新文件）
+        // 但我们仍然检查前面的遍历限制
+      }
+    }
   }
   
   return true;
@@ -181,14 +218,19 @@ export function mergeConfig(config: Record<string, unknown> & { _api?: unknown }
 
 /**
  * 生成随机 Token
+ * 
+ * P1-1 修复：使用 crypto.randomBytes() 替代 Math.random()
+ * 确保生成加密安全的随机 Token
  */
 export function generateToken(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let token = '';
-  for (let i = 0; i < 32; i++) {
-    token += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return token;
+  const bytes = randomBytes(24); // 24 bytes = 32 base64 字符（去掉填充）
+  // 使用 Base64 编码，去掉填充字符（=），得到 32 字符的 token
+  return bytes.toString('base64').replace(/[+/=]/g, (char) => {
+    // 将 base64 的 +/ 替换为字母，去掉 =
+    if (char === '+') return 'A';
+    if (char === '/') return 'B';
+    return ''; // 移除 '='
+  }).slice(0, 32);
 }
 
 // ============================================================================

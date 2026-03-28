@@ -14,6 +14,7 @@ import {
   generateToken,
   checkF2AInstalled,
   formatBroadcastResults,
+  resolveAgent,
   MAX_MESSAGE_LENGTH,
   PEER_ID_REGEX,
 } from '../src/connector-helpers.js';
@@ -227,6 +228,105 @@ describe('connector-helpers', () => {
     it('应该处理空结果', () => {
       const formatted = formatBroadcastResults([]);
       expect(formatted).toBe('');
+    });
+  });
+
+  describe('resolveAgent', () => {
+    // 生成符合格式的 Peer ID
+    const makePeerId = (suffix: string) => {
+      const padded = suffix.padEnd(44, 'A').slice(0, 44);
+      return `12D3KooW${padded}`;
+    };
+
+    // Mock discoverAgents 函数
+    const mockAgents = [
+      { peerId: makePeerId('Agent1'), displayName: 'Agent Alpha' },
+      { peerId: makePeerId('Agent2'), displayName: 'Agent Beta' },
+      { peerId: makePeerId('Agent3'), displayName: 'Agent Gamma' },
+    ];
+
+    it('应该通过 #索引 格式解析 Agent', async () => {
+      const discoverAgents = async () => ({ success: true, data: mockAgents });
+      
+      // #1 应该返回第一个 Agent
+      const result1 = await resolveAgent('#1', discoverAgents);
+      expect(result1).toEqual(mockAgents[0]);
+      
+      // #2 应该返回第二个 Agent
+      const result2 = await resolveAgent('#2', discoverAgents);
+      expect(result2).toEqual(mockAgents[1]);
+      
+      // #超出范围应该返回 null
+      const resultOutOfRange = await resolveAgent('#10', discoverAgents);
+      expect(resultOutOfRange).toBeNull();
+    });
+
+    it('应该通过完整 Peer ID 精确匹配', async () => {
+      const discoverAgents = async () => ({ success: true, data: mockAgents });
+      
+      const result = await resolveAgent(mockAgents[0].peerId, discoverAgents);
+      expect(result).toEqual(mockAgents[0]);
+    });
+
+    it('应该通过 displayName 精确匹配', async () => {
+      const discoverAgents = async () => ({ success: true, data: mockAgents });
+      
+      const result = await resolveAgent('Agent Alpha', discoverAgents);
+      expect(result).toEqual(mockAgents[0]);
+    });
+
+    it('应该通过 Peer ID 前缀模糊匹配', async () => {
+      const discoverAgents = async () => ({ success: true, data: mockAgents });
+      
+      // 使用 Peer ID 的前缀（比如前 20 个字符）
+      const prefix = mockAgents[1].peerId.slice(0, 20);
+      const result = await resolveAgent(prefix, discoverAgents);
+      expect(result).toEqual(mockAgents[1]);
+    });
+
+    it('应该通过 displayName 模糊匹配（大小写不敏感）', async () => {
+      const discoverAgents = async () => ({ success: true, data: mockAgents });
+      
+      // 使用部分名称，大小写不敏感
+      const result = await resolveAgent('alpha', discoverAgents);
+      expect(result).toEqual(mockAgents[0]);
+      
+      const result2 = await resolveAgent('BETA', discoverAgents);
+      expect(result2).toEqual(mockAgents[1]);
+    });
+
+    it('应该在 discoverAgents 失败时返回 null', async () => {
+      const discoverAgents = async () => ({ success: false });
+      
+      const result = await resolveAgent('#1', discoverAgents);
+      expect(result).toBeNull();
+    });
+
+    it('应该在 discoverAgents 返回空数据时返回 null', async () => {
+      const discoverAgents = async () => ({ success: true, data: [] });
+      
+      const result = await resolveAgent('#1', discoverAgents);
+      expect(result).toBeNull();
+    });
+
+    it('应该在找不到匹配时返回 null', async () => {
+      const discoverAgents = async () => ({ success: true, data: mockAgents });
+      
+      const result = await resolveAgent('NonExistent', discoverAgents);
+      expect(result).toBeNull();
+    });
+
+    it('应该优先精确匹配而非模糊匹配', async () => {
+      // 创建一个 displayName 包含另一个 Agent displayName 的情况
+      const agents = [
+        { peerId: makePeerId('Exact'), displayName: 'Alpha' },
+        { peerId: makePeerId('Fuzzy'), displayName: 'Alpha Clone' },
+      ];
+      const discoverAgents = async () => ({ success: true, data: agents });
+      
+      // 精确匹配 'Alpha' 应该返回第一个
+      const result = await resolveAgent('Alpha', discoverAgents);
+      expect(result).toEqual(agents[0]);
     });
   });
 });

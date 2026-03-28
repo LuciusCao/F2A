@@ -49,11 +49,21 @@ export function getContactTools(
           type: 'array',
           description: '分组列表',
           required: false,
+          // P2-5 修复：添加 items 类型验证
+          items: {
+            type: 'string',
+            description: '分组名称或 ID',
+          },
         },
         tags: {
           type: 'array',
           description: '标签列表',
           required: false,
+          // P2-5 修复：添加 items 类型验证
+          items: {
+            type: 'string',
+            description: '标签名称',
+          },
         },
         notes: {
           type: 'string',

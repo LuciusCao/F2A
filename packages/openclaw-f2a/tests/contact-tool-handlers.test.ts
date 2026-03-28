@@ -13,13 +13,13 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 
 // Mock F2APlugin
-const createMockPlugin = (contactManager: ContactManager, handshakeProtocol?: any) => ({
+const createMockPlugin = (contactManager: ContactManager, handshakeProtocol?: any, f2a?: any) => ({
   contactManager,
   _handshakeProtocol: handshakeProtocol,
-  _f2a: handshakeProtocol ? {
+  _f2a: f2a ?? (handshakeProtocol ? {
     getConnectedPeers: () => [],
     peerId: '12D3KooWTestPeerId12345678901234567890123456789012345678',
-  } : undefined,
+  } : undefined),
 });
 
 // Mock SessionContext
@@ -353,6 +353,75 @@ describe('ContactToolHandlers', () => {
       expect(result.content).toContain('❌');
       expect(result.content).toContain('未初始化');
     });
+
+    // P1-3 修复：添加成功场景测试
+    it('应该成功发送好友请求', async () => {
+      // Mock handshakeProtocol
+      const mockHandshakeProtocol = {
+        sendFriendRequest: async (peerId: string, message?: string) => {
+          return `req-${peerId.slice(0, 8)}-${Date.now()}`;
+        },
+      };
+
+      const mockPlugin = createMockPlugin(contactManager, mockHandshakeProtocol);
+      const handlersWithMock = new ContactToolHandlers(mockPlugin as any);
+
+      const peerId = generatePeerId('TargetSuccess');
+      const result = await handlersWithMock.handleFriendRequest(
+        { peer_id: peerId, message: '你好，请加好友' },
+        mockContext
+      );
+
+      expect(result.content).toContain('✅');
+      expect(result.content).toContain('好友请求已发送');
+      expect(result.content).toContain('请求 ID');
+    });
+
+    // P1-3 修复：添加截断匹配验证测试
+    it('应该拒绝截断匹配后的无效 Peer ID', async () => {
+      // Mock F2A 返回无效的 Peer ID
+      const mockF2A = {
+        getConnectedPeers: () => [
+          { peerId: 'InvalidPeerIdNotValid' }, // 不符合 12D3KooW + 44字符格式
+        ],
+        peerId: generatePeerId('Self'),
+      };
+
+      const mockHandshakeProtocol = {
+        sendFriendRequest: async () => null,
+      };
+
+      const mockPlugin = createMockPlugin(contactManager, mockHandshakeProtocol, mockF2A);
+      const handlersWithMock = new ContactToolHandlers(mockPlugin as any);
+
+      // 传入截断的无效 ID
+      const result = await handlersWithMock.handleFriendRequest(
+        { peer_id: 'Invalid' }, // 会匹配到 InvalidPeerIdNotValid
+        mockContext
+      );
+
+      expect(result.content).toContain('❌');
+      expect(result.content).toContain('无效的 Peer ID 格式');
+    });
+
+    // P1-3 修复：添加发送失败场景测试
+    it('应该处理发送失败', async () => {
+      const mockHandshakeProtocol = {
+        sendFriendRequest: async () => null, // 返回 null 表示失败
+      };
+
+      const mockPlugin = createMockPlugin(contactManager, mockHandshakeProtocol);
+      const handlersWithMock = new ContactToolHandlers(mockPlugin as any);
+
+      const peerId = generatePeerId('TargetFail');
+      const result = await handlersWithMock.handleFriendRequest(
+        { peer_id: peerId },
+        mockContext
+      );
+
+      expect(result.content).toContain('❌');
+      expect(result.content).toContain('发送好友请求失败');
+    });
   });
 
   describe('handlePendingRequests', () => {
@@ -367,6 +436,97 @@ describe('ContactToolHandlers', () => {
         mockContext
       );
       expect(result.content).toContain('❌');
+    });
+
+    // P1-4 修复：添加 accept 成功场景测试
+    it('应该成功接受好友请求', async () => {
+      // 先添加一个待处理的请求
+      const fromPeerId = generatePeerId('FromAccept');
+      contactManager.addPendingHandshake({
+        requestId: 'req-accept-test',
+        from: fromPeerId,
+        fromName: '请求者A',
+        message: '请加我好友',
+        receivedAt: Date.now(),
+      });
+
+      const mockHandshakeProtocol = {
+        acceptRequest: async (requestId: string) => requestId === 'req-accept-test',
+      };
+
+      const mockPlugin = createMockPlugin(contactManager, mockHandshakeProtocol);
+      const handlersWithMock = new ContactToolHandlers(mockPlugin as any);
+
+      const result = await handlersWithMock.handlePendingRequests(
+        { action: 'accept', request_id: 'req-accept-test' },
+        mockContext
+      );
+
+      expect(result.content).toContain('✅');
+      expect(result.content).toContain('已接受好友请求');
+    });
+
+    // P1-4 修复：添加 reject 成功场景测试
+    it('应该成功拒绝好友请求', async () => {
+      const fromPeerId = generatePeerId('FromReject');
+      contactManager.addPendingHandshake({
+        requestId: 'req-reject-test',
+        from: fromPeerId,
+        fromName: '请求者B',
+        message: '请加我好友',
+        receivedAt: Date.now(),
+      });
+
+      const mockHandshakeProtocol = {
+        rejectRequest: async (requestId: string, reason?: string) => requestId === 'req-reject-test',
+      };
+
+      const mockPlugin = createMockPlugin(contactManager, mockHandshakeProtocol);
+      const handlersWithMock = new ContactToolHandlers(mockPlugin as any);
+
+      const result = await handlersWithMock.handlePendingRequests(
+        { action: 'reject', request_id: 'req-reject-test', reason: '不需要' },
+        mockContext
+      );
+
+      expect(result.content).toContain('✅');
+      expect(result.content).toContain('已拒绝好友请求');
+    });
+
+    // P1-4 修复：添加 accept 失败场景测试
+    it('应该处理接受失败', async () => {
+      const mockHandshakeProtocol = {
+        acceptRequest: async () => false, // 返回 false 表示失败
+      };
+
+      const mockPlugin = createMockPlugin(contactManager, mockHandshakeProtocol);
+      const handlersWithMock = new ContactToolHandlers(mockPlugin as any);
+
+      const result = await handlersWithMock.handlePendingRequests(
+        { action: 'accept', request_id: 'req-accept-fail' },
+        mockContext
+      );
+
+      expect(result.content).toContain('❌');
+      expect(result.content).toContain('接受失败');
+    });
+
+    // P1-4 修复：添加 reject 失败场景测试
+    it('应该处理拒绝失败', async () => {
+      const mockHandshakeProtocol = {
+        rejectRequest: async () => false, // 返回 false 表示失败
+      };
+
+      const mockPlugin = createMockPlugin(contactManager, mockHandshakeProtocol);
+      const handlersWithMock = new ContactToolHandlers(mockPlugin as any);
+
+      const result = await handlersWithMock.handlePendingRequests(
+        { action: 'reject', request_id: 'req-reject-fail' },
+        mockContext
+      );
+
+      expect(result.content).toContain('❌');
+      expect(result.content).toContain('拒绝失败');
     });
   });
 });

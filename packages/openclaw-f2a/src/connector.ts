@@ -119,16 +119,38 @@ export class F2APlugin implements OpenClawPlugin {
   private pollTimer?: NodeJS.Timeout;
   private _initialized = false;
   
+  // P2-3 修复：懒加载初始化标志，防止重复初始化
+  private _initializingFlags = {
+    nodeManager: false,
+    networkClient: false,
+    taskQueue: false,
+    reputationSystem: false,
+    capabilityDetector: false,
+    announcementQueue: false,
+    reviewCommittee: false,
+    toolHandlers: false,
+    claimHandlers: false,
+    contactToolHandlers: false,
+    contactManager: false,
+    handshakeProtocol: false,
+  };
+  
   // ========== 懒加载 Getter ==========
   
   /**
    * 获取节点管理器（懒加载）
+   * P2-3 修复：添加初始化标志防止重复初始化
    */
   private get nodeManager(): F2ANodeManager {
-    if (!this._nodeManager) {
-      this._nodeManager = new F2ANodeManager(this.nodeConfig, this._logger);
+    if (!this._nodeManager && !this._initializingFlags.nodeManager) {
+      this._initializingFlags.nodeManager = true;
+      try {
+        this._nodeManager = new F2ANodeManager(this.nodeConfig, this._logger);
+      } finally {
+        this._initializingFlags.nodeManager = false;
+      }
     }
-    return this._nodeManager;
+    return this._nodeManager!;
   }
   
   /**
@@ -248,18 +270,16 @@ export class F2APlugin implements OpenClawPlugin {
   
   /**
    * P1-3: 计算消息内容哈希
+   * P2-2 修复：使用 crypto.createHash('sha256') 替代简单哈希
    * 用于基于内容的去重
    */
   private computeMessageHash(from: string, content: string): string {
-    // 使用简单的哈希算法，避免依赖 crypto 模块
+    const crypto = require('crypto');
     const data = `${from}:${content}`;
-    let hash = 0;
-    for (let i = 0; i < data.length; i++) {
-      const char = data.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32bit integer
-    }
-    return `msg-${hash.toString(16)}-${data.length}`;
+    // 使用 SHA256 算法生成安全的哈希值
+    const hash = crypto.createHash('sha256').update(data).digest('hex');
+    // 返回前 32 字符作为标识（足够用于去重）
+    return `msg-${hash.slice(0, 32)}-${data.length}`;
   }
   
   /**
@@ -288,20 +308,26 @@ export class F2APlugin implements OpenClawPlugin {
   /**
    * 获取任务队列（懒加载）
    * 只有在真正需要处理任务时才初始化 SQLite 数据库
+   * P2-3 修复：添加初始化标志防止重复初始化
    */
   private get taskQueue(): TaskQueue {
-    if (!this._taskQueue) {
-      const dataDir = this.getDefaultDataDir();
-      this._taskQueue = new TaskQueue({
-        maxSize: this.config.maxQueuedTasks || 100,
-        maxAgeMs: 24 * 60 * 60 * 1000, // 24小时
-        persistDir: dataDir,
-        persistEnabled: true,
-        logger: this._logger
-      });
-      this._logger?.info('[F2A] TaskQueue 已初始化（懒加载）');
+    if (!this._taskQueue && !this._initializingFlags.taskQueue) {
+      this._initializingFlags.taskQueue = true;
+      try {
+        const dataDir = this.getDefaultDataDir();
+        this._taskQueue = new TaskQueue({
+          maxSize: this.config.maxQueuedTasks || 100,
+          maxAgeMs: 24 * 60 * 60 * 1000, // 24小时
+          persistDir: dataDir,
+          persistEnabled: true,
+          logger: this._logger
+        });
+        this._logger?.info('[F2A] TaskQueue 已初始化（懒加载）');
+      } finally {
+        this._initializingFlags.taskQueue = false;
+      }
     }
-    return this._taskQueue;
+    return this._taskQueue!;
   }
   
   /**
@@ -394,30 +420,41 @@ export class F2APlugin implements OpenClawPlugin {
   
   /**
    * Issue #98: 获取联系人管理器（延迟初始化）
+   * P2-3 修复：添加初始化标志防止重复初始化
    */
   private get contactManager(): ContactManager {
-    if (!this._contactManager) {
-      const dataDir = this.getDefaultDataDir();
-      this._contactManager = new ContactManager(dataDir, this._logger);
-      this._logger?.info('[F2A] ContactManager 已初始化');
+    if (!this._contactManager && !this._initializingFlags.contactManager) {
+      this._initializingFlags.contactManager = true;
+      try {
+        const dataDir = this.getDefaultDataDir();
+        this._contactManager = new ContactManager(dataDir, this._logger);
+        this._logger?.info('[F2A] ContactManager 已初始化');
+      } finally {
+        this._initializingFlags.contactManager = false;
+      }
     }
-    return this._contactManager;
+    return this._contactManager!;
   }
   
   /**
    * Issue #99: 获取握手协议处理器（延迟初始化）
    * 依赖 F2A 实例和 ContactManager
-   * P2-3 修复：传递握手配置
+   * P2-3 修复：传递握手配置 + 添加初始化标志防止重复初始化
    */
   private get handshakeProtocol(): HandshakeProtocol {
-    if (!this._handshakeProtocol && this._f2a && this._contactManager) {
-      this._handshakeProtocol = new HandshakeProtocol(
-        this._f2a,
-        this._contactManager,
-        this._logger,
-        this.config.handshake  // P2-3 修复：传递配置
-      );
-      this._logger?.info('[F2A] HandshakeProtocol 已初始化');
+    if (!this._handshakeProtocol && !this._initializingFlags.handshakeProtocol && this._f2a && this._contactManager) {
+      this._initializingFlags.handshakeProtocol = true;
+      try {
+        this._handshakeProtocol = new HandshakeProtocol(
+          this._f2a,
+          this._contactManager,
+          this._logger,
+          this.config.handshake  // P2-3 修复：传递配置
+        );
+        this._logger?.info('[F2A] HandshakeProtocol 已初始化');
+      } finally {
+        this._initializingFlags.handshakeProtocol = false;
+      }
     }
     return this._handshakeProtocol!;
   }
@@ -557,7 +594,10 @@ export class F2APlugin implements OpenClawPlugin {
         const logPath = join(homedir(), '.openclaw/logs/adapter-debug.log');
         try {
           fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`);
-        } catch {}
+        } catch {
+          // P3-1 修复：日志文件写入失败时静默忽略（不影响主流程）
+          // 这是调试日志，失败不应影响程序执行
+        }
         console.log(msg);
         this._logger?.info(msg);
       };
@@ -610,7 +650,9 @@ export class F2APlugin implements OpenClawPlugin {
           const fs = require('fs');
           const logPath = join(homedir(), '.openclaw/logs/adapter-debug.log');
           fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${logMsg}\n`);
-        } catch {}
+        } catch {
+          // P3-1 修复：日志文件写入失败时静默忽略（不影响主流程）
+        }
         
         try {
           // P1-2, P1-5: 改进的回声循环检测
@@ -678,7 +720,10 @@ export class F2APlugin implements OpenClawPlugin {
       if (this._f2a) {
         try {
           await this._f2a.stop();
-        } catch {}
+        } catch {
+          // P3-1 修复：清理失败时忽略，不影响程序继续执行
+          this._logger?.debug?.('[F2A] F2A 实例停止失败（清理阶段）');
+        }
         this._f2a = undefined;
       }
     }
@@ -762,7 +807,9 @@ export class F2APlugin implements OpenClawPlugin {
         const fs = require('fs');
         const logPath = join(homedir(), '.openclaw/logs/adapter-debug.log');
         fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`);
-      } catch {}
+      } catch {
+        // P3-1 修复：日志文件写入失败时静默忽略（不影响主流程）
+      }
       this._logger?.info(msg);
     };
     
@@ -874,7 +921,10 @@ export class F2APlugin implements OpenClawPlugin {
         try {
           await this._f2a.stop();
           this._logger?.info('[F2A] F2A 实例已停止');
-        } catch {}
+        } catch {
+          // P3-1 修复：清理阶段停止失败时静默忽略
+          this._logger?.debug?.('[F2A] F2A 实例停止失败（清理阶段）');
+        }
       }
       
       // 同步关闭其他资源
@@ -885,12 +935,16 @@ export class F2APlugin implements OpenClawPlugin {
       if (this._webhookServer) {
         try {
           (this._webhookServer as any).server?.close();
-        } catch {}
+        } catch {
+          // P3-1 修复：清理阶段关闭失败时静默忽略
+        }
       }
       if (this._taskQueue) {
         try {
           this._taskQueue.close();
-        } catch {}
+        } catch {
+          // P3-1 修复：清理阶段关闭失败时静默忽略
+        }
       }
     };
     

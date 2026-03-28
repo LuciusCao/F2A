@@ -983,6 +983,12 @@ export class ContactManager {
       // 继续执行，因为主要操作已完成
     }
     
+    // 再次保存以记录 pendingHandshakes 的移除
+    if (!this.saveData()) {
+      this.logger?.warn('[ContactManager] 移除待处理请求后保存失败');
+      // 继续执行，因为主要操作已完成
+    }
+    
     const response: HandshakeResponse = {
       requestId,
       from: '', // 调用方填充

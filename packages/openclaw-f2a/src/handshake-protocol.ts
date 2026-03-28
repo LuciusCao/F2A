@@ -216,6 +216,13 @@ export class HandshakeProtocol {
     }
     
     try {
+      // P1-5 修复：检查是否向自己发送请求
+      const f2aInterface = this.f2a as unknown as F2APublicInterface;
+      if (toPeerId === f2aInterface.peerId) {
+        this.logger?.warn('[HandshakeProtocol] 不能向自己发送好友请求');
+        return null;
+      }
+      
       // 检查是否已是好友
       if (this.contactManager.isFriend(toPeerId)) {
         this.logger?.warn('[HandshakeProtocol] 对方已是好友');
@@ -235,9 +242,6 @@ export class HandshakeProtocol {
         this.logger?.warn('[HandshakeProtocol] 已有待响应的请求');
         return existing.request.requestId;
       }
-      
-      // P0-2 修复：使用类型安全的接口
-      const f2aInterface = this.f2a as unknown as F2APublicInterface;
       
       // 创建请求
       const myCapabilities = this.getMyCapabilities();

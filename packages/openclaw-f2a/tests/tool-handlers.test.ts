@@ -379,4 +379,12 @@ describe('ToolHandlers', () => {
       expect(result.content).toBeDefined();
     });
   });
+
+  describe('handleStatus', () => {
+    it('应该返回 F2A 状态', async () => {
+      const result = await handlers.handleStatus({});
+
+      expect(result.content).toBeDefined();
+    });
+  });
 });

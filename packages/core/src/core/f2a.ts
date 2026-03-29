@@ -32,8 +32,9 @@ import {
   Result,
   TaskDelegateOptions,
   TaskDelegateResult,
-  TaskRequestEvent,
-  TaskResponseEvent,
+  MessageEvent,
+  StructuredMessagePayload,
+  MESSAGE_TOPICS,
   PeerDiscoveredEvent,
   PeerConnectedEvent,
   PeerDisconnectedEvent,
@@ -604,15 +605,15 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   }
 
   /**
-   * 发送自由消息给特定 Peer
+   * 发送自由消息给特定 Peer（Agent 协议层）
    * Agent 之间的自然语言通信
    */
-  async sendMessage(
+  async sendMessageToPeer(
     peerId: string,
-    content: string,
-    metadata?: Record<string, unknown>
+    content: string | Record<string, unknown>,
+    topic?: string
   ): Promise<Result<void>> {
-    return this.p2pNetwork.sendFreeMessage(peerId, content, metadata);
+    return this.p2pNetwork.sendFreeMessage(peerId, content, topic);
   }
 
   /**
@@ -681,14 +682,37 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       this.emit('peer:disconnected', event);
     });
 
-    // 处理收到的任务请求
+    // 处理收到的 Agent 协议层消息
     this.p2pNetwork.on('message:received', async (message, peerId) => {
-      if (message.type === 'TASK_REQUEST') {
-        await this.handleTaskRequest(message.payload as TaskRequestEvent, peerId);
-      } else if (message.type === 'MESSAGE') {
-        // 自由消息：调用配置的 handler URL
-        const payload = message.payload as { content: string; metadata?: Record<string, unknown> };
-        await this.handleFreeMessage(peerId, message.id, payload.content, payload.metadata);
+      if (message.type === 'MESSAGE') {
+        const payload = message.payload as StructuredMessagePayload;
+        
+        // 根据 topic 分发处理
+        if (payload.topic === MESSAGE_TOPICS.TASK_REQUEST) {
+          // 任务请求
+          const content = payload.content as {
+            taskId: string;
+            taskType: string;
+            description: string;
+            parameters?: Record<string, unknown>;
+          };
+          await this.handleTaskRequest(
+            content.taskId,
+            content.taskType,
+            content.description,
+            content.parameters,
+            peerId
+          );
+        } else {
+          // 其他消息：发出事件供上层处理
+          this.emit('peer:message', {
+            messageId: message.id,
+            from: peerId,
+            content: payload.content,
+            topic: payload.topic,
+            replyTo: payload.replyTo
+          });
+        }
       }
     });
 
@@ -698,93 +722,93 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   }
 
   /**
-   * 处理收到的任务请求
+   * 处理收到的任务请求（MESSAGE + topic='task.request'）
    */
   private async handleTaskRequest(
-    request: TaskRequestEvent,
+    taskId: string,
+    taskType: string,
+    description: string,
+    parameters: Record<string, unknown> | undefined,
     fromPeerId: string
   ): Promise<void> {
     this.logger.info('Received task request', {
       fromPeerId: fromPeerId.slice(0, 16),
-      taskType: request.taskType,
-      taskId: request.taskId
+      taskType,
+      taskId
     });
 
     // 查找对应的能力处理器
-    const capability = this.registeredCapabilities.get(request.taskType);
+    const capability = this.registeredCapabilities.get(taskType);
 
     if (!capability) {
       this.logger.warn('Capability not supported, rejecting task', {
-        taskType: request.taskType,
+        taskType,
         fromPeerId: fromPeerId.slice(0, 16)
       });
       // 拒绝任务
       await this.p2pNetwork.sendTaskResponse(
         fromPeerId,
-        request.taskId,
+        taskId,
         'rejected',
         undefined,
-        `Capability not supported: ${request.taskType}`
+        `Capability not supported: ${taskType}`
       );
       return;
     }
 
-    // 触发事件，让上层（OpenClaw）可以拦截或监控
-    this.emit('task:request', request);
-
     // 如果有注册 handler，自动执行任务并发送响应
     if (capability.handler) {
       try {
-        const result = await capability.handler(request.parameters || {});
+        const result = await capability.handler(parameters || {});
         await this.p2pNetwork.sendTaskResponse(
           fromPeerId,
-          request.taskId,
+          taskId,
           'success',
           result
         );
         this.logger.info('Task executed successfully', {
-          taskId: request.taskId,
+          taskId,
           fromPeerId: fromPeerId.slice(0, 16)
         });
       } catch (error) {
         this.logger.error('Task execution failed', {
-          taskId: request.taskId,
+          taskId,
           fromPeerId: fromPeerId.slice(0, 16),
           error: getErrorMessage(error)
         });
         await this.p2pNetwork.sendTaskResponse(
           fromPeerId,
-          request.taskId,
+          taskId,
           'error',
           undefined,
           getErrorMessage(error)
         );
       }
     }
-    // 如果没有 handler，依赖上层通过 respondToTask 手动响应
   }
 
   /**
-   * 处理收到的自由消息
+   * 处理收到的自由消息（MESSAGE + topic='chat' 或其他）
    * 如果配置了 messageHandlerUrl，调用该 URL 并发送响应
    */
   private async handleFreeMessage(
     fromPeerId: string,
     messageId: string,
-    content: string,
-    metadata?: Record<string, unknown>
+    content: string | Record<string, unknown>,
+    topic?: string
   ): Promise<void> {
     this.logger.info('Received free message', {
       from: fromPeerId.slice(0, 16),
-      content: content.slice(0, 50)
+      topic,
+      contentLength: typeof content === 'string' ? content.length : 'object'
     });
 
     // 发出事件供上层监听
-    this.emit('message', {
+    this.emit('peer:message', {
+      messageId,
       from: fromPeerId,
       content,
-      metadata,
-      messageId
+      topic
     });
 
     // 如果配置了 messageHandlerUrl，调用它
@@ -797,7 +821,7 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
           body: JSON.stringify({
             from: fromPeerId,
             content,
-            metadata,
+            topic,
             messageId
           })
         });
@@ -808,7 +832,7 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
           
           if (replyContent) {
             // 发送响应回发送者
-            await this.p2pNetwork.sendFreeMessage(fromPeerId, replyContent);
+            await this.p2pNetwork.sendFreeMessage(fromPeerId, replyContent, topic);
             this.logger.info('Sent message response', {
               to: fromPeerId.slice(0, 16),
               content: replyContent.slice(0, 50)
@@ -848,13 +872,7 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     );
 
     if (responseResult.success) {
-      this.emit('task:response', {
-        taskId,
-        from: this.peerId,
-        status,
-        result,
-        error
-      });
+      // 事件已废弃，不再发出
     }
 
     return responseResult;

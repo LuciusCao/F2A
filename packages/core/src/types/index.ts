@@ -88,29 +88,50 @@ export interface AgentInfo {
 }
 
 // ============================================================================
-// F2A 消息协议
+// F2A 消息协议 - 两层设计
+// ============================================================================
+// 
+// ┌─────────────────────────────────────────────────────────────────────┐
+// │  Layer 2: Agent 协议层（语义层）                                      │
+// │  - MESSAGE: 自由通信，AI-to-AI 对话                                   │
+// │  - SKILL_*: 技能交换（可选扩展）                                       │
+// │  职责：Agent 之间的语义交互，内容由 Agent 自由解释                      │
+// └─────────────────────────────────────────────────────────────────────┘
+//                              ↑ 使用网络层传输
+// ┌─────────────────────────────────────────────────────────────────────┐
+// │  Layer 1: 网络层协议（基础设施）                                       │
+// │  - DISCOVER / DISCOVER_RESP: Agent 发现                              │
+// │  - PING / PONG: 连接心跳                                             │
+// │  - DECRYPT_FAILED: 加密通道异常通知                                   │
+// │  职责：维护 P2P 网络连接、节点发现、基础健康检查                        │
+// └─────────────────────────────────────────────────────────────────────┘
 // ============================================================================
 
-export type F2AMessageType = 
+// Layer 1: 网络层协议（基础设施）
+// 这些消息由网络自动处理，Agent 无需关心语义
+export type NetworkMessageType = 
   | 'DISCOVER'      // 发现广播
   | 'DISCOVER_RESP' // 发现响应
-  | 'CAPABILITY_QUERY'   // 查询能力
-  | 'CAPABILITY_RESPONSE' // 能力响应
-  | 'TASK_REQUEST'  // 任务请求
-  | 'TASK_RESPONSE' // 任务响应
-  | 'TASK_DELEGATE' // 任务转委托
-  | 'DECRYPT_FAILED' // 解密失败通知
   | 'PING'          // 心跳
   | 'PONG'          // 心跳响应
-  // 技能交换
+  | 'DECRYPT_FAILED'; // 解密失败通知
+
+// Layer 2: Agent 协议层（语义层）
+// 这些消息携带 Agent 需要理解的语义内容
+export type AgentMessageType = 
+  | 'MESSAGE';      // 通用消息（取代所有 TASK_* / CAPABILITY_*）
+
+// 技能交换协议（可选扩展，属于 Agent 协议层）
+export type SkillMessageType = 
   | 'SKILL_ANNOUNCE'      // 技能公告
   | 'SKILL_QUERY'         // 技能查询
   | 'SKILL_QUERY_RESPONSE' // 技能查询响应
   | 'SKILL_INVOKE'        // 技能调用
   | 'SKILL_INVOKE_RESPONSE' // 技能调用响应
-  | 'SKILL_RESULT'       // 技能执行结果
-  // 自由消息
-  | 'MESSAGE';       // Agent 自由通信（自然语言）
+  | 'SKILL_RESULT';       // 技能执行结果
+
+// 完整消息类型 = 网络层 + Agent层 + 扩展
+export type F2AMessageType = NetworkMessageType | AgentMessageType | SkillMessageType;
 
 export interface F2AMessage {
   /** 消息ID */
@@ -134,45 +155,79 @@ export interface DiscoverPayload {
   agentInfo: AgentInfo;
 }
 
-// 能力查询
-export interface CapabilityQueryPayload {
-  /** 查询特定能力，空表示查询所有 */
-  capabilityName?: string;
-  /** 查询特定工具 */
-  toolName?: string;
+// 消息主题常量（约定 MESSAGE payload 中的 topic 值）
+export const MESSAGE_TOPICS = {
+  /** 任务请求 */
+  TASK_REQUEST: 'task.request',
+  /** 任务响应 */
+  TASK_RESPONSE: 'task.response',
+  /** 能力查询 */
+  CAPABILITY_QUERY: 'capability.query',
+  /** 能力响应 */
+  CAPABILITY_RESPONSE: 'capability.response',
+  /** 自由对话 */
+  FREE_CHAT: 'chat',
+} as const;
+
+// 结构化消息载荷（用于 MESSAGE 类型）
+export interface StructuredMessagePayload {
+  /** 消息主题（区分消息类型），必须匹配 `/^[a-z0-9]+([.-][a-z0-9]+)*$/` 格式
+   * - 只允许小写字母、数字、点号、连字符
+   * - 不允许连续点号或连字符（如 `a..b` 或 `a--b`）
+   * - 最大长度 256 字符
+   */
+  topic?: string;
+  
+  /** 消息内容（文本或结构化对象）
+   * - 文本格式：最大 1MB (1,048,576 字符)
+   * - 对象格式：任意 JSON 结构化对象
+   */
+  content: string | Record<string, unknown>;
+  
+  /** 引用的消息 ID（用于回复链），最大长度 128 字符 */
+  replyTo?: string;
 }
 
-// 能力响应
-export interface CapabilityResponsePayload {
-  agentInfo: AgentInfo;
+// 类型别名：保留兼容性的结构化消息类型
+/** @deprecated 使用 MESSAGE + StructuredMessagePayload 替代 */
+export interface TaskRequestPayload extends StructuredMessagePayload {
+  topic: typeof MESSAGE_TOPICS.TASK_REQUEST;
+  content: {
+    taskId: string;
+    taskType: string;
+    description: string;
+    parameters?: Record<string, unknown>;
+    timeout?: number;
+  };
 }
 
-// 任务请求
-export interface TaskRequestPayload {
-  /** 任务ID */
-  taskId: string;
-  /** 任务类型 */
-  taskType: string;
-  /** 任务描述 */
-  description: string;
-  /** 任务参数 */
-  parameters?: Record<string, unknown>;
-  /** 超时时间（秒） */
-  timeout?: number;
+/** @deprecated 使用 MESSAGE + StructuredMessagePayload 替代 */
+export interface TaskResponsePayload extends StructuredMessagePayload {
+  topic: typeof MESSAGE_TOPICS.TASK_RESPONSE;
+  content: {
+    taskId: string;
+    status: 'success' | 'error' | 'rejected' | 'delegated';
+    result?: unknown;
+    error?: string;
+    delegatedTo?: string;
+  };
 }
 
-// 任务响应
-export interface TaskResponsePayload {
-  /** 任务ID */
-  taskId: string;
-  /** 状态 */
-  status: 'success' | 'error' | 'rejected' | 'delegated';
-  /** 结果数据 */
-  result?: unknown;
-  /** 错误信息 */
-  error?: string;
-  /** 如果转委托，指向新节点 */
-  delegatedTo?: string;
+/** @deprecated 使用 MESSAGE + StructuredMessagePayload 替代 */
+export interface CapabilityQueryPayload extends StructuredMessagePayload {
+  topic: typeof MESSAGE_TOPICS.CAPABILITY_QUERY;
+  content: {
+    capabilityName?: string;
+    toolName?: string;
+  };
+}
+
+/** @deprecated 使用 MESSAGE + StructuredMessagePayload 替代 */
+export interface CapabilityResponsePayload extends StructuredMessagePayload {
+  topic: typeof MESSAGE_TOPICS.CAPABILITY_RESPONSE;
+  content: {
+    agentInfo: AgentInfo;
+  };
 }
 
 // 自由消息（Agent 之间的自然语言通信）
@@ -214,6 +269,27 @@ export interface PeerDisconnectedEvent {
   peerId: string;
 }
 
+export interface NetworkStartedEvent {
+  peerId: string;
+  listenAddresses: string[];
+}
+
+// Agent 协议层事件：通用消息事件（取代 TaskRequest/Response 事件）
+export interface MessageEvent {
+  /** 消息 ID */
+  messageId: string;
+  /** 发送方 PeerID */
+  from: string;
+  /** 消息内容 */
+  content: string | Record<string, unknown>;
+  /** 消息主题 */
+  topic?: string;
+  /** 引用的消息 ID */
+  replyTo?: string;
+}
+
+// 兼容性类型别名（已废弃）
+/** @deprecated 使用 MessageEvent 替代 */
 export interface TaskRequestEvent {
   taskId: string;
   from: string;
@@ -223,6 +299,7 @@ export interface TaskRequestEvent {
   timeout?: number;
 }
 
+/** @deprecated 使用 MessageEvent 替代 */
 export interface TaskResponseEvent {
   taskId: string;
   from: string;
@@ -231,21 +308,16 @@ export interface TaskResponseEvent {
   error?: string;
 }
 
-export interface NetworkStartedEvent {
-  peerId: string;
-  listenAddresses: string[];
-}
-
 export interface F2AEvents {
+  // 网络层事件
   'peer:discovered': (event: PeerDiscoveredEvent) => void;
   'peer:connected': (event: PeerConnectedEvent) => void;
   'peer:disconnected': (event: PeerDisconnectedEvent) => void;
-  'task:request': (event: TaskRequestEvent) => void;
-  'task:response': (event: TaskResponseEvent) => void;
   'network:started': (event: NetworkStartedEvent) => void;
   'network:stopped': () => void;
   'error': (error: Error) => void;
-  'message': (event: { from: string; content: string; metadata?: Record<string, unknown>; messageId: string }) => void;
+  // Agent 协议层事件
+  'peer:message': (event: MessageEvent) => void;
 }
 
 export type F2AEventEmitter = EventEmitter<F2AEvents>;

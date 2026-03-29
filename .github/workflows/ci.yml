@@ -40,10 +40,43 @@ jobs:
           files: ./coverage/lcov.info
           flags: unittests
 
+  # E2E 测试（真实 P2P 网络）
+  e2e-tests:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm install
+      
+      - name: Build
+        run: npm run build
+      
+      - name: Run E2E tests
+        run: npm run test:e2e
+        env:
+          NODE_ENV: test
+      
+      - name: Upload E2E test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-logs
+          path: |
+            ~/.f2a/logs/
+            /tmp/f2a-*/
+          retention-days: 7
+
   # 集成测试（仅 push 触发，PR 时跳过但返回成功）
   integration-tests:
     runs-on: ubuntu-latest
-    needs: lint-and-test
+    needs: e2e-tests
     steps:
       - name: Skip on PR
         if: github.event_name != 'push'

@@ -53,14 +53,17 @@ export function generateTestConfig(nodeCount: number = 2): TestConfig {
   const mdnsServiceTag = `f2a-e2e-${timestamp}`;
   const baseDataDir = `./test-tmp-e2e-${testRunId}`;
 
+  // 使用随机端口范围，避免冲突
+  const basePort = Math.floor(Math.random() * 50000) + 10000;
+
   const nodes: NodeConfig[] = [];
   for (let i = 0; i < nodeCount; i++) {
-    const basePort = 10000 + i * 100;
+    const nodeBasePort = basePort + i * 100;
     nodes.push({
       nodeIndex: i,
-      name: `node-${i}`,
+      name: `node-${testRunId}-${i}`,
       displayName: `E2E Test Node ${i}`,
-      listenPort: basePort,
+      listenPort: 0,  // 使用 0 让系统自动分配端口
       dataDir: `${baseDataDir}/node-${i}`,
       mdnsServiceTag,
       enableDHT: false,

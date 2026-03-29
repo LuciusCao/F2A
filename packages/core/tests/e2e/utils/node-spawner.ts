@@ -6,8 +6,8 @@
 import { spawn, ChildProcess } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import type { NodeConfig, TestEvent, TestCommand } from './test-config.js';
-import { MessageWaiter } from './message-waiter.js';
+import type { NodeConfig, TestEvent, TestCommand } from './test-config';
+import { MessageWaiter } from './message-waiter';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

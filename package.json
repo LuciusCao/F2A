@@ -10,16 +10,17 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "build:core": "npm run build -w @f2a/network",
-    "build:adapter": "npm run build -w @f2a/openclaw-adapter",
+    "build:adapter": "npm run build -w @f2a/openclaw-f2a",
     "build:dashboard": "npm run build -w @f2a/dashboard",
     "lint": "npm run lint --workspaces",
     "clean": "npm run clean --workspaces && rm -rf node_modules",
-    "test": "npm run test -w @f2a/network",
-    "test:unit": "npm run test:unit -w @f2a/network",
-    "test:coverage": "npm run test:coverage -w @f2a/network",
-    "test:integration": "npm run test:integration -w @f2a/network",
-    "test:all": "npm run test:all -w @f2a/network",
-    "test:ci": "npm run test:ci -w @f2a/network"
+    "test": "npm run test --workspaces",
+    "test:unit": "npm run test:unit --workspaces",
+    "test:coverage": "npm run test:coverage --workspaces",
+    "test:integration": "npm run test:integration --workspaces",
+    "test:e2e": "npm run test:e2e -w @f2a/network",
+    "test:all": "npm run test:all --workspaces",
+    "test:ci": "npm run test:ci --workspaces"
   },
   "engines": {
     "node": ">=18.0.0"

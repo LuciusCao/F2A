@@ -7,6 +7,13 @@ export default defineConfig({
     // E2E 测试配置
     testTimeout: 120000,  // E2E 测试需要更长超时时间
     hookTimeout: 60000,   // beforeAll/afterAll 超时时间
+    // E2E 测试需要串行运行（避免端口冲突）
+    pool: 'forks',
+    poolOptions: {
+      forks: {
+        singleFork: true  // 串行运行
+      }
+    },
     coverage: {
       reporter: ['text', 'json', 'html'],
       exclude: [

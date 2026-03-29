@@ -1,5 +1,5 @@
 {
-  "name": "@f2a/openclaw-adapter",
+  "name": "@f2a/openclaw-f2a",
   "version": "0.3.3",
   "description": "OpenClaw plugin for F2A P2P Agent network",
   "main": "dist/index.js",
@@ -17,7 +17,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "vitest run tests/*.test.ts",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/*.test.ts src/**/*.test.ts --exclude='tests/integration/**'",
     "test:integration": "vitest run tests/integration/*.test.ts",
     "test:all": "vitest run",
     "lint": "eslint src/**/*.ts"

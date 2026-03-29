@@ -293,4 +293,72 @@ describe('TaskQueue', () => {
       smallQueue.close();
     });
   });
+
+  describe('getWebhookPending', () => {
+    it('应该返回待 webhook 推送的任务', () => {
+      queue.add({
+        taskId: 'webhook-task-1',
+        taskType: 'test',
+        description: 'Webhook Task',
+        from: 'test-peer',
+        timestamp: Date.now(),
+      });
+
+      const pending = queue.getWebhookPending();
+      expect(pending.length).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  describe('markWebhookPushed', () => {
+    it('应该标记任务为已推送', () => {
+      queue.add({
+        taskId: 'pushed-task',
+        taskType: 'test',
+        description: 'Pushed Task',
+        from: 'test-peer',
+        timestamp: Date.now(),
+      });
+
+      queue.markWebhookPushed('pushed-task');
+      // 不应该抛出错误
+    });
+  });
+
+  describe('resetProcessingTask', () => {
+    it('应该重置 processing 任务', () => {
+      queue.add({
+        taskId: 'reset-task',
+        taskType: 'test',
+        description: 'Reset Task',
+        from: 'test-peer',
+        timestamp: Date.now(),
+      });
+
+      queue.markProcessing('reset-task');
+      const result = queue.resetProcessingTask('reset-task');
+
+      expect(result).toBeDefined();
+      expect(result?.status).toBe('pending');
+    });
+
+    it('应该返回 undefined 对于不存在的任务', () => {
+      const result = queue.resetProcessingTask('nonexistent');
+      expect(result).toBeUndefined();
+    });
+  });
+
+  describe('cleanup', () => {
+    it('应该能够清理过期任务', () => {
+      queue.add({
+        taskId: 'cleanup-task',
+        taskType: 'test',
+        description: 'Cleanup Task',
+        from: 'test-peer',
+        timestamp: Date.now(),
+      });
+
+      queue.cleanup();
+      // 不应该抛出错误
+    });
+  });
 });

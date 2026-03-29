@@ -3,7 +3,7 @@
   "extension": "./dist/plugin.js",
   "name": "F2A P2P Agent Network",
   "description": "OpenClaw plugin for F2A P2P Agent network",
-  "version": "0.2.20",
+  "version": "0.3.3",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

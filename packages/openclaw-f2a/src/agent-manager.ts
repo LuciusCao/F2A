@@ -45,14 +45,14 @@ export class AgentManager {
     const existing = this.loadIdentity();
     if (existing) {
       this.identity = existing;
-      logger.info('[F2A:Agent] 已加载 Agent 身份: %s', existing.agentId);
+      logger.info('[F2A:Agent] 已加载 Agent 身份', { agentId: existing.agentId });
       return;
     }
 
     // 创建新身份
     this.identity = this.createIdentity();
     this.saveIdentity(this.identity);
-    logger.info('[F2A:Agent] 已创建新 Agent 身份: %s', this.identity.agentId);
+    logger.info('[F2A:Agent] 已创建新 Agent 身份', { agentId: this.identity.agentId });
   }
 
   /**
@@ -142,7 +142,7 @@ export class AgentManager {
 
       return identity;
     } catch (error) {
-      logger.warn('[F2A:Agent] 加载身份文件失败: %s', error);
+      logger.warn('[F2A:Agent] 加载身份文件失败', { error: String(error) });
       return null;
     }
   }
@@ -160,7 +160,7 @@ export class AgentManager {
     const data = JSON.stringify(identity, null, 2);
     
     writeFileSync(filePath, data, { mode: 0o600 }); // 仅所有者可读写
-    logger.debug?.('[F2A:Agent] 身份已保存到: %s', filePath);
+    logger.debug?.('[F2A:Agent] 身份已保存', { filePath });
   }
 
   /**
@@ -215,7 +215,7 @@ export class AgentManager {
 
     this.identity = identity;
     this.saveIdentity(identity);
-    logger.info('[F2A:Agent] 已导入 Agent 身份: %s', identity.agentId);
+    logger.info('[F2A:Agent] 已导入 Agent 身份', { agentId: identity.agentId });
     return identity;
   }
 
@@ -225,7 +225,7 @@ export class AgentManager {
   resetIdentity(): AgentIdentity {
     this.identity = this.createIdentity();
     this.saveIdentity(this.identity);
-    logger.info('[F2A:Agent] 已重置 Agent 身份: %s', this.identity.agentId);
+    logger.info('[F2A:Agent] 已重置 Agent 身份', { agentId: this.identity.agentId });
     return this.identity;
   }
 }

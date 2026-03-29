@@ -6,10 +6,10 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { ClaimHandlers } from '../src/claim-handlers.js';
-import type { F2APlugin } from '../src/connector.js';
+import type { F2APluginPublicInterface } from '../src/types.js';
 
 // 创建模拟适配器
-function createMockAdapter() {
+function createMockPlugin() {
   const mockAnnouncementQueue = {
     create: vi.fn(() => ({ announcementId: 'ann-1' })),
     get: vi.fn(() => ({
@@ -44,6 +44,30 @@ function createMockAdapter() {
   };
 
   return {
+    // F2APluginPublicInterface 方法
+    getConfig: () => ({}),
+    getApi: () => ({
+      config: {
+        agents: {
+          defaults: {
+            workspace: '/test/workspace',
+          },
+        },
+      },
+    }),
+    getNetworkClient: () => null,
+    getReputationSystem: () => null,
+    getNodeManager: () => null,
+    getTaskQueue: () => null,
+    getAnnouncementQueue: () => mockAnnouncementQueue,
+    getReviewCommittee: () => undefined,
+    getContactManager: () => null,
+    getHandshakeProtocol: () => null,
+    getF2AStatus: () => ({ running: false }),
+    discoverAgents: async () => ({ success: false, error: { message: 'Not implemented' } }),
+    getConnectedPeers: async () => ({ success: false, error: { message: 'Not implemented' } }),
+    sendMessage: async () => ({ success: false, error: 'Not implemented' }),
+    // 兼容旧的直接属性访问
     announcementQueue: mockAnnouncementQueue,
     config: {},
     api: {
@@ -60,11 +84,11 @@ function createMockAdapter() {
 
 describe('ClaimHandlers', () => {
   let handlers: ClaimHandlers;
-  let mockAdapter: any;
+  let mockPlugin: any;
 
   beforeEach(() => {
-    mockAdapter = createMockAdapter();
-    handlers = new ClaimHandlers(mockAdapter as unknown as F2APlugin);
+    mockPlugin = createMockPlugin();
+    handlers = new ClaimHandlers(mockPlugin as unknown as F2APluginPublicInterface);
   });
 
   afterEach(() => {
@@ -106,7 +130,7 @@ describe('ClaimHandlers', () => {
         description: 'Review my PR',
       });
 
-      expect(mockAdapter.announcementQueue.create).toHaveBeenCalled();
+      expect(mockPlugin.announcementQueue.create).toHaveBeenCalled();
     });
   });
 
@@ -118,7 +142,7 @@ describe('ClaimHandlers', () => {
     });
 
     it('应该处理空列表', async () => {
-      mockAdapter.announcementQueue.getOpen.mockReturnValue([]);
+      mockPlugin.announcementQueue.getOpen.mockReturnValue([]);
 
       const result = await handlers.handleListAnnouncements({});
 
@@ -140,7 +164,7 @@ describe('ClaimHandlers', () => {
         announcement_id: 'ann-1',
       });
 
-      expect(mockAdapter.announcementQueue.submitClaim).toHaveBeenCalled();
+      expect(mockPlugin.announcementQueue.submitClaim).toHaveBeenCalled();
     });
   });
 
@@ -177,7 +201,7 @@ describe('ClaimHandlers', () => {
 
   describe('handleMyClaims', () => {
     it('应该返回我的认领列表', async () => {
-      mockAdapter.announcementQueue.getMyClaims.mockReturnValue([
+      mockPlugin.announcementQueue.getMyClaims.mockReturnValue([
         { claimId: 'claim-1', status: 'pending', announcementId: 'ann-1' },
       ]);
 

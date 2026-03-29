@@ -17,7 +17,7 @@
 import { join, resolve, normalize } from 'path';
 import { mkdirSync, existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { randomBytes } from 'crypto'; // P2-5 修复：导入 crypto 模块
-import type { ApiLogger } from './connector.js';
+import type { ApiLogger } from './types.js';
 import {
   Contact,
   ContactCreateParams,

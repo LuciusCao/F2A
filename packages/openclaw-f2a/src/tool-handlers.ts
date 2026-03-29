@@ -10,11 +10,12 @@ import type {
   AgentCapability,
   TaskResponse,
   F2APluginConfig,
-  OpenClawPluginApi
+  OpenClawPluginApi,
+  PluginInternalAccess
 } from './types.js';
-import type { F2APlugin } from './connector.js';
+import type { F2APluginPublicInterface } from './types.js';
 import type { QueuedTask } from './task-queue.js';
-import type { ReputationSystem } from './reputation.js';
+import type { ReputationSystemLike } from './types.js';
 import type { F2ANetworkClient } from './network-client.js';
 import type { F2ANodeManager } from './node-manager.js';
 import type { TaskQueue } from './task-queue.js';
@@ -30,27 +31,6 @@ interface BroadcastResult {
   success: boolean;
   error?: string;
   latency?: number;
-}
-
-/**
- * Adapter 内部接口 - 用于类型安全的属性访问
- */
-interface AdapterInternalAccess {
-  networkClient: F2ANetworkClient;
-  reputationSystem: ReputationSystem;
-  nodeManager: F2ANodeManager;
-  taskQueue: TaskQueue;
-  announcementQueue: AnnouncementQueue;
-  config: F2APluginConfig;
-  api?: OpenClawPluginApi;
-  reviewCommittee?: ReviewCommittee;
-  // 新架构：直接访问 F2A 实例
-  f2aClient?: {
-    discoverAgents: (capability?: string) => Promise<{ success: boolean; data?: AgentInfo[]; error?: { message: string } }>;
-    getConnectedPeers: () => Promise<{ success: boolean; data?: any[]; error?: { message: string } }>;
-  };
-  // 获取 F2A 状态
-  getF2AStatus?: () => { running: boolean; peerId?: string; uptime?: number };
 }
 
 /**
@@ -97,9 +77,39 @@ export interface TaskEstimation {
 /**
  * 工具处理器类
  * 包含所有核心工具的处理逻辑
+ * 
+ * Issue #106: 使用 F2APluginPublicInterface 解除循环依赖
  */
 export class ToolHandlers {
-  constructor(private adapter: F2APlugin) {}
+  constructor(private plugin: F2APluginPublicInterface) {}
+  
+  /**
+   * 类型安全的内部访问 getter
+   * 避免在每个方法中重复类型转换
+   */
+  private get networkClient(): F2ANetworkClient {
+    return this.plugin.getNetworkClient() as unknown as F2ANetworkClient;
+  }
+  
+  private get reputationSystem(): ReputationSystemLike {
+    return this.plugin.getReputationSystem();
+  }
+  
+  private get taskQueue(): TaskQueue {
+    return this.plugin.getTaskQueue() as TaskQueue;
+  }
+  
+  private get reviewCommittee(): ReviewCommittee | undefined {
+    return this.plugin.getReviewCommittee() as ReviewCommittee | undefined;
+  }
+  
+  private get config(): F2APluginConfig {
+    return this.plugin.getConfig();
+  }
+  
+  private get api(): OpenClawPluginApi | undefined {
+    return this.plugin.getApi();
+  }
 
   /**
    * 处理 f2a_discover 工具
@@ -109,17 +119,10 @@ export class ToolHandlers {
     params: ToolHandlerParams['discover'],
     context: SessionContext
   ): Promise<ToolResult> {
-    const adapter = this.adapter as unknown as AdapterInternalAccess;
-    const reputationSystem = adapter.reputationSystem;
+    const reputationSystem = this.reputationSystem;
     
-    // 新架构：优先使用 f2aClient（直接访问 F2A 实例）
-    let result;
-    if (adapter.f2aClient) {
-      result = await adapter.f2aClient.discoverAgents(params.capability);
-    } else {
-      // 降级：使用旧的 HTTP 方式
-      result = await adapter.networkClient.discoverAgents(params.capability);
-    }
+    // 新架构：优先使用 discoverAgents 方法
+    let result = await this.plugin.discoverAgents(params.capability);
     
     if (!result.success) {
       const errorMsg = result.error?.message || String(result.error) || 'Unknown error';
@@ -177,8 +180,8 @@ ${agents.map((a: AgentInfo, i: number) => {
       return { content: '❌ 请提供有效的 task 参数（任务描述）' };
     }
     
-    const networkClient = (this.adapter as unknown as AdapterInternalAccess).networkClient;
-    const reputationSystem = (this.adapter as unknown as AdapterInternalAccess).reputationSystem;
+    const networkClient = (this.plugin as unknown as PluginInternalAccess).networkClient;
+    const reputationSystem = (this.plugin as unknown as PluginInternalAccess).reputationSystem;
     
     // 解析 Agent 引用
     const targetAgent = await this.resolveAgent(params.agent);
@@ -196,12 +199,12 @@ ${agents.map((a: AgentInfo, i: number) => {
     logger.info(`委托任务给 ${targetAgent.displayName}...`);
 
     // 新架构：直接使用 F2A 发送消息
-    const adapter = this.adapter as unknown as AdapterInternalAccess;
+    const plugin = this.plugin as unknown as PluginInternalAccess;
     
-    if (adapter.f2aClient && (adapter as any).getF2AStatus?.()?.running) {
+    if (plugin.f2aClient && (plugin as any).getF2AStatus?.()?.running) {
       // 通过 F2A 实例直接发送消息
       try {
-        const f2a = (this.adapter as any)._f2a;
+        const f2a = (this.plugin as any)._f2a;
         if (f2a && f2a.sendMessage) {
           // 发送任务消息
           const message = {
@@ -270,7 +273,7 @@ ${agents.map((a: AgentInfo, i: number) => {
       return { content: '❌ 请提供有效的 task 参数（任务描述）' };
     }
     
-    const networkClient = (this.adapter as unknown as AdapterInternalAccess).networkClient;
+    const networkClient = (this.plugin as unknown as PluginInternalAccess).networkClient;
     
     const discoverResult = await networkClient.discoverAgents(params.capability);
     
@@ -304,7 +307,7 @@ ${agents.map((a: AgentInfo, i: number) => {
     });
 
     const results = await Promise.allSettled(promises);
-    const settled = results.map((r, i) => 
+    const settled = results.map((r: PromiseSettledResult<BroadcastResult>, i: number) => 
       r.status === 'fulfilled' ? r.value : { 
         agent: agents[i].displayName ?? agents[i].peerId, 
         success: false, 
@@ -312,7 +315,7 @@ ${agents.map((a: AgentInfo, i: number) => {
       }
     ) as BroadcastResult[];
 
-    const successful = settled.filter(r => r.success);
+    const successful = settled.filter((r: BroadcastResult) => r.success);
     const minResponses = params.min_responses || 1;
 
     if (successful.length < minResponses) {
@@ -335,27 +338,27 @@ ${agents.map((a: AgentInfo, i: number) => {
     params: {},
     context: SessionContext
   ): Promise<ToolResult> {
-    const adapter = this.adapter as unknown as AdapterInternalAccess;
-    const taskQueue = adapter.taskQueue;
-    const reputationSystem = adapter.reputationSystem;
+    const plugin = this.plugin as unknown as PluginInternalAccess;
+    const taskQueue = plugin.taskQueue;
+    const reputationSystem = plugin.reputationSystem;
     
     // 新架构：直接获取 F2A 状态
     let nodeStatus: { running: boolean; peerId?: string; uptime?: number };
     let peers: any[] = [];
     
-    if (adapter.getF2AStatus) {
-      nodeStatus = adapter.getF2AStatus();
+    if (plugin.getF2AStatus) {
+      nodeStatus = plugin.getF2AStatus();
       
       // 使用 f2aClient 获取连接的 peers
-      if (adapter.f2aClient) {
-        const peersResult = await adapter.f2aClient.getConnectedPeers();
+      if (plugin.f2aClient) {
+        const peersResult = await plugin.f2aClient.getConnectedPeers();
         peers = peersResult.success ? (peersResult.data || []) : [];
       }
     } else {
       // 降级：使用旧的方式
       const [nodeStatusResult, peersResult] = await Promise.all([
-        adapter.nodeManager.getStatus(),
-        adapter.networkClient.getConnectedPeers()
+        plugin.nodeManager.getStatus(),
+        plugin.networkClient.getConnectedPeers()
       ]);
       
       if (!nodeStatusResult.success) {
@@ -411,8 +414,8 @@ ${peers.map((p: any) => {
       return { content: `❌ 无效的 peer_id 格式: ${(params.peer_id as string).slice(0, 20)}...` };
     }
     
-    const reputationSystem = (this.adapter as unknown as AdapterInternalAccess).reputationSystem;
-    const config = (this.adapter as unknown as AdapterInternalAccess).config;
+    const reputationSystem = (this.plugin as unknown as PluginInternalAccess).reputationSystem;
+    const config = (this.plugin as unknown as PluginInternalAccess).config;
     
     switch (params.action) {
       case 'list': {
@@ -487,7 +490,7 @@ ${peers.map((p: any) => {
       return { content: '❌ status 参数必须是 pending, processing, completed 或 failed' };
     }
     
-    const taskQueue = (this.adapter as unknown as AdapterInternalAccess).taskQueue;
+    const taskQueue = (this.plugin as unknown as PluginInternalAccess).taskQueue;
     
     let tasks: QueuedTask[];
     
@@ -519,7 +522,7 @@ ${peers.map((p: any) => {
         logger.info(`已将 ${tasks.length} 个任务标记为 processing`);
       }
       if (skippedIds.length > 0) {
-        logger.warn('[F2A:Tools] 跳过 %d 个已被获取的任务', skippedIds.length);
+        logger.warn('[F2A:Tools] 跳过已被获取的任务', { count: skippedIds.length });
       }
     }
 
@@ -585,9 +588,9 @@ ${tasks.map(t => {
       return { content: '❌ status 参数必须是 success 或 error' };
     }
     
-    const taskQueue = (this.adapter as unknown as AdapterInternalAccess).taskQueue;
-    const networkClient = (this.adapter as unknown as AdapterInternalAccess).networkClient;
-    const reputationSystem = (this.adapter as unknown as AdapterInternalAccess).reputationSystem;
+    const taskQueue = (this.plugin as unknown as PluginInternalAccess).taskQueue;
+    const networkClient = (this.plugin as unknown as PluginInternalAccess).networkClient;
+    const reputationSystem = (this.plugin as unknown as PluginInternalAccess).reputationSystem;
     
     // 查找任务
     const task = taskQueue.get(params.task_id);
@@ -637,7 +640,7 @@ ${tasks.map(t => {
     params: {},
     context: SessionContext
   ): Promise<ToolResult> {
-    const taskQueue = (this.adapter as unknown as AdapterInternalAccess).taskQueue;
+    const taskQueue = (this.plugin as unknown as PluginInternalAccess).taskQueue;
     const stats = taskQueue.getStats();
     
     const content = `
@@ -661,14 +664,14 @@ ${tasks.map(t => {
    * 解析 Agent 引用
    */
   private async resolveAgent(agentRef: string): Promise<AgentInfo | null> {
-    const adapter = this.adapter as unknown as AdapterInternalAccess;
+    const plugin = this.plugin as unknown as PluginInternalAccess;
     
     // 新架构：优先使用 f2aClient
     let result;
-    if (adapter.f2aClient) {
-      result = await adapter.f2aClient.discoverAgents();
+    if (plugin.f2aClient) {
+      result = await plugin.f2aClient.discoverAgents();
     } else {
-      result = await adapter.networkClient.discoverAgents();
+      result = await plugin.networkClient.discoverAgents();
     }
     
     if (!result.success) return null;
@@ -772,8 +775,8 @@ ${tasks.map(t => {
       return { content: '❌ value 参数必须是 -100 到 100 之间的数字' };
     }
 
-    const reviewCommittee = (this.adapter as unknown as AdapterInternalAccess).reviewCommittee;
-    const reputationSystem = (this.adapter as unknown as AdapterInternalAccess).reputationSystem;
+    const reviewCommittee = (this.plugin as unknown as PluginInternalAccess).reviewCommittee;
+    const reputationSystem = (this.plugin as unknown as PluginInternalAccess).reputationSystem;
     
     if (!reviewCommittee) {
       return { content: '❌ 评审系统未初始化' };
@@ -843,7 +846,7 @@ ${isComplete ? '🎉 评审已完成，可以使用 f2a_get_reviews 查看最终
       return { content: '❌ 请提供有效的 task_id 参数' };
     }
 
-    const reviewCommittee = (this.adapter as unknown as AdapterInternalAccess).reviewCommittee;
+    const reviewCommittee = (this.plugin as unknown as PluginInternalAccess).reviewCommittee;
     
     if (!reviewCommittee) {
       return { content: '❌ 评审系统未初始化' };
@@ -867,7 +870,7 @@ ${isComplete ? '🎉 评审已完成，可以使用 f2a_get_reviews 查看最终
 📊 进度: ${pendingReview.reviews.length}/${pendingReview.requiredReviewers}
 
 已收到的评审:
-${pendingReview.reviews.map((r, i) => 
+${pendingReview.reviews.map((r: any, i: number) => 
   `  ${i + 1}. 工作量: ${r.dimensions.workload}, 价值: ${r.dimensions.value}`
 ).join('\n')}
       `.trim();
@@ -879,7 +882,7 @@ ${pendingReview.reviews.map((r, i) =>
           status: 'in_progress',
           current: pendingReview.reviews.length,
           required: pendingReview.requiredReviewers,
-          reviews: pendingReview.reviews.map(r => ({
+          reviews: pendingReview.reviews.map((r: any) => ({
             reviewerId: r.reviewerId.slice(0, 16) + '...',
             workload: r.dimensions.workload,
             value: r.dimensions.value,
@@ -908,7 +911,7 @@ ${pendingReview.reviews.map((r, i) =>
    ${result.outliers.length > 0 ? `• 偏离评审: ${result.outliers.length} 个` : ''}
 
 详细评审:
-${result.reviews.map((r, i) => {
+${result.reviews.map((r: any, i: number) => {
   const isOutlier = result.outliers.includes(r);
   const outlierMark = isOutlier ? ' ⚠️ (偏离)' : '';
   return `  ${i + 1}. 工作量: ${r.dimensions.workload}, 价值: ${r.dimensions.value}${outlierMark}`;
@@ -951,7 +954,7 @@ ${result.reviews.map((r, i) => {
       }
     }
 
-    const networkClient = (this.adapter as unknown as AdapterInternalAccess).networkClient;
+    const networkClient = (this.plugin as unknown as PluginInternalAccess).networkClient;
     
     // 发现所有 agents
     const result = await networkClient.discoverAgents();

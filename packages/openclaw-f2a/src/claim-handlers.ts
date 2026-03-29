@@ -1,26 +1,19 @@
 /**
  * F2A OpenClaw Connector - Claim Handlers
  * 认领模式处理器模块 - 处理任务广播和认领相关工具
+ * 
+ * Issue #106: 使用 F2APluginPublicInterface 解除循环依赖
  */
 
 import type {
   SessionContext,
   ToolResult,
   F2APluginConfig,
-  OpenClawPluginApi
+  OpenClawPluginApi,
+  F2APluginPublicInterface
 } from './types.js';
-import type { F2APlugin } from './connector.js';
 import type { AnnouncementQueue } from './announcement-queue.js';
 import { pluginLogger as logger } from './logger.js';
-
-/**
- * Adapter 内部接口 - 用于类型安全的属性访问
- */
-interface AdapterInternalAccess {
-  announcementQueue: AnnouncementQueue;
-  api?: OpenClawPluginApi;
-  config: F2APluginConfig;
-}
 
 /**
  * 认领模式处理器参数类型
@@ -56,9 +49,26 @@ export interface ClaimHandlerParams {
 /**
  * 认领模式处理器类
  * 包含所有认领相关工具的处理逻辑
+ * 
+ * Issue #106: 使用 F2APluginPublicInterface 解除循环依赖
  */
 export class ClaimHandlers {
-  constructor(private adapter: F2APlugin) {}
+  constructor(private plugin: F2APluginPublicInterface) {}
+  
+  /**
+   * 类型安全的内部访问 getter
+   */
+  private get announcementQueue(): AnnouncementQueue {
+    return this.plugin.getAnnouncementQueue() as AnnouncementQueue;
+  }
+  
+  private get api(): OpenClawPluginApi | undefined {
+    return this.plugin.getApi();
+  }
+  
+  private get config(): F2APluginConfig {
+    return this.plugin.getConfig();
+  }
 
   /**
    * 处理 f2a_announce 工具
@@ -123,9 +133,9 @@ export class ClaimHandlers {
       }
     }
     
-    const announcementQueue = (this.adapter as unknown as AdapterInternalAccess).announcementQueue;
-    const api = (this.adapter as unknown as AdapterInternalAccess).api;
-    const config = (this.adapter as unknown as AdapterInternalAccess).config;
+    const announcementQueue = this.announcementQueue;
+    const api = this.api;
+    const config = this.config;
     
     try {
       const announcement = announcementQueue.create({
@@ -178,7 +188,7 @@ ${announcement.reward ? `奖励: ${announcement.reward}` : ''}
     params: ClaimHandlerParams['listAnnouncements'],
     context: SessionContext
   ): Promise<ToolResult> {
-    const announcementQueue = (this.adapter as unknown as AdapterInternalAccess).announcementQueue;
+    const announcementQueue = this.announcementQueue;
     
     let announcements = announcementQueue.getOpen();
 
@@ -263,9 +273,9 @@ ${announcements.map((a: any, i: number) => {
       }
     }
     
-    const announcementQueue = (this.adapter as unknown as AdapterInternalAccess).announcementQueue;
-    const api = (this.adapter as unknown as AdapterInternalAccess).api;
-    const config = (this.adapter as unknown as AdapterInternalAccess).config;
+    const announcementQueue = this.announcementQueue;
+    const api = this.api;
+    const config = this.config;
     
     const announcement = announcementQueue.get(params.announcement_id);
     
@@ -336,7 +346,7 @@ ${params.confidence ? `信心指数: ${Math.round(params.confidence * 100)}%` : 
       return { content: '❌ accept/reject 操作需要提供 claim_id 参数' };
     }
     
-    const announcementQueue = (this.adapter as unknown as AdapterInternalAccess).announcementQueue;
+    const announcementQueue = this.announcementQueue;
     
     const announcement = announcementQueue.get(params.announcement_id);
     
@@ -427,7 +437,7 @@ ${claims.map((c: any, i: number) => {
     params: ClaimHandlerParams['myClaims'],
     context: SessionContext
   ): Promise<ToolResult> {
-    const announcementQueue = (this.adapter as unknown as AdapterInternalAccess).announcementQueue;
+    const announcementQueue = this.announcementQueue;
     
     const status = params.status || 'all';
     let claims = announcementQueue.getMyClaims('local');
@@ -476,7 +486,7 @@ ${claims.map((c: any, i: number) => {
     params: {},
     context: SessionContext
   ): Promise<ToolResult> {
-    const announcementQueue = (this.adapter as unknown as AdapterInternalAccess).announcementQueue;
+    const announcementQueue = this.announcementQueue;
     const stats = announcementQueue.getStats();
     
     const content = `

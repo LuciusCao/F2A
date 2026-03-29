@@ -351,9 +351,9 @@ export class TaskGuard {
       // 注册进程退出处理，确保状态持久化（仅在真正需要持久化时注册）
       registerShutdownHandlers();
       
-      logger.info('persistence-initialized: persistDir=%s, intervalMs=%d', persistDir, interval);
+      logger.info('persistence-initialized', { persistDir, intervalMs: interval });
     } catch (error) {
-      logger.error('persistence-init-failed: error=%s', error);
+      logger.error('persistence-init-failed', { error: String(error) });
       this.persistFilePath = null;
     }
   }
@@ -388,11 +388,10 @@ export class TaskGuard {
           }
         }
         
-        logger.info('persistence-loaded: entries=%d, timestamps=%d, savedAt=%s', 
-          this.recentTasks.size, loadedCount, new Date(state.savedAt).toISOString());
+        logger.info('persistence-loaded', { entries: this.recentTasks.size, timestamps: loadedCount, savedAt: new Date(state.savedAt).toISOString() });
       }
     } catch (error) {
-      logger.warn('persistence-load-failed: error=%s', error);
+      logger.warn('persistence-load-failed', { error: String(error) });
     }
   }
 
@@ -416,9 +415,9 @@ export class TaskGuard {
       fs.renameSync(tempPath, this.persistFilePath);
       
       this.hasUnsavedChanges = false;
-      logger.debug?.('persistence-saved: entries=%d', this.recentTasks.size);
+      logger.debug?.('persistence-saved', { entries: this.recentTasks.size });
     } catch (error) {
-      logger.error('persistence-save-failed: error=%s', error);
+      logger.error('persistence-save-failed', { error: String(error) });
     }
   }
 
@@ -452,7 +451,7 @@ export class TaskGuard {
       this.saveState();
     }
     
-    logger.info('task-guard-shutdown: persisted=%s', !!this.persistFilePath);
+    logger.info('task-guard-shutdown', { persisted: !!this.persistFilePath });
   }
 
   /**
@@ -471,7 +470,7 @@ export class TaskGuard {
     };
 
     const taskId = 'taskId' in task ? task.taskId : task.announcementId;
-    logger.debug?.('check: taskId=%s, from=%s, rules=%d', taskId, task.from, this.rules.filter(r => r.enabled).length);
+    logger.debug?.('check: task check started', { taskId, from: task.from, enabledRules: this.rules.filter(r => r.enabled).length });
 
     const results: TaskGuardResult[] = [];
 
@@ -486,13 +485,13 @@ export class TaskGuard {
         // 记录规则执行结果
         if (!result.passed) {
           if (result.severity === 'block') {
-            logger.warn('rule-blocked: taskId=%s, ruleId=%s, message=%s', taskId, rule.id, result.message);
+            logger.warn('rule-blocked', { taskId, ruleId: rule.id, message: result.message });
           } else if (result.severity === 'warn') {
-            logger.info('rule-warning: taskId=%s, ruleId=%s, message=%s', taskId, rule.id, result.message);
+            logger.info('rule-warning', { taskId, ruleId: rule.id, message: result.message });
           }
         }
       } catch (error) {
-        logger.error('rule-error: ruleId=%s, taskId=%s, error=%s', rule.id, taskId, error);
+        logger.error('rule-error', { ruleId: rule.id, taskId, error: String(error) });
         results.push({
           passed: false,
           severity: 'warn',
@@ -514,8 +513,7 @@ export class TaskGuard {
     );
 
     const passed = blocks.length === 0;
-    logger.debug?.('check-result: taskId=%s, passed=%s, blocks=%d, warnings=%d, requiresConfirmation=%s', 
-      taskId, passed, blocks.length, warnings.length, requiresConfirmation);
+    logger.debug?.('check-result', { taskId, passed, blocks: blocks.length, warnings: warnings.length, requiresConfirmation });
 
     return {
       taskId,
@@ -537,7 +535,7 @@ export class TaskGuard {
   ): boolean {
     const report = this.check(task, context);
     const taskId = 'taskId' in task ? task.taskId : task.announcementId;
-    logger.debug?.('quickCheck: taskId=%s, passed=%s', taskId, report.passed);
+    logger.debug?.('quickCheck', { taskId, passed: report.passed });
     return report.passed;
   }
 
@@ -546,7 +544,7 @@ export class TaskGuard {
    */
   addRule(rule: TaskGuardRule): void {
     this.rules.push(rule);
-    logger.info('addRule: ruleId=%s, name=%s, severity=%s, enabled=%s', rule.id, rule.name, rule.severity, rule.enabled);
+    logger.info('addRule', { ruleId: rule.id, name: rule.name, severity: rule.severity, enabled: rule.enabled });
   }
 
   /**
@@ -556,9 +554,9 @@ export class TaskGuard {
     const rule = this.rules.find(r => r.id === ruleId);
     if (rule) {
       rule.enabled = enabled;
-      logger.info('setRuleEnabled: ruleId=%s, enabled=%s', ruleId, enabled);
+      logger.info('setRuleEnabled', { ruleId, enabled });
     } else {
-      logger.warn('setRuleEnabled: rule not found, ruleId=%s', ruleId);
+      logger.warn('setRuleEnabled: rule not found', { ruleId });
     }
   }
 

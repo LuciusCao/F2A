@@ -27,7 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bas
 ## 初始化配置
 
 ```bash
-f2a init
+f2a configure
 ```
 
 回答 3 个问题：
@@ -84,7 +84,7 @@ f2a config
 lsof -i :9000
 
 # 修改配置
-f2a config set p2pPort 9001
+f2a config set network.listenPort 9001
 ```
 
 ### 2. 无法连接其他节点

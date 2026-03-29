@@ -19,7 +19,7 @@ import {
   HandshakeResponse,
   PendingHandshake,
 } from './contact-types.js';
-import type { ApiLogger } from './connector.js';
+import type { ApiLogger } from './types.js';
 import { DEFAULT_HANDSHAKE_CONFIG, type HandshakeConfig, type F2APublicInterface, type F2AMessageEvent } from './types.js';
 import { randomBytes } from 'crypto'; // P1-2 修复：导入 crypto 模块用于生成安全的请求 ID
 

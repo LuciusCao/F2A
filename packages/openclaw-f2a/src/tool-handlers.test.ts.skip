@@ -59,7 +59,22 @@ const createMockAdapter = () => ({
       maxTasksPerMinute: 10
     }
   },
-  reviewCommittee: createMockReviewCommittee()
+  reviewCommittee: createMockReviewCommittee(),
+  // 添加 getter 方法
+  getNetworkClient: vi.fn(() => createMockNetworkClient()),
+  getReputationSystem: vi.fn(() => createMockReputationSystem()),
+  getTaskQueue: vi.fn(() => createMockTaskQueue()),
+  getNodeManager: vi.fn(() => createMockNodeManager()),
+  getReviewCommittee: vi.fn(() => createMockReviewCommittee()),
+  getConfig: vi.fn(() => ({
+    security: {
+      requireConfirmation: false,
+      whitelist: [] as string[],
+      blacklist: [] as string[],
+      maxTasksPerMinute: 10
+    }
+  })),
+  getApi: vi.fn(() => undefined)
 });
 
 // 创建 mock SessionContext
@@ -643,7 +658,7 @@ describe('ToolHandlers', () => {
 
         const result = await toolHandlers.handleReputation({
           action: 'view',
-          peer_id: 'peer-target-12345678901234567890'
+          peer_id: '12D3KooWPeerTarget123456789abcdefghijklmnopqrstuv'
         }, mockContext);
 
         expect(result.content).toContain('信誉分: 85');
@@ -662,7 +677,7 @@ describe('ToolHandlers', () => {
       it('应该成功屏蔽 Peer', async () => {
         const result = await toolHandlers.handleReputation({
           action: 'block',
-          peer_id: 'peer-to-block-12345678901234567890'
+          peer_id: '12D3KooWPeerToBlock123456789abcdefghijklmnopqrstuvw'
         }, mockContext);
 
         expect(result.content).toContain('已屏蔽');
@@ -680,7 +695,7 @@ describe('ToolHandlers', () => {
 
         const result = await toolHandlers.handleReputation({
           action: 'block',
-          peer_id: 'peer-to-block'
+          peer_id: '12D3KooWPeerToBlock123456789abcdefghij'
         }, mockContext);
 
         expect(mockAdapter.config.security).toBeDefined();
@@ -694,7 +709,7 @@ describe('ToolHandlers', () => {
 
         const result = await toolHandlers.handleReputation({
           action: 'unblock',
-          peer_id: 'peer-to-unblock'
+          peer_id: '12D3KooWPeerToUnblock123456789abcdefghijk'
         }, mockContext);
 
         expect(result.content).toContain('已解除屏蔽');
@@ -1160,7 +1175,7 @@ describe('ToolHandlers', () => {
       });
 
       const result = await toolHandlers.handleGetCapabilities({
-        peer_id: 'peer-target'
+        peer_id: '12D3KooWPeerTarget123456789abcdefghijk'
       }, mockContext);
 
       expect(result.content).toContain('Agent 能力列表');
@@ -1194,7 +1209,7 @@ describe('ToolHandlers', () => {
       });
 
       const result = await toolHandlers.handleGetCapabilities({
-        peer_id: 'non-existent'
+        peer_id: '12D3KooWNonExistent123456789abcdefghijklmnopqrs'
       }, mockContext);
 
       expect(result.content).toContain('找不到 Agent');
@@ -1213,7 +1228,7 @@ describe('ToolHandlers', () => {
       });
 
       const result = await toolHandlers.handleGetCapabilities({
-        peer_id: 'some-peer'
+        peer_id: '12D3KooWSomeValidPeerId123456789abcdefghijklmnopq'
       }, mockContext);
 
       expect(result.content).toContain('查询失败');
@@ -1221,7 +1236,7 @@ describe('ToolHandlers', () => {
 
     it('应该处理无能力信息的 Agent', async () => {
       const agent = createMockAgent({
-        peerId: 'peer-no-caps',
+        peerId: '12D3KooWNoCapsAgent123456789abcdefghijklmnopqrstuv',
         displayName: 'No Capabilities Agent',
         capabilities: []
       });
@@ -1232,7 +1247,7 @@ describe('ToolHandlers', () => {
       });
 
       const result = await toolHandlers.handleGetCapabilities({
-        peer_id: 'peer-no-caps'
+        peer_id: '12D3KooWNoCapsAgent123456789abcdefghijklmnopqrstuv'
       }, mockContext);
 
       expect(result.content).toContain('暂无能力信息');

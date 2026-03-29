@@ -33,13 +33,18 @@ vi.mock('./config.js', () => ({
 // Mock readline
 const mockQuestion = vi.fn();
 const mockClose = vi.fn();
-const mockCreateInterface = vi.fn().mockReturnValue({
-  question: (...args: any[]) => mockQuestion(...args),
+const mockRl = {
+  question: (prompt: string, callback: (answer: string) => void) => {
+    // Simulate readline callback - will be controlled by mockQuestion
+    mockQuestion(prompt).then((answer: string) => {
+      callback(answer);
+    });
+  },
   close: () => mockClose(),
-});
+};
 
 vi.mock('readline', () => ({
-  createInterface: () => mockCreateInterface(),
+  createInterface: () => mockRl,
 }));
 
 vi.mock('os', () => ({
@@ -473,15 +478,21 @@ describe('configure.ts', () => {
     });
   });
 
-  describe.skip('configureCommand (interactive)', () => {
-    beforeEach(() => {
+  describe('configureCommand (interactive)', () => {
+    beforeEach(async () => {
       // Mock TTY
-      Object.defineProperty(process.stdin, 'isTTY', { value: true });
-      Object.defineProperty(process.stdout, 'isTTY', { value: true });
+      (process.stdin as any).isTTY = true;
+      (process.stdout as any).isTTY = true;
+      
+      // Re-import the os mock
+      const os = await import('os');
+      vi.mocked(os.hostname).mockReturnValue('test-host');
+      vi.mocked(os.homedir).mockReturnValue('/home/test');
     });
 
     it('should throw error when not in TTY', async () => {
-      Object.defineProperty(process.stdin, 'isTTY', { value: false });
+      (process.stdin as any).isTTY = false;
+      (process.stdout as any).isTTY = false;
       
       await expect(configureCommand()).rejects.toThrow('interactive terminal');
     });

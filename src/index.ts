@@ -65,7 +65,7 @@ export type {
 
 // 工具模块
 export { Logger } from './utils/logger.js';
-export { RateLimiter } from './utils/rate-limiter.js';
+export { RateLimiter, createRateLimitMiddleware } from './utils/rate-limiter.js';
 export { 
   RequestSigner, 
   loadSignatureConfig, 
@@ -75,7 +75,9 @@ export {
 } from './utils/signature.js';
 export { 
   createMessageSizeLimitMiddleware,
-  createMessageTypeFilterMiddleware 
+  createMessageTypeFilterMiddleware,
+  createMessageLoggingMiddleware,
+  createMessageTransformMiddleware
 } from './utils/middleware.js';
 export type { Middleware, MiddlewareContext, MiddlewareResult } from './utils/middleware.js';
 export { 

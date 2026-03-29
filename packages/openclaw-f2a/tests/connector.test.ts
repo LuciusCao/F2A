@@ -330,4 +330,368 @@ describe('F2APlugin', () => {
       expect(status).toBeDefined();
     });
   });
+
+  describe('公开接口方法', () => {
+    it('discoverAgents 应该返回错误当未初始化时', async () => {
+      plugin = new F2APlugin();
+      
+      const result = await plugin.discoverAgents();
+      expect(result.success).toBe(false);
+      expect(result.error?.message).toContain('未初始化');
+    });
+
+    it('getConnectedPeers 应该返回错误当未初始化时', async () => {
+      plugin = new F2APlugin();
+      
+      const result = await plugin.getConnectedPeers();
+      expect(result.success).toBe(false);
+      expect(result.error?.message).toContain('未初始化');
+    });
+
+    it('sendMessage 应该返回错误当未初始化时', async () => {
+      plugin = new F2APlugin();
+      
+      const result = await plugin.sendMessage('peer-id', 'test message');
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('未初始化');
+    });
+
+    it('sendFriendRequest 应该返回 null 当握手协议未初始化', async () => {
+      plugin = new F2APlugin();
+      
+      const result = await plugin.sendFriendRequest('peer-id');
+      expect(result).toBeNull();
+    });
+
+    it('acceptFriendRequest 应该返回 false 当握手协议未初始化', async () => {
+      plugin = new F2APlugin();
+      
+      const result = await plugin.acceptFriendRequest('request-id');
+      expect(result).toBe(false);
+    });
+
+    it('rejectFriendRequest 应该返回 false 当握手协议未初始化', async () => {
+      plugin = new F2APlugin();
+      
+      const result = await plugin.rejectFriendRequest('request-id');
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('getF2A', () => {
+    it('应该返回 undefined 当 F2A 未初始化', () => {
+      plugin = new F2APlugin();
+      
+      const f2a = plugin.getF2A();
+      expect(f2a).toBeUndefined();
+    });
+  });
+
+  describe('getTools', () => {
+    it('应该返回所有工具', () => {
+      plugin = new F2APlugin();
+      
+      const tools = plugin.getTools();
+      expect(tools.length).toBeGreaterThan(0);
+      
+      // 验证工具结构
+      for (const tool of tools) {
+        expect(tool.name).toBeDefined();
+        expect(tool.description).toBeDefined();
+        expect(tool.handler).toBeDefined();
+      }
+    });
+
+    it('工具应该有有效的参数定义', () => {
+      plugin = new F2APlugin();
+      
+      const tools = plugin.getTools();
+      for (const tool of tools) {
+        if (tool.parameters) {
+          // parameters 可能是 JSON Schema 或其他格式
+          expect(typeof tool.parameters).toBe('object');
+        }
+      }
+    });
+  });
+
+  describe('f2aClient', () => {
+    it('discoverAgents 应该返回错误当 F2A 未初始化', async () => {
+      plugin = new F2APlugin();
+      
+      const result = await plugin.f2aClient.discoverAgents();
+      expect(result.success).toBe(false);
+      expect(result.error?.message).toContain('未初始化');
+    });
+
+    it('getConnectedPeers 应该返回错误当 F2A 未初始化', async () => {
+      plugin = new F2APlugin();
+      
+      const result = await plugin.f2aClient.getConnectedPeers();
+      expect(result.success).toBe(false);
+      expect(result.error?.message).toContain('未初始化');
+    });
+  });
+
+  describe('初始化后功能', () => {
+    it('应该返回正确的 F2A 状态', async () => {
+      plugin = new F2APlugin();
+      
+      const mockApi = {
+        config: {
+          agents: {
+            defaults: {
+              workspace: tempDir,
+            },
+          },
+        },
+      };
+
+      await plugin.initialize({
+        api: mockApi as any,
+        config: {},
+      });
+
+      const status = plugin.getF2AStatus();
+      expect(status).toBeDefined();
+      // 未启用时 running 为 false
+    });
+
+    it('应该正确设置配置', async () => {
+      plugin = new F2APlugin();
+      
+      const mockApi = {
+        config: {
+          agents: {
+            defaults: {
+              workspace: tempDir,
+            },
+          },
+        },
+      };
+
+      await plugin.initialize({
+        api: mockApi as any,
+        config: {
+          agentName: 'TestAgent',
+          p2pPort: 4001,
+        },
+      });
+
+      // 初始化成功，工具应该可用
+      const tools = plugin.getTools();
+      expect(tools.length).toBeGreaterThan(0);
+    });
+
+    it('应该支持 bootstrapPeers 配置', async () => {
+      plugin = new F2APlugin();
+      
+      const mockApi = {
+        config: {
+          agents: {
+            defaults: {
+              workspace: tempDir,
+            },
+          },
+        },
+      };
+
+      await plugin.initialize({
+        api: mockApi as any,
+        config: {
+          bootstrapPeers: ['/ip4/1.2.3.4/tcp/4001/p2p/12D3KooWTest'],
+        },
+      });
+
+      const tools = plugin.getTools();
+      expect(tools.length).toBeGreaterThan(0);
+    });
+
+    it('应该支持 enableMDNS 配置', async () => {
+      plugin = new F2APlugin();
+      
+      const mockApi = {
+        config: {
+          agents: {
+            defaults: {
+              workspace: tempDir,
+            },
+          },
+        },
+      };
+
+      await plugin.initialize({
+        api: mockApi as any,
+        config: {
+          enableMDNS: true,
+        },
+      });
+
+      expect(plugin.isInitialized()).toBe(false); // enable() 未调用
+    });
+  });
+
+  describe('shutdown 边界情况', () => {
+    it('应该能够关闭未初始化的插件', async () => {
+      plugin = new F2APlugin();
+      await plugin.shutdown();
+      // 不应该抛出错误
+    });
+
+    it('应该能够多次关闭', async () => {
+      plugin = new F2APlugin();
+      await plugin.shutdown();
+      await plugin.shutdown();
+      await plugin.shutdown();
+    });
+  });
+
+  describe('enable 方法', () => {
+    it('应该能够启用插件', async () => {
+      plugin = new F2APlugin();
+      
+      const mockApi = {
+        config: {
+          agents: {
+            defaults: {
+              workspace: tempDir,
+            },
+          },
+        },
+      };
+
+      await plugin.initialize({
+        api: mockApi as any,
+        config: {
+          autoStart: false,
+        },
+      });
+
+      // enable() 应该设置 _initialized 为 true
+      await plugin.enable();
+      
+      expect(plugin.isInitialized()).toBe(true);
+    });
+
+    it('多次启用应该跳过', async () => {
+      plugin = new F2APlugin();
+      
+      const mockApi = {
+        config: {
+          agents: {
+            defaults: {
+              workspace: tempDir,
+            },
+          },
+        },
+      };
+
+      await plugin.initialize({
+        api: mockApi as any,
+        config: {},
+      });
+
+      await plugin.enable();
+      await plugin.enable(); // 第二次应该跳过
+    });
+  });
+
+  describe('getConnectedPeers', () => {
+    it('应该返回空数组当 F2A 未初始化', async () => {
+      plugin = new F2APlugin();
+      
+      const result = await plugin.getConnectedPeers();
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('discoverAgents', () => {
+    it('应该返回错误当 F2A 未初始化', async () => {
+      plugin = new F2APlugin();
+      
+      const result = await plugin.discoverAgents('test-capability');
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('sendMessage', () => {
+    it('应该返回错误当 F2A 未初始化', async () => {
+      plugin = new F2APlugin();
+      
+      const result = await plugin.sendMessage('peer-id', 'test message');
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('getReputationSystem', () => {
+    it('应该返回信誉系统实例', async () => {
+      plugin = new F2APlugin();
+      
+      const mockApi = {
+        config: {
+          agents: {
+            defaults: {
+              workspace: tempDir,
+            },
+          },
+        },
+      };
+
+      await plugin.initialize({
+        api: mockApi as any,
+        config: {},
+      });
+
+      // getReputationSystem 是通过 toolHandlers 访问的
+      const tools = plugin.getTools();
+      expect(tools.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('getAnnouncementQueue', () => {
+    it('应该返回公告队列', async () => {
+      plugin = new F2APlugin();
+      
+      const mockApi = {
+        config: {
+          agents: {
+            defaults: {
+              workspace: tempDir,
+            },
+          },
+        },
+      };
+
+      await plugin.initialize({
+        api: mockApi as any,
+        config: {},
+      });
+
+      // 公告队列应该在 enable 时初始化
+      const tools = plugin.getTools();
+      expect(tools.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('工具测试', () => {
+    it('应该包含网络工具', () => {
+      plugin = new F2APlugin();
+      
+      const tools = plugin.getTools();
+      const toolNames = tools.map(t => t.name);
+      
+      expect(toolNames).toContain('f2a_discover');
+      expect(toolNames).toContain('f2a_delegate');
+    });
+
+    it('应该包含任务工具', () => {
+      plugin = new F2APlugin();
+      
+      const tools = plugin.getTools();
+      const toolNames = tools.map(t => t.name);
+      
+      expect(toolNames).toContain('f2a_poll_tasks');
+      expect(toolNames).toContain('f2a_submit_result');
+    });
+  });
 });

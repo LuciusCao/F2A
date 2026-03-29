@@ -271,7 +271,7 @@ export class F2ANodeManager {
       await sleep(5000);
       
       // 如果还在运行，强制关闭
-      if (this.process.exitCode === null) {
+      if (this.process && this.process.exitCode === null) {
         this.process.kill('SIGKILL');
       }
       

@@ -19,7 +19,7 @@
 ### 查看节点信誉
 
 ```typescript
-import { F2A } from 'f2a-network';
+import { F2A } from '@f2a/network';
 
 const f2a = await F2A.create({ displayName: 'My Agent' });
 await f2a.start();

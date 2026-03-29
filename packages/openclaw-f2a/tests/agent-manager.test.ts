@@ -102,4 +102,52 @@ describe('AgentManager', () => {
       expect(identity).toBeDefined();
     });
   });
+
+  describe('exportIdentity', () => {
+    it('应该能够导出身份', () => {
+      manager = new AgentManager(tempDir, { name: 'ExportAgent' });
+      
+      const exported = manager.exportIdentity();
+      expect(exported).toBeDefined();
+      expect(typeof exported).toBe('string');
+      
+      // 应该是有效的 JSON
+      const parsed = JSON.parse(exported);
+      expect(parsed.agentId).toBeDefined();
+      expect(parsed.name).toBe('ExportAgent');
+    });
+  });
+
+  describe('importIdentity', () => {
+    it('应该能够导入身份', () => {
+      manager = new AgentManager(tempDir, { name: 'OriginalAgent' });
+      const exported = manager.exportIdentity();
+      
+      // 创建新的 manager 并导入
+      const manager2 = new AgentManager(tempDir);
+      const imported = manager2.importIdentity(exported);
+      
+      expect(imported.name).toBe('OriginalAgent');
+    });
+  });
+
+  describe('resetIdentity', () => {
+    it('应该能够重置身份', () => {
+      manager = new AgentManager(tempDir, { name: 'OldAgent' });
+      const oldId = manager.getAgentId();
+      
+      const newIdentity = manager.resetIdentity();
+      
+      expect(newIdentity.agentId).not.toBe(oldId);
+    });
+
+    it('重置后应该有新的身份', () => {
+      manager = new AgentManager(tempDir);
+      manager.resetIdentity();
+      
+      const identity = manager.getIdentity();
+      expect(identity).toBeDefined();
+      expect(identity?.agentId).toBeDefined();
+    });
+  });
 });

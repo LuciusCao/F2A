@@ -14,7 +14,7 @@
 ## 快速开始
 
 ```typescript
-import { F2A, createMessageSizeLimitMiddleware } from 'f2a-network';
+import { F2A, createMessageSizeLimitMiddleware } from '@f2a/network';
 
 const f2a = await F2A.create({ displayName: 'My Agent' });
 
@@ -90,7 +90,7 @@ type MiddlewareResult =
 限制消息大小，防止过大的消息消耗资源：
 
 ```typescript
-import { createMessageSizeLimitMiddleware } from 'f2a-network';
+import { createMessageSizeLimitMiddleware } from '@f2a/network';
 
 // 限制消息最大 1MB
 f2a.useMiddleware(createMessageSizeLimitMiddleware(1024 * 1024));
@@ -104,7 +104,7 @@ f2a.useMiddleware(createMessageSizeLimitMiddleware(100 * 1024));
 只允许特定类型的消息通过：
 
 ```typescript
-import { createMessageTypeFilterMiddleware } from 'f2a-network';
+import { createMessageTypeFilterMiddleware } from '@f2a/network';
 
 // 只允许任务请求和响应消息
 f2a.useMiddleware(
@@ -122,13 +122,13 @@ f2a.useMiddleware(
 记录消息处理日志，用于调试：
 
 ```typescript
-import { createMessageLoggingMiddleware } from 'f2a-network';
+import { createMessageLoggingMiddleware } from '@f2a/network';
 
 // 使用默认日志器
 f2a.useMiddleware(createMessageLoggingMiddleware());
 
 // 使用自定义日志器
-import { Logger } from 'f2a-network';
+import { Logger } from '@f2a/network';
 const logger = new Logger({ level: 'debug', component: 'MyLogger' });
 f2a.useMiddleware(createMessageLoggingMiddleware(logger));
 ```
@@ -138,7 +138,7 @@ f2a.useMiddleware(createMessageLoggingMiddleware(logger));
 在处理前修改消息内容：
 
 ```typescript
-import { createMessageTransformMiddleware } from 'f2a-network';
+import { createMessageTransformMiddleware } from '@f2a/network';
 
 // 添加时间戳到所有消息
 f2a.useMiddleware(
@@ -164,7 +164,7 @@ f2a.useMiddleware(
 限制每个节点的请求频率：
 
 ```typescript
-import { createRateLimitMiddleware } from 'f2a-network';
+import { createRateLimitMiddleware } from '@f2a/network';
 
 // 每分钟最多 100 个请求
 f2a.useMiddleware(createRateLimitMiddleware(100));
@@ -178,7 +178,7 @@ f2a.useMiddleware(createRateLimitMiddleware(50, 30000));
 ### 基础示例
 
 ```typescript
-import { Middleware, MiddlewareContext, MiddlewareResult } from 'f2a-network';
+import { Middleware, MiddlewareContext, MiddlewareResult } from '@f2a/network';
 
 // 创建一个简单的日志中间件
 const myLogger: Middleware = {

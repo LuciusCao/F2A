@@ -66,7 +66,7 @@ curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bas
 安装后运行交互式配置向导：
 
 ```bash
-f2a init
+f2a configure
 ```
 
 只需回答 3 个必需问题即可完成基本配置：
@@ -144,10 +144,10 @@ npm install -g @f2a/network
 
 ```bash
 # 交互式配置向导
-f2a init
+f2a configure
 
 # 查看当前配置
-f2a config
+f2a config list
 ```
 
 ### 2.3 启动节点
@@ -242,7 +242,7 @@ f2a status
 
 **交互式配置：**
 
-运行 `f2a init` 时，配置引导节点后会询问是否配置指纹验证：
+运行 `f2a configure` 时，配置引导节点后会询问是否配置指纹验证：
 
 ```
 ? 是否配置引导节点指纹验证？（推荐，防止中间人攻击） (y/N)
@@ -394,7 +394,7 @@ F2A/
 ### 4.2 核心 API
 
 ```typescript
-import { F2A } from 'f2a-network';
+import { F2A } from '@f2a/network';
 
 // 创建节点
 const f2a = await F2A.create({
@@ -459,7 +459,7 @@ npm run build:all
 curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bash -s -- --global
 
 # 2. 配置
-f2a init
+f2a configure
 
 # 3. 启动
 f2a daemon -d
@@ -475,7 +475,7 @@ f2a status
 npm install -g @f2a/network
 
 # 2. 配置
-f2a init
+f2a configure
 
 # 3. 启动
 f2a daemon -d
@@ -491,7 +491,7 @@ npm install
 npm run build
 
 # 2. 配置
-node dist/cli/index.js init
+node dist/cli/index.js configure
 
 # 3. 启动
 node dist/cli/index.js daemon -d

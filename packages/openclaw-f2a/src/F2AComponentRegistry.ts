@@ -394,9 +394,11 @@ export class F2AComponentRegistry {
 
   /**
    * 获取评审委员会（公共接口）
+   * 触发懒加载
    */
   getReviewCommittee(): ReviewCommitteeLike | undefined {
-    return this._reviewCommittee as unknown as ReviewCommitteeLike | undefined;
+    // 触发懒加载
+    return this.reviewCommittee as unknown as ReviewCommitteeLike | undefined;
   }
 
   /**

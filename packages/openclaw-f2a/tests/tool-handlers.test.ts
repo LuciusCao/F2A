@@ -441,4 +441,53 @@ describe('handleBroadcast', () => {
       expect(result.content).toContain('未发现');
     });
   });
+
+  describe('handleEstimateTask', () => {
+    it('应该评估任务成本', async () => {
+      const result = await handlers.handleEstimateTask({
+        description: 'Test task description',
+        task_type: 'code-review',
+      });
+
+      expect(result.content).toBeDefined();
+    });
+  });
+
+  describe('handleReviewTask', () => {
+    it('应该提交任务评审', async () => {
+      const result = await handlers.handleReviewTask({
+        task_id: 'task-123',
+        workload: 50,
+        value: 30,
+        comment: 'Good work',
+      });
+
+      expect(result.content).toBeDefined();
+    });
+  });
+
+  describe('handleGetReviews', () => {
+    it('应该获取任务评审', async () => {
+      const result = await handlers.handleGetReviews({
+        task_id: 'task-123',
+      });
+
+      expect(result.content).toBeDefined();
+    });
+  });
+
+  describe('handleGetCapabilities', () => {
+    it('应该获取 Agent 能力列表', async () => {
+      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+        success: true,
+        data: [],
+      });
+
+      const result = await handlers.handleGetCapabilities({
+        peer_id: '12D3KooW' + 'A'.repeat(44),
+      });
+
+      expect(result.content).toBeDefined();
+    });
+  });
 });

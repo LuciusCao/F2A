@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { WebhookServer, WebhookHandler } from '../src/webhook-server.js';
 import type { DiscoverWebhookPayload, DelegateWebhookPayload } from '../src/types.js';
+import getPort from 'get-port';
 
 // 创建模拟 handler
 function createMockHandler(): WebhookHandler {
@@ -32,9 +33,11 @@ function createMockHandler(): WebhookHandler {
 describe('WebhookServer', () => {
   let server: WebhookServer;
   let handler: WebhookHandler;
+  let port: number;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     handler = createMockHandler();
+    port = await getPort();
   });
 
   afterEach(async () => {
@@ -44,13 +47,14 @@ describe('WebhookServer', () => {
   });
 
   describe('构造函数', () => {
-    it('应该能够创建服务器实例', () => {
-      server = new WebhookServer(19000, handler);
+    it('应该能够创建服务器实例', async () => {
+      server = new WebhookServer(port, handler);
       expect(server).toBeDefined();
     });
 
-    it('应该接受自定义配置', () => {
-      server = new WebhookServer(19001, handler, {
+    it('应该接受自定义配置', async () => {
+      const customPort = await getPort();
+      server = new WebhookServer(customPort, handler, {
         maxBodySize: 1024 * 1024,
         allowedOrigins: ['http://localhost:3000'],
       });
@@ -60,11 +64,10 @@ describe('WebhookServer', () => {
 
   describe('启动和停止', () => {
     it('应该能够启动服务器', async () => {
-      server = new WebhookServer(19002, handler);
+      server = new WebhookServer(port, handler);
       await server.start();
       
-      // 测试服务器是否在监听 - 使用 POST 请求
-      const response = await fetch('http://localhost:19002/webhook', {
+      const response = await fetch(`http://localhost:${port}/webhook`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -77,13 +80,13 @@ describe('WebhookServer', () => {
     });
 
     it('应该能够停止服务器', async () => {
-      server = new WebhookServer(19003, handler);
+      server = new WebhookServer(port, handler);
       await server.start();
       await server.stop();
       
       // 停止后不应该能连接
       try {
-        await fetch('http://localhost:19003/webhook', {
+        await fetch(`http://localhost:${port}/webhook`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -102,12 +105,12 @@ describe('WebhookServer', () => {
 
   describe('CORS', () => {
     it('应该处理 CORS 预检请求', async () => {
-      server = new WebhookServer(19004, handler, {
+      server = new WebhookServer(port, handler, {
         allowedOrigins: ['http://localhost:3000'],
       });
       await server.start();
 
-      const response = await fetch('http://localhost:19004/webhook', {
+      const response = await fetch(`http://localhost:${port}/webhook`, {
         method: 'OPTIONS',
         headers: {
           'Origin': 'http://localhost:3000',
@@ -115,18 +118,16 @@ describe('WebhookServer', () => {
         },
       });
 
-      // OPTIONS 请求应该返回 200
       expect(response.status).toBe(200);
     });
   });
 
   describe('健康检查', () => {
     it('应该返回健康状态', async () => {
-      server = new WebhookServer(19005, handler);
+      server = new WebhookServer(port, handler);
       await server.start();
 
-      // 使用 status 事件作为健康检查
-      const response = await fetch('http://localhost:19005/webhook', {
+      const response = await fetch(`http://localhost:${port}/webhook`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -153,10 +154,10 @@ describe('WebhookServer', () => {
         onStatus: async () => ({ status: 'available' }),
       };
 
-      server = new WebhookServer(19006, mockHandler);
+      server = new WebhookServer(port, mockHandler);
       await server.start();
 
-      const response = await fetch('http://localhost:19006/webhook', {
+      const response = await fetch(`http://localhost:${port}/webhook`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -179,10 +180,10 @@ describe('WebhookServer', () => {
         onStatus: async () => ({ status: 'available' }),
       };
 
-      server = new WebhookServer(19007, mockHandler);
+      server = new WebhookServer(port, mockHandler);
       await server.start();
 
-      const response = await fetch('http://localhost:19007/webhook', {
+      const response = await fetch(`http://localhost:${port}/webhook`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -210,10 +211,10 @@ describe('WebhookServer', () => {
         onStatus: async () => ({ status: 'busy', load: 0.8 }),
       };
 
-      server = new WebhookServer(19008, mockHandler);
+      server = new WebhookServer(port, mockHandler);
       await server.start();
 
-      const response = await fetch('http://localhost:19008/webhook', {
+      const response = await fetch(`http://localhost:${port}/webhook`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -229,10 +230,10 @@ describe('WebhookServer', () => {
     });
 
     it('应该拒绝未知事件类型', async () => {
-      server = new WebhookServer(19009, handler);
+      server = new WebhookServer(port, handler);
       await server.start();
 
-      const response = await fetch('http://localhost:19009/webhook', {
+      const response = await fetch(`http://localhost:${port}/webhook`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

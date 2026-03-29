@@ -19,6 +19,15 @@ export const MAX_MESSAGE_LENGTH = 1024 * 1024;
 /** libp2p Peer ID 正则 */
 export const PEER_ID_REGEX = /^12D3KooW[A-Za-z1-9]{44}$/;
 
+/** P2-6: 消息哈希去重阈值，短消息不计算哈希（性能优化） */
+export const MESSAGE_HASH_THRESHOLD = 100;
+
+/** P1-3: 消息去重缓存最大条目数 */
+export const MAX_MESSAGE_HASH_CACHE_SIZE = 10000;
+
+/** P1-3: 消息去重缓存条目最大存活时间（毫秒） */
+export const MESSAGE_HASH_TTL_MS = 5 * 60 * 1000; // 5 分钟
+
 /** 路径遍历模式 */
 export const PATH_TRAVERSAL_PATTERNS = [
   '../',
@@ -334,4 +343,126 @@ export async function resolveAgent(
   );
 
   return fuzzy || null;
+}
+
+// ============================================================================
+// 消息处理辅助函数
+// ============================================================================
+
+/**
+ * P1-3: 计算消息内容哈希
+ * P2-2 修复：使用 crypto.createHash('sha256') 替代简单哈希
+ * 用于基于内容的去重
+ * 
+ * @param from - 消息发送者 Peer ID
+ * @param content - 消息内容
+ * @returns SHA256 哈希字符串（前 32 字符作为标识）
+ */
+export function computeMessageHash(from: string, content: string): string {
+  const crypto = require('crypto');
+  const data = `${from}:${content}`;
+  // 使用 SHA256 算法生成安全的哈希值
+  const hash = crypto.createHash('sha256').update(data).digest('hex');
+  // 返回前 32 字符作为标识（足够用于去重）
+  return `msg-${hash.slice(0, 32)}-${data.length}`;
+}
+
+/**
+ * P1-2, P1-5: 检测消息 metadata 中的回声标记
+ * 
+ * 检查 metadata 中的特定标记，判断是否为应该跳过的回声消息。
+ * 这是 isEchoMessage 检测的第一层。
+ * 
+ * @param metadata - 消息的 metadata 字段
+ * @returns 是否检测到回声标记
+ */
+export function isEchoMessageByMetadata(metadata?: Record<string, unknown>): boolean {
+  if (!metadata) return false;
+  
+  // 检查是否是我们自己发出的回复标记
+  if (metadata.type === 'reply' && metadata.replyTo) {
+    return true;
+  }
+  
+  // 检查显式的跳过标记
+  if (metadata._f2a_skip_echo === true || metadata['x-openclaw-skip'] === true) {
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * P1-2: 检测消息内容中的回声标记
+ * 
+ * 检查消息内容中的特殊标记，判断是否为应该跳过的回声消息。
+ * 这是 isEchoMessage 检测的第二层。
+ * 
+ * @param content - 消息内容
+ * @returns 是否检测到回声标记
+ */
+export function isEchoMessageByContent(content?: string): boolean {
+  if (!content) return false;
+  
+  // 使用特殊的标记格式 [[F2A:REPLY:...]]
+  if (content.includes('[[F2A:REPLY:') || content.includes('[[reply_to_current]]')) {
+    return true;
+  }
+  
+  // 检查是否以 NO_REPLY 标记开头（更严格）
+  if (content.startsWith('NO_REPLY:') || content.startsWith('[NO_REPLY]')) {
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * P1-3: 清理过期的消息哈希缓存
+ * 
+ * @param cache - 消息哈希缓存 Map
+ * @param now - 当前时间戳
+ * @param ttl - 缓存条目存活时间（毫秒）
+ */
+export function cleanupMessageHashCache(
+  cache: Map<string, number>,
+  now: number,
+  ttl: number = MESSAGE_HASH_TTL_MS
+): void {
+  for (const [hash, timestamp] of cache.entries()) {
+    if (now - timestamp > ttl) {
+      cache.delete(hash);
+    }
+  }
+}
+
+/**
+ * P1-3: 检查消息哈希是否为重复消息
+ * 
+ * @param cache - 消息哈希缓存 Map
+ * @param messageHash - 消息哈希值
+ * @param now - 当前时间戳
+ * @param ttl - 缓存条目存活时间（毫秒）
+ * @returns 是否为重复消息（在 TTL 内已处理过）
+ */
+export function isDuplicateMessage(
+  cache: Map<string, number>,
+  messageHash: string,
+  now: number,
+  ttl: number = MESSAGE_HASH_TTL_MS
+): boolean {
+  if (!cache.has(messageHash)) return false;
+  
+  const processedTime = cache.get(messageHash)!;
+  return now - processedTime < ttl;
+}
+
+/**
+ * 消息对象类型（用于消息处理函数）
+ */
+export interface MessageLike {
+  from: string;
+  content: string;
+  metadata?: Record<string, unknown>;
+  messageId: string;
 }

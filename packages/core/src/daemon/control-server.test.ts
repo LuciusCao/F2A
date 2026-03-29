@@ -1183,8 +1183,8 @@ describe('ControlServer', () => {
       handler(req, res);
       
       expect(res.setHeader).toHaveBeenCalledWith('Access-Control-Allow-Origin', 'http://localhost');
-      expect(res.setHeader).toHaveBeenCalledWith('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-      expect(res.setHeader).toHaveBeenCalledWith('Access-Control-Allow-Headers', 'Content-Type, X-F2A-Token');
+      expect(res.setHeader).toHaveBeenCalledWith('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+      expect(res.setHeader).toHaveBeenCalledWith('Access-Control-Allow-Headers', 'Content-Type, X-F2A-Token, Authorization');
       
       server.stop();
     });

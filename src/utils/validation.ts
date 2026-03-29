@@ -6,6 +6,13 @@
 import { z } from 'zod';
 
 // ============================================================================
+// 常量定义
+// ============================================================================
+
+const MAX_MESSAGE_CONTENT_SIZE = 1024 * 1024; // 1MB
+const TOPIC_REGEX = /^[a-z0-9.-]+$/;
+
+// ============================================================================
 // 基础类型 Schema
 // ============================================================================
 
@@ -134,9 +141,12 @@ export const F2AMessageSchema = z.object({
 
 // MESSAGE 消息载荷 Schema
 export const StructuredMessagePayloadSchema = z.object({
-  topic: z.string().optional(),
-  content: z.union([z.string(), z.record(z.unknown())]),
-  replyTo: z.string().optional(),
+  topic: z.string().max(256).regex(TOPIC_REGEX, 'Invalid topic format').optional(),
+  content: z.union([
+    z.string().max(MAX_MESSAGE_CONTENT_SIZE),
+    z.record(z.unknown())
+  ]),
+  replyTo: z.string().max(128).optional(),
 });
 
 // 消息主题常量

@@ -6,7 +6,9 @@ import {
   F2AOptions,
   Result,
   TaskDelegateOptions,
-  WebhookConfig
+  WebhookConfig,
+  MESSAGE_TOPICS,
+  StructuredMessagePayload
 } from './index.js';
 
 describe('Types', () => {
@@ -83,5 +85,23 @@ describe('Types', () => {
       retryDelay: 1000
     };
     expect(config.url).toBe('http://localhost:8080');
+  });
+});
+
+describe('MESSAGE Protocol Types', () => {
+  it('should validate MESSAGE_TOPICS constants', () => {
+    expect(MESSAGE_TOPICS.TASK_REQUEST).toBe('task.request');
+    expect(MESSAGE_TOPICS.TASK_RESPONSE).toBe('task.response');
+    expect(MESSAGE_TOPICS.CAPABILITY_QUERY).toBe('capability.query');
+    expect(MESSAGE_TOPICS.CAPABILITY_RESPONSE).toBe('capability.response');
+    expect(MESSAGE_TOPICS.FREE_CHAT).toBe('chat');
+  });
+
+  it('should allow creating StructuredMessagePayload', () => {
+    const payload: StructuredMessagePayload = {
+      topic: MESSAGE_TOPICS.TASK_REQUEST,
+      content: { taskId: 'task-1' }
+    };
+    expect(payload.topic).toBe('task.request');
   });
 });

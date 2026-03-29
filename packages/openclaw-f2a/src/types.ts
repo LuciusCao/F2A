@@ -386,17 +386,25 @@ export interface DelegateWebhookPayload extends TaskRequest {
   // TaskRequest 本身已包含所有字段
 }
 
-// Result 类型已从核心库 re-export，见文件顶部
+// Reputation Types - 从 @f2a/network 重新导出并扩展
+// 重构说明：改用 core 层的 ReputationManager，类型保持兼容
+export type { ReputationEntry as CoreReputationEntry } from '@f2a/network';
 
-// Reputation Types
+/**
+ * 扩展的信誉条目类型（用于 TaskGuard 等本地组件）
+ * 包含 core 层的基本字段 + 本地扩展字段
+ */
 export interface ReputationEntry {
   peerId: string;
   score: number;
-  successfulTasks: number;
-  failedTasks: number;
-  totalTasks: number;
-  avgResponseTime: number;
-  lastInteraction: number;
+  level?: string;  // core 层字段
+  lastUpdated?: number;  // core 层字段
+  // 本地扩展字段（可选，兼容旧代码）
+  successfulTasks?: number;
+  failedTasks?: number;
+  totalTasks?: number;
+  avgResponseTime?: number;
+  lastInteraction?: number;
   history: ReputationEvent[];
 }
 
@@ -717,10 +725,26 @@ export interface F2ANetworkClientLike {
 /**
  * ReputationSystem 简化接口
  * P2-1 修复：定义信誉系统公共方法签名
+ * 
+ * 重构说明：改用 @f2a/network 的 ReputationManager，保持接口兼容
  */
 export interface ReputationSystemLike {
-  /** 获取信誉分数 */
-  getReputation: (peerId: string) => number;
+  /** 获取信誉信息（包含 score、peerId、history 等属性） */
+  getReputation: (peerId: string) => { score: number; peerId: string; history: ReputationEvent[]; [key: string]: unknown };
+  /** 检查权限 */
+  hasPermission?: (peerId: string, permission: 'publish' | 'execute' | 'review') => boolean;
+  /** 获取所有信誉记录 */
+  getAllReputations?: () => Array<{ score: number; peerId: string; history: ReputationEvent[]; [key: string]: unknown }>;
+  /** 获取高信誉节点 */
+  getHighReputationNodes?: (minScore: number) => Array<{ score: number; peerId: string; history: ReputationEvent[]; [key: string]: unknown }>;
+  /** 记录成功 */
+  recordSuccess?: (peerId: string, taskId: string, delta?: number, latency?: number) => void;
+  /** 记录失败 */
+  recordFailure?: (peerId: string, taskId: string, reason?: string, delta?: number) => void;
+  /** 记录评审奖励 */
+  recordReviewReward?: (peerId: string, delta?: number) => void;
+  /** 记录评审惩罚 */
+  recordReviewPenalty?: (peerId: string, delta?: number, reason?: string) => void;
   /** 更新信誉分数（可选） */
   updateReputation?: (peerId: string, delta: number, reason?: string) => void;
   /** 获取高分 Agents（可选） */

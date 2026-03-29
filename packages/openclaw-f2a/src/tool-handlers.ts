@@ -14,7 +14,7 @@ import type {
 } from './types.js';
 import type { F2APluginPublicInterface } from './types.js';
 import type { QueuedTask } from './task-queue.js';
-import type { ReputationSystem } from './reputation.js';
+import type { ReputationSystemLike } from './types.js';
 import type { F2ANetworkClient } from './network-client.js';
 import type { F2ANodeManager } from './node-manager.js';
 import type { TaskQueue } from './task-queue.js';
@@ -87,11 +87,11 @@ export class ToolHandlers {
    * 避免在每个方法中重复类型转换
    */
   private get networkClient(): F2ANetworkClient {
-    return this.plugin.getNetworkClient() as F2ANetworkClient;
+    return this.plugin.getNetworkClient() as unknown as F2ANetworkClient;
   }
   
-  private get reputationSystem(): ReputationSystem {
-    return this.plugin.getReputationSystem() as ReputationSystem;
+  private get reputationSystem(): ReputationSystemLike {
+    return this.plugin.getReputationSystem();
   }
   
   private get taskQueue(): TaskQueue {

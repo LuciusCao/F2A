@@ -695,8 +695,8 @@ describe('F2APlugin - 高级测试', () => {
       const system = plugin.getReputationSystem();
       
       expect(system).toBeDefined();
-      expect(typeof system.isAllowed).toBe('function');
       expect(typeof system.getReputation).toBe('function');
+      expect(typeof system.hasPermission).toBe('function');
     });
   });
 

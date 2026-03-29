@@ -14,10 +14,11 @@ import type {
   ApiLogger,
   F2APluginConfig,
 } from './types.js';
+import { INTERNAL_REPUTATION_CONFIG } from './types.js';
 import type { WebhookHandler } from './webhook-server.js';
 import type { TaskQueue } from './task-queue.js';
 import type { WebhookPusher } from './webhook-pusher.js';
-import type { ReputationSystem } from './reputation.js';
+import type { ReputationSystemLike } from './types.js';
 import type { OpenClawPluginApi } from './types.js';
 import { taskGuard, TaskGuardContext } from './task-guard.js';
 import {
@@ -37,7 +38,7 @@ export interface WebhookManagerDeps {
   /** Logger */
   logger?: ApiLogger;
   /** 信誉系统 */
-  reputationSystem: ReputationSystem;
+  reputationSystem: ReputationSystemLike;
   /** 任务队列 */
   taskQueue: TaskQueue;
   /** Webhook 推送器（可选） */
@@ -89,11 +90,12 @@ export class F2AWebhookManager {
    * 处理 discover webhook
    */
   private async handleDiscover(payload: DiscoverWebhookPayload) {
-    // 检查请求者信誉
-    if (!this.deps.reputationSystem.isAllowed(payload.requester)) {
+    // 检查请求者信誉 - 使用分数检查替代 isAllowed
+    const requesterScore = this.deps.reputationSystem.getReputation(payload.requester).score;
+    if (requesterScore < INTERNAL_REPUTATION_CONFIG.minScoreForService) {
       return {
         capabilities: [],
-        reputation: this.deps.reputationSystem.getReputation(payload.requester).score,
+        reputation: requesterScore,
       };
     }
 
@@ -117,8 +119,9 @@ export class F2AWebhookManager {
   private async handleDelegate(payload: DelegateWebhookPayload) {
     const { config, logger, reputationSystem, taskQueue, webhookPusher, api } = this.deps;
 
-    // 安全检查
-    if (!reputationSystem.isAllowed(payload.from)) {
+    // 安全检查 - 使用分数检查替代 isAllowed
+    const requesterScore = reputationSystem.getReputation(payload.from).score;
+    if (requesterScore < INTERNAL_REPUTATION_CONFIG.minScoreForService) {
       return {
         accepted: false,
         taskId: payload.taskId,

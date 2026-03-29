@@ -14,6 +14,7 @@ function createMockPlugin() {
     getReputation: vi.fn(() => ({ 
       score: 85, 
       history: [],
+      peerId: 'test-peer',
       successfulTasks: 10,
       failedTasks: 2,
       avgResponseTime: 150,
@@ -27,7 +28,6 @@ function createMockPlugin() {
     unblockPeer: vi.fn(() => true),
     recordSuccess: vi.fn(),
     recordFailure: vi.fn(),
-    isAllowed: vi.fn(() => true),
   };
 
   const mockNetworkClient = {

@@ -28,7 +28,7 @@ import type {
 import { INTERNAL_REPUTATION_CONFIG } from './types.js';
 import { F2ANodeManager } from './node-manager.js';
 import { F2ANetworkClient } from './network-client.js';
-import { ReputationSystem, ReputationManagerAdapter } from './reputation.js';
+import { ReputationManager } from '@f2a/network';
 import { CapabilityDetector } from './capability-detector.js';
 import { TaskQueue } from './task-queue.js';
 import { AnnouncementQueue } from './announcement-queue.js';
@@ -82,7 +82,7 @@ export class F2AComponentRegistry {
 
   private _nodeManager?: F2ANodeManager;
   private _networkClient?: F2ANetworkClient;
-  private _reputationSystem?: ReputationSystem;
+  private _reputationSystem?: ReputationManager;
   private _capabilityDetector?: CapabilityDetector;
   private _taskQueue?: TaskQueue;
   private _announcementQueue?: AnnouncementQueue;
@@ -238,29 +238,27 @@ export class F2AComponentRegistry {
 
   /**
    * 获取信誉系统（懒加载）
+   * 重构：改用 @f2a/network 的 ReputationManager
    */
-  get reputationSystem(): ReputationSystem {
+  get reputationSystem(): ReputationManager {
     if (!this._reputationSystem) {
-      this._reputationSystem = new ReputationSystem(
-        {
-          enabled: INTERNAL_REPUTATION_CONFIG.enabled,
-          initialScore: INTERNAL_REPUTATION_CONFIG.initialScore,
-          minScoreForService: INTERNAL_REPUTATION_CONFIG.minScoreForService,
-          decayRate: INTERNAL_REPUTATION_CONFIG.decayRate,
-        },
-        this.getDefaultDataDir()
-      );
+      this._reputationSystem = new ReputationManager({
+        initialScore: INTERNAL_REPUTATION_CONFIG.initialScore,
+        minScore: 0,
+        maxScore: 100,
+        decayRate: INTERNAL_REPUTATION_CONFIG.decayRate,
+      });
     }
     return this._reputationSystem;
   }
 
   /**
    * 获取评审委员会（懒加载）
+   * 重构：直接使用 ReputationManager，不需要 Adapter
    */
   get reviewCommittee(): ReviewCommittee {
     if (!this._reviewCommittee) {
-      const reputationPlugin = new ReputationManagerAdapter(this.reputationSystem);
-      this._reviewCommittee = new ReviewCommittee(reputationPlugin, {
+      this._reviewCommittee = new ReviewCommittee(this.reputationSystem, {
         minReviewers: 1,
         maxReviewers: 5,
         minReputation: INTERNAL_REPUTATION_CONFIG.minScoreForReview,

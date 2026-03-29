@@ -209,10 +209,10 @@ describe('F2APlugin - Webhook 错误处理测试', () => {
           config: {},
         });
 
-        // Mock reputationSystem.isAllowed to return false
+        // Mock reputationSystem.getReputation to return low score
         const repSystem = (plugin as any).reputationSystem;
         if (repSystem) {
-          vi.spyOn(repSystem, 'isAllowed').mockReturnValue(false);
+          vi.spyOn(repSystem, 'getReputation').mockReturnValue({ score: 20, peerId: 'test-peer', history: [] });
         }
 
         const handler = (plugin as any).createWebhookHandler();
@@ -248,10 +248,10 @@ describe('F2APlugin - Webhook 错误处理测试', () => {
           config: {},
         });
 
-        // Mock reputationSystem.isAllowed to return true
+        // Mock reputationSystem.getReputation to return high score
         const repSystem = (plugin as any).reputationSystem;
         if (repSystem) {
-          vi.spyOn(repSystem, 'isAllowed').mockReturnValue(true);
+          vi.spyOn(repSystem, 'getReputation').mockReturnValue({ score: 80, peerId: 'test-peer', history: [] });
         }
 
         // Mock taskQueue.add 抛出错误

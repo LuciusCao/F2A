@@ -104,7 +104,10 @@ export interface DaemonResponse<T = unknown> {
  * F2A Daemon 客户端
  */
 export class F2AClient {
-  private config: Required<F2AClientConfig>;
+  private config: Omit<Required<F2AClientConfig>, 'webhookUrl' | 'capabilities'> & {
+    webhookUrl?: string;
+    capabilities: AgentCapability[];
+  };
   private logger: SimpleLogger;
   private registered: boolean = false;
   private abortController?: AbortController;
@@ -439,7 +442,10 @@ export class F2AClient {
   /**
    * 获取配置
    */
-  getConfig(): Required<F2AClientConfig> {
+  getConfig(): Omit<Required<F2AClientConfig>, 'webhookUrl' | 'capabilities'> & {
+    webhookUrl?: string;
+    capabilities: AgentCapability[];
+  } {
     return this.config;
   }
 
@@ -461,13 +467,15 @@ export class F2AClient {
   // ========== 内部方法 ==========
 
   /**
-   * 发送 HTTP 请求到 Daemon
+   * 发送 HTTP 请求到 Daemon（带超时）
    */
   private async fetch(path: string, options: {
     method: 'GET' | 'POST' | 'DELETE';
     body?: string;
+    timeout?: number;
   }): Promise<DaemonResponse> {
     const url = `${this.config.daemonUrl}${path}`;
+    const requestTimeout = options.timeout || this.config.timeout;
     
     let lastError: Error | undefined;
     
@@ -475,31 +483,40 @@ export class F2AClient {
       try {
         this.abortController = new AbortController();
         
-        const response = await global.fetch(url, {
-          method: options.method,
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: options.body,
-          signal: this.abortController.signal,
-        });
+        // 设置超时
+        const timeoutId = setTimeout(() => {
+          this.abortController?.abort();
+        }, requestTimeout);
+        
+        try {
+          const response = await global.fetch(url, {
+            method: options.method,
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: options.body,
+            signal: this.abortController.signal,
+          });
 
-        if (!response.ok) {
-          const text = await response.text();
-          try {
-            const data = JSON.parse(text);
-            return data as DaemonResponse;
-          } catch {
-            return {
-              success: false,
-              error: text,
-              code: `HTTP_${response.status}`,
-            };
+          if (!response.ok) {
+            const text = await response.text();
+            try {
+              const data = JSON.parse(text);
+              return data as DaemonResponse;
+            } catch {
+              return {
+                success: false,
+                error: text,
+                code: `HTTP_${response.status}`,
+              };
+            }
           }
-        }
 
-        const data = await response.json() as DaemonResponse;
-        return data;
+          const data = await response.json() as DaemonResponse;
+          return data;
+        } finally {
+          clearTimeout(timeoutId);
+        }
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         

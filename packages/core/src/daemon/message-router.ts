@@ -247,4 +247,13 @@ export class MessageRouter {
 
     return cleaned;
   }
+
+  /**
+   * 更新 Agent 注册表
+   * 公开方法，允许外部更新注册表引用
+   */
+  updateRegistry(registry: Map<string, AgentRegistration>): void {
+    this.agentRegistry = registry;
+    this.logger.info('Agent registry updated', { count: registry.size });
+  }
 }

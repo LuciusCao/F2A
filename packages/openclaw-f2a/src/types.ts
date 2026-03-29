@@ -40,6 +40,21 @@ export interface ApiLogger {
   debug?(message: string, ...args: unknown[]): void;
 }
 
+/**
+ * Plugin 内部访问接口
+ * 用于 Handler 访问 Plugin 内部组件
+ */
+export interface PluginInternalAccess {
+  networkClient?: any;
+  reputationSystem?: any;
+  taskQueue?: any;
+  config?: any;
+  f2aClient?: any;
+  nodeManager?: any;
+  getF2AStatus?: () => any;
+  reviewCommittee?: any;
+}
+
 // 重新导出核心 Result 类型，确保整个项目使用统一的错误处理模式
 export type { Result, F2AError, ErrorCode, SecurityConfig } from '@f2a/network';
 export { success, failure, failureFromError, createError } from '@f2a/network';
@@ -215,11 +230,11 @@ export interface OpenClawPluginApi {
       resolveEnvelopeFormatOptions: (cfg: unknown) => unknown;
     };
   };
-  logger: {
-    debug?: (message: string) => void;
-    info: (message: string) => void;
-    warn: (message: string) => void;
-    error: (message: string) => void;
+  logger?: {
+    info: (message: string, ...args: unknown[]) => void;
+    warn: (message: string, ...args: unknown[]) => void;
+    error: (message: string, ...args: unknown[]) => void;
+    debug?: (message: string, ...args: unknown[]) => void;
   };
   registerTool?: (tool: unknown, opts?: { optional?: boolean }) => void;
   registerService?: (service: { id: string; start: () => void | Promise<void>; stop?: () => void | Promise<void> }) => void;
@@ -237,6 +252,12 @@ export interface ParameterSchema {
   description: string;
   required?: boolean;
   enum?: string[];
+  /** 数组类型的元素类型定义 */
+  items?: {
+    type: string;
+    description?: string;
+    enum?: string[];
+  };
 }
 
 export interface SessionContext {
@@ -703,6 +724,10 @@ export interface ContactManagerLike {
 export interface HandshakeProtocolLike {
   /** 发送好友请求 */
   sendFriendRequest: (peerId: string, message?: string) => Promise<string | null>;
+  /** 接受好友请求 */
+  acceptRequest: (requestId: string) => Promise<boolean>;
+  /** 拒绝好友请求 */
+  rejectRequest: (requestId: string, reason?: string) => Promise<boolean>;
   /** 处理收到的请求（可选） */
   handleRequest?: (request: unknown) => Promise<void>;
   /** 获取待处理请求（可选） */
@@ -773,8 +798,8 @@ export interface NodeManagerLike {
  * P2-1 修复：定义任务队列公共方法签名
  */
 export interface TaskQueueLike {
-  /** 添加任务（可选） */
-  addTask?: (task: unknown) => string;
+  /** 添加任务 */
+  add(task: unknown): unknown;
   /** 获取任务（可选） */
   getTask?: (taskId: string) => unknown;
   /** 获取待处理任务（可选） */
@@ -787,8 +812,16 @@ export interface TaskQueueLike {
   size?: () => number;
   /** 关闭队列（可选） */
   close?: () => void;
-  /** 获取统计（可选） */
-  getStats?: () => unknown;
+  /** 获取统计 */
+  getStats(): unknown;
+  /** 获取所有任务 */
+  getAll(): unknown[];
+  /** 重置处理中的任务为待处理 */
+  resetProcessingTask(taskId: string): void;
+  /** 获取待 webhook 推送的任务 */
+  getWebhookPending(): unknown[];
+  /** 标记任务为已推送 webhook */
+  markWebhookPushed(taskId: string): void;
 }
 
 /**

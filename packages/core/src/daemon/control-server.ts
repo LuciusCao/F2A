@@ -986,11 +986,9 @@ export class ControlServer {
     // 获取所有注册的 Agent
     const agents = this.agentRegistry.list();
     
-    // 更新路由器内部的 agentRegistry Map
-    // 由于 messageRouter 使用的是 Map 引用，我们需要重建它
-    // 这里通过类型断言来访问私有属性
-    (this.messageRouter as any).agentRegistry = new Map(
+    // 使用公开方法更新路由器的注册表
+    this.messageRouter.updateRegistry(new Map(
       agents.map(a => [a.agentId, a])
-    );
+    ));
   }
 }

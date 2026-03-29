@@ -8,10 +8,10 @@
  */
 
 export interface Logger {
-  debug(message: string, meta?: Record<string, unknown>): void;
-  info(message: string, meta?: Record<string, unknown>): void;
-  warn(message: string, meta?: Record<string, unknown>): void;
-  error(message: string, meta?: Record<string, unknown>): void;
+  debug?(message: string, ...args: unknown[]): void;
+  info(message: string, ...args: unknown[]): void;
+  warn(message: string, ...args: unknown[]): void;
+  error(message: string, ...args: unknown[]): void;
 }
 
 /** 默认日志前缀 */
@@ -49,17 +49,21 @@ export function createLogger(component?: string): Logger {
   const prefix = component ? `[F2A:${component}]` : DEFAULT_PREFIX;
 
   return {
-    debug(message: string, meta?: Record<string, unknown>): void {
-      console.debug(formatOutput('DEBUG', prefix, message, meta));
+    debug(message: string, ...args: unknown[]): void {
+      const meta = args.length > 0 ? args[0] : undefined;
+      console.debug(formatOutput('DEBUG', prefix, message, meta as Record<string, unknown> | undefined));
     },
-    info(message: string, meta?: Record<string, unknown>): void {
-      console.log(formatOutput('INFO', prefix, message, meta));
+    info(message: string, ...args: unknown[]): void {
+      const meta = args.length > 0 ? args[0] : undefined;
+      console.log(formatOutput('INFO', prefix, message, meta as Record<string, unknown> | undefined));
     },
-    warn(message: string, meta?: Record<string, unknown>): void {
-      console.warn(formatOutput('WARN', prefix, message, meta));
+    warn(message: string, ...args: unknown[]): void {
+      const meta = args.length > 0 ? args[0] : undefined;
+      console.warn(formatOutput('WARN', prefix, message, meta as Record<string, unknown> | undefined));
     },
-    error(message: string, meta?: Record<string, unknown>): void {
-      console.error(formatOutput('ERROR', prefix, message, meta));
+    error(message: string, ...args: unknown[]): void {
+      const meta = args.length > 0 ? args[0] : undefined;
+      console.error(formatOutput('ERROR', prefix, message, meta as Record<string, unknown> | undefined));
     }
   };
 }

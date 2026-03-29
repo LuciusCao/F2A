@@ -41,7 +41,7 @@ export type {
 export { FriendStatus } from './contact-types.js';
 export type {
   ContactFilter,
-  ContactInfo,
+  Contact,
 } from './contact-types.js';
 
 // 公共错误类型

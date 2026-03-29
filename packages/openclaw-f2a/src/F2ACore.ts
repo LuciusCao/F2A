@@ -291,8 +291,8 @@ export class F2ACore {
     }
 
     this.logger?.info('[F2A] 初始化完成（延迟模式）');
-    this.logger?.info(`[F2A] Agent 名称: ${this.config.agentName}`);
-    this.logger?.info(`[F2A] 能力数: ${this.state.capabilities.length}`);
+    this.logger?.info('[F2A] Agent 名称', { agentName: this.config.agentName });
+    this.logger?.info('[F2A] 能力数', { count: this.state.capabilities.length });
     this.logger?.info('[F2A] 资源将在首次使用时初始化');
   }
 
@@ -323,7 +323,7 @@ export class F2ACore {
     const runMode = this.determineRunMode();
     this.state.runMode = runMode;
     
-    this.logger?.info(`[F2A] 启用适配器（${runMode} 模式）...`);
+    this.logger?.info('[F2A] 启用适配器', { mode: runMode });
     this.state.initialized = true;
 
     // 注册清理处理器
@@ -342,7 +342,7 @@ export class F2ACore {
 
     if (this.state.f2a || this.state.f2aClient) {
       const peerId = this.state.f2a?.peerId || 'daemon-client';
-      this.logger?.info(`[F2A] P2P 已就绪，Peer ID: ${peerId?.slice(0, 20)}...`);
+      this.logger?.info('[F2A] P2P 已就绪', { peerId: peerId?.slice(0, 20) + '...' });
     }
   }
 
@@ -430,7 +430,7 @@ export class F2ACore {
       });
     } catch (err) {
       const errorMsg = extractErrorMessage(err);
-      this.logger?.error(`[F2A] Daemon 模式启动失败: ${errorMsg}`);
+      this.logger?.error('[F2A] Daemon 模式启动失败', { error: errorMsg });
       this.logger?.warn('[F2A] F2A Plugin 将以降级模式运行，P2P 功能不可用');
       
       // 清理失败的客户端
@@ -457,7 +457,7 @@ export class F2ACore {
         });
         
         child.on('error', (err) => {
-          this.logger?.warn(`[F2A] 启动 Daemon 失败: ${err.message}`);
+          this.logger?.warn('[F2A] 启动 Daemon 失败', { error: err.message });
           resolve(false);
         });
         
@@ -477,7 +477,7 @@ export class F2ACore {
         });
       });
     } catch (err) {
-      this.logger?.warn(`[F2A] 无法启动 Daemon: ${extractErrorMessage(err)}`);
+      this.logger?.warn('[F2A] 无法启动 Daemon', { error: extractErrorMessage(err) });
       return false;
     }
   }
@@ -512,7 +512,7 @@ export class F2ACore {
           await this.state.f2aClient.clearMessages(messageIds);
         }
       } catch (err) {
-        this.logger?.debug?.(`[F2A] 消息轮询错误: ${extractErrorMessage(err)}`);
+        this.logger?.debug?.('[F2A] 消息轮询错误', { error: extractErrorMessage(err) });
       }
     }, pollInterval);
 
@@ -616,7 +616,7 @@ export class F2ACore {
       }
     } catch (err) {
       const errorMsg = extractErrorMessage(err);
-      this.logger?.error(`[F2A] 创建 F2A 实例失败: ${errorMsg}`);
+      this.logger?.error('[F2A] 创建 F2A 实例失败', { error: errorMsg });
       this.logger?.warn('[F2A] F2A Plugin 将以降级模式运行，P2P 功能不可用');
 
       // 清理失败的实例
@@ -643,10 +643,10 @@ export class F2ACore {
         { logger: this.logger }
       );
       await this.state.webhookServer.start();
-      this.logger?.info(`[F2A] Webhook 服务器已启动: ${this.state.webhookServer.getUrl()}`);
+      this.logger?.info('[F2A] Webhook 服务器已启动', { url: this.state.webhookServer.getUrl() });
     } catch (err) {
       const errorMsg = extractErrorMessage(err);
-      this.logger?.warn(`[F2A] Webhook 服务器启动失败: ${errorMsg}`);
+      this.logger?.warn('[F2A] Webhook 服务器启动失败', { error: errorMsg });
     }
   }
 
@@ -671,12 +671,13 @@ export class F2ACore {
         const pending = taskQueue.getWebhookPending();
 
         if (pending.length > 0) {
-          this.logger?.info(`[F2A] 兜底轮询: ${pending.length} 个待推送任务`);
+          this.logger?.info('[F2A] 兜底轮询: 待推送任务', { count: pending.length });
 
           for (const task of pending) {
-            const result = await this.state.webhookPusher!.pushTask(task);
+            const queuedTask = task as any;
+            const result = await this.state.webhookPusher!.pushTask(queuedTask);
             if (result.success) {
-              taskQueue.markWebhookPushed(task.taskId);
+              taskQueue.markWebhookPushed(queuedTask.taskId);
             }
           }
         }
@@ -698,7 +699,7 @@ export class F2ACore {
 
     try {
       const taskQueue = this.componentRegistry.getTaskQueue();
-      const stats = taskQueue.getStats();
+      const stats = taskQueue.getStats() as { processing: number };
       if (stats.processing === 0) return;
 
       const allTasks = taskQueue.getAll();
@@ -706,16 +707,17 @@ export class F2ACore {
       const processingTimeout = this.config.processingTimeoutMs || 5 * 60 * 1000;
 
       for (const task of allTasks) {
-        if (task.status === 'processing') {
-          const taskTimeout = task.timeout || 30000;
+        const queuedTask = task as any;
+        if (queuedTask.status === 'processing') {
+          const taskTimeout = queuedTask.timeout || 30000;
           const maxAllowedTime = Math.max(taskTimeout * 2, processingTimeout);
-          const processingTime = now - (task.updatedAt || task.createdAt);
+          const processingTime = now - (queuedTask.updatedAt || queuedTask.createdAt);
 
           if (processingTime > maxAllowedTime) {
-            this.logger?.warn(
-              `[F2A] 检测到僵尸任务 ${task.taskId.slice(0, 8)}... (processing ${Math.round(processingTime / 1000)}s)，重置为 pending`
+            this.logger?.warn?.(
+              `[F2A] 检测到僵尸任务 ${queuedTask.taskId.slice(0, 8)}... (processing ${Math.round(processingTime / 1000)}s)，重置为 pending`
             );
-            taskQueue.resetProcessingTask(task.taskId);
+            taskQueue.resetProcessingTask(queuedTask.taskId);
           }
         }
       }

@@ -4,7 +4,7 @@
  * 测试任务广播和认领队列功能。
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AnnouncementQueue } from '../src/announcement-queue.js';
 import type { TaskAnnouncement } from '../src/types.js';
 import { mkdtempSync, rmSync, existsSync } from 'fs';

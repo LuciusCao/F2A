@@ -28,6 +28,7 @@ import type {
   ContactManagerLike,
   HandshakeProtocolLike,
   F2APublicInterface,
+  PeerInfoLike,
 } from './types.js';
 import { ToolHandlers } from './tool-handlers.js';
 import { ClaimHandlers } from './claim-handlers.js';
@@ -68,9 +69,9 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
   private _processedMessageHashes: Map<string, number> = new Map();
 
   // 配置
-  private config!: F2APluginConfig;
-  private nodeConfig!: F2ANodeConfig;
-  private api?: OpenClawPluginApi;
+  private _pluginConfig!: F2APluginConfig;
+  private _nodeConfig!: F2ANodeConfig;
+  private _pluginApi?: OpenClawPluginApi;
 
   // ========== 处理器 Getter ==========
 
@@ -157,27 +158,27 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
     debugLog(`[F2A] invokeOpenClawAgent: sessionKey=${sessionKey}`);
 
     // Channel API
-    if (this.api?.channel?.reply?.dispatchReplyFromConfig) {
+    if (this._pluginApi?.channel?.reply?.dispatchReplyFromConfig) {
       try {
-        const route = this.api.channel.routing.resolveAgentRoute({ peerId: sessionKey });
-        const ctx = this.api.channel.reply.finalizeInboundContext({
+        const route = this._pluginApi.channel.routing.resolveAgentRoute({ peerId: sessionKey });
+        const ctx = this._pluginApi.channel.reply.finalizeInboundContext({
           SessionKey: route.sessionKey, PeerId: sessionKey, Sender: 'F2P P2P',
           SenderId: fromPeerId, ChannelType: 'p2p', InboundId: fromPeerId,
         });
-        await this.api.channel.reply.dispatchReplyFromConfig({ ctx, cfg: this.config, dispatcher: f2aDispatcher });
+        await this._pluginApi.channel.reply.dispatchReplyFromConfig({ ctx, cfg: this._pluginConfig, dispatcher: f2aDispatcher });
         return undefined;
       } catch (err) { debugLog(`[F2A] Channel API 失败: ${extractErrorMessage(err)}`); }
     }
 
     // Subagent API
-    if (this.api?.runtime?.subagent?.run) {
+    if (this._pluginApi?.runtime?.subagent?.run) {
       try {
         const idempotencyKey = `subagent:f2a:${fromPeerId}-${Date.now()}`;
-        const runResult = await this.api.runtime.subagent.run({ sessionKey, message, deliver: false, idempotencyKey });
-        const waitResult = await this.api.runtime.subagent.waitForRun({ runId: runResult.runId, timeoutMs: 60000 });
+        const runResult = await this._pluginApi.runtime.subagent.run({ sessionKey, message, deliver: false, idempotencyKey });
+        const waitResult = await this._pluginApi.runtime.subagent.waitForRun({ runId: runResult.runId, timeoutMs: 60000 });
         
         if (waitResult.status === 'ok') {
-          const messagesResult = await this.api.runtime.subagent.getSessionMessages({ sessionKey, limit: 1 });
+          const messagesResult = await this._pluginApi.runtime.subagent.getSessionMessages({ sessionKey, limit: 1 });
           if (messagesResult.messages?.length > 0) {
             const lastMessage = messagesResult.messages[messagesResult.messages.length - 1] as any;
             const reply = Array.isArray(lastMessage?.content)
@@ -190,7 +191,7 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
     }
 
     // 降级回复
-    const fallbackReply = `收到你的消息："${message.slice(0, 30)}"。我是 ${this.config.agentName || 'OpenClaw Agent'}，很高兴与你交流！`;
+    const fallbackReply = `收到你的消息："${message.slice(0, 30)}"。我是 ${this._pluginConfig.agentName || 'OpenClaw Agent'}，很高兴与你交流！`;
     await f2aDispatcher.deliver({ text: fallbackReply });
     return undefined;
   }
@@ -198,15 +199,15 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
   // ========== 插件生命周期 ==========
 
   async initialize(config: Record<string, unknown> & { _api?: OpenClawPluginApi }): Promise<void> {
-    this.api = config._api;
+    this._pluginApi = config._api;
     const logger = config._api?.logger;
 
-    this.core = new F2ACore({ pluginConfig: {} as F2APluginConfig, nodeConfig: {} as F2ANodeConfig, api: this.api, logger });
+    this.core = new F2ACore({ pluginConfig: {} as F2APluginConfig, nodeConfig: {} as F2ANodeConfig, api: this._pluginApi, logger });
     await this.core.initialize(config);
-    this.config = this.core.getConfig();
-    this.nodeConfig = this.core.getNodeConfig();
+    this._pluginConfig = this.core.getConfig();
+    this._nodeConfig = this.core.getNodeConfig();
 
-    this.components = new F2AComponentRegistry({ pluginConfig: this.config, nodeConfig: this.nodeConfig, api: this.api, logger });
+    this.components = new F2AComponentRegistry({ pluginConfig: this._pluginConfig, nodeConfig: this._nodeConfig, api: this._pluginApi, logger });
     this.core.setComponentRegistry(this.components);
 
     logger?.info('[F2A] 插件初始化完成');
@@ -216,17 +217,17 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
     const logger = this.core?.getLogger();
 
     this.webhookManager = new F2AWebhookManager({
-      config: this.config, capabilities: this.core?.getCapabilities() || [], logger,
+      config: this._pluginConfig, capabilities: this.core?.getCapabilities() || [], logger,
       reputationSystem: this.components!.getReputationSystem(), taskQueue: this.components!.getTaskQueue(),
-      webhookPusher: this.core?.getWebhookPusher(), api: this.api,
+      webhookPusher: this.core?.getWebhookPusher(), api: this._pluginApi,
       invokeOpenClawAgent: (from, msg) => this.invokeOpenClawAgent(from, msg),
     });
 
     const onMessage = async (msg: { from: string; content: string; metadata?: Record<string, unknown>; messageId: string }) => {
-      if (!isValidPeerId(msg.from)) { logger?.warn(`[F2A] 拒绝无效 PeerID: ${String(msg.from).slice(0, 20)}`); return; }
+      if (!isValidPeerId(msg.from)) { logger?.warn('[F2A] 拒绝无效 PeerID', { peerId: String(msg.from).slice(0, 20) }); return; }
       if (msg.content?.length > MAX_MESSAGE_LENGTH) { logger?.warn(`[F2A] 消息过长，拒绝处理`); return; }
       
-      logger?.info(`[F2A] 收到 P2P 消息: from=${msg.from.slice(0, 16)}, content=${msg.content?.slice(0, 50)}`);
+      logger?.info('[F2A] 收到 P2P 消息', { from: msg.from.slice(0, 16), content: msg.content?.slice(0, 50) });
       
       try {
         if (this.isEchoMessage(msg)) { logger?.info('[F2A] 跳过回声消息'); return; }
@@ -274,13 +275,13 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
     // 如果 webhookManager 未初始化，创建一个临时的
     if (!this.webhookManager) {
       this.webhookManager = new F2AWebhookManager({
-        config: this.config,
+        config: this._pluginConfig,
         capabilities: this.core?.getCapabilities() || [],
         logger: this.core?.getLogger(),
         reputationSystem: this.components!.getReputationSystem(),
         taskQueue: this.components!.getTaskQueue(),
         webhookPusher: this.core?.getWebhookPusher(),
-        api: this.api,
+        api: this._pluginApi,
         invokeOpenClawAgent: (from, msg) => this.invokeOpenClawAgent(from, msg),
       });
     }
@@ -341,8 +342,8 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
   isInitialized(): boolean { return this.core?.isInitialized() ?? false; }
   getF2AStatus(): { running: boolean; peerId?: string; uptime?: number } { return this.core?.getF2AStatus() ?? { running: false }; }
   getF2A(): F2APublicInterface | undefined { return this.core?.getF2A() as unknown as F2APublicInterface | undefined; }
-  getConfig(): F2APluginConfig { return this.config; }
-  getApi(): OpenClawPluginApi | undefined { return this.api; }
+  getConfig(): F2APluginConfig { return this._pluginConfig; }
+  getApi(): OpenClawPluginApi | undefined { return this._pluginApi; }
   getNetworkClient(): F2ANetworkClientLike { if (!this.components) throw new Error('Not initialized'); return this.components.getNetworkClient(); }
   getReputationSystem(): ReputationSystemLike { if (!this.components) throw new Error('Not initialized'); return this.components.getReputationSystem(); }
   getNodeManager(): NodeManagerLike { if (!this.components) throw new Error('Not initialized'); return this.components.getNodeManager(); }
@@ -376,7 +377,7 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
     catch (err) { return { success: false, error: { message: extractErrorMessage(err) } }; }
   }
 
-  async getConnectedPeers(): Promise<{ success: boolean; data?: unknown[]; error?: { message: string } }> {
+  async getConnectedPeers(): Promise<{ success: boolean; data?: PeerInfoLike[]; error?: { message: string } }> {
     const f2a = this.core?.getF2A();
     if (!f2a) return { success: false, error: { message: 'F2A 实例未初始化' } };
     try { return { success: true, data: (f2a as any).p2pNetwork?.getConnectedPeers?.() || [] }; }

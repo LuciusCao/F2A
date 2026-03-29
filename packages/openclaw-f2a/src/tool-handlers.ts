@@ -10,7 +10,8 @@ import type {
   AgentCapability,
   TaskResponse,
   F2APluginConfig,
-  OpenClawPluginApi
+  OpenClawPluginApi,
+  PluginInternalAccess
 } from './types.js';
 import type { F2APluginPublicInterface } from './types.js';
 import type { QueuedTask } from './task-queue.js';
@@ -306,7 +307,7 @@ ${agents.map((a: AgentInfo, i: number) => {
     });
 
     const results = await Promise.allSettled(promises);
-    const settled = results.map((r, i) => 
+    const settled = results.map((r: PromiseSettledResult<BroadcastResult>, i: number) => 
       r.status === 'fulfilled' ? r.value : { 
         agent: agents[i].displayName ?? agents[i].peerId, 
         success: false, 
@@ -314,7 +315,7 @@ ${agents.map((a: AgentInfo, i: number) => {
       }
     ) as BroadcastResult[];
 
-    const successful = settled.filter(r => r.success);
+    const successful = settled.filter((r: BroadcastResult) => r.success);
     const minResponses = params.min_responses || 1;
 
     if (successful.length < minResponses) {
@@ -521,7 +522,7 @@ ${peers.map((p: any) => {
         logger.info(`已将 ${tasks.length} 个任务标记为 processing`);
       }
       if (skippedIds.length > 0) {
-        logger.warn('[F2A:Tools] 跳过 %d 个已被获取的任务', skippedIds.length);
+        logger.warn('[F2A:Tools] 跳过已被获取的任务', { count: skippedIds.length });
       }
     }
 
@@ -869,7 +870,7 @@ ${isComplete ? '🎉 评审已完成，可以使用 f2a_get_reviews 查看最终
 📊 进度: ${pendingReview.reviews.length}/${pendingReview.requiredReviewers}
 
 已收到的评审:
-${pendingReview.reviews.map((r, i) => 
+${pendingReview.reviews.map((r: any, i: number) => 
   `  ${i + 1}. 工作量: ${r.dimensions.workload}, 价值: ${r.dimensions.value}`
 ).join('\n')}
       `.trim();
@@ -881,7 +882,7 @@ ${pendingReview.reviews.map((r, i) =>
           status: 'in_progress',
           current: pendingReview.reviews.length,
           required: pendingReview.requiredReviewers,
-          reviews: pendingReview.reviews.map(r => ({
+          reviews: pendingReview.reviews.map((r: any) => ({
             reviewerId: r.reviewerId.slice(0, 16) + '...',
             workload: r.dimensions.workload,
             value: r.dimensions.value,
@@ -910,7 +911,7 @@ ${pendingReview.reviews.map((r, i) =>
    ${result.outliers.length > 0 ? `• 偏离评审: ${result.outliers.length} 个` : ''}
 
 详细评审:
-${result.reviews.map((r, i) => {
+${result.reviews.map((r: any, i: number) => {
   const isOutlier = result.outliers.includes(r);
   const outlierMark = isOutlier ? ' ⚠️ (偏离)' : '';
   return `  ${i + 1}. 工作量: ${r.dimensions.workload}, 价值: ${r.dimensions.value}${outlierMark}`;

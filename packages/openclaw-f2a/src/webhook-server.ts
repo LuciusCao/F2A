@@ -100,7 +100,7 @@ export class WebhookServer {
       this.server = createServer(this.handleRequest.bind(this));
       
       this.server.listen(this.port, () => {
-        this.logger.info('[F2A:Webhook] 服务器启动在端口 %d', this.port);
+        this.logger.info('[F2A:Webhook] 服务器启动在端口', { port: this.port });
         // 允许进程在只有这个服务器时退出（用于 CLI 命令如 gateway status）
         this.server?.unref();
         resolve();
@@ -168,7 +168,7 @@ export class WebhookServer {
       const body = await this.parseBody(req);
       const event = body as WebhookEvent;
 
-      this.logger.info('[F2A:Webhook] 收到事件: %s', event.type);
+      this.logger.info('[F2A:Webhook] 收到事件', { type: event.type });
 
       let result: unknown;
 
@@ -209,7 +209,7 @@ export class WebhookServer {
       res.end(JSON.stringify(result));
 
     } catch (error) {
-      this.logger.error('[F2A:Webhook] 处理错误: %s', error);
+      this.logger.error('[F2A:Webhook] 处理错误', { error: error instanceof Error ? error.message : String(error) });
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ 
         error: error instanceof Error ? error.message : 'Internal error' 

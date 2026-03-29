@@ -13,10 +13,10 @@ import type {
   AgentCapability,
   ApiLogger,
   F2APluginConfig,
+  TaskQueueLike,
 } from './types.js';
 import { INTERNAL_REPUTATION_CONFIG } from './types.js';
 import type { WebhookHandler } from './webhook-server.js';
-import type { TaskQueue } from './task-queue.js';
 import type { WebhookPusher } from './webhook-pusher.js';
 import type { ReputationSystemLike } from './types.js';
 import type { OpenClawPluginApi } from './types.js';
@@ -40,7 +40,7 @@ export interface WebhookManagerDeps {
   /** 信誉系统 */
   reputationSystem: ReputationSystemLike;
   /** 任务队列 */
-  taskQueue: TaskQueue;
+  taskQueue: TaskQueueLike;
   /** Webhook 推送器（可选） */
   webhookPusher?: WebhookPusher;
   /** OpenClaw API */
@@ -178,7 +178,7 @@ export class F2AWebhookManager {
     }
 
     // 检查队列是否已满
-    const stats = taskQueue.getStats();
+    const stats = taskQueue.getStats() as { pending: number; processing: number };
     if (stats.pending >= (config.maxQueuedTasks || 100)) {
       return {
         accepted: false,
@@ -192,11 +192,12 @@ export class F2AWebhookManager {
       const task = taskQueue.add(payload);
 
       // 优先使用 webhook 推送
-      if (webhookPusher) {
-        const result = await webhookPusher.pushTask(task);
+      if (webhookPusher && task) {
+        const queuedTask = task as any;
+        const result = await webhookPusher.pushTask(queuedTask);
         if (result.success) {
-          taskQueue.markWebhookPushed(task.taskId);
-          logger?.info(`[F2A] 任务 ${task.taskId} 已通过 webhook 推送 (${result.latency}ms)`);
+          taskQueue.markWebhookPushed(queuedTask.taskId);
+          logger?.info(`[F2A] 任务 ${queuedTask.taskId} 已通过 webhook 推送 (${result.latency}ms)`);
         } else {
           logger?.info(`[F2A] Webhook 推送失败: ${result.error}，任务将在轮询时处理`);
         }
@@ -263,8 +264,13 @@ export class F2AWebhookManager {
   /**
    * 处理 status webhook
    */
-  private async handleStatus() {
-    const stats = this.deps.taskQueue.getStats();
+  private async handleStatus(): Promise<{
+    status: "available" | "busy" | "offline";
+    load: number;
+    queued: number;
+    processing: number;
+  }> {
+    const stats = this.deps.taskQueue.getStats() as { pending: number; processing: number };
     return {
       status: 'available',
       load: stats.pending + stats.processing,

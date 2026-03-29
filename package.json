@@ -1,6 +1,6 @@
 {
   "name": "@f2a/monorepo",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "description": "F2A - Friend-to-Agent P2P networking protocol (Monorepo root)",
   "private": true,
   "type": "module",

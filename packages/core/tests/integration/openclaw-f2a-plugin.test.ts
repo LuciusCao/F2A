@@ -8,12 +8,12 @@ import { spawn, ChildProcess } from 'child_process';
 import { existsSync, rmSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { F2AOpenClawAdapter } from '../../packages/openclaw-f2a/src/connector.js';
+import { F2APlugin } from '../../packages/openclaw-f2a/src/connector.js';
 import { F2ANodeManager } from '../../packages/openclaw-f2a/src/node-manager.js';
 
 describe('F2A OpenClaw Adapter Plugin', () => {
-  const testDir = join(tmpdir(), `f2a-adapter-test-${Date.now()}`);
-  let adapter: F2AOpenClawAdapter | null = null;
+  const testDir = join(tmpdir(), `f2a-plugin-test-${Date.now()}`);
+  let plugin: F2APlugin | null = null;
   let webhookProcess: ChildProcess | null = null;
 
   beforeEach(() => {
@@ -21,10 +21,10 @@ describe('F2A OpenClaw Adapter Plugin', () => {
   });
 
   afterEach(async () => {
-    // 清理 adapter
-    if (adapter) {
-      await adapter.shutdown();
-      adapter = null;
+    // 清理 plugin
+    if (plugin) {
+      await plugin.shutdown();
+      plugin = null;
     }
     
     // 清理 webhook 进程
@@ -41,7 +41,7 @@ describe('F2A OpenClaw Adapter Plugin', () => {
 
   describe('初始化', () => {
     it('应该正确初始化并注册 18 个工具', async () => {
-      adapter = new F2AOpenClawAdapter();
+      plugin = new F2APlugin();
       
       const config = {
         dataDir: testDir,
@@ -50,9 +50,9 @@ describe('F2A OpenClaw Adapter Plugin', () => {
         agentName: 'Test-Agent',
       };
 
-      await adapter.initialize(config);
+      await plugin.initialize(config);
       
-      const tools = adapter.getTools();
+      const tools = plugin.getTools();
       expect(tools).toHaveLength(24);
       expect(tools.map(t => t.name)).toContain('f2a_status');
       expect(tools.map(t => t.name)).toContain('f2a_discover');
@@ -60,7 +60,7 @@ describe('F2A OpenClaw Adapter Plugin', () => {
     });
 
     it('initialize() 不应该启动 Webhook 服务器（延迟模式）', async () => {
-      adapter = new F2AOpenClawAdapter();
+      plugin = new F2APlugin();
       
       const config = {
         dataDir: testDir,
@@ -68,7 +68,7 @@ describe('F2A OpenClaw Adapter Plugin', () => {
         enableMDNS: false,
       };
 
-      await adapter.initialize(config);
+      await plugin.initialize(config);
       
       // 延迟模式下，initialize() 不启动 WebhookServer
       // WebhookServer 只有在 enable() 时才启动
@@ -91,7 +91,7 @@ describe('F2A OpenClaw Adapter Plugin', () => {
     });
 
     it('enable() 应该启动 Webhook 服务器', async () => {
-      adapter = new F2AOpenClawAdapter();
+      plugin = new F2APlugin();
       
       const config = {
         dataDir: testDir,
@@ -99,10 +99,10 @@ describe('F2A OpenClaw Adapter Plugin', () => {
         enableMDNS: false,
       };
 
-      await adapter.initialize(config);
+      await plugin.initialize(config);
       
       // enable() 应该启动 WebhookServer
-      await adapter.enable();
+      await plugin.enable();
       
       // 测试 Webhook 服务器是否可访问
       const response = await fetch('http://localhost:19009/', {
@@ -115,9 +115,9 @@ describe('F2A OpenClaw Adapter Plugin', () => {
     });
 
     it('应该创建数据目录和持久化文件', async () => {
-      adapter = new F2AOpenClawAdapter();
+      plugin = new F2APlugin();
       
-      await adapter.initialize({
+      await plugin.initialize({
         dataDir: testDir,
         webhookPort: 19004,
         enableMDNS: false,
@@ -146,7 +146,7 @@ describe('F2A OpenClaw Adapter Plugin', () => {
       await new Promise(resolve => setTimeout(resolve, 500));
       
       // 尝试用相同端口初始化 adapter
-      adapter = new F2AOpenClawAdapter();
+      plugin = new F2APlugin();
       
       // 不应该抛出异常，而是优雅降级
       await expect(adapter.initialize({
@@ -156,7 +156,7 @@ describe('F2A OpenClaw Adapter Plugin', () => {
       })).resolves.not.toThrow();
       
       // 应该仍然能获取工具（降级模式）
-      const tools = adapter.getTools();
+      const tools = plugin.getTools();
       expect(tools).toHaveLength(24);
     });
   });
@@ -209,35 +209,35 @@ describe('F2A OpenClaw Adapter Plugin', () => {
   describe('进程退出行为', () => {
     it('shutdown 后进程应该能正常退出', async () => {
       // 简化测试：验证 adapter 初始化后能正确 shutdown
-      adapter = new F2AOpenClawAdapter();
+      plugin = new F2APlugin();
       
-      await adapter.initialize({
+      await plugin.initialize({
         dataDir: join(testDir, 'exit-test'),
         webhookPort: 19006,
         enableMDNS: false,
       });
       
       // shutdown 应该清理所有定时器
-      await adapter.shutdown();
-      adapter = null;
+      await plugin.shutdown();
+      plugin = null;
       
       // 如果 shutdown 正确清理了定时器，测试应该能正常完成
       expect(true).toBe(true);
     });
 
     it('多次 shutdown 应该安全', async () => {
-      adapter = new F2AOpenClawAdapter();
+      plugin = new F2APlugin();
       
-      await adapter.initialize({
+      await plugin.initialize({
         dataDir: join(testDir, 'multi-shutdown'),
         webhookPort: 19008,
         enableMDNS: false,
       });
       
       // 多次调用 shutdown 不应该抛出异常
-      await adapter.shutdown();
-      await adapter.shutdown();
-      await adapter.shutdown();
+      await plugin.shutdown();
+      await plugin.shutdown();
+      await plugin.shutdown();
       
       expect(true).toBe(true);
     });
@@ -245,9 +245,9 @@ describe('F2A OpenClaw Adapter Plugin', () => {
 
   describe('shutdown', () => {
     it('应该正确清理所有资源', async () => {
-      adapter = new F2AOpenClawAdapter();
+      plugin = new F2APlugin();
       
-      await adapter.initialize({
+      await plugin.initialize({
         dataDir: testDir,
         webhookPort: 19007,
         enableMDNS: false,

@@ -53,21 +53,21 @@ export interface ClaimHandlerParams {
  * Issue #106: 使用 F2APluginPublicInterface 解除循环依赖
  */
 export class ClaimHandlers {
-  constructor(private adapter: F2APluginPublicInterface) {}
+  constructor(private plugin: F2APluginPublicInterface) {}
   
   /**
    * 类型安全的内部访问 getter
    */
   private get announcementQueue(): AnnouncementQueue {
-    return this.adapter.getAnnouncementQueue() as AnnouncementQueue;
+    return this.plugin.getAnnouncementQueue() as AnnouncementQueue;
   }
   
   private get api(): OpenClawPluginApi | undefined {
-    return this.adapter.getApi();
+    return this.plugin.getApi();
   }
   
   private get config(): F2APluginConfig {
-    return this.adapter.getConfig();
+    return this.plugin.getConfig();
   }
 
   /**

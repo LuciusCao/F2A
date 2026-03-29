@@ -1,5 +1,5 @@
 /**
- * F2A OpenClaw Adapter - 公共 API 入口
+ * F2A OpenClaw Plugin - 公共 API 入口
  * OpenClaw 适配器，用于接入 F2A P2P Agent 网络
  * 
  * Issue #106: 精简导出，只导出公共 API

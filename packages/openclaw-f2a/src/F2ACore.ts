@@ -367,7 +367,7 @@ export class F2ACore {
     } catch (err) {
       const errorMsg = extractErrorMessage(err);
       this.logger?.error(`[F2A] 创建 F2A 实例失败: ${errorMsg}`);
-      this.logger?.warn('[F2A] F2A Adapter 将以降级模式运行，P2P 功能不可用');
+      this.logger?.warn('[F2A] F2A Plugin 将以降级模式运行，P2P 功能不可用');
 
       // 清理失败的实例
       if (this.state.f2a) {

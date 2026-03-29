@@ -1,5 +1,5 @@
 /**
- * OpenClaw Adapter 统一日志模块
+ * OpenClaw Plugin 统一日志模块
  * 
  * 设计说明：
  * - 提供统一的日志接口，便于维护和测试

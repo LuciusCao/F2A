@@ -359,7 +359,7 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
     } 
   }
 
-  // ========== 兼容性属性（供 AdapterInternalAccess 访问） ==========
+  // ========== 兼容性属性（供 PluginInternalAccess 访问） ==========
 
   /** @internal 用于 tool-handlers 直接访问 */
   get taskQueue() { return this._taskQueue; }
@@ -414,4 +414,3 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
 }
 
 export default F2APlugin;
-export { F2APlugin as F2AOpenClawAdapter };

@@ -139,9 +139,10 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
   }
 
   private async invokeOpenClawAgent(fromPeerId: string, message: string, replyToMessageId?: string): Promise<string | undefined> {
-    // SessionKey 标准化：f2a:default:peer:{完整peerId}
-    // 符合 OpenClaw Channel 规范，每个 peer 独立 session
-    const sessionKey = `f2a:default:peer:${fromPeerId}`;
+    // SessionKey: subagent:f2a:<peerId>
+    // 使用 subagent 前缀，禁用 MEMORY.md 加载（群聊记忆隔离）
+    // 每个 peer 独立 session，支持跨对话记忆
+    const sessionKey = `subagent:f2a:${fromPeerId}`;
     const logger = this.core?.getLogger();
     const f2aDispatcher = this.createF2AReplyDispatcher(fromPeerId, replyToMessageId);
 
@@ -171,7 +172,7 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
     // Subagent API
     if (this.api?.runtime?.subagent?.run) {
       try {
-        const idempotencyKey = `f2a:default:peer:${fromPeerId}-${Date.now()}`;
+        const idempotencyKey = `subagent:f2a:${fromPeerId}-${Date.now()}`;
         const runResult = await this.api.runtime.subagent.run({ sessionKey, message, deliver: false, idempotencyKey });
         const waitResult = await this.api.runtime.subagent.waitForRun({ runId: runResult.runId, timeoutMs: 60000 });
         

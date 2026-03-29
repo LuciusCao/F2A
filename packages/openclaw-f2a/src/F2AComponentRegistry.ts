@@ -259,8 +259,8 @@ export class F2AComponentRegistry {
    */
   get reviewCommittee(): ReviewCommittee {
     if (!this._reviewCommittee) {
-      const reputationAdapter = new ReputationManagerAdapter(this.reputationSystem);
-      this._reviewCommittee = new ReviewCommittee(reputationAdapter, {
+      const reputationPlugin = new ReputationManagerAdapter(this.reputationSystem);
+      this._reviewCommittee = new ReviewCommittee(reputationPlugin, {
         minReviewers: 1,
         maxReviewers: 5,
         minReputation: INTERNAL_REPUTATION_CONFIG.minScoreForReview,

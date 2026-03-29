@@ -9,7 +9,7 @@ import { ToolHandlers } from '../src/tool-handlers.js';
 import type { F2APluginPublicInterface } from '../src/types.js';
 
 // 创建模拟适配器
-function createMockAdapter() {
+function createMockPlugin() {
   const mockReputationSystem = {
     getReputation: vi.fn(() => ({ 
       score: 85, 
@@ -114,11 +114,11 @@ function createMockAdapter() {
 
 describe('ToolHandlers', () => {
   let handlers: ToolHandlers;
-  let mockAdapter: any;
+  let mockPlugin: any;
 
   beforeEach(() => {
-    mockAdapter = createMockAdapter();
-    handlers = new ToolHandlers(mockAdapter as unknown as F2APluginPublicInterface);
+    mockPlugin = createMockPlugin();
+    handlers = new ToolHandlers(mockPlugin as unknown as F2APluginPublicInterface);
   });
 
   afterEach(() => {
@@ -127,7 +127,7 @@ describe('ToolHandlers', () => {
 
   describe('handleDiscover', () => {
     it('应该返回发现的 Agents 列表', async () => {
-      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+      mockPlugin.networkClient.discoverAgents.mockResolvedValue({
         success: true,
         data: [
           { peerId: '12D3KooW' + 'A'.repeat(44), displayName: 'Agent1', capabilities: [] },
@@ -143,7 +143,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该处理没有发现 Agents 的情况', async () => {
-      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+      mockPlugin.networkClient.discoverAgents.mockResolvedValue({
         success: true,
         data: [],
       });
@@ -154,7 +154,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该处理发现失败的情况', async () => {
-      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+      mockPlugin.networkClient.discoverAgents.mockResolvedValue({
         success: false,
         error: { message: 'Network error' },
       });
@@ -165,7 +165,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该按能力过滤 Agents', async () => {
-      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+      mockPlugin.networkClient.discoverAgents.mockResolvedValue({
         success: true,
         data: [
           { peerId: '12D3KooW' + 'A'.repeat(44), displayName: 'Agent1', capabilities: [{ name: 'code-generation' }] },
@@ -174,11 +174,11 @@ describe('ToolHandlers', () => {
 
       await handlers.handleDiscover({ capability: 'code-generation' });
 
-      expect(mockAdapter.networkClient.discoverAgents).toHaveBeenCalledWith('code-generation');
+      expect(mockPlugin.networkClient.discoverAgents).toHaveBeenCalledWith('code-generation');
     });
 
     it('应该按最低信誉过滤 Agents', async () => {
-      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+      mockPlugin.networkClient.discoverAgents.mockResolvedValue({
         success: true,
         data: [
           { peerId: '12D3KooW' + 'A'.repeat(44), displayName: 'Agent1', capabilities: [] },
@@ -188,7 +188,7 @@ describe('ToolHandlers', () => {
       await handlers.handleDiscover({ min_reputation: 90 });
 
       // getReputation 会被调用以检查信誉
-      expect(mockAdapter.reputationSystem.getReputation).toHaveBeenCalled();
+      expect(mockPlugin.reputationSystem.getReputation).toHaveBeenCalled();
     });
   });
 
@@ -214,7 +214,7 @@ describe('ToolHandlers', () => {
 
   describe('handleReputation', () => {
     it('应该返回指定 Peer 的信誉分数', async () => {
-      mockAdapter.reputationSystem.getReputation.mockReturnValue({ 
+      mockPlugin.reputationSystem.getReputation.mockReturnValue({ 
         score: 90, 
         successfulTasks: 10, 
         failedTasks: 2, 
@@ -231,7 +231,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该列出所有 Peers 的信誉', async () => {
-      mockAdapter.reputationSystem.getTopAgents.mockReturnValue([
+      mockPlugin.reputationSystem.getTopAgents.mockReturnValue([
         { peerId: '12D3KooW' + 'A'.repeat(44), reputation: 90 },
         { peerId: '12D3KooW' + 'B'.repeat(44), reputation: 80 },
       ]);
@@ -264,7 +264,7 @@ describe('ToolHandlers', () => {
 
   describe('handlePollTasks', () => {
     it('应该返回任务列表', async () => {
-      mockAdapter.taskQueue.getPending.mockReturnValue([
+      mockPlugin.taskQueue.getPending.mockReturnValue([
         { taskId: 'task-1', status: 'pending', description: 'Task 1', from: 'test-peer', taskType: 'test', createdAt: Date.now() },
       ]);
 
@@ -274,7 +274,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该处理空任务列表', async () => {
-      mockAdapter.taskQueue.getPending.mockReturnValue([]);
+      mockPlugin.taskQueue.getPending.mockReturnValue([]);
 
       const result = await handlers.handlePollTasks({});
 
@@ -282,7 +282,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该按状态过滤任务', async () => {
-      mockAdapter.taskQueue.getAll.mockReturnValue([
+      mockPlugin.taskQueue.getAll.mockReturnValue([
         { taskId: 'task-1', status: 'pending', description: 'Task 1', from: 'test-peer', taskType: 'test', createdAt: Date.now() },
       ]);
 
@@ -350,7 +350,7 @@ describe('ToolHandlers', () => {
 
   describe('handleGetCapabilities', () => {
     it('应该返回指定 Agent 的能力', async () => {
-      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+      mockPlugin.networkClient.discoverAgents.mockResolvedValue({
         success: true,
         data: [
           { peerId: '12D3KooW' + 'A'.repeat(44), displayName: 'Agent1', capabilities: [{ name: 'code-generation' }] },
@@ -365,7 +365,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该处理 Agent 不存在的情况', async () => {
-      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+      mockPlugin.networkClient.discoverAgents.mockResolvedValue({
         success: true,
         data: [],
       });
@@ -380,7 +380,7 @@ describe('ToolHandlers', () => {
 
   describe('handleTaskStats', () => {
     it('应该返回任务队列统计', async () => {
-      mockAdapter.taskQueue.getStats = vi.fn(() => ({
+      mockPlugin.taskQueue.getStats = vi.fn(() => ({
         pending: 5,
         processing: 2,
         completed: 10,
@@ -393,7 +393,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该处理空统计', async () => {
-      mockAdapter.taskQueue.getStats = vi.fn(() => ({
+      mockPlugin.taskQueue.getStats = vi.fn(() => ({
         pending: 0,
         processing: 0,
         completed: 0,
@@ -409,14 +409,14 @@ describe('ToolHandlers', () => {
   // 追加测试到最后
 describe('handleBroadcast', () => {
     it('应该广播任务给所有具备某能力的 Agents', async () => {
-      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+      mockPlugin.networkClient.discoverAgents.mockResolvedValue({
         success: true,
         data: [
           { peerId: '12D3KooW' + 'A'.repeat(44), displayName: 'Agent1' },
           { peerId: '12D3KooW' + 'B'.repeat(44), displayName: 'Agent2' },
         ],
       });
-      mockAdapter.networkClient.sendMessage.mockResolvedValue({ success: true });
+      mockPlugin.networkClient.sendMessage.mockResolvedValue({ success: true });
 
       const result = await handlers.handleBroadcast({
         capability: 'code-generation',
@@ -424,11 +424,11 @@ describe('handleBroadcast', () => {
       });
 
       // 验证调用了 discoverAgents
-      expect(mockAdapter.networkClient.discoverAgents).toHaveBeenCalled();
+      expect(mockPlugin.networkClient.discoverAgents).toHaveBeenCalled();
     });
 
     it('应该处理没有 Agents 具备所需能力的情况', async () => {
-      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+      mockPlugin.networkClient.discoverAgents.mockResolvedValue({
         success: true,
         data: [],
       });
@@ -478,7 +478,7 @@ describe('handleBroadcast', () => {
 
   describe('handleGetCapabilities', () => {
     it('应该获取 Agent 能力列表', async () => {
-      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+      mockPlugin.networkClient.discoverAgents.mockResolvedValue({
         success: true,
         data: [],
       });

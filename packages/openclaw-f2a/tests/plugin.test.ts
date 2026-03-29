@@ -202,7 +202,7 @@ describe('Plugin 入口', () => {
       const registerToolCall = (mockApi.registerTool as any).mock.calls[0];
       const toolConfig = registerToolCall[0];
       
-      await expect(toolConfig.execute('session-id', {})).rejects.toThrow('F2A Adapter 启用失败');
+      await expect(toolConfig.execute('session-id', {})).rejects.toThrow('F2A Plugin 启用失败');
     });
 
     it('应该返回字符串结果', async () => {

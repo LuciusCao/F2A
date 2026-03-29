@@ -9,7 +9,7 @@ import { ClaimHandlers } from '../src/claim-handlers.js';
 import type { F2APluginPublicInterface } from '../src/types.js';
 
 // 创建模拟适配器
-function createMockAdapter() {
+function createMockPlugin() {
   const mockAnnouncementQueue = {
     create: vi.fn(() => ({ announcementId: 'ann-1' })),
     get: vi.fn(() => ({
@@ -84,11 +84,11 @@ function createMockAdapter() {
 
 describe('ClaimHandlers', () => {
   let handlers: ClaimHandlers;
-  let mockAdapter: any;
+  let mockPlugin: any;
 
   beforeEach(() => {
-    mockAdapter = createMockAdapter();
-    handlers = new ClaimHandlers(mockAdapter as unknown as F2APluginPublicInterface);
+    mockPlugin = createMockPlugin();
+    handlers = new ClaimHandlers(mockPlugin as unknown as F2APluginPublicInterface);
   });
 
   afterEach(() => {
@@ -130,7 +130,7 @@ describe('ClaimHandlers', () => {
         description: 'Review my PR',
       });
 
-      expect(mockAdapter.announcementQueue.create).toHaveBeenCalled();
+      expect(mockPlugin.announcementQueue.create).toHaveBeenCalled();
     });
   });
 
@@ -142,7 +142,7 @@ describe('ClaimHandlers', () => {
     });
 
     it('应该处理空列表', async () => {
-      mockAdapter.announcementQueue.getOpen.mockReturnValue([]);
+      mockPlugin.announcementQueue.getOpen.mockReturnValue([]);
 
       const result = await handlers.handleListAnnouncements({});
 
@@ -164,7 +164,7 @@ describe('ClaimHandlers', () => {
         announcement_id: 'ann-1',
       });
 
-      expect(mockAdapter.announcementQueue.submitClaim).toHaveBeenCalled();
+      expect(mockPlugin.announcementQueue.submitClaim).toHaveBeenCalled();
     });
   });
 
@@ -201,7 +201,7 @@ describe('ClaimHandlers', () => {
 
   describe('handleMyClaims', () => {
     it('应该返回我的认领列表', async () => {
-      mockAdapter.announcementQueue.getMyClaims.mockReturnValue([
+      mockPlugin.announcementQueue.getMyClaims.mockReturnValue([
         { claimId: 'claim-1', status: 'pending', announcementId: 'ann-1' },
       ]);
 

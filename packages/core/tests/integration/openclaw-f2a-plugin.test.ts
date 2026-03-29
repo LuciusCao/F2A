@@ -1,5 +1,5 @@
 /**
- * OpenClaw Adapter Plugin 集成测试
+ * OpenClaw Plugin 集成测试
  * 真实测试插件初始化、错误处理、进程退出行为
  */
 
@@ -11,7 +11,7 @@ import { tmpdir } from 'os';
 import { F2APlugin } from '../../packages/openclaw-f2a/src/connector.js';
 import { F2ANodeManager } from '../../packages/openclaw-f2a/src/node-manager.js';
 
-describe('F2A OpenClaw Adapter Plugin', () => {
+describe('F2A OpenClaw Plugin', () => {
   const testDir = join(tmpdir(), `f2a-plugin-test-${Date.now()}`);
   let plugin: F2APlugin | null = null;
   let webhookProcess: ChildProcess | null = null;
@@ -145,11 +145,11 @@ describe('F2A OpenClaw Adapter Plugin', () => {
       // 等待服务器启动
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      // 尝试用相同端口初始化 adapter
+      // 尝试用相同端口初始化 plugin
       plugin = new F2APlugin();
       
       // 不应该抛出异常，而是优雅降级
-      await expect(adapter.initialize({
+      await expect(plugin.initialize({
         dataDir: testDir,
         webhookPort: port,
         enableMDNS: false,
@@ -208,7 +208,7 @@ describe('F2A OpenClaw Adapter Plugin', () => {
 
   describe('进程退出行为', () => {
     it('shutdown 后进程应该能正常退出', async () => {
-      // 简化测试：验证 adapter 初始化后能正确 shutdown
+      // 简化测试：验证 plugin 初始化后能正确 shutdown
       plugin = new F2APlugin();
       
       await plugin.initialize({
@@ -254,10 +254,10 @@ describe('F2A OpenClaw Adapter Plugin', () => {
       });
       
       // shutdown 应该不抛出异常
-      await expect(adapter.shutdown()).resolves.not.toThrow();
+      await expect(plugin.shutdown()).resolves.not.toThrow();
       
       // 再次 shutdown 也应该安全
-      await expect(adapter.shutdown()).resolves.not.toThrow();
+      await expect(plugin.shutdown()).resolves.not.toThrow();
     });
   });
 });

@@ -21,19 +21,9 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
       
-      # 在根目录安装所有依赖（跳过 prepare scripts）
-      - run: npm ci --ignore-scripts
-      
-      # build @f2a/network（确保 dist 存在）
-      - run: npm run build
-        working-directory: packages/core
-      
-      # 进入 openclaw-f2a 目录，安装依赖（使用已发布的 @f2a/network）
-      # 设置环境变量跳过 workspace 链接
-      - run: npm install --no-package-lock
+      # 进入 openclaw-f2a 目录
+      - run: npm install
         working-directory: packages/openclaw-f2a
-        env:
-          NPM_CONFIG_WORKSPACE_PACKAGES: ""
       
       # build openclaw-f2a
       - run: npm run build

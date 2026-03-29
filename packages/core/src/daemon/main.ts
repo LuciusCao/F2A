@@ -4,6 +4,9 @@
  */
 
 import { F2ADaemon } from './index.js';
+import { Logger } from '../utils/logger.js';
+
+const logger = new Logger({ component: 'daemon' });
 
 // 解析引导节点地址
 const bootstrapPeers = process.env.BOOTSTRAP_PEERS 
@@ -24,22 +27,22 @@ const daemon = new F2ADaemon({
 
 // 处理信号
 process.on('SIGINT', async () => {
-  console.log('[Daemon] Received SIGINT, shutting down...');
+  logger.info('Received SIGINT, shutting down');
   await daemon.stop();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
-  console.log('[Daemon] Received SIGTERM, shutting down...');
+  logger.info('Received SIGTERM, shutting down');
   await daemon.stop();
   process.exit(0);
 });
 
 // 启动
 daemon.start().catch((error) => {
-  console.error('[Daemon] Failed to start:', error instanceof Error ? error.message : String(error));
-  if (error instanceof Error && error.stack) {
-    console.error('[Daemon] Stack trace:', error.stack);
-  }
+  logger.error('Failed to start daemon', {
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined
+  });
   process.exit(1);
 });

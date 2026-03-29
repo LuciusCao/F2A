@@ -37,6 +37,10 @@ export interface LoggerOptions {
   maxRetries?: number;
   /** 重试间隔（毫秒） */
   retryDelayMs?: number;
+  /** 日志轮转：最大文件大小（字节），默认 10MB */
+  maxFileSize?: number;
+  /** 日志轮转：最大文件数量，默认 5 */
+  maxFiles?: number;
 }
 
 /**
@@ -54,6 +58,10 @@ export class Logger {
   private retryDelayMs: number;
   private retryCount: number = 0;
   private isReconnecting: boolean = false;
+  // 日志轮转配置
+  private maxFileSize: number;
+  private maxFiles: number;
+  private currentFileSize: number = 0;
 
   constructor(options: LoggerOptions = {}) {
     this.level = options.level || 'INFO';
@@ -65,6 +73,9 @@ export class Logger {
     this.jsonMode = options.jsonMode ?? (process.env.NODE_ENV === 'production');
     this.maxRetries = options.maxRetries ?? 3;
     this.retryDelayMs = options.retryDelayMs ?? 1000;
+    // 日志轮转配置：默认 10MB, 5 个文件
+    this.maxFileSize = options.maxFileSize ?? 10 * 1024 * 1024; // 10MB
+    this.maxFiles = options.maxFiles ?? 5;
 
     // 初始化文件流
     if (this.enableFile && this.filePath) {
@@ -222,10 +233,73 @@ export class Logger {
   }
 
   /**
+   * 检查并执行日志轮转
+   * 当文件大小超过 maxFileSize 时，轮转日志文件
+   */
+  private checkRotation(): void {
+    if (!this.filePath || !this.fileStream) return;
+
+    try {
+      // 检查当前文件大小
+      const stats = fs.statSync(this.filePath);
+      this.currentFileSize = stats.size;
+
+      if (this.currentFileSize >= this.maxFileSize) {
+        this.rotateLogFiles();
+      }
+    } catch {
+      // 文件可能不存在，忽略错误
+    }
+  }
+
+  /**
+   * 轮转日志文件
+   * 将旧文件重命名为 .1, .2, ... 删除最旧的文件
+   */
+  private rotateLogFiles(): void {
+    if (!this.filePath) return;
+
+    try {
+      // 关闭当前流
+      if (this.fileStream) {
+        this.fileStream.end();
+        this.fileStream = undefined;
+      }
+
+      // 删除最旧的文件（如果存在）
+      const oldestFile = `${this.filePath}.${this.maxFiles}`;
+      if (fs.existsSync(oldestFile)) {
+        fs.unlinkSync(oldestFile);
+      }
+
+      // 轮转现有文件：.4 -> .5, .3 -> .4, ... .1 -> .2, current -> .1
+      for (let i = this.maxFiles - 1; i >= 1; i--) {
+        const oldFile = `${this.filePath}.${i}`;
+        const newFile = `${this.filePath}.${i + 1}`;
+        if (fs.existsSync(oldFile)) {
+          fs.renameSync(oldFile, newFile);
+        }
+      }
+
+      // 重命名当前文件为 .1
+      if (fs.existsSync(this.filePath)) {
+        fs.renameSync(this.filePath, `${this.filePath}.1`);
+      }
+
+      // 重新打开文件流
+      this.initFileStream();
+      this.currentFileSize = 0;
+    } catch (err) {
+      console.error(`[Logger] Failed to rotate log files: ${err}`);
+    }
+  }
+
+  /**
    * 输出日志
    */
   private output(entry: LogEntry): void {
     const jsonLine = JSON.stringify(entry);
+    const lineSize = Buffer.byteLength(jsonLine + '\n', 'utf8');
 
     // 控制台输出
     if (this.enableConsole) {
@@ -250,7 +324,13 @@ export class Logger {
 
     // 文件输出
     if (this.enableFile && this.fileStream && this.fileStream.writable) {
+      // 检查是否需要轮转
+      if (this.currentFileSize + lineSize > this.maxFileSize) {
+        this.checkRotation();
+      }
+
       this.fileStream.write(jsonLine + '\n');
+      this.currentFileSize += lineSize;
     }
   }
 

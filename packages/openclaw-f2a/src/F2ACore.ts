@@ -4,6 +4,10 @@
  * 负责 F2A 插件的初始化、启用和关闭。
  * 从 connector.ts 拆分（Issue #106），遵循单一职责原则。
  * 
+ * Phase 3 扩展：支持 Daemon 模式
+ * - embedded: 直接创建 F2A 实例（默认）
+ * - daemon: 通过 F2AClient 连接到独立 Daemon
+ * 
  * @module F2ACore
  */
 
@@ -21,6 +25,7 @@ import { CapabilityDetector } from './capability-detector.js';
 import { WebhookServer } from './webhook-server.js';
 import { WebhookPusher } from './webhook-pusher.js';
 import { ReviewCommittee, F2A } from '@f2a/network';
+import { F2AClient, F2AClientConfig } from './f2a-client.js';
 import {
   mergeConfig,
   generateToken,
@@ -29,6 +34,11 @@ import {
 } from './connector-helpers.js';
 import type { F2AComponentRegistry } from './F2AComponentRegistry.js';
 import type { WebhookHandler } from './webhook-server.js';
+
+/**
+ * 运行模式
+ */
+export type F2ARunMode = 'embedded' | 'daemon';
 
 /**
  * 核心生命周期配置
@@ -50,8 +60,12 @@ export interface CoreLifecycleConfig {
 export interface CoreLifecycleState {
   /** 是否已初始化 */
   initialized: boolean;
-  /** F2A 实例 */
+  /** F2A 实例 (embedded 模式) */
   f2a?: F2A;
+  /** F2A 客户端 (daemon 模式) */
+  f2aClient?: F2AClient;
+  /** 运行模式 */
+  runMode: F2ARunMode;
   /** F2A 启动时间 */
   f2aStartTime?: number;
   /** Webhook 服务器 */
@@ -91,6 +105,7 @@ export class F2ACore {
 
   private state: CoreLifecycleState = {
     initialized: false,
+    runMode: 'embedded',
     capabilities: [],
   };
 
@@ -170,16 +185,48 @@ export class F2ACore {
   }
 
   /**
+   * 获取 F2A 客户端（daemon 模式）
+   */
+  getF2AClient(): F2AClient | undefined {
+    return this.state.f2aClient;
+  }
+
+  /**
+   * 获取运行模式
+   */
+  getRunMode(): F2ARunMode {
+    return this.state.runMode;
+  }
+
+  /**
+   * 是否为 Daemon 模式
+   */
+  isDaemonMode(): boolean {
+    return this.state.runMode === 'daemon';
+  }
+
+  /**
    * 获取 F2A 状态
    */
-  getF2AStatus(): { running: boolean; peerId?: string; uptime?: number } {
+  getF2AStatus(): { running: boolean; peerId?: string; uptime?: number; mode: F2ARunMode } {
+    // Daemon 模式
+    if (this.state.f2aClient) {
+      return {
+        running: this.state.f2aClient.isRegistered(),
+        mode: 'daemon',
+        uptime: this.state.f2aStartTime ? Date.now() - this.state.f2aStartTime : undefined,
+      };
+    }
+    
+    // Embedded 模式
     if (!this.state.f2a) {
-      return { running: false };
+      return { running: false, mode: 'embedded' };
     }
     return {
       running: true,
       peerId: this.state.f2a.peerId,
       uptime: this.state.f2aStartTime ? Date.now() - this.state.f2aStartTime : undefined,
+      mode: 'embedded',
     };
   }
 
@@ -252,7 +299,11 @@ export class F2ACore {
   // ========== 启用 ==========
 
   /**
-   * 启用适配器（直接创建 F2A 实例）
+   * 启用适配器
+   * 
+   * 根据配置选择运行模式：
+   * - embedded: 直接创建 F2A 实例（默认）
+   * - daemon: 通过 F2AClient 连接到独立 Daemon
    * 
    * @param webhookHandler - Webhook 处理器
    * @param onMessage - P2P 消息回调
@@ -266,25 +317,224 @@ export class F2ACore {
       return;
     }
 
-    this.logger?.info('[F2A] 启用适配器（直接管理模式）...');
-    this.state.initialized = true;
     this.onMessageCallback = onMessage;
+
+    // 确定运行模式
+    const runMode = this.determineRunMode();
+    this.state.runMode = runMode;
+    
+    this.logger?.info(`[F2A] 启用适配器（${runMode} 模式）...`);
+    this.state.initialized = true;
 
     // 注册清理处理器
     this.registerCleanupHandlers();
+
+    if (runMode === 'daemon') {
+      // Daemon 模式：使用 F2AClient
+      await this.startDaemonMode(webhookHandler);
+    } else {
+      // Embedded 模式：直接创建 F2A 实例
+      await this.startEmbeddedMode(webhookHandler);
+    }
+
+    // 启动兜底轮询
+    this.startFallbackPolling();
+
+    if (this.state.f2a || this.state.f2aClient) {
+      const peerId = this.state.f2a?.peerId || 'daemon-client';
+      this.logger?.info(`[F2A] P2P 已就绪，Peer ID: ${peerId?.slice(0, 20)}...`);
+    }
+  }
+
+  /**
+   * 确定运行模式
+   */
+  private determineRunMode(): F2ARunMode {
+    // 检查配置中的 mode 字段
+    const mode = (this.config as any).mode;
+    if (mode === 'daemon') {
+      return 'daemon';
+    }
+    
+    // 检查是否配置了 daemonUrl
+    if ((this.config as any).daemonUrl) {
+      return 'daemon';
+    }
+    
+    // 默认使用 embedded 模式
+    return 'embedded';
+  }
+
+  /**
+   * 启动 Daemon 模式
+   */
+  private async startDaemonMode(webhookHandler: WebhookHandler): Promise<void> {
+    try {
+      const daemonUrl = (this.config as any).daemonUrl || 'http://localhost:7788';
+      const agentId = (this.config as any).agentId || 'main';
+      
+      // 从 IDENTITY.md 读取 agent 名字
+      const workspace = (this.api?.config as OpenClawConfig)?.agents?.defaults?.workspace;
+      const identityName = readAgentNameFromIdentity(workspace);
+      const agentName = identityName || this.config.agentName || 'OpenClaw Agent';
+
+      const clientConfig: F2AClientConfig = {
+        daemonUrl,
+        agentId,
+        agentName,
+        capabilities: this.state.capabilities,
+        webhookUrl: this.state.webhookServer?.getUrl(),
+        timeout: 30000,
+        retries: 3,
+        retryDelay: 1000,
+      };
+
+      this.state.f2aClient = new F2AClient(clientConfig);
+
+      // 检查 Daemon 是否可用
+      const healthOk = await this.state.f2aClient.checkHealth();
+      if (!healthOk) {
+        this.logger?.warn('[F2A] Daemon 不可用，尝试启动本地 Daemon...');
+        
+        // 尝试启动本地 Daemon
+        const started = await this.tryStartLocalDaemon();
+        if (!started) {
+          throw new Error('Daemon 不可用且无法启动');
+        }
+        
+        // 再次检查健康状态
+        const retryOk = await this.state.f2aClient.checkHealth();
+        if (!retryOk) {
+          throw new Error('Daemon 启动后仍不可用');
+        }
+      }
+
+      // 注册 Agent 到 Daemon
+      const registerResult = await this.state.f2aClient.registerAgent();
+      if (!registerResult.success) {
+        throw new Error(`Agent 注册失败: ${registerResult.error}`);
+      }
+
+      // 启动消息轮询（从 Daemon 获取消息）
+      this.startDaemonMessagePolling();
+
+      // 启动 Webhook 服务器
+      await this.startWebhookServer(webhookHandler);
+
+      this.state.f2aStartTime = Date.now();
+      
+      this.logger?.info('[F2A] Daemon 模式已启用', {
+        daemonUrl,
+        agentId,
+        agentName,
+      });
+    } catch (err) {
+      const errorMsg = extractErrorMessage(err);
+      this.logger?.error(`[F2A] Daemon 模式启动失败: ${errorMsg}`);
+      this.logger?.warn('[F2A] F2A Plugin 将以降级模式运行，P2P 功能不可用');
+      
+      // 清理失败的客户端
+      if (this.state.f2aClient) {
+        await this.state.f2aClient.close();
+        this.state.f2aClient = undefined;
+      }
+    }
+  }
+
+  /**
+   * 尝试启动本地 Daemon
+   */
+  private async tryStartLocalDaemon(): Promise<boolean> {
+    try {
+      const { spawn } = await import('child_process');
+      
+      return new Promise((resolve) => {
+        this.logger?.info('[F2A] 尝试启动本地 F2A Daemon...');
+        
+        const child = spawn('f2a', ['daemon', 'start'], {
+          detached: true,
+          stdio: 'ignore',
+        });
+        
+        child.on('error', (err) => {
+          this.logger?.warn(`[F2A] 启动 Daemon 失败: ${err.message}`);
+          resolve(false);
+        });
+        
+        child.on('spawn', () => {
+          this.logger?.info('[F2A] Daemon 启动命令已发送');
+          child.unref();
+          
+          // 等待 Daemon 就绪
+          setTimeout(async () => {
+            if (this.state.f2aClient) {
+              const ok = await this.state.f2aClient.checkHealth();
+              resolve(ok);
+            } else {
+              resolve(false);
+            }
+          }, 3000);
+        });
+      });
+    } catch (err) {
+      this.logger?.warn(`[F2A] 无法启动 Daemon: ${extractErrorMessage(err)}`);
+      return false;
+    }
+  }
+
+  /**
+   * 启动 Daemon 消息轮询
+   */
+  private startDaemonMessagePolling(): void {
+    const pollInterval = 1000; // 1 秒轮询一次
+
+    const pollTimer = setInterval(async () => {
+      if (!this.state.f2aClient || !this.onMessageCallback) {
+        return;
+      }
+
+      try {
+        const result = await this.state.f2aClient.getMessages(10);
+        
+        if (result.success && result.data?.messages && result.data.messages.length > 0) {
+          for (const msg of result.data.messages) {
+            // 调用消息回调
+            await this.onMessageCallback({
+              from: msg.fromAgentId,
+              content: msg.content,
+              metadata: msg.metadata,
+              messageId: msg.messageId,
+            });
+          }
+          
+          // 清除已处理的消息
+          const messageIds = result.data.messages.map(m => m.messageId);
+          await this.state.f2aClient.clearMessages(messageIds);
+        }
+      } catch (err) {
+        this.logger?.debug?.(`[F2A] 消息轮询错误: ${extractErrorMessage(err)}`);
+      }
+    }, pollInterval);
+
+    if (pollTimer.unref) {
+      pollTimer.unref();
+    }
+    
+    // 保存定时器引用以便清理
+    (this.state as any).daemonPollTimer = pollTimer;
+  }
+
+  /**
+   * 启动 Embedded 模式
+   */
+  private async startEmbeddedMode(webhookHandler: WebhookHandler): Promise<void> {
+    this.logger?.info('[F2A] 启用适配器（直接管理模式）...');
 
     // 创建 F2A 实例
     await this.startF2AInstance();
 
     // 启动 Webhook 服务器
     await this.startWebhookServer(webhookHandler);
-
-    // 启动兜底轮询
-    this.startFallbackPolling();
-
-    if (this.state.f2a) {
-      this.logger?.info(`[F2A] P2P 已就绪，Peer ID: ${this.state.f2a.peerId?.slice(0, 20)}...`);
-    }
   }
 
   /**
@@ -500,13 +750,26 @@ export class F2ACore {
       clearInterval(this.state.pollTimer);
       this.state.pollTimer = undefined;
     }
+    
+    // 停止 Daemon 消息轮询
+    if ((this.state as any).daemonPollTimer) {
+      clearInterval((this.state as any).daemonPollTimer);
+      (this.state as any).daemonPollTimer = undefined;
+    }
 
     // 关闭组件注册器
     if (this.componentRegistry) {
       await this.componentRegistry.cleanup();
     }
 
-    // 停止 F2A 实例
+    // 停止 F2A 客户端（daemon 模式）
+    if (this.state.f2aClient) {
+      await this.state.f2aClient.close();
+      this.logger?.info('[F2A] F2A 客户端已关闭');
+      this.state.f2aClient = undefined;
+    }
+
+    // 停止 F2A 实例（embedded 模式）
     if (this.state.f2a) {
       try {
         await this.state.f2a.stop();

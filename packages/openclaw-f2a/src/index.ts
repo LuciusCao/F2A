@@ -46,3 +46,16 @@ export type {
 
 // 公共错误类型
 export type { Result, F2AError, ErrorCode } from './types.js';
+
+// Phase 3: Daemon 模式客户端
+export { F2AClient } from './f2a-client.js';
+export type {
+  F2AClientConfig,
+  AgentRegisterRequest,
+  MessageSendRequest,
+  RoutableMessage,
+  DaemonResponse,
+} from './f2a-client.js';
+
+// Phase 3: 核心运行模式类型
+export type { F2ARunMode } from './F2ACore.js';

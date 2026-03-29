@@ -1,6 +1,8 @@
 /**
  * F2A Daemon
  * 后台服务主入口 - P2P 版本
+ * 
+ * Phase 1 扩展：支持 Agent 注册和消息路由
  */
 
 import { F2A } from '../core/f2a.js';
@@ -8,6 +10,11 @@ import { ControlServer } from './control-server.js';
 import { F2AOptions, WebhookConfig } from '../types/index.js';
 import { join } from 'path';
 import { homedir } from 'os';
+import { Logger } from '../utils/logger.js';
+
+// Phase 1: 导出新增组件
+export { AgentRegistry, AgentRegistration } from './agent-registry.js';
+export { MessageRouter, RoutableMessage, MessageQueue } from './message-router.js';
 
 export interface DaemonOptions extends F2AOptions {
   webhook?: WebhookConfig;
@@ -19,6 +26,7 @@ export class F2ADaemon {
   private f2a?: F2A;
   private controlServer?: ControlServer;
   private running: boolean = false;
+  private logger: Logger;
 
   constructor(options: DaemonOptions = {}) {
     this.options = {
@@ -26,6 +34,7 @@ export class F2ADaemon {
       dataDir: join(homedir(), '.f2a'),
       ...options
     };
+    this.logger = new Logger({ component: 'daemon' });
   }
 
   /**
@@ -36,7 +45,9 @@ export class F2ADaemon {
       throw new Error('Daemon already running');
     }
 
-    console.log('[Daemon] Starting F2A Daemon...');
+    this.logger.info('Starting F2A Daemon', {
+      version: process.env.npm_package_version
+    });
 
     // 创建并启动 F2A
     this.f2a = await F2A.create(this.options);
@@ -57,7 +68,10 @@ export class F2ADaemon {
     await this.controlServer.start();
 
     this.running = true;
-    console.log(`[Daemon] F2A Daemon started with peerId: ${this.f2a.peerId.slice(0, 16)}...`);
+    this.logger.info('F2A Daemon started', {
+      peerId: this.f2a.peerId.slice(0, 16) + '...',
+      controlPort: this.options.controlPort
+    });
   }
 
   /**
@@ -66,13 +80,13 @@ export class F2ADaemon {
   async stop(): Promise<void> {
     if (!this.running) return;
 
-    console.log('[Daemon] Stopping F2A Daemon...');
+    this.logger.info('Stopping F2A Daemon');
 
     await this.controlServer?.stop();
     await this.f2a?.stop();
 
     this.running = false;
-    console.log('[Daemon] F2A Daemon stopped');
+    this.logger.info('F2A Daemon stopped');
   }
 
   /**

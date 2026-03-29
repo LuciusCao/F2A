@@ -126,7 +126,8 @@ describe('Plugin 入口', () => {
       await register(mockApi);
       
       expect(mockApi.logger?.error).toHaveBeenCalledWith(
-        expect.stringContaining('初始化失败')
+        expect.stringContaining('初始化失败'),
+        expect.anything()
       );
       expect(mockApi.logger?.warn).toHaveBeenCalledWith(
         expect.stringContaining('降级模式')
@@ -150,7 +151,8 @@ describe('Plugin 入口', () => {
       await register(mockApi);
       
       expect(mockApi.logger?.warn).toHaveBeenCalledWith(
-        expect.stringContaining('清理资源时出错')
+        expect.stringContaining('清理资源时出错'),
+        expect.anything()
       );
     });
   });
@@ -371,7 +373,8 @@ describe('Plugin 入口', () => {
       await new Promise(resolve => setImmediate(resolve));
       
       expect(mockApi.logger?.warn).toHaveBeenCalledWith(
-        expect.stringContaining('F2A 实例启动失败')
+        expect.stringContaining('F2A 实例启动失败'),
+        expect.anything()
       );
     });
   });

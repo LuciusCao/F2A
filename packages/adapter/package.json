@@ -1,5 +1,5 @@
 {
-  "name": "@f2a/openclaw-f2a",
+  "name": "@f2a/openclaw-adapter",
   "version": "0.3.3",
   "description": "OpenClaw plugin for F2A P2P Agent network",
   "main": "dist/index.js",

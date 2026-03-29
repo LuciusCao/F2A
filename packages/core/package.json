@@ -28,8 +28,7 @@
     "test:docker": "docker compose -f tests/docker/docker-compose.test.yml up --abort-on-container-exit",
     "test:docker:10": "NODE_COUNT=10 docker compose -f tests/docker/docker-compose.test.yml up --scale node=10 --abort-on-container-exit",
     "test:all": "npm run test:unit && npm run test:e2e && npm run test:docker",
-    "test:ci": "npm run test:unit && npm run test:docker",
-    "prepare": "npm run build"
+    "test:ci": "npm run test:unit && npm run test:docker"
   },
   "engines": {
     "node": ">=18.0.0"

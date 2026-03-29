@@ -361,17 +361,9 @@ export class MessageDispatcher {
         await this.handleDiscoverMessage(message, peerId, false);
         break;
 
-      case 'CAPABILITY_QUERY':
-        await this.handleCapabilityQueryMessage(message, peerId);
-        break;
-
-      case 'CAPABILITY_RESPONSE':
-        await this.handleCapabilityResponseMessage(message, peerId);
-        break;
-
-      case 'TASK_RESPONSE':
-        await this.handleTaskResponseMessage(message);
-        break;
+      // CAPABILITY_QUERY, CAPABILITY_RESPONSE, TASK_RESPONSE 已废弃
+      // 现在使用 MESSAGE 类型 + topic 字段区分
+      // 参见 MESSAGE_TOPICS 常量
 
       case 'DECRYPT_FAILED':
         await this.handleDecryptFailedMessage(message, peerId);
@@ -408,9 +400,10 @@ export class MessageDispatcher {
   }
 
   /**
-   * 处理能力查询消息
+   * @deprecated 已废弃。CAPABILITY_QUERY/RESPONSE/TASK_RESPONSE 类型已移除
+   * 现在使用 MESSAGE 类型 + topic 字段区分
    */
-  private async handleCapabilityQueryMessage(message: F2AMessage, peerId: string): Promise<void> {
+  private async _handleCapabilityQueryMessage(message: F2AMessage, peerId: string): Promise<void> {
     const payload = message.payload as CapabilityQueryPayload;
     
     if (this.callbacks.onCapabilityQuery) {
@@ -419,23 +412,24 @@ export class MessageDispatcher {
   }
 
   /**
-   * 处理能力响应消息
+   * @deprecated 已废弃。CAPABILITY_QUERY/RESPONSE/TASK_RESPONSE 类型已移除
    */
-  private async handleCapabilityResponseMessage(message: F2AMessage, peerId: string): Promise<void> {
-    const payload = message.payload as CapabilityResponsePayload;
+  private async _handleCapabilityResponseMessage(message: F2AMessage, peerId: string): Promise<void> {
+    // 注意: CapabilityResponsePayload.agentInfo 已不存在
+    // 使用 MESSAGE + MESSAGE_TOPICS.CAPABILITY_RESPONSE 替代
+    const payload = message.payload as { agentInfo?: AgentInfo };
     
-    if (this.callbacks.onCapabilityResponse) {
+    if (this.callbacks.onCapabilityResponse && payload.agentInfo) {
       await this.callbacks.onCapabilityResponse(payload.agentInfo, peerId);
-    } else if (this.peerTableManager) {
-      // 默认处理：更新 Peer 表
+    } else if (this.peerTableManager && payload.agentInfo) {
       await this.peerTableManager.upsertPeerFromAgentInfo(payload.agentInfo, peerId);
     }
   }
 
   /**
-   * 处理任务响应消息
+   * @deprecated 已废弃。CAPABILITY_QUERY/RESPONSE/TASK_RESPONSE 类型已移除
    */
-  private async handleTaskResponseMessage(message: F2AMessage): Promise<void> {
+  private async _handleTaskResponseMessage(message: F2AMessage): Promise<void> {
     const payloadValidation = validateTaskResponsePayload(message.payload);
     if (!payloadValidation.success) {
       this.logger.warn('Invalid task response payload', {

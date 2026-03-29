@@ -28,8 +28,8 @@ jobs:
       - run: npm run build
         working-directory: packages/core
       
-      # 进入 openclaw-f2a 目录，安装其特定依赖
-      - run: npm install --ignore-scripts
+      # 进入 openclaw-f2a 目录，安装所有依赖（包括 devDependencies）
+      - run: npm install
         working-directory: packages/openclaw-f2a
       
       # build openclaw-f2a

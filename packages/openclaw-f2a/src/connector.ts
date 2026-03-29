@@ -149,7 +149,7 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
     const debugLog = (msg: string) => {
       try {
         const fs = require('fs');
-        fs.appendFileSync(join(homedir(), '.openclaw/logs/adapter-debug.log'), `[${new Date().toISOString()}] ${msg}\n`);
+        fs.appendFileSync(join(homedir(), '.openclaw/logs/f2a-debug.log'), `[${new Date().toISOString()}] ${msg}\n`);
       } catch {}
       logger?.info(msg);
     };

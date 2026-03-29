@@ -97,7 +97,7 @@ export default async function register(api: OpenClawPluginApi) {
   // 注册后台服务
   // 使用 setImmediate 异步启动 F2A，避免阻塞 Gateway
   api.registerService?.({
-    id: 'f2a-adapter-service',
+    id: 'f2a-plugin-service',
     start: () => {
       api.logger?.info('[F2A Adapter] 服务已启动');
       

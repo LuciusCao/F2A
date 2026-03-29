@@ -543,10 +543,10 @@ export interface AgentConfig {
  * ```typescript
  * // Handler 通过接口接收依赖
  * class ToolHandlers {
- *   constructor(private adapter: F2APluginPublicInterface) {}
+ *   constructor(private plugin: F2APluginPublicInterface) {}
  *   
  *   async handleDiscover() {
- *     const agents = await this.adapter.discoverAgents('code-generation');
+ *     const agents = await this.plugin.discoverAgents('code-generation');
  *     // ...
  *   }
  * }

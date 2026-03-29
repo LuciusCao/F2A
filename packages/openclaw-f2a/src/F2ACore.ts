@@ -298,7 +298,7 @@ export class F2ACore {
       const debugLog = (msg: string) => {
         try {
           const fs = require('fs');
-          const logPath = join(homedir(), '.openclaw/logs/adapter-debug.log');
+          const logPath = join(homedir(), '.openclaw/logs/f2a-debug.log');
           fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`);
         } catch {
           // 静默忽略

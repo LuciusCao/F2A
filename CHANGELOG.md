@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bootstrap Node Public Key Fingerprint Verification**: Enhanced security with fingerprint validation
 - **One-click Install Script**: Simplified installation with `curl -fsSL https://raw.githubusercontent.com/LuciusCao/F2A/main/install.sh | bash`
 - **Quick Start Documentation**: 5-minute onboarding guide in QUICKSTART.md
-- **IReputationManager Interface**: Extracted interface for adapter compatibility
+- **IReputationManager Interface**: Extracted interface for plugin compatibility
 
 ### Security
 - Full codebase security audit and fixes

@@ -284,7 +284,7 @@ describe('Plugin 入口', () => {
       const serviceCall = (mockApi.registerService as any).mock.calls[0];
       const serviceConfig = serviceCall[0];
       
-      expect(serviceConfig.id).toBe('f2a-adapter-service');
+      expect(serviceConfig.id).toBe('f2a-plugin-service');
       expect(serviceConfig.start).toBeDefined();
       expect(serviceConfig.stop).toBeDefined();
     });

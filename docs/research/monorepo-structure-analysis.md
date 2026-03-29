@@ -157,7 +157,7 @@ F2A/
 │   │   ├── tests/
 │   │   ├── dist/
 │   │   └── package.json
-│   ├── adapter/          # @f2a/openclaw-f2a
+│   ├── openclaw-f2a/     # @f2a/openclaw-f2a
 │   │   ├── src/
 │   │   └── package.json
 │   └── dashboard/        # @f2a/dashboard
@@ -323,7 +323,7 @@ F2A/
 │   │   ├── dist/
 │   │   ├── package.json
 │   │   └── tsconfig.json
-│   ├── adapter/               # @f2a/openclaw-f2a → @f2a/adapter
+│   ├── openclaw-f2a/          # @f2a/openclaw-f2a
 │   │   ├── src/
 │   │   ├── tests/
 │   │   ├── dist/
@@ -346,7 +346,7 @@ F2A/
 | 包 | 当前名称 | 建议名称 | 原因 |
 |----|---------|---------|------|
 | core | `@f2a/network` | `@f2a/core` 或保持 | network 已有品牌认知 |
-| adapter | `@f2a/openclaw-f2a` | `@f2a/openclaw-adapter` | 更符合命名惯例 |
+| openclaw-f2a | `@f2a/openclaw-f2a` | 保持现有名称 | 无需修改 |
 | dashboard | `@f2a/dashboard` | 保持 | 无问题 |
 
 ### 迁移步骤
@@ -366,7 +366,7 @@ F2A/
 
 3. **创建各包 package.json**：
    - `packages/core/package.json`: 复制当前根 package.json 内容
-   - `packages/adapter/package.json`: 保持现有配置
+   - `packages/openclaw-f2a/package.json`: 保持现有配置
 
 4. **更新依赖引用**：
    - `"@f2a/network": "workspace:*"`（pnpm）

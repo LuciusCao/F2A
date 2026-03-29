@@ -13,8 +13,8 @@ describe('E2E: Multi-Node Network', () => {
   let testConfig: ReturnType<typeof generateTestConfig>;
 
   beforeAll(async () => {
-    // 创建 3 个节点
-    testConfig = generateTestConfig(3);
+    // 创建 5 个节点
+    testConfig = generateTestConfig(5);
     spawner = new NodeSpawner({
       startTimeout: 30000,
       defaultTimeout: 60000
@@ -26,8 +26,8 @@ describe('E2E: Multi-Node Network', () => {
     await spawner.cleanupDataDir(testConfig.baseDataDir);
   }, 30000);
 
-  describe('3+ 节点组网', () => {
-    it('should start all 3 nodes', async () => {
+  describe('5+ 节点组网', () => {
+    it('should start all 5 nodes', async () => {
       for (const config of testConfig.nodes) {
         const node = await spawner.spawnNode(config);
         nodes.push(node);
@@ -38,7 +38,7 @@ describe('E2E: Multi-Node Network', () => {
         expect(node.peerId!.length).toBeGreaterThan(0);
       }
       
-      expect(nodes.length).toBe(3);
+      expect(nodes.length).toBe(5);
     }, 90000);
 
     it('should discover all peers via mDNS', async () => {
@@ -79,7 +79,7 @@ describe('E2E: Multi-Node Network', () => {
     it('should have correct peer count for each node', async () => {
       for (let i = 0; i < nodes.length; i++) {
         const peers = await spawner.getConnectedPeers(testConfig.nodes[i].name);
-        expect(peers.length).toBeGreaterThanOrEqual(2);
+        expect(peers.length).toBeGreaterThanOrEqual(4);
       }
     }, 15000);
   });
@@ -167,7 +167,9 @@ describe('E2E: Multi-Node Network', () => {
       const messages = [
         { from: 0, to: 1, content: 'msg-0-to-1' },
         { from: 1, to: 2, content: 'msg-1-to-2' },
-        { from: 2, to: 0, content: 'msg-2-to-0' }
+        { from: 2, to: 3, content: 'msg-2-to-3' },
+        { from: 3, to: 4, content: 'msg-3-to-4' },
+        { from: 4, to: 0, content: 'msg-4-to-0' }
       ];
 
       // 发送所有消息
@@ -195,10 +197,10 @@ describe('E2E: Multi-Node Network', () => {
 
   describe('节点动态离开', () => {
     it('should handle node leaving gracefully', async () => {
-      // 停止 node2
-      await spawner.stopNode(testConfig.nodes[2].name);
+      // 停止 node4
+      await spawner.stopNode(testConfig.nodes[4].name);
       
-      // node0 和 node1 应该仍然互相连接
+      // node0-node3 应该仍然互相连接
       const peers0 = await spawner.getConnectedPeers(testConfig.nodes[0].name);
       const peers1 = await spawner.getConnectedPeers(testConfig.nodes[1].name);
       

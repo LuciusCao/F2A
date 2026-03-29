@@ -622,7 +622,7 @@ export class ReputationSystem {
  * 
  * 将 ReputationSystem 包装为 ReviewCommittee 所需的 IReputationManager 接口。
  * 用于解决 ReviewCommittee (src/core/) 依赖 IReputationManager 接口，
- * 而 adapter 使用的是 ReputationSystem 的问题。
+ * 而 F2A 插件使用的是 ReputationSystem 的问题。
  */
 export class ReputationManagerAdapter implements IReputationManager {
   private reputationSystem: ReputationSystem;

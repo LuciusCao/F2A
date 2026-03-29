@@ -171,11 +171,20 @@ export const MESSAGE_TOPICS = {
 
 // 结构化消息载荷（用于 MESSAGE 类型）
 export interface StructuredMessagePayload {
-  /** 消息主题（用于区分消息类型） */
+  /** 消息主题（区分消息类型），必须匹配 `/^[a-z0-9]+([.-][a-z0-9]+)*$/` 格式
+   * - 只允许小写字母、数字、点号、连字符
+   * - 不允许连续点号或连字符（如 `a..b` 或 `a--b`）
+   * - 最大长度 256 字符
+   */
   topic?: string;
-  /** 消息内容（可以是文本或结构化对象） */
+  
+  /** 消息内容（文本或结构化对象）
+   * - 文本格式：最大 1MB (1,048,576 字符)
+   * - 对象格式：任意 JSON 结构化对象
+   */
   content: string | Record<string, unknown>;
-  /** 可选的引用消息 ID（用于回复链） */
+  
+  /** 引用的消息 ID（用于回复链），最大长度 128 字符 */
   replyTo?: string;
 }
 

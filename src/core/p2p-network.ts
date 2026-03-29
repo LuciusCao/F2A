@@ -1277,7 +1277,16 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    * 根据 topic 区分不同类型的消息
    */
   private async handleAgentMessage(message: F2AMessage, peerId: string): Promise<void> {
-    const payload = message.payload as StructuredMessagePayload;
+    // P0 修复：验证 MESSAGE payload 格式
+    const validation = validateStructuredMessagePayload(message.payload);
+    if (!validation.success) {
+      this.logger.warn('Invalid MESSAGE payload format', {
+        errors: validation.error.errors,
+        peerId: peerId.slice(0, 16)
+      });
+      return;
+    }
+    const payload = validation.data;
     const topic = payload.topic;
 
     this.logger.info('Received MESSAGE', {

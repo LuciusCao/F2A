@@ -146,7 +146,11 @@ Agent 协议层使用单一的 `MESSAGE` 类型，通过 `topic` 区分不同用
 
 ```typescript
 interface StructuredMessagePayload {
-  /** 消息主题（区分消息类型） */
+  /** 消息主题（区分消息类型），必须匹配 `/^[a-z0-9]+([.-][a-z0-9]+)*$/` 格式
+   * - 只允许小写字母、数字、点号、连字符
+   * - 不允许连续点号或连字符（如 `a..b` 或 `a--b`）
+   * - 最大长度 256 字符
+   */
   topic?: string;
   /** 消息内容（文本或结构化对象） */
   content: string | Record<string, unknown>;
@@ -362,8 +366,14 @@ export const MESSAGE_TOPICS = {
 
 // 结构化消息载荷
 export interface StructuredMessagePayload {
+  /** 消息主题，必须匹配 `/^[a-z0-9]+([.-][a-z0-9]+)*$/` 格式
+   * - 只允许小写字母、数字、点号、连字符
+   * - 不允许连续点号或连字符
+   * - 最大长度 256 字符
+   */
   topic?: string;
   content: string | Record<string, unknown>;
+  /** 引用的消息 ID，最大长度 128 字符 */
   replyTo?: string;
 }
 

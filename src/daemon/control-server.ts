@@ -509,7 +509,7 @@ export class ControlServer {
         contentLength: command.content.length 
       });
 
-      const result = await this.f2a.sendMessage(command.peerId, command.content, command.metadata);
+      const result = await this.f2a.sendMessageToPeer(command.peerId, command.content);
       
       this.logger.debug('Message send result', { 
         success: result.success, 

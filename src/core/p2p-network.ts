@@ -39,12 +39,9 @@ import {
   PeerConnectedEvent,
   PeerDisconnectedEvent,
   Result,
-  TaskRequestPayload,
-  TaskResponsePayload,
+  StructuredMessagePayload,
+  MESSAGE_TOPICS,
   DiscoverPayload,
-  CapabilityQueryPayload,
-  CapabilityResponsePayload,
-  MessagePayload,
   success,
   failureFromError,
   createError
@@ -53,7 +50,7 @@ import { E2EECrypto, EncryptedMessage } from './e2ee-crypto.js';
 import { IdentityManager } from './identity/index.js';
 import { NATTraversalManager, NATTraversalStatus } from './nat-traversal.js';
 import { Logger } from '../utils/logger.js';
-import { validateF2AMessage, validateTaskRequestPayload, validateTaskResponsePayload } from '../utils/validation.js';
+import { validateF2AMessage, validateStructuredMessagePayload } from '../utils/validation.js';
 import { MiddlewareManager, Middleware } from '../utils/middleware.js';
 import { RequestSigner, loadSignatureConfig, SignedMessage } from '../utils/signature.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
@@ -531,13 +528,16 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       return agents;
     }
 
-    // 广播能力查询以发现更多节点
+    // 广播能力查询以发现更多节点（使用 MESSAGE 协议）
     await this.broadcast({
       id: randomUUID(),
-      type: 'CAPABILITY_QUERY',
+      type: 'MESSAGE',
       from: this.agentInfo.peerId,
       timestamp: Date.now(),
-      payload: { capabilityName: capability } as CapabilityQueryPayload
+      payload: {
+        topic: MESSAGE_TOPICS.CAPABILITY_QUERY,
+        content: { capabilityName: capability }
+      } as StructuredMessagePayload
     });
 
     // 使用 Promise.race 等待首个响应或超时
@@ -587,7 +587,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   }
 
   /**
-   * 向特定 Peer 发送任务请求
+   * 向特定 Peer 发送任务请求（使用 MESSAGE 协议）
+   * Agent 协议层方法
    */
   async sendTaskRequest(
     peerId: string,
@@ -600,17 +601,20 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
     const message: F2AMessage = {
       id: taskId,
-      type: 'TASK_REQUEST',
+      type: 'MESSAGE',
       from: this.agentInfo.peerId,
       to: peerId,
       timestamp: Date.now(),
       payload: {
-        taskId,
-        taskType,
-        description,
-        parameters,
-        timeout: Math.floor(timeout / 1000)
-      } as TaskRequestPayload
+        topic: MESSAGE_TOPICS.TASK_REQUEST,
+        content: {
+          taskId,
+          taskType,
+          description,
+          parameters,
+          timeout: Math.floor(timeout / 1000)
+        }
+      } as StructuredMessagePayload
     };
 
     // 发送消息（启用 E2EE 加密）
@@ -625,7 +629,6 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         resolve: (result: unknown) => {
           if (!taskEntry.resolved) {
             taskEntry.resolved = true;
-            // 从 Map 中移除，确保不会重复处理
             this.pendingTasks.delete(taskId);
             resolve(success(result));
           }
@@ -633,7 +636,6 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         reject: (error: string) => {
           if (!taskEntry.resolved) {
             taskEntry.resolved = true;
-            // 从 Map 中移除，确保不会重复处理
             this.pendingTasks.delete(taskId);
             resolve({ success: false, error: createError('TASK_FAILED', error) } as Result<unknown>);
           }
@@ -653,17 +655,17 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   }
 
   /**
-   * 发送自由消息给特定 Peer
+   * 发送自由消息给特定 Peer（Agent 协议层）
    * Agent 之间的自然语言通信，无需预定义协议
    */
   async sendFreeMessage(
     peerId: string,
-    content: string,
-    metadata?: Record<string, unknown>
+    content: string | Record<string, unknown>,
+    topic?: string
   ): Promise<Result<void>> {
     this.logger.debug('sendFreeMessage called', {
       peerId: peerId.slice(0, 16),
-      contentLength: content.length
+      contentLength: typeof content === 'string' ? content.length : 'object'
     });
 
     const message: F2AMessage = {
@@ -673,9 +675,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       to: peerId,
       timestamp: Date.now(),
       payload: {
-        content,
-        metadata
-      }
+        topic: topic || MESSAGE_TOPICS.FREE_CHAT,
+        content
+      } as StructuredMessagePayload
     };
 
     // 发送消息（启用 E2EE 加密）
@@ -690,7 +692,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   }
 
   /**
-   * 发送任务响应
+   * 发送任务响应（Agent 协议层）
    */
   async sendTaskResponse(
     peerId: string,
@@ -701,19 +703,23 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   ): Promise<Result<void>> {
     const message: F2AMessage = {
       id: randomUUID(),
-      type: 'TASK_RESPONSE',
+      type: 'MESSAGE',
       from: this.agentInfo.peerId,
       to: peerId,
       timestamp: Date.now(),
       payload: {
-        taskId,
-        status,
-        result,
-        error
-      } as TaskResponsePayload
+        topic: MESSAGE_TOPICS.TASK_RESPONSE,
+        content: {
+          taskId,
+          status,
+          result,
+          error
+        },
+        replyTo: taskId
+      } as StructuredMessagePayload
     };
 
-    // 任务响应也启用 E2EE 加密
+    // 任务响应启用 E2EE 加密
     return this.sendMessage(peerId, message, true);
   }
 
@@ -1237,8 +1243,10 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
   /**
    * 根据消息类型分发处理
+   * 网络层消息直接处理，Agent 协议层消息转发给上层
    */
   private async dispatchMessage(message: F2AMessage, peerId: string): Promise<void> {
+    // 网络层消息处理
     switch (message.type) {
       case 'DISCOVER':
         await this.handleDiscoverMessage(message, peerId, true);
@@ -1248,28 +1256,119 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         await this.handleDiscoverMessage(message, peerId, false);
         break;
 
-      case 'CAPABILITY_QUERY':
-        await this.handleCapabilityQueryMessage(message, peerId);
-        break;
-
-      case 'CAPABILITY_RESPONSE':
-        await this.handleCapabilityResponseMessage(message, peerId);
-        break;
-
-      case 'TASK_RESPONSE':
-        await this.handleTaskResponseMessage(message);
-        break;
-
       case 'DECRYPT_FAILED':
         await this.handleDecryptFailedMessage(message, peerId);
         break;
 
-      case 'MESSAGE':
-        await this.handleFreeMessage(message, peerId);
+      case 'PING':
+      case 'PONG':
+        // 心跳消息由 libp2p 自动处理
         break;
 
-      // TASK_REQUEST 不在这里处理，由 F2A 通过 'message:received' 事件处理
-      // 这样允许 F2A 访问其自己的 registeredCapabilities
+      // Agent 协议层消息：MESSAGE 类型，根据 topic 分发
+      case 'MESSAGE':
+        await this.handleAgentMessage(message, peerId);
+        break;
+    }
+  }
+
+  /**
+   * 处理 Agent 协议层消息（MESSAGE）
+   * 根据 topic 区分不同类型的消息
+   */
+  private async handleAgentMessage(message: F2AMessage, peerId: string): Promise<void> {
+    const payload = message.payload as StructuredMessagePayload;
+    const topic = payload.topic;
+
+    this.logger.info('Received MESSAGE', {
+      from: peerId.slice(0, 16),
+      topic,
+      contentLength: typeof payload.content === 'string' ? payload.content.length : 'object'
+    });
+
+    // 根据 topic 处理不同类型的消息
+    if (topic === MESSAGE_TOPICS.CAPABILITY_QUERY) {
+      await this.handleCapabilityQuery(payload, peerId);
+    } else if (topic === MESSAGE_TOPICS.CAPABILITY_RESPONSE) {
+      await this.handleCapabilityResponse(payload, peerId);
+    } else if (topic === MESSAGE_TOPICS.TASK_RESPONSE) {
+      this.handleTaskResponse(payload);
+    } else {
+      // 其他消息（包括 task.request 和自由对话）转发给上层
+      this.emit('message:received', message, peerId);
+    }
+  }
+
+  /**
+   * 处理能力查询（MESSAGE + topic='capability.query'）
+   */
+  private async handleCapabilityQuery(
+    payload: StructuredMessagePayload,
+    peerId: string
+  ): Promise<void> {
+    const content = payload.content as { capabilityName?: string; toolName?: string };
+    const matches = !content.capabilityName || 
+      this.hasCapability(this.agentInfo, content.capabilityName);
+
+    if (matches) {
+      // 发送能力响应
+      await this.sendMessage(peerId, {
+        id: randomUUID(),
+        type: 'MESSAGE',
+        from: this.agentInfo.peerId,
+        to: peerId,
+        timestamp: Date.now(),
+        payload: {
+          topic: MESSAGE_TOPICS.CAPABILITY_RESPONSE,
+          content: { agentInfo: this.agentInfo }
+        } as StructuredMessagePayload
+      });
+    }
+  }
+
+  /**
+   * 处理能力响应（MESSAGE + topic='capability.response'）
+   */
+  private async handleCapabilityResponse(
+    payload: StructuredMessagePayload,
+    peerId: string
+  ): Promise<void> {
+    const content = payload.content as { agentInfo: AgentInfo };
+    await this.upsertPeerFromAgentInfo(content.agentInfo, peerId);
+  }
+
+  /**
+   * 处理任务响应（MESSAGE + topic='task.response'）
+   * P0-1 修复：使用原子删除操作避免竞态条件
+   */
+  private handleTaskResponse(payload: StructuredMessagePayload): void {
+    const content = payload.content as {
+      taskId: string;
+      status: 'success' | 'error' | 'rejected' | 'delegated';
+      result?: unknown;
+      error?: string;
+    };
+    
+    // P0-1 修复：先检查 resolved 标志
+    const pending = this.pendingTasks.get(content.taskId);
+    if (!pending) {
+      this.logger.warn('Received response for unknown task', { taskId: content.taskId });
+      return;
+    }
+    
+    if (pending.resolved) {
+      this.logger.warn('Task already resolved, ignoring duplicate response', { taskId: content.taskId });
+      return;
+    }
+    
+    pending.resolved = true;
+    this.pendingTasks.delete(content.taskId);
+    clearTimeout(pending.timeout);
+
+    if (content.status === 'success') {
+      pending.resolve(content.result);
+    } else {
+      pending.reject(content.error || 'Task failed');
     }
   }
 
@@ -1291,39 +1390,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   }
 
   /**
-   * 处理能力响应消息
-   */
-  private async handleCapabilityResponseMessage(message: F2AMessage, peerId: string): Promise<void> {
-    const payload = message.payload as CapabilityResponsePayload;
-    // P2-5 修复：upsertPeerFromAgentInfo 现在是 async，需要 await
-    await this.upsertPeerFromAgentInfo(payload.agentInfo, peerId);
-  }
-
-  /**
-   * 处理能力查询消息
-   */
-  private async handleCapabilityQueryMessage(message: F2AMessage, peerId: string): Promise<void> {
-    const payload = message.payload as CapabilityQueryPayload;
-    await this.handleCapabilityQuery(payload, peerId);
-  }
-
-  /**
-   * 处理任务响应消息
-   */
-  private async handleTaskResponseMessage(message: F2AMessage): Promise<void> {
-    const payloadValidation = validateTaskResponsePayload(message.payload);
-    if (!payloadValidation.success) {
-      this.logger.warn('Invalid task response payload', {
-        errors: payloadValidation.error.errors
-      });
-      return;
-    }
-    const payload = message.payload as TaskResponsePayload;
-    this.handleTaskResponse(payload);
-  }
-
-  /**
-   * 处理解密失败通知消息
+   * 处理解密失败通知消息（网络层协议）
    * P0-2 修复：添加速率限制，防止攻击者触发大量解密失败
    */
   private async handleDecryptFailedMessage(message: F2AMessage, peerId: string): Promise<void> {
@@ -1359,20 +1426,6 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     
     // 发出事件通知上层应用
     this.emit('error', new Error(`Decrypt failed for message ${originalMessageId}: ${errorMsg}`));
-  }
-
-  /**
-   * 处理自由消息（Agent 之间的自然语言通信）
-   */
-  private async handleFreeMessage(message: F2AMessage, peerId: string): Promise<void> {
-    const payload = message.payload as MessagePayload;
-    this.logger.info('Received free message', {
-      fromPeerId: peerId.slice(0, 16),
-      contentLength: payload.content?.length || 0
-    });
-
-    // 发出事件供上层处理
-    this.emit('message:received', message, peerId);
   }
 
   /**
@@ -1519,70 +1572,6 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     if (agentInfo.encryptionPublicKey) {
       this.e2eeCrypto.registerPeerPublicKey(peerId, agentInfo.encryptionPublicKey);
       this.logger.info('Registered encryption key', { peerId: peerId.slice(0, 16) });
-    }
-  }
-
-  /**
-   * 处理能力查询
-   */
-  private async handleCapabilityQuery(
-    query: CapabilityQueryPayload,
-    peerId: string
-  ): Promise<void> {
-    // 检查是否匹配
-    const matches = !query.capabilityName || 
-      this.hasCapability(this.agentInfo, query.capabilityName);
-
-    if (matches) {
-      // 发送能力响应
-      await this.sendMessage(peerId, {
-        id: randomUUID(),
-        type: 'CAPABILITY_RESPONSE',
-        from: this.agentInfo.peerId,
-        to: peerId,
-        timestamp: Date.now(),
-        payload: { agentInfo: this.agentInfo } as CapabilityResponsePayload
-      });
-    }
-  }
-
-  /**
-   * 处理任务响应
-   * P0-1 修复：使用原子删除操作避免竞态条件
-   * Map.delete() 是原子操作，只有第一个成功删除的调用才能处理响应
-   */
-  private handleTaskResponse(payload: TaskResponsePayload): void {
-    // P0-1 修复：先检查 resolved 标志（快速路径，避免不必要的删除尝试）
-    const pending = this.pendingTasks.get(payload.taskId);
-    if (!pending) {
-      this.logger.warn('Received response for unknown task', { taskId: payload.taskId });
-      return;
-    }
-    
-    // 快速检查：如果已处理，直接返回
-    if (pending.resolved) {
-      this.logger.warn('Task already resolved, ignoring duplicate response', { taskId: payload.taskId });
-      return;
-    }
-    
-    // P0-1 修复：设置 resolved 标志，然后尝试删除
-    // 关键：先设置标志，再删除，这样即使有并发：
-    // - 第一个设置 resolved=true 并删除成功
-    // - 第二个看到 resolved=true（上面的检查）或 get 返回 undefined
-    pending.resolved = true;
-
-    // 从 Map 中移除（原子操作）
-    // 即使多个响应并发到达，只有一个能成功删除
-    this.pendingTasks.delete(payload.taskId);
-
-    // 清理资源
-    clearTimeout(pending.timeout);
-
-    // 处理结果
-    if (payload.status === 'success') {
-      pending.resolve(payload.result);
-    } else {
-      pending.reject(payload.error || 'Task failed');
     }
   }
 

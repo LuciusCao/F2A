@@ -445,6 +445,7 @@ npm run build:all
 ### 4.4 文档
 
 - [协议规范](docs/F2A-PROTOCOL.md)
+- [消息协议（简化版）](docs/message-protocol.md)
 - [中间件指南](docs/middleware-guide.md)
 - [信誉系统指南](docs/reputation-guide.md)
 

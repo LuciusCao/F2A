@@ -82,22 +82,25 @@ export const TaskDelegateOptionsSchema = z.object({
 });
 
 // ============================================================================
-// 消息协议 Schema
+// 消息协议 Schema - 两层设计
 // ============================================================================
 
-// P2-3 修复：添加 DECRYPT_FAILED 消息类型
-// P3-3 修复：添加 MESSAGE 和 SKILL_* 类型的 JSDoc 注释
-export const F2AMessageTypeSchema = z.enum([
+// Layer 1: 网络层协议（基础设施）
+export const NetworkMessageTypeSchema = z.enum([
   'DISCOVER',
   'DISCOVER_RESP',
-  'CAPABILITY_QUERY',
-  'CAPABILITY_RESPONSE',
-  'TASK_REQUEST',
-  'TASK_RESPONSE',
-  'TASK_DELEGATE',
-  'DECRYPT_FAILED',
   'PING',
   'PONG',
+  'DECRYPT_FAILED',
+]);
+
+// Layer 2: Agent 协议层（语义层）
+export const AgentMessageTypeSchema = z.enum([
+  'MESSAGE',
+]);
+
+// 技能交换协议（可选扩展）
+export const SkillMessageTypeSchema = z.enum([
   /** 技能公告：Agent 向网络广播自己提供的技能 */
   'SKILL_ANNOUNCE',
   /** 技能查询：查询网络中具备特定技能的 Agent */
@@ -110,8 +113,13 @@ export const F2AMessageTypeSchema = z.enum([
   'SKILL_INVOKE_RESPONSE',
   /** 技能执行结果：返回技能执行的最终结果 */
   'SKILL_RESULT',
-  /** 自由消息：Agent 之间的自然语言通信，无需预定义协议 */
-  'MESSAGE'
+]);
+
+// 完整消息类型
+export const F2AMessageTypeSchema = z.union([
+  NetworkMessageTypeSchema,
+  AgentMessageTypeSchema,
+  SkillMessageTypeSchema,
 ]);
 
 export const F2AMessageSchema = z.object({
@@ -124,21 +132,40 @@ export const F2AMessageSchema = z.object({
   payload: z.unknown()
 });
 
+// MESSAGE 消息载荷 Schema
+export const StructuredMessagePayloadSchema = z.object({
+  topic: z.string().optional(),
+  content: z.union([z.string(), z.record(z.unknown())]),
+  replyTo: z.string().optional(),
+});
+
+// 消息主题常量
+export const MESSAGE_TOPICS_SCHEMA = z.enum([
+  'task.request',
+  'task.response',
+  'capability.query',
+  'capability.response',
+  'chat',
+]);
+
+// 兼容性 Schema（已废弃）
+/** @deprecated 使用 StructuredMessagePayloadSchema 替代 */
 export const TaskRequestPayloadSchema = z.object({
   taskId: z.string().uuid(),
   taskType: z.string().min(1).max(64),
   description: z.string().min(1).max(1024),
   parameters: z.record(z.unknown()).optional(),
-  timeout: z.number().int().min(1).max(300).optional() // seconds
-});
+  timeout: z.number().int().min(1).max(300).optional()
+}).passthrough();
 
+/** @deprecated 使用 StructuredMessagePayloadSchema 替代 */
 export const TaskResponsePayloadSchema = z.object({
   taskId: z.string().uuid(),
   status: z.enum(['success', 'error', 'rejected', 'delegated']),
   result: z.unknown().optional(),
   error: z.string().max(1024).optional(),
   delegatedTo: z.string().optional()
-});
+}).passthrough();
 
 // ============================================================================
 // Webhook Schema
@@ -185,14 +212,23 @@ export function validateF2AMessage(message: unknown) {
 }
 
 /**
- * 验证任务请求载荷
+ * 验证 MESSAGE 消息载荷
+ */
+export function validateStructuredMessagePayload(payload: unknown) {
+  return StructuredMessagePayloadSchema.safeParse(payload);
+}
+
+/**
+ * 验证任务请求载荷（兼容）
+ * @deprecated 使用 validateStructuredMessagePayload 替代
  */
 export function validateTaskRequestPayload(payload: unknown) {
   return TaskRequestPayloadSchema.safeParse(payload);
 }
 
 /**
- * 验证任务响应载荷
+ * 验证任务响应载荷（兼容）
+ * @deprecated 使用 validateStructuredMessagePayload 替代
  */
 export function validateTaskResponsePayload(payload: unknown) {
   return TaskResponsePayloadSchema.safeParse(payload);

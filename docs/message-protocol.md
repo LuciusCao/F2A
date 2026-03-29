@@ -152,9 +152,12 @@ interface StructuredMessagePayload {
    * - 最大长度 256 字符
    */
   topic?: string;
-  /** 消息内容（文本或结构化对象） */
+  /** 消息内容（文本或结构化对象）
+   * - 文本格式：最大 1MB (1,048,576 字符)
+   * - 对象格式：任意 JSON 结构化对象
+   */
   content: string | Record<string, unknown>;
-  /** 引用的消息 ID（用于回复链） */
+  /** 引用的消息 ID（用于回复链），最大长度 128 字符 */
   replyTo?: string;
 }
 

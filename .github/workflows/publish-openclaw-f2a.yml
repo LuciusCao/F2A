@@ -21,13 +21,20 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
       
-      # 进入 openclaw-f2a 目录
+      # 复制 openclaw-f2a 到独立目录（避免 workspace 链接）
+      - run: |
+          mkdir -p /tmp/openclaw-f2a-publish
+          cp -r packages/openclaw-f2a/* /tmp/openclaw-f2a-publish/
+          cp packages/openclaw-f2a/.npmignore /tmp/openclaw-f2a-publish/ 2>/dev/null || true
+      
+      # 在独立目录安装依赖
       - run: npm install
-        working-directory: packages/openclaw-f2a
+        working-directory: /tmp/openclaw-f2a-publish
       
-      # build openclaw-f2a
+      # build
       - run: npm run build
-        working-directory: packages/openclaw-f2a
+        working-directory: /tmp/openclaw-f2a-publish
       
+      # 发布
       - run: npm publish
-        working-directory: packages/openclaw-f2a
+        working-directory: /tmp/openclaw-f2a-publish

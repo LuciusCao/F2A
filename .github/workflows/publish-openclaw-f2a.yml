@@ -21,11 +21,12 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
       
-      # 在根目录安装所有依赖
-      - run: npm install
+      # 在根目录安装所有依赖（使用 ci 确保一致性）
+      - run: npm ci
       
-      # 先 build 根目录（@f2a/network）
+      # 只 build @f2a/network（跳过其他 workspace）
       - run: npm run build
+        working-directory: packages/core
       
       # 进入 openclaw-f2a 目录，安装其特定依赖
       - run: npm install

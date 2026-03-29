@@ -11,6 +11,7 @@
 
 import { join } from 'path';
 import { homedir } from 'os';
+import * as fs from 'fs';
 import type {
   OpenClawPlugin,
   OpenClawPluginApi,
@@ -147,10 +148,28 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
     const logger = this.core?.getLogger();
     const f2aDispatcher = this.createF2AReplyDispatcher(fromPeerId, replyToMessageId);
 
+    // P1-5 修复：添加日志文件大小限制（与 F2ACore.ts 保持一致）
+    const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
     const debugLog = (msg: string) => {
       try {
-        const fs = require('fs');
-        fs.appendFileSync(join(homedir(), '.openclaw/logs/f2a-debug.log'), `[${new Date().toISOString()}] ${msg}\n`);
+        const logPath = join(homedir(), '.openclaw/logs/f2a-debug.log');
+        
+        // P1-5 修复：检查日志文件大小，超过限制则截断
+        try {
+          const stats = fs.statSync(logPath);
+          if (stats.size > MAX_LOG_SIZE) {
+            // 保留最后 1MB 的日志
+            const keepSize = 1024 * 1024;
+            const content = fs.readFileSync(logPath, 'utf-8');
+            const lines = content.split('\n');
+            const keepLines = lines.slice(-Math.floor(keepSize / 100)); // 估计每行 100 字节
+            fs.writeFileSync(logPath, keepLines.join('\n'));
+          }
+        } catch {
+          // 文件不存在或其他错误，忽略
+        }
+        
+        fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`);
       } catch {}
       logger?.info(msg);
     };

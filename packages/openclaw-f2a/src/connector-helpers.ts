@@ -6,7 +6,7 @@
 
 import { existsSync, readFileSync, realpathSync } from 'fs';
 import { join, resolve, relative, isAbsolute } from 'path';
-import { randomBytes } from 'crypto';
+import { randomBytes, createHash } from 'crypto';
 import type { F2ANodeConfig, Result, F2APluginConfig, AgentInfo } from './types.js';
 
 // ============================================================================
@@ -359,10 +359,9 @@ export async function resolveAgent(
  * @returns SHA256 哈希字符串（前 32 字符作为标识）
  */
 export function computeMessageHash(from: string, content: string): string {
-  const crypto = require('crypto');
   const data = `${from}:${content}`;
   // 使用 SHA256 算法生成安全的哈希值
-  const hash = crypto.createHash('sha256').update(data).digest('hex');
+  const hash = createHash('sha256').update(data).digest('hex');
   // 返回前 32 字符作为标识（足够用于去重）
   return `msg-${hash.slice(0, 32)}-${data.length}`;
 }

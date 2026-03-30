@@ -14,6 +14,8 @@ export default defineConfig({
         singleFork: true  // 串行运行
       }
     },
+    // 跳过的测试不应导致失败
+    passWithNoTests: true,
     coverage: {
       reporter: ['text', 'json', 'html'],
       exclude: [

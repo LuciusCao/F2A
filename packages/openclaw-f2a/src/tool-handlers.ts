@@ -1,6 +1,10 @@
 /**
  * F2A OpenClaw Connector - Tool Handlers
- * 工具处理器模块 - 处理 f2a_discover, f2a_delegate 等工具
+ * 工具处理器模块 - 处理 f2a_discover, f2a_send, f2a_broadcast 等工具
+ * 
+ * PR #111 重构：使用新的 MESSAGE 协议
+ * - 所有消息使用 MESSAGE 类型 + StructuredMessagePayload
+ * - topic 字段区分消息类型（chat, task.request, task.response 等）
  */
 
 import type {
@@ -165,8 +169,8 @@ ${agents.map((a: AgentInfo, i: number) => {
   }
 
   /**
-   * 处理 f2a_delegate 工具
-   * 委托任务给特定 Agent
+   * 处理 f2a_send 工具（原 f2a_delegate，按 PR #111 新协议重构）
+   * 发送消息给特定 Agent
    */
   async handleDelegate(
     params: ToolHandlerParams['delegate'],
@@ -177,10 +181,9 @@ ${agents.map((a: AgentInfo, i: number) => {
       return { content: '❌ 请提供有效的 agent 参数（Agent ID、名称或 #索引）' };
     }
     if (!params.task || typeof params.task !== 'string' || params.task.trim() === '') {
-      return { content: '❌ 请提供有效的 task 参数（任务描述）' };
+      return { content: '❌ 请提供有效的 task 参数（消息内容）' };
     }
     
-    const networkClient = (this.plugin as unknown as PluginInternalAccess).networkClient;
     const reputationSystem = (this.plugin as unknown as PluginInternalAccess).reputationSystem;
     
     // 解析 Agent 引用
@@ -190,78 +193,56 @@ ${agents.map((a: AgentInfo, i: number) => {
       return { content: `❌ 找不到 Agent: ${params.agent}` };
     }
 
-    // 检查信誉（使用 getReputation 替代不存在的 isAllowed）
+    // 检查信誉
     const reputation = reputationSystem.getReputation(targetAgent.peerId);
-    const minScore = 20; // 最低信誉分数
+    const minScore = 20;
     if (reputation.score < minScore) {
-      // 警告但继续执行（不阻止委托）
-      logger.warn(`⚠️ ${targetAgent.displayName} 信誉较低 (${reputation.score})，谨慎委托`);
+      logger.warn(`⚠️ ${targetAgent.displayName} 信誉较低 (${reputation.score})，谨慎发送`);
     }
 
-    logger.info(`委托任务给 ${targetAgent.displayName}...`);
+    logger.info(`发送消息给 ${targetAgent.displayName}...`);
 
-    // 新架构：直接使用 F2A 发送消息
+    // 新协议：使用 MESSAGE 类型 + StructuredMessagePayload
     const plugin = this.plugin as unknown as PluginInternalAccess;
     
     if (plugin.f2aClient && (plugin as any).getF2AStatus?.()?.running) {
-      // 通过 F2A 实例直接发送消息
       try {
         const f2a = (this.plugin as any)._f2a;
         if (f2a && f2a.sendMessage) {
-          // 发送任务消息
-          const message = {
-            type: 'task-request',
-            task: params.task,
-            context: params.context,
-            from: f2a.peerId,
-            timestamp: Date.now()
+          // PR #111 新协议：MESSAGE 类型 + StructuredMessagePayload
+          const messagePayload = {
+            topic: params.context ? 'task.request' : 'chat',
+            content: {
+              text: params.task,
+              context: params.context,
+              from: f2a.peerId,
+              timestamp: Date.now()
+            }
           };
           
-          await f2a.sendMessage(targetAgent.peerId, JSON.stringify(message), {
-            type: 'delegate'
-          });
+          await f2a.sendMessage(targetAgent.peerId, JSON.stringify(messagePayload));
           
-          logger.info(`任务已发送给 ${targetAgent.displayName}`);
+          logger.info(`消息已发送给 ${targetAgent.displayName}`);
           
           return {
-            content: `✅ 任务已发送给 ${targetAgent.displayName}:\n\n📝 ${params.task}\n\n⏳ 等待对方处理中...`,
+            content: `✅ 消息已发送给 ${targetAgent.displayName}:\n\n📝 ${params.task}\n\n⏳ 等待回复中...`,
             data: { sent: true, agent: targetAgent.displayName, task: params.task }
           };
         }
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
-        logger.error(`委托失败: ${errorMsg}`);
-        return { content: `❌ 委托失败: ${errorMsg}` };
+        logger.error(`发送失败: ${errorMsg}`);
+        return { content: `❌ 发送失败: ${errorMsg}` };
       }
     }
     
-    // 降级：使用旧的 HTTP 方式
-    const result = await networkClient.delegateTask({
-      peerId: targetAgent.peerId,
-      taskType: 'openclaw-task',
-      description: params.task,
-      parameters: {
-        context: params.context,
-        sessionContext: context.toJSON()
-      },
-      timeout: params.timeout || 60000
-    });
-
-    if (!result.success) {
-      // 记录失败
-      reputationSystem.recordFailure(targetAgent.peerId, 'unknown', result.error.message);
-      return { content: `❌ 委托失败: ${result.error.message}` };
-    }
-
-    return {
-      content: `✅ ${targetAgent.displayName} 已完成任务:\n\n${JSON.stringify(result.data, null, 2)}`,
-      data: result.data
-    };
+    // 降级：提示 F2A 未运行
+    return { content: `❌ F2A 未运行，无法发送消息` };
   }
 
   /**
    * 处理 f2a_broadcast 工具
-   * 广播任务给所有具备某能力的 Agents
+   * 广播消息给所有具备某能力的 Agents（按 PR #111 新协议重构）
    */
   async handleBroadcast(
     params: ToolHandlerParams['broadcast'],
@@ -272,10 +253,11 @@ ${agents.map((a: AgentInfo, i: number) => {
       return { content: '❌ 请提供有效的 capability 参数（所需能力）' };
     }
     if (!params.task || typeof params.task !== 'string' || params.task.trim() === '') {
-      return { content: '❌ 请提供有效的 task 参数（任务描述）' };
+      return { content: '❌ 请提供有效的 task 参数（消息内容）' };
     }
     
-    const networkClient = (this.plugin as unknown as PluginInternalAccess).networkClient;
+    const plugin = this.plugin as unknown as PluginInternalAccess;
+    const networkClient = plugin.networkClient;
     
     const discoverResult = await networkClient.discoverAgents(params.capability);
     
@@ -284,28 +266,53 @@ ${agents.map((a: AgentInfo, i: number) => {
     }
 
     const agents = discoverResult.data;
-    logger.info(`广播任务给 ${agents.length} 个 Agents...`);
+    logger.info(`广播消息给 ${agents.length} 个 Agents...`);
 
-    // 并行委托
+    const f2a = (this.plugin as any)._f2a;
+    
+    // 并行发送消息
     const promises = agents.map(async (agent: AgentInfo) => {
       const start = Date.now();
-      const result = await networkClient.delegateTask({
-        peerId: agent.peerId,
-        taskType: 'openclaw-task',
-        description: params.task,
-        parameters: { sessionContext: context.toJSON() },
-        timeout: 60000
-      });
-      const latency = Date.now() - start;
-
-      return {
-        agent: agent.displayName || agent.peerId,
-        peerId: agent.peerId,
-        success: result.success,
-        result: result.data,
-        error: result.success ? undefined : (result.error?.message || 'Unknown error'),
-        latency
-      };
+      
+      try {
+        if (f2a && f2a.sendMessage) {
+          // PR #111 新协议：MESSAGE 类型
+          const messagePayload = {
+            topic: 'task.request',
+            content: {
+              text: params.task,
+              from: f2a.peerId,
+              timestamp: Date.now()
+            }
+          };
+          
+          await f2a.sendMessage(agent.peerId, JSON.stringify(messagePayload));
+          const latency = Date.now() - start;
+          
+          return {
+            agent: agent.displayName || agent.peerId,
+            peerId: agent.peerId,
+            success: true,
+            latency
+          };
+        } else {
+          return {
+            agent: agent.displayName || agent.peerId,
+            peerId: agent.peerId,
+            success: false,
+            error: 'F2A not available'
+          };
+        }
+      } catch (err) {
+        const latency = Date.now() - start;
+        return {
+          agent: agent.displayName || agent.peerId,
+          peerId: agent.peerId,
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+          latency
+        };
+      }
     });
 
     const results = await Promise.allSettled(promises);
@@ -327,7 +334,7 @@ ${agents.map((a: AgentInfo, i: number) => {
     }
 
     return {
-      content: `✅ 收到 ${successful.length}/${settled.length} 个成功响应:\n\n${this.formatBroadcastResults(settled)}`,
+      content: `✅ 消息已发送给 ${successful.length}/${settled.length} 个 Agents:\n\n${this.formatBroadcastResults(settled)}`,
       data: { results: settled }
     };
   }

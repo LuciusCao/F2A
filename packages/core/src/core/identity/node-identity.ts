@@ -20,10 +20,10 @@ import type {
   NodeIdentityOptions,
   PersistedNodeIdentity,
   ExportedNodeIdentity,
-  EncryptedIdentity,
   PersistedIdentity
 } from './types.js';
-import { DEFAULT_DATA_DIR, NODE_IDENTITY_FILE } from './types.js';
+import { DEFAULT_DATA_DIR, NODE_IDENTITY_FILE, isEncryptedIdentity } from './types.js';
+import type { EncryptedIdentity } from './types.js';
 
 /** Node ID 格式验证正则表达式 (P1-4) */
 const NODE_ID_PATTERN = /^[a-zA-Z0-9-]+$/;
@@ -39,24 +39,6 @@ export function isValidNodeId(nodeId: string): boolean {
   if (typeof nodeId !== 'string') return false;
   if (nodeId.length < NODE_ID_MIN_LENGTH || nodeId.length > NODE_ID_MAX_LENGTH) return false;
   return NODE_ID_PATTERN.test(nodeId);
-}
-
-/**
- * Type guard to validate EncryptedIdentity structure
- * P2-1 修复: 添加 .length > 0 检查，与 identity-manager.ts 保持一致
- */
-function isEncryptedIdentity(obj: unknown): obj is EncryptedIdentity {
-  if (typeof obj !== 'object' || obj === null) {
-    return false;
-  }
-  const record = obj as Record<string, unknown>;
-  return (
-    record.encrypted === true &&
-    typeof record.salt === 'string' && record.salt.length > 0 &&
-    typeof record.iv === 'string' && record.iv.length > 0 &&
-    typeof record.authTag === 'string' && record.authTag.length > 0 &&
-    typeof record.ciphertext === 'string' && record.ciphertext.length > 0
-  );
 }
 
 /**

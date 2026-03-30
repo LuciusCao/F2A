@@ -17,29 +17,11 @@ import { encryptIdentity, decryptIdentity } from './encrypted-key-store.js';
 import type { 
   PersistedIdentity, 
   IdentityManagerOptions, 
-  ExportedIdentity,
-  EncryptedIdentity 
+  ExportedIdentity
 } from './types.js';
-import { DEFAULT_DATA_DIR, IDENTITY_FILE } from './types.js';
+import { DEFAULT_DATA_DIR, IDENTITY_FILE, isEncryptedIdentity } from './types.js';
+import type { EncryptedIdentity } from './types.js';
 import { isValidBase64, secureWipe } from '../../utils/crypto-utils.js';
-
-/**
- * Type guard to validate EncryptedIdentity structure
- * P2 修复：使用类型守卫替代类型断言链
- */
-function isEncryptedIdentity(obj: unknown): obj is EncryptedIdentity {
-  if (typeof obj !== 'object' || obj === null) {
-    return false;
-  }
-  const record = obj as Record<string, unknown>;
-  return (
-    record.encrypted === true &&
-    typeof record.salt === 'string' && record.salt.length > 0 &&
-    typeof record.iv === 'string' && record.iv.length > 0 &&
-    typeof record.authTag === 'string' && record.authTag.length > 0 &&
-    typeof record.ciphertext === 'string' && record.ciphertext.length > 0
-  );
-}
 
 /**
  * Identity Manager

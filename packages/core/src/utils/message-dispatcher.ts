@@ -22,20 +22,10 @@ import { RateLimiter } from './rate-limiter.js';
 import { MiddlewareManager, Middleware, type MiddlewareContext, type MiddlewareResult } from './middleware.js';
 import { getErrorMessage } from './error-utils.js';
 import type { PeerTableManager } from './peer-table-manager.js';
+import { isEncryptedMessage, EncryptedF2AMessage } from '../common/type-guards.js';
 
 // F2A 协议标识
 export const F2A_PROTOCOL = '/f2a/1.0.0';
-
-// 加密消息类型
-interface EncryptedF2AMessage extends F2AMessage {
-  encrypted: true;
-  payload: EncryptedMessage;
-}
-
-// 类型守卫：检查是否为加密消息
-function isEncryptedMessage(msg: F2AMessage): msg is EncryptedF2AMessage {
-  return 'encrypted' in msg && msg.encrypted === true && 'payload' in msg;
-}
 
 // 加密消息处理结果
 export interface DecryptResult {

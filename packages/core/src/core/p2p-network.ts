@@ -55,6 +55,7 @@ import { MiddlewareManager, Middleware } from '../utils/middleware.js';
 import { RequestSigner, loadSignatureConfig, SignedMessage } from '../utils/signature.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { getErrorMessage } from '../utils/error-utils.js';
+import { isEncryptedMessage, EncryptedF2AMessage } from '../common/type-guards.js';
 
 // DHT 服务类型定义
 interface DHTService {
@@ -64,17 +65,6 @@ interface DHTService {
 
 interface Libp2pServices {
   dht?: DHTService;
-}
-
-// 加密消息类型定义
-interface EncryptedF2AMessage extends F2AMessage {
-  encrypted: true;
-  payload: EncryptedMessage;
-}
-
-// 类型守卫：检查是否为加密消息
-function isEncryptedMessage(msg: F2AMessage): msg is EncryptedF2AMessage {
-  return 'encrypted' in msg && msg.encrypted === true && 'payload' in msg;
 }
 
 // 加密消息处理结果

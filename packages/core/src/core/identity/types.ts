@@ -82,6 +82,23 @@ export interface EncryptedIdentity {
   ciphertext: string;
 }
 
+/**
+ * Type guard to validate EncryptedIdentity structure
+ */
+export function isEncryptedIdentity(obj: unknown): obj is EncryptedIdentity {
+  if (typeof obj !== 'object' || obj === null) {
+    return false;
+  }
+  const record = obj as Record<string, unknown>;
+  return (
+    record.encrypted === true &&
+    typeof record.salt === 'string' && record.salt.length > 0 &&
+    typeof record.iv === 'string' && record.iv.length > 0 &&
+    typeof record.authTag === 'string' && record.authTag.length > 0 &&
+    typeof record.ciphertext === 'string' && record.ciphertext.length > 0
+  );
+}
+
 // ============================================================================
 // Node Identity - 持久化身份，代表物理设备
 // ============================================================================

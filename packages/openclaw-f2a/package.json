@@ -18,6 +18,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest run",
+    "test:unit": "vitest run",
     "test:unit": "vitest run tests/*.test.ts src/**/*.test.ts --exclude='tests/integration/**'",
     "test:integration": "vitest run tests/integration/*.test.ts",
     "test:all": "vitest run",

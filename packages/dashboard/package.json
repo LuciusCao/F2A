@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "test": "vitest",
+    "test:unit": "vitest run",
     "test:ui": "vitest --ui"
   },
   "dependencies": {

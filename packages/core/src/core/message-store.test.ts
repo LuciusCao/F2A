@@ -61,11 +61,14 @@ describe('MessageStore', () => {
     });
 
     it('应该使用默认配置', () => {
-      const defaultStore = new MessageStore();
-      expect(defaultStore).toBeDefined();
-      const stats = defaultStore.getStats();
+      // 使用测试目录避免 CI 环境问题
+      const testDefaultStore = new MessageStore({
+        dbPath: join(TEST_DIR, 'default-messages.db')
+      });
+      expect(testDefaultStore).toBeDefined();
+      const stats = testDefaultStore.getStats();
       expect(stats.count).toBe(0);
-      defaultStore.close();
+      testDefaultStore.close();
     });
 
     it('应该正确初始化数据库表', async () => {

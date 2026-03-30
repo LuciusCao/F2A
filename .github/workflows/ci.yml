@@ -25,10 +25,14 @@ jobs:
       - name: Install dependencies
         run: npm install
       
-      - name: Run lint
-        run: npm run lint || npm run build -- --noEmit
+      # 先 build packages/core，让 workspace 依赖可用
+      - name: Build core package
+        run: npm run build --workspace=@f2a/network
       
-      - name: Build
+      - name: Run lint
+        run: npm run lint
+      
+      - name: Build all
         run: npm run build
       
       - name: Run unit tests
@@ -36,6 +40,7 @@ jobs:
       
       - name: Upload coverage
         uses: codecov/codecov-action@v4
+        if: hashFiles('./coverage/lcov.info') != ''
         with:
           files: ./coverage/lcov.info
           flags: unittests

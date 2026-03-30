@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useF2AData } from './hooks/useF2AData';
 import { NetworkTopology } from './components/NetworkTopology';
 import { NodeList } from './components/NodeList';
+import type { AgentCapability } from './types';
 
 // Get API URL from environment or default to proxy
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
@@ -138,7 +139,7 @@ function App() {
               {peers
                 .filter(p => p.capabilities && p.capabilities.length > 0)
                 .flatMap(peer => 
-                  peer.capabilities!.map((cap, i) => (
+                  peer.capabilities!.map((cap: AgentCapability, i: number) => (
                     <div 
                       key={`${peer.peerId}-${i}`}
                       className="bg-slate-700/50 rounded-lg p-4 border border-slate-600"
@@ -152,7 +153,7 @@ function App() {
                       <p className="text-sm text-slate-400">{cap.description}</p>
                       {cap.tools && cap.tools.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-1">
-                          {cap.tools.map((tool, j) => (
+                          {cap.tools.map((tool: string, j: number) => (
                             <span 
                               key={j}
                               className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 text-xs"

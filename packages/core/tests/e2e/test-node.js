@@ -114,7 +114,7 @@ async function handleSendMessage(peerId, message, metadata) {
     return;
   }
 
-  const result = await f2a.sendMessage(peerId, message, metadata);
+  const result = await f2a.sendMessageToPeer(peerId, message, metadata);
 
   if (!result.success) {
     sendEvent({

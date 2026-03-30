@@ -66,7 +66,7 @@ function NodeRow({ node, isLocal }: { node: AgentInfo; isLocal: boolean }) {
       <td className="py-3 px-4 text-sm text-slate-400">
         {node.capabilities?.length > 0 ? (
           <div className="flex flex-wrap gap-1">
-            {node.capabilities.slice(0, 3).map((cap, i) => (
+            {node.capabilities.slice(0, 3).map((cap: { name: string }, i: number) => (
               <span key={i} className="px-1.5 py-0.5 rounded bg-slate-700 text-xs">
                 {cap.name}
               </span>

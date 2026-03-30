@@ -246,7 +246,7 @@ function bindEvents(instance) {
     sendEvent({ type: 'peerDisconnected', peerId: event.peerId });
   });
 
-  instance.on('message', (event) => {
+  instance.on('peer:message', (event) => {
     sendEvent({
       type: 'messageReceived',
       from: event.from,

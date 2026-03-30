@@ -365,7 +365,8 @@ describe('P2PNetwork', () => {
       expect(peers[0].multiaddrs[0].toString()).toContain('/tcp/9002');
     });
 
-    it('should process CAPABILITY_RESPONSE and upsert peer', async () => {
+    // ⚠️ 跳过：PR #111 移除了 CAPABILITY_RESPONSE 类型，改用 MESSAGE + topic
+    it.skip('should process CAPABILITY_RESPONSE and upsert peer', async () => {
       const agentInfo: AgentInfo = {
         ...mockAgentInfo,
         peerId: 'peer-cap',

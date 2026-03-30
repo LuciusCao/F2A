@@ -121,11 +121,13 @@ describe('F2A', () => {
       const sendResponseSpy = vi.fn().mockResolvedValue({ success: true });
       (f2a as any).p2pNetwork.sendTaskResponse = sendResponseSpy;
 
-      await (f2a as any).handleTaskRequest({
-        taskId: 'task-123',
-        taskType: 'echo',
-        parameters: { message: 'hello' }
-      }, 'caller-peer');
+      await (f2a as any).handleTaskRequest(
+        'task-123',
+        'echo',
+        'Test task',
+        { message: 'hello' },
+        'caller-peer'
+      );
 
       expect(handler).toHaveBeenCalledWith({ message: 'hello' });
       expect(sendResponseSpy).toHaveBeenCalledWith(
@@ -140,11 +142,13 @@ describe('F2A', () => {
       const sendResponseSpy = vi.fn().mockResolvedValue({ success: true });
       (f2a as any).p2pNetwork.sendTaskResponse = sendResponseSpy;
 
-      await (f2a as any).handleTaskRequest({
-        taskId: 'task-123',
-        taskType: 'unknown-cap',
-        parameters: {}
-      }, 'caller-peer');
+      await (f2a as any).handleTaskRequest(
+        'task-123',
+        'unknown-cap',
+        'Test task',
+        {},
+        'caller-peer'
+      );
 
       expect(sendResponseSpy).toHaveBeenCalledWith(
         'caller-peer',
@@ -164,11 +168,13 @@ describe('F2A', () => {
       const sendResponseSpy = vi.fn().mockResolvedValue({ success: true });
       (f2a as any).p2pNetwork.sendTaskResponse = sendResponseSpy;
 
-      await (f2a as any).handleTaskRequest({
-        taskId: 'task-123',
-        taskType: 'failing-cap',
-        parameters: {}
-      }, 'caller-peer');
+      await (f2a as any).handleTaskRequest(
+        'task-123',
+        'failing-cap',
+        'Test task',
+        {},
+        'caller-peer'
+      );
 
       expect(sendResponseSpy).toHaveBeenCalledWith(
         'caller-peer',
@@ -191,11 +197,13 @@ describe('F2A', () => {
       const sendResponseSpy = vi.fn();
       (f2a as any).p2pNetwork.sendTaskResponse = sendResponseSpy;
 
-      await (f2a as any).handleTaskRequest({
-        taskId: 'task-123',
-        taskType: 'manual-cap',
-        parameters: {}
-      }, 'caller-peer');
+      await (f2a as any).handleTaskRequest(
+        'task-123',
+        'manual-cap',
+        'Test task',
+        {},
+        'caller-peer'
+      );
 
       expect(sendResponseSpy).not.toHaveBeenCalled();
     });
@@ -363,11 +371,13 @@ describe('F2A', () => {
         async () => 'result'
       );
 
-      await (f2a as any).handleTaskRequest({
-        taskId: 'task-123',
-        taskType: 'echo',
-        parameters: {}
-      }, 'caller-peer');
+      await (f2a as any).handleTaskRequest(
+        'task-123',
+        'echo',
+        'Test task',
+        {},
+        'caller-peer'
+      );
 
       expect(eventSpy).toHaveBeenCalledWith(
         expect.objectContaining({

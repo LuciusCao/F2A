@@ -957,7 +957,7 @@ describe('ControlServer', () => {
 
     it('should handle send command failure', async () => {
       mockRateLimiterAllow = true;
-      mockF2A.sendMessage = vi.fn().mockRejectedValue(new Error('Send failed'));
+      mockF2A.sendMessageToPeer = vi.fn().mockRejectedValue(new Error('Send failed'));
       
       const server = new ControlServer(mockF2A, 9001);
       await server.start();

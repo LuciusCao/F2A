@@ -435,8 +435,7 @@ async function sendCommand(action: string, params?: Record<string, unknown>, isR
               // P1-2 修复：认证失败时强制刷新 token 并重试一次
               if (!isRetry) {
                 // 强制重新加载 token
-                _controlToken = undefined;
-                _tokenFileMtime = undefined;
+                resetControlTokenCache();
                 
                 // 重试请求
                 sendCommand(action, params, true)

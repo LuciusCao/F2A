@@ -55,6 +55,7 @@ const createMockF2A = () => ({
   discoverAgents: vi.fn().mockResolvedValue([]),
   sendTaskTo: vi.fn().mockResolvedValue({ success: true, result: 'done' }),
   sendMessage: vi.fn().mockResolvedValue({ success: true }),
+  sendMessageToPeer: vi.fn().mockResolvedValue({ success: true }),
   registerCapability: vi.fn().mockResolvedValue({ success: true }),
   updateAgentInfo: vi.fn().mockResolvedValue({ success: true }),
   getAgentInfo: vi.fn().mockReturnValue({

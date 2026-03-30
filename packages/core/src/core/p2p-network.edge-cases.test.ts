@@ -212,7 +212,8 @@ describe('P2PNetwork - 高价值边缘情况', () => {
   });
 
   // ========== 3. 任务响应处理 - 竞态条件防护 ==========
-  describe('handleTaskResponseMessage - 竞态条件防护', () => {
+  // ⚠️ 跳过：PR #111 移除了 TASK_RESPONSE 类型，改用 MESSAGE + topic
+  describe.skip('handleTaskResponseMessage - 竞态条件防护', () => {
     it('应该忽略已解析任务的重复响应', async () => {
       const taskId = '00000000-0000-4000-8000-000000000001'; // 有效的 UUID
       

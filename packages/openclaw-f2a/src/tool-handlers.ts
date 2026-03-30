@@ -205,30 +205,31 @@ ${agents.map((a: AgentInfo, i: number) => {
     // 新协议：使用 MESSAGE 类型 + StructuredMessagePayload
     const plugin = this.plugin as unknown as PluginInternalAccess;
     
-    if (plugin.f2aClient && (plugin as any).getF2AStatus?.()?.running) {
+    // 获取 F2A 实例（embedded 模式通过 core 访问）
+    const f2a = (plugin as any).core?.getF2A?.();
+    const status = plugin.getF2AStatus?.();
+    
+    if (f2a && f2a.sendMessage && status?.running) {
       try {
-        const f2a = (this.plugin as any)._f2a;
-        if (f2a && f2a.sendMessage) {
-          // PR #111 新协议：MESSAGE 类型 + StructuredMessagePayload
-          const messagePayload = {
-            topic: params.context ? 'task.request' : 'chat',
-            content: {
-              text: params.task,
-              context: params.context,
-              from: f2a.peerId,
-              timestamp: Date.now()
-            }
-          };
-          
-          await f2a.sendMessage(targetAgent.peerId, JSON.stringify(messagePayload));
-          
-          logger.info(`消息已发送给 ${targetAgent.displayName}`);
-          
-          return {
-            content: `✅ 消息已发送给 ${targetAgent.displayName}:\n\n📝 ${params.task}\n\n⏳ 等待回复中...`,
-            data: { sent: true, agent: targetAgent.displayName, task: params.task }
-          };
-        }
+        // PR #111 新协议：MESSAGE 类型 + StructuredMessagePayload
+        const messagePayload = {
+          topic: params.context ? 'task.request' : 'chat',
+          content: {
+            text: params.task,
+            context: params.context,
+            from: f2a.peerId,
+            timestamp: Date.now()
+          }
+        };
+        
+        await f2a.sendMessage(targetAgent.peerId, JSON.stringify(messagePayload));
+        
+        logger.info(`消息已发送给 ${targetAgent.displayName}`);
+        
+        return {
+          content: `✅ 消息已发送给 ${targetAgent.displayName}:\n\n📝 ${params.task}\n\n⏳ 等待回复中...`,
+          data: { sent: true, agent: targetAgent.displayName, task: params.task }
+        };
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         logger.error(`发送失败: ${errorMsg}`);
@@ -237,6 +238,7 @@ ${agents.map((a: AgentInfo, i: number) => {
     }
     
     // 降级：提示 F2A 未运行
+    logger.warn(`F2A 状态检查失败`, { hasF2a: !!f2a, status });
     return { content: `❌ F2A 未运行，无法发送消息` };
   }
 

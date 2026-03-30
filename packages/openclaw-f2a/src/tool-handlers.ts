@@ -190,10 +190,12 @@ ${agents.map((a: AgentInfo, i: number) => {
       return { content: `❌ 找不到 Agent: ${params.agent}` };
     }
 
-    // 检查信誉
-    if (!reputationSystem.isAllowed(targetAgent.peerId)) {
+    // 检查信誉（使用 getReputation 替代不存在的 isAllowed）
+    const reputation = reputationSystem.getReputation(targetAgent.peerId);
+    const minScore = 20; // 最低信誉分数
+    if (reputation.score < minScore) {
       // 警告但继续执行（不阻止委托）
-      logger.warn(`⚠️ ${targetAgent.displayName} 信誉较低 (${reputationSystem.getReputation(targetAgent.peerId).score})，谨慎委托`);
+      logger.warn(`⚠️ ${targetAgent.displayName} 信誉较低 (${reputation.score})，谨慎委托`);
     }
 
     logger.info(`委托任务给 ${targetAgent.displayName}...`);

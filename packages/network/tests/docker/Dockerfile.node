@@ -10,16 +10,16 @@ WORKDIR /app
 
 # 先复制 package.json 文件以利用 Docker 缓存
 COPY package*.json ./
-COPY packages/core/package*.json ./packages/core/
+COPY packages/network/package*.json ./packages/network/
 
 # 复制源代码
-COPY packages/core ./packages/core
+COPY packages/network ./packages/network
 
 # 安装所有依赖
 RUN npm install
 
-# 切换到 packages/core 目录并构建
-WORKDIR /app/packages/core
+# 切换到 packages/network 目录并构建
+WORKDIR /app/packages/network
 RUN npm run build
 
 # 切换回主目录
@@ -34,4 +34,4 @@ HEALTHCHECK --interval=5s --timeout=3s --retries=10 \
   CMD wget -q --spider http://localhost:9001/health || exit 1
 
 # 启动命令
-CMD ["node", "packages/core/dist/daemon/main.js"]
+CMD ["node", "packages/network/dist/daemon/main.js"]

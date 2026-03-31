@@ -23,6 +23,6 @@ jobs:
 
       - run: npm ci --ignore-scripts
       - run: npm run build
-        working-directory: packages/core
+        working-directory: packages/network
       - run: npm publish
-        working-directory: packages/core
+        working-directory: packages/network

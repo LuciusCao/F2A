@@ -107,7 +107,7 @@ jobs:
       
       - name: Export logs on failure
         if: failure()
-        run: docker compose -f packages/core/tests/docker/docker-compose.test.yml logs > docker-test-logs.txt
+        run: docker compose -f packages/network/tests/docker/docker-compose.test.yml logs > docker-test-logs.txt
       
       - name: Upload logs on failure
         if: failure()

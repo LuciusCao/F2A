@@ -65,7 +65,10 @@ jobs:
       - name: Install dependencies
         run: npm install
       
-      - name: Build
+      - name: Build core package
+        run: npm run build --workspace=@f2a/network
+      
+      - name: Build all
         run: npm run build
       
       - name: Run integration tests
@@ -99,7 +102,10 @@ jobs:
       - name: Install dependencies
         run: npm install
       
-      - name: Build
+      - name: Build core package
+        run: npm run build --workspace=@f2a/network
+      
+      - name: Build all
         run: npm run build
       
       - name: Run Docker tests
@@ -107,7 +113,7 @@ jobs:
       
       - name: Export logs on failure
         if: failure()
-        run: docker compose -f packages/core/tests/docker/docker-compose.test.yml logs > docker-test-logs.txt
+        run: docker compose -f packages/network/tests/docker/docker-compose.test.yml logs > docker-test-logs.txt
       
       - name: Upload logs on failure
         if: failure()
@@ -138,7 +144,10 @@ jobs:
       - name: Install dependencies
         run: npm install
       
-      - name: Build
+      - name: Build core package
+        run: npm run build --workspace=@f2a/network
+      
+      - name: Build all
         run: npm run build
       
       - name: Run 10-node stress test

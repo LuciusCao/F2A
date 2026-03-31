@@ -8,7 +8,7 @@ services:
   bootstrap:
     build:
       context: ../../../..
-      dockerfile: packages/core/tests/docker/Dockerfile.node
+      dockerfile: packages/network/tests/docker/Dockerfile.node
     networks:
       f2a-test-net:
         aliases:
@@ -29,7 +29,7 @@ services:
   node:
     build:
       context: ../../../..
-      dockerfile: packages/core/tests/docker/Dockerfile.node
+      dockerfile: packages/network/tests/docker/Dockerfile.node
     networks:
       - f2a-test-net
     environment:
@@ -52,7 +52,7 @@ services:
   test-runner:
     build:
       context: ../../../..
-      dockerfile: packages/core/tests/docker/Dockerfile.runner
+      dockerfile: packages/network/tests/docker/Dockerfile.runner
     networks:
       - f2a-test-net
     environment:

@@ -112,7 +112,7 @@ jobs:
 
       - name: Export logs on failure
         if: failure() && github.event_name == 'push'
-        run: docker compose -f tests/docker/docker-compose.test.yml logs > test-logs.txt
+        run: docker compose -f packages/core/tests/docker/docker-compose.test.yml logs > test-logs.txt
 
       - name: Upload logs on failure
         if: failure() && github.event_name == 'push'

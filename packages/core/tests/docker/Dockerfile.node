@@ -8,14 +8,24 @@ RUN apk add --no-cache python3 make g++
 
 WORKDIR /app
 
-# 复制整个 monorepo
-COPY . .
+# 先复制 package.json 文件以利用 Docker 缓存
+COPY package*.json ./
+COPY packages/core/package*.json ./packages/core/
+COPY packages/openclaw-f2a/package*.json ./packages/openclaw-f2a/ 2>/dev/null || true
 
-# 安装所有依赖（npm 会自动识别 workspaces）
+# 复制源代码
+COPY packages/core ./packages/core
+COPY packages/openclaw-f2a ./packages/openclaw-f2a 2>/dev/null || true
+
+# 安装所有依赖
 RUN npm install
 
-# 构建 packages/core（直接进入目录构建）
-RUN cd packages/core && npm run build
+# 切换到 packages/core 目录并构建
+WORKDIR /app/packages/core
+RUN npm run build
+
+# 切换回主目录
+WORKDIR /app
 
 # 环境变量
 ENV NODE_ENV=production

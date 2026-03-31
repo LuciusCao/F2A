@@ -11,11 +11,11 @@ WORKDIR /app
 # 复制整个 monorepo
 COPY . .
 
-# 在根目录安装所有 workspace 依赖
-RUN npm install
+# 安装所有 workspace 依赖
+RUN npm install --workspaces
 
-# 构建 packages/core
-RUN npm run build -w @f2a/network
+# 构建 packages/core（直接进入目录构建）
+RUN cd packages/core && npm run build
 
 # 运行集成测试
 CMD ["npm", "run", "test:integration"]

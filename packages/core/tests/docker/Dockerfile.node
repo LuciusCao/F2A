@@ -11,8 +11,8 @@ WORKDIR /app
 # 复制整个 monorepo
 COPY . .
 
-# 安装所有 workspace 依赖
-RUN npm install --workspaces
+# 安装所有依赖（npm 会自动识别 workspaces）
+RUN npm install
 
 # 构建 packages/core（直接进入目录构建）
 RUN cd packages/core && npm run build

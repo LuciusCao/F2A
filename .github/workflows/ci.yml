@@ -10,9 +10,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
+# 测试层级说明：
+# 1. unit-tests: 单元测试，mock 外部依赖，每个 PR 必跑
+# 2. integration-tests: 真实 P2P 网络测试，每个 PR 必跑
+# 3. docker-tests: Docker 容器测试，仅 main/develop push 时跑
+# 4. stress-tests: 多节点压力测试，仅 main 分支 push 时跑
+
 jobs:
-  # Lint + 单元测试（合并）
-  lint-and-test:
+  # 单元测试
+  unit-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,7 +31,6 @@ jobs:
       - name: Install dependencies
         run: npm install
       
-      # 先 build packages/core，让 workspace 依赖可用
       - name: Build core package
         run: npm run build --workspace=@f2a/network
       
@@ -45,10 +50,10 @@ jobs:
           files: ./coverage/lcov.info
           flags: unittests
 
-  # E2E 测试（真实 P2P 网络）
-  e2e-tests:
+  # 集成测试（真实 P2P 网络）
+  integration-tests:
     runs-on: ubuntu-latest
-    needs: lint-and-test
+    needs: unit-tests
     steps:
       - uses: actions/checkout@v4
       
@@ -63,99 +68,78 @@ jobs:
       - name: Build
         run: npm run build
       
-      - name: Run E2E tests
-        run: npm run test:e2e
+      - name: Run integration tests
+        run: npm run test:integration
         env:
           NODE_ENV: test
       
-      - name: Upload E2E test logs on failure
+      - name: Upload test logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-test-logs
+          name: integration-test-logs
           path: |
             ~/.f2a/logs/
             /tmp/f2a-*/
           retention-days: 7
 
-  # 集成测试（仅 push 触发，PR 时跳过但返回成功）
-  integration-tests:
+  # Docker 容器测试（仅 push 触发）
+  docker-tests:
     runs-on: ubuntu-latest
-    needs: e2e-tests
+    needs: integration-tests
+    if: github.event_name == 'push'
     steps:
-      - name: Skip on PR
-        if: github.event_name != 'push'
-        run: |
-          echo "Skipping integration tests on PR"
-          exit 0
-
       - uses: actions/checkout@v4
-        if: github.event_name == 'push'
-
+      
       - uses: actions/setup-node@v4
-        if: github.event_name == 'push'
         with:
           node-version: '22'
           cache: 'npm'
-
+      
       - name: Install dependencies
-        if: github.event_name == 'push'
         run: npm install
-
+      
       - name: Build
-        if: github.event_name == 'push'
         run: npm run build
-
-      - name: Run Docker integration tests
-        if: github.event_name == 'push'
+      
+      - name: Run Docker tests
         run: npm run test:docker
-
+      
       - name: Export logs on failure
-        if: failure() && github.event_name == 'push'
-        run: docker compose -f packages/core/tests/docker/docker-compose.test.yml logs > test-logs.txt
-
+        if: failure()
+        run: docker compose -f packages/core/tests/docker/docker-compose.test.yml logs > docker-test-logs.txt
+      
       - name: Upload logs on failure
-        if: failure() && github.event_name == 'push'
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-test-logs
-          path: test-logs.txt
-
+          name: docker-test-logs
+          path: docker-test-logs.txt
+      
       - name: Upload coverage
-        if: github.event_name == 'push'
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage/lcov.info
-          flags: integration
+          flags: docker
 
-  # 多节点测试（仅 main 分支 push 触发）
-  multi-node-tests:
+  # 压力测试（仅 main 分支 push 触发）
+  stress-tests:
     runs-on: ubuntu-latest
-    needs: integration-tests
+    needs: docker-tests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
-      - name: Skip on non-main
-        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-        run: |
-          echo "Skipping multi-node tests"
-          exit 0
-
       - uses: actions/checkout@v4
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
+      
       - uses: actions/setup-node@v4
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           node-version: '22'
           cache: 'npm'
-
+      
       - name: Install dependencies
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: npm install
-
+      
       - name: Build
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: npm run build
-
-      - name: Run 10-node test
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: npm run test:docker:10
+      
+      - name: Run 10-node stress test
+        run: npm run test:stress

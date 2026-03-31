@@ -8,15 +8,14 @@ RUN apk add --no-cache python3 make g++
 
 WORKDIR /app
 
-# 先复制所有文件（包括 tsconfig.json）
+# 复制整个 monorepo
 COPY . .
 
-# 安装所有依赖（包括 devDependencies）
-# 不使用 --ignore-scripts，因为 better-sqlite3 需要编译原生模块
+# 在根目录安装所有 workspace 依赖
 RUN npm install
 
-# 构建项目
-RUN npm run build
+# 构建 packages/core
+RUN npm run build -w @f2a/network
 
 # 运行集成测试
 CMD ["npm", "run", "test:integration"]

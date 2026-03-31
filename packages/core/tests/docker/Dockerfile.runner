@@ -8,14 +8,22 @@ RUN apk add --no-cache python3 make g++
 
 WORKDIR /app
 
-# 复制整个 monorepo
-COPY . .
+# 先复制 package.json 文件
+COPY package*.json ./
+COPY packages/core/package*.json ./packages/core/
 
-# 安装所有依赖（npm 会自动识别 workspaces）
+# 复制源代码
+COPY packages/core ./packages/core
+
+# 安装所有依赖
 RUN npm install
 
-# 构建 packages/core（直接进入目录构建）
-RUN cd packages/core && npm run build
+# 切换到 packages/core 目录并构建
+WORKDIR /app/packages/core
+RUN npm run build
+
+# 切换回主目录
+WORKDIR /app
 
 # 运行集成测试
 CMD ["npm", "run", "test:integration"]

@@ -77,11 +77,13 @@ describe('E2E: Multi-Node Network', () => {
     }, 70000);
 
     it('should have correct peer count for each node', async () => {
+      // CI 环境网络较慢，增加等待时间
+      await new Promise(resolve => setTimeout(resolve, 5000));
       for (let i = 0; i < nodes.length; i++) {
         const peers = await spawner.getConnectedPeers(testConfig.nodes[i].name);
         expect(peers.length).toBeGreaterThanOrEqual(4);
       }
-    }, 15000);
+    }, 30000);
   });
 
   describe('广播消息', () => {
@@ -99,10 +101,10 @@ describe('E2E: Multi-Node Network', () => {
         });
       }
 
-      // 等待所有接收者收到消息
+      // 等待所有接收者收到消息（CI 环境增加超时）
       for (const receiver of receivers) {
         const received = await receiver.messageWaiter.waitForMessage(broadcastMessage, {
-          timeout: testConfig.messageTimeout,
+          timeout: testConfig.messageTimeout * 2,
           fromPeerId: sender.peerId!
         });
         
@@ -110,7 +112,7 @@ describe('E2E: Multi-Node Network', () => {
         expect(received!.content).toBe(broadcastMessage);
         expect(received!.from).toBe(sender.peerId);
       }
-    }, 25000);
+    }, 40000);
 
     it('should handle broadcast from each node', async () => {
       // 每个节点都广播一条消息

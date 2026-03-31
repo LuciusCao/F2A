@@ -17,10 +17,9 @@
     "test": "npm run test --workspaces",
     "test:unit": "npm run test:unit --workspaces",
     "test:coverage": "npm run test:coverage --workspaces",
-    "test:integration": "npm run test:integration --workspaces",
-    "test:e2e": "npm run test:e2e -w @f2a/network",
+    "test:integration": "npm run test:integration -w @f2a/network",
     "test:docker": "npm run test:docker -w @f2a/network",
-    "test:docker:10": "npm run test:docker:10 -w @f2a/network",
+    "test:stress": "npm run test:stress -w @f2a/network",
     "test:all": "npm run test:all --workspaces",
     "test:ci": "npm run test:ci --workspaces"
   },

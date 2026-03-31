@@ -7,8 +7,8 @@ services:
   # 引导节点（稳定，其他节点连接它）
   bootstrap:
     build:
-      context: ../..
-      dockerfile: tests/docker/Dockerfile.node
+      context: ../../../..
+      dockerfile: packages/core/tests/docker/Dockerfile.node
     networks:
       f2a-test-net:
         aliases:
@@ -28,8 +28,8 @@ services:
   # 动态生成的节点（使用 --scale 参数调整数量）
   node:
     build:
-      context: ../..
-      dockerfile: tests/docker/Dockerfile.node
+      context: ../../../..
+      dockerfile: packages/core/tests/docker/Dockerfile.node
     networks:
       - f2a-test-net
     environment:
@@ -51,8 +51,8 @@ services:
   # 测试运行器
   test-runner:
     build:
-      context: ../..
-      dockerfile: tests/docker/Dockerfile.runner
+      context: ../../../..
+      dockerfile: packages/core/tests/docker/Dockerfile.runner
     networks:
       - f2a-test-net
     environment:
@@ -66,7 +66,7 @@ services:
       node:
         condition: service_healthy
     volumes:
-      - ../../coverage:/app/coverage  # 导出覆盖率报告
+      - ../../../../coverage:/app/coverage  # 导出覆盖率报告
 
 networks:
   f2a-test-net:

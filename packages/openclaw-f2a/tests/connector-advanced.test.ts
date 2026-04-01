@@ -723,19 +723,39 @@ describe('F2APlugin - 高级测试', () => {
 
     it('getTaskQueue 应该返回有效实例', () => {
       const queue = plugin.getTaskQueue();
-      
+
       expect(queue).toBeDefined();
       expect(typeof queue.getStats).toBe('function');
+      // P0-2 修复：补充实际行为验证
+      expect(typeof queue.add).toBe('function');
+      expect(typeof queue.get).toBe('function');
+      expect(typeof queue.complete).toBe('function');
     });
 
     it('任务队列统计应该有效', () => {
       const queue = plugin.getTaskQueue();
       const stats = queue.getStats();
-      
+
       expect(stats).toHaveProperty('pending');
       expect(stats).toHaveProperty('processing');
       expect(typeof stats.pending).toBe('number');
       expect(typeof stats.processing).toBe('number');
+      // P0-2 修复：补充实际行为验证
+      expect(stats.total).toBeDefined();
+      expect(typeof stats.total).toBe('number');
+      expect(stats.total).toBeGreaterThanOrEqual(0);
+    });
+
+    // P0-3 修复：添加 null 处理测试
+    it('getTaskQueue 未初始化时应该抛出错误', async () => {
+      const uninitializedPlugin = new F2APlugin();
+      // 不初始化，直接调用 - 根据 connector.ts 实现，未初始化时会抛出错误
+      expect(() => uninitializedPlugin.getTaskQueue()).toThrow('Not initialized');
+    });
+
+    it('getAnnouncementQueue 未初始化时应该抛出错误', async () => {
+      const uninitializedPlugin = new F2APlugin();
+      expect(() => uninitializedPlugin.getAnnouncementQueue()).toThrow('Not initialized');
     });
   });
 
@@ -790,8 +810,24 @@ describe('F2APlugin - 高级测试', () => {
 
     it('getAnnouncementQueue 应该返回有效实例', () => {
       const queue = plugin.getAnnouncementQueue();
-      
+
       expect(queue).toBeDefined();
+      // P0-2 修复：补充实际行为验证
+      expect(typeof queue.create).toBe('function');
+      expect(typeof queue.get).toBe('function');
+      expect(typeof queue.submitClaim).toBe('function');
+      expect(typeof queue.getStats).toBe('function');
+    });
+
+    // P0-2 修复：补充公告队列实际行为验证
+    it('公告队列统计应该有效', () => {
+      const queue = plugin.getAnnouncementQueue();
+      const stats = queue.getStats();
+
+      expect(stats).toBeDefined();
+      expect(typeof stats.total).toBe('number');
+      expect(typeof stats.open).toBe('number');
+      expect(stats.total).toBeGreaterThanOrEqual(0);
     });
   });
 });

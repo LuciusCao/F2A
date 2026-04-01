@@ -73,10 +73,15 @@ describe('F2AComponentRegistry', () => {
   describe('构造函数', () => {
     it('应该创建组件注册器实例', () => {
       expect(registry).toBeDefined();
+      // P0-2 修复：补充实际行为验证
+      expect(registry.nodeManager).toBeDefined();
+      expect(registry.networkClient).toBeDefined();
     });
 
     it('应该接受配置', () => {
       expect(registry).toBeDefined();
+      // P0-2 修复：补充实际行为验证
+      expect(registry.taskQueue).toBeDefined();
     });
 
     it('应该在没有 logger 的情况下工作', () => {
@@ -85,6 +90,8 @@ describe('F2AComponentRegistry', () => {
         nodeConfig: createTestNodeConfig(),
       });
       expect(noLoggerRegistry).toBeDefined();
+      // P0-2 修复：补充实际行为验证
+      expect(noLoggerRegistry.nodeManager).toBeDefined();
     });
   });
 
@@ -92,6 +99,9 @@ describe('F2AComponentRegistry', () => {
     it('应该懒加载节点管理器', () => {
       const nodeManager = registry.nodeManager;
       expect(nodeManager).toBeDefined();
+      // P0-2 修复：补充实际行为验证 - F2ANodeManager 有 getConfig 方法
+      expect(typeof nodeManager?.getConfig).toBe('function');
+      expect(typeof nodeManager?.isRunning).toBe('function');
     });
 
     it('应该返回同一个实例', () => {
@@ -105,6 +115,8 @@ describe('F2AComponentRegistry', () => {
     it('应该懒加载网络客户端', () => {
       const networkClient = registry.networkClient;
       expect(networkClient).toBeDefined();
+      // P0-2 修复：补充实际行为验证
+      expect(typeof networkClient?.discoverAgents).toBe('function');
     });
 
     it('应该返回同一个实例', () => {
@@ -118,6 +130,9 @@ describe('F2AComponentRegistry', () => {
     it('应该懒加载任务队列', () => {
       const taskQueue = registry.taskQueue;
       expect(taskQueue).toBeDefined();
+      // P0-2 修复：补充实际行为验证
+      expect(typeof taskQueue?.getStats).toBe('function');
+      expect(typeof taskQueue?.add).toBe('function');
     });
 
     it('应该返回同一个实例', () => {
@@ -131,6 +146,9 @@ describe('F2AComponentRegistry', () => {
     it('应该懒加载公告队列', () => {
       const announcementQueue = registry.announcementQueue;
       expect(announcementQueue).toBeDefined();
+      // P0-2 修复：补充实际行为验证
+      expect(typeof announcementQueue?.create).toBe('function');
+      expect(typeof announcementQueue?.getStats).toBe('function');
     });
 
     it('应该返回同一个实例', () => {
@@ -144,6 +162,8 @@ describe('F2AComponentRegistry', () => {
     it('应该懒加载信誉系统', () => {
       const reputationSystem = registry.reputationSystem;
       expect(reputationSystem).toBeDefined();
+      // P0-2 修复：补充实际行为验证
+      expect(typeof reputationSystem?.getReputation).toBe('function');
     });
 
     it('应该返回同一个实例', () => {
@@ -157,6 +177,8 @@ describe('F2AComponentRegistry', () => {
     it('应该懒加载能力检测器', () => {
       const capabilityDetector = registry.capabilityDetector;
       expect(capabilityDetector).toBeDefined();
+      // P0-2 修复：补充实际行为验证 - CapabilityDetector 有 getDefaultCapabilities 方法
+      expect(typeof capabilityDetector?.getDefaultCapabilities).toBe('function');
     });
 
     it('应该返回同一个实例', () => {
@@ -170,6 +192,8 @@ describe('F2AComponentRegistry', () => {
     it('应该懒加载联系人管理器', () => {
       const contactManager = registry.contactManager;
       expect(contactManager).toBeDefined();
+      // P0-2 修复：补充实际行为验证
+      expect(typeof contactManager?.getContacts).toBe('function');
     });
 
     it('应该返回同一个实例', () => {

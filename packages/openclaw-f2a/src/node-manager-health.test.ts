@@ -46,6 +46,11 @@ vi.mock('fs', () => ({
   writeFileSync: vi.fn(),
   unlinkSync: vi.fn(),
   statSync: vi.fn(() => ({ mtimeMs: Date.now() - 10000 })),
+  mkdirSync: vi.fn(),
+  rmSync: vi.fn(),
+  readdirSync: vi.fn(() => []),
+  copyFileSync: vi.fn(),
+  renameSync: vi.fn(),
 }));
 
 // Mock fetch

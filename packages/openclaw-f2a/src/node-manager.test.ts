@@ -15,13 +15,18 @@ vi.mock('child_process', () => ({
   })),
 }));
 
-// Mock fs
+// Mock fs - 完整 mock，包含所有需要的方法
 vi.mock('fs', () => ({
   existsSync: vi.fn(() => false),
   readFileSync: vi.fn(),
   writeFileSync: vi.fn(),
   unlinkSync: vi.fn(),
   statSync: vi.fn(() => ({ mtimeMs: Date.now() - 10000 })),
+  mkdirSync: vi.fn(),
+  rmSync: vi.fn(),
+  readdirSync: vi.fn(() => []),
+  copyFileSync: vi.fn(),
+  renameSync: vi.fn(),
 }));
 
 // Mock fetch

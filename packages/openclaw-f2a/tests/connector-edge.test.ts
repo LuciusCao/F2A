@@ -172,6 +172,9 @@ describe('F2APlugin - 边界情况测试', () => {
       // 应该返回相同的实例
       expect(queue1).toBe(queue2);
       expect(queue2).toBe(queue3);
+      // P0-2 修复：补充实际行为验证
+      expect(queue1?.getStats).toBeDefined();
+      expect(typeof queue1?.getStats).toBe('function');
     });
 
     it('应该处理并发 getReputationSystem 调用', async () => {

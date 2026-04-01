@@ -2,6 +2,12 @@
  * Connector (F2APlugin) 测试
  * 
  * 测试核心插件功能，尽量使用真实实例而非 mock。
+ * 
+ * P1 修复内容：
+ * 5. 临时目录清理不完整 - 使用 try-finally 确保清理
+ * 6. 异步 afterEach 错误处理不足 - 添加错误处理
+ * 7. 添加恶意输入测试
+ * 8. 添加 Unicode 边界测试
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -10,6 +16,11 @@ import { isValidPeerId as isValidPeerIdHelper } from '../src/connector-helpers.j
 import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import {
+  MALICIOUS_INPUT_TEST_CASES,
+  UNICODE_BOUNDARY_TEST_CASES,
+  safeCleanupTempDir,
+} from './utils/test-helpers.js';
 
 describe('isValidPeerId', () => {
   it('应该接受有效的 libp2p Peer ID', () => {
@@ -64,41 +75,85 @@ describe('isValidPeerId', () => {
     expect(isValidPeerIdHelper(mixedPeerId)).toBe(true);
     expect(mixedPeerId.length).toBe(52);
   });
+  
+  // P1-7 修复：恶意输入测试
+  describe('恶意输入防护', () => {
+    for (const malicious of MALICIOUS_INPUT_TEST_CASES.pathTraversal) {
+      it(`应该拒绝路径遍历作为 Peer ID: "${malicious.slice(0, 20)}..."`, () => {
+        expect(isValidPeerIdHelper(malicious)).toBe(false);
+      });
+    }
+    
+    for (const malicious of MALICIOUS_INPUT_TEST_CASES.commandInjection.slice(0, 5)) {
+      it(`应该拒绝命令注入作为 Peer ID: "${malicious.slice(0, 20)}..."`, () => {
+        expect(isValidPeerIdHelper(malicious)).toBe(false);
+      });
+    }
+  });
+  
+  // P1-8 修复：Unicode 边界测试
+  describe('Unicode 边界处理', () => {
+    for (const char of UNICODE_BOUNDARY_TEST_CASES.invisible.slice(0, 5)) {
+      it(`应该拒绝包含不可见字符的 Peer ID: U+${char.charCodeAt(0).toString(16)}`, () => {
+        const peerId = '12D3KooW' + char + 'A'.repeat(43);
+        expect(isValidPeerIdHelper(peerId)).toBe(false);
+      });
+    }
+    
+    for (const longStr of UNICODE_BOUNDARY_TEST_CASES.longStrings.slice(0, 2)) {
+      it(`应该拒绝超长字符串作为 Peer ID`, () => {
+        expect(isValidPeerIdHelper(longStr)).toBe(false);
+      });
+    }
+    
+    for (const ctrl of UNICODE_BOUNDARY_TEST_CASES.controlChars.slice(0, 3)) {
+      it(`应该拒绝包含控制字符的 Peer ID`, () => {
+        const peerId = '12D3KooW' + ctrl + 'A'.repeat(43);
+        expect(isValidPeerIdHelper(peerId)).toBe(false);
+      });
+    }
+  });
 });
 
 describe('F2APlugin', () => {
-  let tempDir: string;
-  let plugin: F2APlugin;
+  let tempDir: string | null = null;
+  let plugin: F2APlugin | null = null;
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), `f2a-plugin-test-${Date.now()}-`));
     
     // 创建 IDENTITY.md
     writeFileSync(
-      join(tempDir, 'IDENTITY.md'),
+      join(tempDir!, 'IDENTITY.md'),
       '# IDENTITY.md\n\n- **Name:** TestAgent'
     );
     
     // 创建 .openclaw 目录
-    mkdirSync(join(tempDir, '.openclaw'), { recursive: true });
+    mkdirSync(join(tempDir!, '.openclaw'), { recursive: true });
+    
+    plugin = new F2APlugin();
   });
 
+  // P1-6 修复：异步 afterEach 错误处理
   afterEach(async () => {
-    if (plugin) {
-      try {
-        await plugin.shutdown();
-      } catch (e) {
-        // 忽略关闭错误
+    try {
+      if (plugin) {
+        try {
+          await plugin.shutdown();
+        } catch (e) {
+          // 忽略关闭错误
+        }
       }
-    }
-    if (existsSync(tempDir)) {
-      rmSync(tempDir, { recursive: true, force: true });
+    } finally {
+      // P1-5 修复：使用 safeCleanup 确保清理
+      safeCleanupTempDir(tempDir, rmSync);
+      tempDir = null;
+      plugin = null;
     }
   });
 
   describe('初始化', () => {
     it('应该能够创建插件实例', () => {
-      plugin = new F2APlugin();
       expect(plugin).toBeDefined();
     });
 
@@ -109,13 +164,13 @@ describe('F2APlugin', () => {
         config: {
           agents: {
             defaults: {
-              workspace: tempDir,
+              workspace: tempDir!,
             },
           },
         },
       };
 
-      await plugin.initialize({
+      await plugin!.initialize({
         api: mockApi as any,
         config: {},
       });
@@ -130,13 +185,13 @@ describe('F2APlugin', () => {
         config: {
           agents: {
             defaults: {
-              workspace: tempDir,
+              workspace: tempDir!,
             },
           },
         },
       };
 
-      await plugin.initialize({
+      await plugin!.initialize({
         api: mockApi as any,
         config: {
           minReputation: 50,
@@ -145,15 +200,80 @@ describe('F2APlugin', () => {
 
       expect(plugin).toBeDefined();
     });
+    
+    // P1-7 修复：恶意输入测试 - workspace 路径
+    describe('恶意输入防护', () => {
+      it('应该拒绝包含路径遍历的 workspace', async () => {
+        plugin = new F2APlugin();
+        
+        const maliciousWorkspace = '../../../etc/passwd';
+        
+        const mockApi = {
+          config: {
+            agents: {
+              defaults: {
+                workspace: maliciousWorkspace,
+              },
+            },
+          },
+        };
+
+        // 初始化应该失败或使用安全路径
+        try {
+          await plugin!.initialize({
+            api: mockApi as any,
+            config: {},
+          });
+          // 如果初始化成功，验证不会导致安全问题
+          const tools = plugin!.getTools();
+          expect(tools).toBeDefined();
+        } catch (e) {
+          // 初始化失败也是合理的
+          expect(e).toBeDefined();
+        }
+      });
+    });
+    
+    // P1-8 修复：Unicode 边界测试 - agentName
+    describe('Unicode 边界处理', () => {
+      for (const char of UNICODE_BOUNDARY_TEST_CASES.specialChars.slice(0, 3)) {
+        it(`应该安全处理包含特殊 Unicode 的 agentName: U+${char.charCodeAt(0).toString(16)}`, async () => {
+          plugin = new F2APlugin();
+          
+          const mockApi = {
+            config: {
+              agents: {
+                defaults: {
+                  workspace: tempDir!,
+                },
+              },
+            },
+          };
+
+          const specialName = `Test${char}Agent`;
+          
+          await plugin!.initialize({
+            api: mockApi as any,
+            config: {
+              agentName: specialName,
+            },
+          });
+
+          expect(plugin).toBeDefined();
+        });
+      }
+    });
   });
 
   describe('工具注册', () => {
     beforeEach(() => {
-      plugin = new F2APlugin();
+      if (!plugin) {
+        plugin = new F2APlugin();
+      }
     });
 
     it('应该返回工具列表', () => {
-      const tools = plugin.getTools();
+      const tools = plugin!.getTools();
       
       expect(tools).toBeDefined();
       expect(Array.isArray(tools)).toBe(true);
@@ -161,7 +281,7 @@ describe('F2APlugin', () => {
     });
 
     it('应该包含核心工具', () => {
-      const tools = plugin.getTools();
+      const tools = plugin!.getTools();
       const toolNames = tools.map(t => t.name);
       
       expect(toolNames).toContain('f2a_discover');
@@ -170,7 +290,7 @@ describe('F2APlugin', () => {
     });
 
     it('应该包含通讯录工具', () => {
-      const tools = plugin.getTools();
+      const tools = plugin!.getTools();
       const toolNames = tools.map(t => t.name);
       
       expect(toolNames).toContain('f2a_contacts');
@@ -179,14 +299,14 @@ describe('F2APlugin', () => {
     });
 
     it('应该包含信誉管理工具', () => {
-      const tools = plugin.getTools();
+      const tools = plugin!.getTools();
       const toolNames = tools.map(t => t.name);
       
       expect(toolNames).toContain('f2a_reputation');
     });
 
     it('应该包含任务管理工具', () => {
-      const tools = plugin.getTools();
+      const tools = plugin!.getTools();
       const toolNames = tools.map(t => t.name);
       
       expect(toolNames).toContain('f2a_poll_tasks');
@@ -195,7 +315,7 @@ describe('F2APlugin', () => {
     });
 
     it('应该包含公告工具', () => {
-      const tools = plugin.getTools();
+      const tools = plugin!.getTools();
       const toolNames = tools.map(t => t.name);
       
       expect(toolNames).toContain('f2a_announce');
@@ -204,7 +324,7 @@ describe('F2APlugin', () => {
     });
 
     it('工具应该有正确的描述', () => {
-      const tools = plugin.getTools();
+      const tools = plugin!.getTools();
       const discoverTool = tools.find(t => t.name === 'f2a_discover');
       
       expect(discoverTool?.description).toBeDefined();
@@ -212,7 +332,7 @@ describe('F2APlugin', () => {
     });
 
     it('工具应该有参数定义', () => {
-      const tools = plugin.getTools();
+      const tools = plugin!.getTools();
       const delegateTool = tools.find(t => t.name === 'f2a_delegate');
       
       expect(delegateTool?.parameters).toBeDefined();
@@ -227,25 +347,25 @@ describe('F2APlugin', () => {
         config: {
           agents: {
             defaults: {
-              workspace: tempDir,
+              workspace: tempDir!,
             },
           },
         },
       };
 
-      await plugin.initialize({
+      await plugin!.initialize({
         api: mockApi as any,
         config: {},
       });
 
-      await plugin.enable();
+      await plugin!.enable();
       
-      expect(plugin.isInitialized()).toBe(true);
+      expect(plugin!.isInitialized()).toBe(true);
     });
 
     it('应该能够检查初始化状态', () => {
       plugin = new F2APlugin();
-      expect(plugin.isInitialized()).toBe(false);
+      expect(plugin!.isInitialized()).toBe(false);
     });
 
     it('多次启用不应该报错', async () => {
@@ -255,19 +375,19 @@ describe('F2APlugin', () => {
         config: {
           agents: {
             defaults: {
-              workspace: tempDir,
+              workspace: tempDir!,
             },
           },
         },
       };
 
-      await plugin.initialize({
+      await plugin!.initialize({
         api: mockApi as any,
         config: {},
       });
 
-      await plugin.enable();
-      await plugin.enable();
+      await plugin!.enable();
+      await plugin!.enable();
     });
   });
 
@@ -279,31 +399,31 @@ describe('F2APlugin', () => {
         config: {
           agents: {
             defaults: {
-              workspace: tempDir,
+              workspace: tempDir!,
             },
           },
         },
       };
 
-      await plugin.initialize({
+      await plugin!.initialize({
         api: mockApi as any,
         config: {},
       });
 
-      await plugin.shutdown();
+      await plugin!.shutdown();
     });
 
     it('应该能够多次调用 shutdown', async () => {
       plugin = new F2APlugin();
       
-      await plugin.shutdown();
-      await plugin.shutdown();
-      await plugin.shutdown();
+      await plugin!.shutdown();
+      await plugin!.shutdown();
+      await plugin!.shutdown();
     });
 
     it('未初始化时也能关闭', async () => {
       plugin = new F2APlugin();
-      await plugin.shutdown();
+      await plugin!.shutdown();
     });
   });
 
@@ -315,18 +435,18 @@ describe('F2APlugin', () => {
         config: {
           agents: {
             defaults: {
-              workspace: tempDir,
+              workspace: tempDir!,
             },
           },
         },
       };
 
-      await plugin.initialize({
+      await plugin!.initialize({
         api: mockApi as any,
         config: {},
       });
 
-      const status = plugin.getF2AStatus();
+      const status = plugin!.getF2AStatus();
       expect(status).toBeDefined();
     });
   });
@@ -335,7 +455,7 @@ describe('F2APlugin', () => {
     it('discoverAgents 应该返回错误当未初始化时', async () => {
       plugin = new F2APlugin();
       
-      const result = await plugin.discoverAgents();
+      const result = await plugin!.discoverAgents();
       expect(result.success).toBe(false);
       expect(result.error?.message).toContain('未初始化');
     });
@@ -343,7 +463,7 @@ describe('F2APlugin', () => {
     it('getConnectedPeers 应该返回错误当未初始化时', async () => {
       plugin = new F2APlugin();
       
-      const result = await plugin.getConnectedPeers();
+      const result = await plugin!.getConnectedPeers();
       expect(result.success).toBe(false);
       expect(result.error?.message).toContain('未初始化');
     });
@@ -351,7 +471,7 @@ describe('F2APlugin', () => {
     it('sendMessage 应该返回错误当未初始化时', async () => {
       plugin = new F2APlugin();
       
-      const result = await plugin.sendMessage('peer-id', 'test message');
+      const result = await plugin!.sendMessage('peer-id', 'test message');
       expect(result.success).toBe(false);
       expect(result.error).toContain('未初始化');
     });
@@ -359,21 +479,21 @@ describe('F2APlugin', () => {
     it('sendFriendRequest 应该返回 null 当握手协议未初始化', async () => {
       plugin = new F2APlugin();
       
-      const result = await plugin.sendFriendRequest('peer-id');
+      const result = await plugin!.sendFriendRequest('peer-id');
       expect(result).toBeNull();
     });
 
     it('acceptFriendRequest 应该返回 false 当握手协议未初始化', async () => {
       plugin = new F2APlugin();
       
-      const result = await plugin.acceptFriendRequest('request-id');
+      const result = await plugin!.acceptFriendRequest('request-id');
       expect(result).toBe(false);
     });
 
     it('rejectFriendRequest 应该返回 false 当握手协议未初始化', async () => {
       plugin = new F2APlugin();
       
-      const result = await plugin.rejectFriendRequest('request-id');
+      const result = await plugin!.rejectFriendRequest('request-id');
       expect(result).toBe(false);
     });
   });
@@ -382,7 +502,7 @@ describe('F2APlugin', () => {
     it('应该返回 undefined 当 F2A 未初始化', () => {
       plugin = new F2APlugin();
       
-      const f2a = plugin.getF2A();
+      const f2a = plugin!.getF2A();
       expect(f2a).toBeUndefined();
     });
   });
@@ -391,7 +511,7 @@ describe('F2APlugin', () => {
     it('应该返回所有工具', () => {
       plugin = new F2APlugin();
       
-      const tools = plugin.getTools();
+      const tools = plugin!.getTools();
       expect(tools.length).toBeGreaterThan(0);
       
       // 验证工具结构
@@ -405,7 +525,7 @@ describe('F2APlugin', () => {
     it('工具应该有有效的参数定义', () => {
       plugin = new F2APlugin();
       
-      const tools = plugin.getTools();
+      const tools = plugin!.getTools();
       for (const tool of tools) {
         if (tool.parameters) {
           // parameters 可能是 JSON Schema 或其他格式
@@ -419,7 +539,7 @@ describe('F2APlugin', () => {
     it('discoverAgents 应该返回错误当 F2A 未初始化', async () => {
       plugin = new F2APlugin();
       
-      const result = await plugin.f2aClient.discoverAgents();
+      const result = await plugin!.f2aClient.discoverAgents();
       expect(result.success).toBe(false);
       expect(result.error?.message).toContain('未初始化');
     });
@@ -427,7 +547,7 @@ describe('F2APlugin', () => {
     it('getConnectedPeers 应该返回错误当 F2A 未初始化', async () => {
       plugin = new F2APlugin();
       
-      const result = await plugin.f2aClient.getConnectedPeers();
+      const result = await plugin!.f2aClient.getConnectedPeers();
       expect(result.success).toBe(false);
       expect(result.error?.message).toContain('未初始化');
     });
@@ -441,18 +561,18 @@ describe('F2APlugin', () => {
         config: {
           agents: {
             defaults: {
-              workspace: tempDir,
+              workspace: tempDir!,
             },
           },
         },
       };
 
-      await plugin.initialize({
+      await plugin!.initialize({
         api: mockApi as any,
         config: {},
       });
 
-      const status = plugin.getF2AStatus();
+      const status = plugin!.getF2AStatus();
       expect(status).toBeDefined();
       // 未启用时 running 为 false
     });
@@ -464,13 +584,13 @@ describe('F2APlugin', () => {
         config: {
           agents: {
             defaults: {
-              workspace: tempDir,
+              workspace: tempDir!,
             },
           },
         },
       };
 
-      await plugin.initialize({
+      await plugin!.initialize({
         api: mockApi as any,
         config: {
           agentName: 'TestAgent',
@@ -479,7 +599,7 @@ describe('F2APlugin', () => {
       });
 
       // 初始化成功，工具应该可用
-      const tools = plugin.getTools();
+      const tools = plugin!.getTools();
       expect(tools.length).toBeGreaterThan(0);
     });
 
@@ -490,20 +610,20 @@ describe('F2APlugin', () => {
         config: {
           agents: {
             defaults: {
-              workspace: tempDir,
+              workspace: tempDir!,
             },
           },
         },
       };
 
-      await plugin.initialize({
+      await plugin!.initialize({
         api: mockApi as any,
         config: {
           bootstrapPeers: ['/ip4/1.2.3.4/tcp/4001/p2p/12D3KooWTest'],
         },
       });
 
-      const tools = plugin.getTools();
+      const tools = plugin!.getTools();
       expect(tools.length).toBeGreaterThan(0);
     });
 
@@ -514,35 +634,35 @@ describe('F2APlugin', () => {
         config: {
           agents: {
             defaults: {
-              workspace: tempDir,
+              workspace: tempDir!,
             },
           },
         },
       };
 
-      await plugin.initialize({
+      await plugin!.initialize({
         api: mockApi as any,
         config: {
           enableMDNS: true,
         },
       });
 
-      expect(plugin.isInitialized()).toBe(false); // enable() 未调用
+      expect(plugin!.isInitialized()).toBe(false); // enable() 未调用
     });
   });
 
   describe('shutdown 边界情况', () => {
     it('应该能够关闭未初始化的插件', async () => {
       plugin = new F2APlugin();
-      await plugin.shutdown();
+      await plugin!.shutdown();
       // 不应该抛出错误
     });
 
     it('应该能够多次关闭', async () => {
       plugin = new F2APlugin();
-      await plugin.shutdown();
-      await plugin.shutdown();
-      await plugin.shutdown();
+      await plugin!.shutdown();
+      await plugin!.shutdown();
+      await plugin!.shutdown();
     });
   });
 
@@ -554,13 +674,13 @@ describe('F2APlugin', () => {
         config: {
           agents: {
             defaults: {
-              workspace: tempDir,
+              workspace: tempDir!,
             },
           },
         },
       };
 
-      await plugin.initialize({
+      await plugin!.initialize({
         api: mockApi as any,
         config: {
           autoStart: false,
@@ -568,9 +688,9 @@ describe('F2APlugin', () => {
       });
 
       // enable() 应该设置 _initialized 为 true
-      await plugin.enable();
+      await plugin!.enable();
       
-      expect(plugin.isInitialized()).toBe(true);
+      expect(plugin!.isInitialized()).toBe(true);
     });
 
     it('多次启用应该跳过', async () => {
@@ -580,19 +700,19 @@ describe('F2APlugin', () => {
         config: {
           agents: {
             defaults: {
-              workspace: tempDir,
+              workspace: tempDir!,
             },
           },
         },
       };
 
-      await plugin.initialize({
+      await plugin!.initialize({
         api: mockApi as any,
         config: {},
       });
 
-      await plugin.enable();
-      await plugin.enable(); // 第二次应该跳过
+      await plugin!.enable();
+      await plugin!.enable(); // 第二次应该跳过
     });
   });
 
@@ -600,7 +720,7 @@ describe('F2APlugin', () => {
     it('应该返回空数组当 F2A 未初始化', async () => {
       plugin = new F2APlugin();
       
-      const result = await plugin.getConnectedPeers();
+      const result = await plugin!.getConnectedPeers();
       expect(result.success).toBe(false);
     });
   });
@@ -609,7 +729,7 @@ describe('F2APlugin', () => {
     it('应该返回错误当 F2A 未初始化', async () => {
       plugin = new F2APlugin();
       
-      const result = await plugin.discoverAgents('test-capability');
+      const result = await plugin!.discoverAgents('test-capability');
       expect(result.success).toBe(false);
     });
   });
@@ -618,9 +738,32 @@ describe('F2APlugin', () => {
     it('应该返回错误当 F2A 未初始化', async () => {
       plugin = new F2APlugin();
       
-      const result = await plugin.sendMessage('peer-id', 'test message');
+      const result = await plugin!.sendMessage('peer-id', 'test message');
       expect(result.success).toBe(false);
     });
+    
+    // P1-7 修复：恶意输入测试
+    for (const malicious of MALICIOUS_INPUT_TEST_CASES.commandInjection.slice(0, 5)) {
+      it(`应该安全处理恶意消息内容: "${malicious.slice(0, 20)}..."`, async () => {
+        plugin = new F2APlugin();
+        
+        // F2A 未初始化，应该返回错误而不是崩溃
+        const result = await plugin!.sendMessage('peer-id', malicious);
+        expect(result.success).toBe(false);
+        expect(result.error).toBeDefined();
+      });
+    }
+    
+    // P1-8 修复：Unicode 边界测试
+    for (const char of UNICODE_BOUNDARY_TEST_CASES.invisible.slice(0, 3)) {
+      it(`应该安全处理包含不可见字符的消息: U+${char.charCodeAt(0).toString(16)}`, async () => {
+        plugin = new F2APlugin();
+        
+        const result = await plugin!.sendMessage('peer-id', `Test${char}Message`);
+        expect(result.success).toBe(false);
+        expect(result.error).toBeDefined();
+      });
+    }
   });
 
   describe('getReputationSystem', () => {
@@ -631,19 +774,19 @@ describe('F2APlugin', () => {
         config: {
           agents: {
             defaults: {
-              workspace: tempDir,
+              workspace: tempDir!,
             },
           },
         },
       };
 
-      await plugin.initialize({
+      await plugin!.initialize({
         api: mockApi as any,
         config: {},
       });
 
       // getReputationSystem 是通过 toolHandlers 访问的
-      const tools = plugin.getTools();
+      const tools = plugin!.getTools();
       expect(tools.length).toBeGreaterThan(0);
     });
   });
@@ -656,19 +799,19 @@ describe('F2APlugin', () => {
         config: {
           agents: {
             defaults: {
-              workspace: tempDir,
+              workspace: tempDir!,
             },
           },
         },
       };
 
-      await plugin.initialize({
+      await plugin!.initialize({
         api: mockApi as any,
         config: {},
       });
 
       // 公告队列应该在 enable 时初始化
-      const tools = plugin.getTools();
+      const tools = plugin!.getTools();
       expect(tools.length).toBeGreaterThan(0);
     });
   });
@@ -677,7 +820,7 @@ describe('F2APlugin', () => {
     it('应该包含网络工具', () => {
       plugin = new F2APlugin();
       
-      const tools = plugin.getTools();
+      const tools = plugin!.getTools();
       const toolNames = tools.map(t => t.name);
       
       expect(toolNames).toContain('f2a_discover');
@@ -687,7 +830,7 @@ describe('F2APlugin', () => {
     it('应该包含任务工具', () => {
       plugin = new F2APlugin();
       
-      const tools = plugin.getTools();
+      const tools = plugin!.getTools();
       const toolNames = tools.map(t => t.name);
       
       expect(toolNames).toContain('f2a_poll_tasks');

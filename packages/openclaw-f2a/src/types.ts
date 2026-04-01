@@ -52,6 +52,7 @@ export interface PluginInternalAccess {
   f2aClient?: any;
   nodeManager?: any;
   getF2AStatus?: () => any;
+  getF2A?: () => any;
   reviewCommittee?: any;
 }
 

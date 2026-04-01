@@ -28,6 +28,9 @@ describe('AnnouncementQueue', () => {
   describe('基本操作', () => {
     it('应该能够创建队列', () => {
       expect(queue).toBeDefined();
+      // P0-2 修复：补充实际行为验证
+      expect(queue.getStats()).toBeDefined();
+      expect(queue.getStats().total).toBe(0);
     });
 
     it('应该能够创建广播', () => {
@@ -40,6 +43,13 @@ describe('AnnouncementQueue', () => {
       expect(announcement).toBeDefined();
       expect(announcement.announcementId).toBeDefined();
       expect(announcement.status).toBe('open');
+      // P0-2 修复：补充实际行为验证
+      expect(announcement.taskType).toBe('test');
+      expect(announcement.description).toBe('Test task');
+      expect(announcement.from).toBe('test-peer');
+      // AnnouncementQueue 使用 timestamp 而非 createdAt
+      expect(announcement.timestamp).toBeDefined();
+      expect(announcement.timestamp).toBeGreaterThan(0);
     });
 
     it('应该能够获取广播', () => {
@@ -262,6 +272,117 @@ describe('AnnouncementQueue', () => {
         // 广播可能被清理
         expect(stats).toBeDefined();
       }, 150);
+    });
+  });
+
+  // P1-5 修复：并发认领测试
+  describe('并发安全', () => {
+    it('应该处理多个 Agent 同时认领同一广播', async () => {
+      const announcement = queue.create({
+        taskType: 'test',
+        description: 'Concurrent Claim Test',
+        from: 'peer-1',
+      });
+
+      // 多个 Agent 同时认领
+      const claimPromises = Array.from({ length: 5 }, (_, i) =>
+        Promise.resolve(queue.submitClaim(announcement.announcementId, {
+          claimant: `claimant-${i}`,
+          confidence: 0.8,
+          estimatedTime: 1000,
+        }))
+      );
+
+      const claims = await Promise.all(claimPromises);
+
+      // 所有认领应该成功（pending 状态）
+      const successfulClaims = claims.filter(c => c !== null);
+      expect(successfulClaims.length).toBe(5);
+
+      // 验证广播有正确的认领列表
+      const retrieved = queue.get(announcement.announcementId);
+      expect(retrieved?.claims?.length).toBe(5);
+
+      // 每个认领者应该不同
+      const claimants = retrieved?.claims?.map(c => c.claimant);
+      const uniqueClaimants = new Set(claimants);
+      expect(uniqueClaimants.size).toBe(5);
+    });
+
+    it('应该只允许接受一个认领', async () => {
+      const announcement = queue.create({
+        taskType: 'test',
+        description: 'Single Accept Test',
+        from: 'peer-1',
+      });
+
+      // 提交多个认领
+      const claims = [
+        queue.submitClaim(announcement.announcementId, { claimant: 'claimant-1' }),
+        queue.submitClaim(announcement.announcementId, { claimant: 'claimant-2' }),
+        queue.submitClaim(announcement.announcementId, { claimant: 'claimant-3' }),
+      ];
+
+      // 接受第一个认领
+      const accepted = queue.acceptClaim(announcement.announcementId, claims[0]!.claimId);
+      expect(accepted).toBeDefined();
+      expect(accepted?.status).toBe('accepted');
+
+      // 广播状态应该变为 claimed
+      const retrieved = queue.get(announcement.announcementId);
+      expect(retrieved?.status).toBe('claimed');
+
+      // 再次接受其他认领应该失败或返回 null
+      const secondAccept = queue.acceptClaim(announcement.announcementId, claims[1]!.claimId);
+      expect(secondAccept).toBeNull();
+    });
+
+    it('应该处理并发接受和拒绝认领', async () => {
+      const announcement = queue.create({
+        taskType: 'test',
+        description: 'Concurrent Accept/Reject Test',
+        from: 'peer-1',
+      });
+
+      const claim1 = queue.submitClaim(announcement.announcementId, { claimant: 'claimant-1' });
+      const claim2 = queue.submitClaim(announcement.announcementId, { claimant: 'claimant-2' });
+
+      // 并发接受和拒绝
+      const results = await Promise.all([
+        Promise.resolve(queue.acceptClaim(announcement.announcementId, claim1!.claimId)),
+        Promise.resolve(queue.rejectClaim(announcement.announcementId, claim2!.claimId)),
+      ]);
+
+      // 接受应该成功
+      expect(results[0]).toBeDefined();
+      expect(results[0]?.status).toBe('accepted');
+
+      // 拒绝也应该成功（即使广播已被接受）
+      expect(results[1]).toBeDefined();
+      expect(results[1]?.status).toBe('rejected');
+
+      // 最终状态应该是 claimed
+      const retrieved = queue.get(announcement.announcementId);
+      expect(retrieved?.status).toBe('claimed');
+    });
+
+    it('应该拒绝已关闭广播的认领', async () => {
+      const announcement = queue.create({
+        taskType: 'test',
+        description: 'Closed Broadcast Test',
+        from: 'peer-1',
+      });
+
+      // 先接受一个认领，关闭广播
+      const claim = queue.submitClaim(announcement.announcementId, { claimant: 'claimant-1' });
+      queue.acceptClaim(announcement.announcementId, claim!.claimId);
+
+      // 尝试认领已关闭的广播
+      const lateClaim = queue.submitClaim(announcement.announcementId, {
+        claimant: 'late-claimant',
+      });
+
+      expect(lateClaim).toBeNull();
     });
   });
 });

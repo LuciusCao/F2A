@@ -11,59 +11,43 @@ import { FriendStatus } from '../src/contact-types.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-
-// Mock F2APluginPublicInterface
-const createMockPlugin = (contactManager: ContactManager, handshakeProtocol?: any, f2a?: any) => {
-  const defaultF2A = handshakeProtocol ? {
-    getConnectedPeers: () => [],
-    peerId: '12D3KooWTestPeerId12345678901234567890123456789012345678',
-  } : undefined;
-  
-  return {
-    // F2APluginPublicInterface 方法
-    getConfig: () => ({}),
-    getApi: () => undefined,
-    getNetworkClient: () => null,
-    getReputationSystem: () => null,
-    getNodeManager: () => null,
-    getTaskQueue: () => null,
-    getAnnouncementQueue: () => null,
-    getReviewCommittee: () => undefined,
-    getContactManager: () => contactManager,
-    getHandshakeProtocol: () => handshakeProtocol,
-    getF2AStatus: () => ({ 
-      running: !!(f2a ?? defaultF2A), 
-      peerId: f2a?.peerId ?? defaultF2A?.peerId 
-    }),
-    getF2A: () => f2a ?? defaultF2A,
-    discoverAgents: async () => ({ success: false, error: { message: 'Not implemented' } }),
-    getConnectedPeers: async () => ({ success: false, error: { message: 'Not implemented' } }),
-    sendMessage: async () => ({ success: false, error: 'Not implemented' }),
-    // P1-3 修复：添加握手协议方法
-    sendFriendRequest: async (peerId: string, message?: string) => {
-      return handshakeProtocol?.sendFriendRequest?.(peerId, message) ?? null;
-    },
-    acceptFriendRequest: async (requestId: string) => {
-      return handshakeProtocol?.acceptRequest?.(requestId) ?? false;
-    },
-    rejectFriendRequest: async (requestId: string, reason?: string) => {
-      return handshakeProtocol?.rejectRequest?.(requestId, reason) ?? false;
-    },
-    // 兼容旧的直接属性访问
-    contactManager,
-    _handshakeProtocol: handshakeProtocol,
-    _f2a: f2a ?? defaultF2A,
-  };
-};
+import { createMockPlugin, generatePeerId } from './utils/test-helpers.js';
 
 // Mock SessionContext
 const mockContext = {} as any;
 
-// 生成符合格式的 Peer ID（12D3KooW + 44 个 base58 字符）
-const generatePeerId = (suffix: string) => {
-  const padded = suffix.padEnd(44, 'A').slice(0, 44);
-  return `12D3KooW${padded}`;
-};
+/**
+ * P1-3 修复：创建带自定义 handshakeProtocol 和 f2a 的 mock plugin
+ * 使用 test-helpers.ts 的 createMockPlugin 作为基础，然后覆盖特定方法
+ */
+function createMockPluginWithExtras(
+  contactManager: ContactManager,
+  handshakeProtocol?: any,
+  f2a?: any
+) {
+  const mockPlugin = createMockPlugin();
+  mockPlugin.getContactManager = () => contactManager;
+  
+  if (handshakeProtocol) {
+    mockPlugin.getHandshakeProtocol = () => handshakeProtocol;
+    mockPlugin.sendFriendRequest = async (peerId: string, message?: string) => {
+      return handshakeProtocol?.sendFriendRequest?.(peerId, message) ?? null;
+    };
+    mockPlugin.acceptFriendRequest = async (requestId: string) => {
+      return handshakeProtocol?.acceptRequest?.(requestId) ?? false;
+    };
+    mockPlugin.rejectFriendRequest = async (requestId: string, reason?: string) => {
+      return handshakeProtocol?.rejectRequest?.(requestId, reason) ?? false;
+    };
+  }
+  
+  if (f2a) {
+    mockPlugin.getF2A = () => f2a;
+    mockPlugin.getF2AStatus = () => ({ running: true, peerId: f2a.peerId });
+  }
+  
+  return mockPlugin;
+}
 
 describe('ContactToolHandlers', () => {
   let tempDir: string;
@@ -73,7 +57,10 @@ describe('ContactToolHandlers', () => {
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'f2a-contact-test-'));
     contactManager = new ContactManager(tempDir);
-    const mockPlugin = createMockPlugin(contactManager);
+    // P1-3 修复：使用 test-helpers.ts 的 createMockPlugin
+    const mockPlugin = createMockPlugin();
+    // 覆盖 getContactManager 返回我们的测试实例
+    mockPlugin.getContactManager = () => contactManager;
     handlers = new ContactToolHandlers(mockPlugin as any);
   });
 
@@ -397,7 +384,7 @@ describe('ContactToolHandlers', () => {
         },
       };
 
-      const mockPlugin = createMockPlugin(contactManager, mockHandshakeProtocol);
+      const mockPlugin = createMockPluginWithExtras(contactManager, mockHandshakeProtocol);
       const handlersWithMock = new ContactToolHandlers(mockPlugin as any);
 
       const peerId = generatePeerId('TargetSuccess');
@@ -425,7 +412,7 @@ describe('ContactToolHandlers', () => {
         sendFriendRequest: async () => null,
       };
 
-      const mockPlugin = createMockPlugin(contactManager, mockHandshakeProtocol, mockF2A);
+      const mockPlugin = createMockPluginWithExtras(contactManager, mockHandshakeProtocol, mockF2A);
       const handlersWithMock = new ContactToolHandlers(mockPlugin as any);
 
       // 传入截断的无效 ID
@@ -444,7 +431,7 @@ describe('ContactToolHandlers', () => {
         sendFriendRequest: async () => null, // 返回 null 表示失败
       };
 
-      const mockPlugin = createMockPlugin(contactManager, mockHandshakeProtocol);
+      const mockPlugin = createMockPluginWithExtras(contactManager, mockHandshakeProtocol);
       const handlersWithMock = new ContactToolHandlers(mockPlugin as any);
 
       const peerId = generatePeerId('TargetFail');
@@ -488,7 +475,7 @@ describe('ContactToolHandlers', () => {
         acceptRequest: async (requestId: string) => requestId === 'req-accept-test',
       };
 
-      const mockPlugin = createMockPlugin(contactManager, mockHandshakeProtocol);
+      const mockPlugin = createMockPluginWithExtras(contactManager, mockHandshakeProtocol);
       const handlersWithMock = new ContactToolHandlers(mockPlugin as any);
 
       const result = await handlersWithMock.handlePendingRequests(
@@ -515,7 +502,7 @@ describe('ContactToolHandlers', () => {
         rejectRequest: async (requestId: string, reason?: string) => requestId === 'req-reject-test',
       };
 
-      const mockPlugin = createMockPlugin(contactManager, mockHandshakeProtocol);
+      const mockPlugin = createMockPluginWithExtras(contactManager, mockHandshakeProtocol);
       const handlersWithMock = new ContactToolHandlers(mockPlugin as any);
 
       const result = await handlersWithMock.handlePendingRequests(
@@ -533,7 +520,7 @@ describe('ContactToolHandlers', () => {
         acceptRequest: async () => false, // 返回 false 表示失败
       };
 
-      const mockPlugin = createMockPlugin(contactManager, mockHandshakeProtocol);
+      const mockPlugin = createMockPluginWithExtras(contactManager, mockHandshakeProtocol);
       const handlersWithMock = new ContactToolHandlers(mockPlugin as any);
 
       const result = await handlersWithMock.handlePendingRequests(
@@ -551,7 +538,7 @@ describe('ContactToolHandlers', () => {
         rejectRequest: async () => false, // 返回 false 表示失败
       };
 
-      const mockPlugin = createMockPlugin(contactManager, mockHandshakeProtocol);
+      const mockPlugin = createMockPluginWithExtras(contactManager, mockHandshakeProtocol);
       const handlersWithMock = new ContactToolHandlers(mockPlugin as any);
 
       const result = await handlersWithMock.handlePendingRequests(

@@ -205,11 +205,11 @@ ${agents.map((a: AgentInfo, i: number) => {
     // 新协议：使用 MESSAGE 类型 + StructuredMessagePayload
     const plugin = this.plugin as unknown as PluginInternalAccess;
     
-    // 获取 F2A 实例（embedded 模式通过 core 访问）
-    const f2a = (plugin as any).core?.getF2A?.();
+    // 获取 F2A 实例（使用公开的 getter 方法）
+    const f2a = plugin.getF2A?.();
     const status = plugin.getF2AStatus?.();
     
-    if (f2a && f2a.sendMessage && status?.running) {
+    if (f2a && f2a.sendMessageToPeer && status?.running) {
       try {
         // PR #111 新协议：MESSAGE 类型 + StructuredMessagePayload
         const messagePayload = {
@@ -222,7 +222,7 @@ ${agents.map((a: AgentInfo, i: number) => {
           }
         };
         
-        await f2a.sendMessage(targetAgent.peerId, JSON.stringify(messagePayload));
+        await f2a.sendMessageToPeer(targetAgent.peerId, JSON.stringify(messagePayload));
         
         logger.info(`消息已发送给 ${targetAgent.displayName}`);
         
@@ -277,7 +277,7 @@ ${agents.map((a: AgentInfo, i: number) => {
       const start = Date.now();
       
       try {
-        if (f2a && f2a.sendMessage) {
+        if (f2a && f2a.sendMessageToPeer) {
           // PR #111 新协议：MESSAGE 类型
           const messagePayload = {
             topic: 'task.request',
@@ -288,7 +288,7 @@ ${agents.map((a: AgentInfo, i: number) => {
             }
           };
           
-          await f2a.sendMessage(agent.peerId, JSON.stringify(messagePayload));
+          await f2a.sendMessageToPeer(agent.peerId, JSON.stringify(messagePayload));
           const latency = Date.now() - start;
           
           return {
@@ -794,7 +794,7 @@ ${tasks.map(t => {
     }
 
     // 获取评审者 ID（从 context 或使用默认）
-    const reviewerId = context.sessionId || 'anonymous-reviewer';
+    const reviewerId = context?.sessionId || 'anonymous-reviewer';
 
     // 检查评审者资格
     if (!reputationSystem.hasPermission(reviewerId, 'review')) {

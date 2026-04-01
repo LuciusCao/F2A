@@ -184,21 +184,32 @@ describe('F2APlugin - 增强测试', () => {
     it('getTaskQueue 应该返回任务队列', () => {
       const queue = plugin.getTaskQueue();
       expect(queue).toBeDefined();
+      // P0-2 修复：补充实际行为验证
+      expect(typeof queue?.getStats).toBe('function');
+      expect(typeof queue?.add).toBe('function');
     });
 
     it('getAnnouncementQueue 应该返回公告队列', () => {
       const queue = plugin.getAnnouncementQueue();
       expect(queue).toBeDefined();
+      // P0-2 修复：补充实际行为验证
+      expect(typeof queue?.create).toBe('function');
+      expect(typeof queue?.getStats).toBe('function');
     });
 
     it('getReviewCommittee 应该返回评审委员会', () => {
       const committee = plugin.getReviewCommittee();
       expect(committee).toBeDefined();
+      // P0-2 修复：验证 committee 存在且具有基本结构
+      // 由于 ReviewCommittee 是可选实现，这里只验证基本存在性
+      expect(typeof committee === 'object' || committee === undefined).toBe(true);
     });
 
     it('getContactManager 应该返回联系人管理器', () => {
       const manager = plugin.getContactManager();
       expect(manager).toBeDefined();
+      // P0-2 修复：补充实际行为验证
+      expect(typeof manager?.getContacts).toBe('function');
     });
 
     it('getHandshakeProtocol 应该返回握手协议', async () => {

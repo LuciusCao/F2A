@@ -454,3 +454,71 @@ export function expectMessageProtocol(callArgs: any[]): {
     protocolResult,
   };
 }
+
+/**
+ * 创建 Mock Logger
+ */
+export function createMockLogger() {
+  return {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  };
+}
+
+/**
+ * 生成恶意测试输入 - SQL 注入
+ */
+export function generateSqlInjectionPayloads(): string[] {
+  return [
+    "'; DROP TABLE tasks; --",
+    "test' OR '1'='1",
+    "test; DELETE FROM contacts WHERE '1'='1'",
+    "' UNION SELECT * FROM users --",
+    "admin'--",
+    "1'; EXEC xp_cmdshell('dir'); --",
+  ];
+}
+
+/**
+ * 生成恶意测试输入 - XSS
+ */
+export function generateXssPayloads(): string[] {
+  return [
+    '<script>alert("xss")</script>',
+    '<img src=x onerror=alert(1)>',
+    'javascript:alert(document.cookie)',
+    '<svg onload=alert(1)>',
+    '"><script>alert(String.fromCharCode(88,83,83))</script>',
+    '<body onload=alert("XSS")>',
+  ];
+}
+
+/**
+ * 生成超长字符串测试输入
+ */
+export function generateLongStringPayload(length: number = 10000): string {
+  return 'A'.repeat(length);
+}
+
+/**
+ * 生成特殊字符测试输入
+ */
+export function generateSpecialCharPayloads(): string[] {
+  return [
+    '\u0000\u0001\u0002', // 控制字符
+    '测试\x00中文', // 空字符在字符串中
+    '\n\r\t', // 换行符
+    '\u202E\u202D', // Unicode 方向控制字符
+    '🔥🎮🐱', // Emoji
+    '名字\u0000', // 空字符在末尾
+  ];
+}
+
+/**
+ * 生成过期的时间戳
+ */
+export function generateExpiredTimestamp(daysAgo: number = 30): number {
+  return Date.now() - daysAgo * 24 * 60 * 60 * 1000;
+}

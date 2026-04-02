@@ -10,6 +10,7 @@ import type { TaskRequest } from '../src/types.js';
 import { mkdtempSync, rmSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { generateSqlInjectionPayloads, generatePeerId } from './utils/test-helpers.js';
 
 describe('TaskQueue', () => {
   let tempDir: string;
@@ -535,6 +536,148 @@ describe('TaskQueue', () => {
       expect(failCount).toBeGreaterThanOrEqual(0);
 
       smallQueue.close();
+    });
+  });
+
+  // P1-4: SQL 注入测试
+  describe('SQL 注入防护', () => {
+    const sqlPayloads = generateSqlInjectionPayloads();
+
+    it.each(sqlPayloads)('应该安全处理 SQL 注入 payload: %s', (payload) => {
+      const task: TaskRequest = {
+        taskId: `sql-test-${Date.now()}`,
+        taskType: 'test',
+        description: payload,
+        from: generatePeerId(),
+        timestamp: Date.now(),
+      };
+
+      // 添加任务不应该抛出错误或导致数据库损坏
+      const result = queue.add(task);
+      expect(result).toBeDefined();
+      expect(result.taskId).toBe(task.taskId);
+      expect(result.description).toBe(payload);
+    });
+
+    it('应该安全处理包含单引号的 taskId', () => {
+      const maliciousTaskId = "task'; DROP TABLE tasks; --";
+      const task: TaskRequest = {
+        taskId: maliciousTaskId,
+        taskType: 'test',
+        description: 'Test task',
+        from: generatePeerId(),
+        timestamp: Date.now(),
+      };
+
+      const result = queue.add(task);
+      expect(result).toBeDefined();
+      expect(result.taskId).toBe(maliciousTaskId);
+
+      // 验证数据库未被破坏
+      const retrieved = queue.get(maliciousTaskId);
+      expect(retrieved).toBeDefined();
+      expect(retrieved?.taskId).toBe(maliciousTaskId);
+    });
+
+    it('应该安全处理包含 SQL 关键字的 from 字段', () => {
+      const maliciousFrom = "peer; DELETE FROM tasks WHERE '1'='1'";
+      const task: TaskRequest = {
+        taskId: 'sql-from-test',
+        taskType: 'test',
+        description: 'Test',
+        from: maliciousFrom,
+        timestamp: Date.now(),
+      };
+
+      queue.add(task);
+      
+      const retrieved = queue.get('sql-from-test');
+      expect(retrieved).toBeDefined();
+      expect(retrieved?.from).toBe(maliciousFrom);
+      
+      // 验证其他任务未被影响
+      queue.add({
+        taskId: 'survivor-task',
+        taskType: 'test',
+        description: 'Should survive',
+        from: generatePeerId(),
+        timestamp: Date.now(),
+      });
+      
+      const survivor = queue.get('survivor-task');
+      expect(survivor).toBeDefined();
+    });
+
+    it('应该安全处理 UNION SELECT payload', () => {
+      const unionPayload = "' UNION SELECT * FROM sqlite_master --";
+      const task: TaskRequest = {
+        taskId: 'union-test',
+        taskType: 'test',
+        description: unionPayload,
+        from: generatePeerId(),
+        timestamp: Date.now(),
+      };
+
+      queue.add(task);
+      
+      const retrieved = queue.get('union-test');
+      expect(retrieved).toBeDefined();
+      expect(retrieved?.description).toBe(unionPayload);
+    });
+
+    it('SQL 注入 payload 后数据库仍能正常工作', () => {
+      // 先添加恶意 payload
+      for (let i = 0; i < sqlPayloads.length; i++) {
+        queue.add({
+          taskId: `malicious-${i}`,
+          taskType: 'test',
+          description: sqlPayloads[i],
+          from: generatePeerId(),
+          timestamp: Date.now(),
+        });
+      }
+
+      // 验证正常操作仍能工作
+      queue.add({
+        taskId: 'normal-task-after-sql',
+        taskType: 'normal',
+        description: 'Normal task after malicious',
+        from: generatePeerId(),
+        timestamp: Date.now(),
+      });
+
+      queue.complete('normal-task-after-sql', {
+        taskId: 'normal-task-after-sql',
+        status: 'success',
+      });
+
+      const stats = queue.getStats();
+      expect(stats.total).toBeGreaterThan(0);
+      
+      // 清理恶意任务
+      queue.clear();
+      expect(queue.getStats().total).toBe(0);
+    });
+
+    it('应该安全处理包含分号的复合 payload', () => {
+      const compoundPayload = "test; INSERT INTO tasks (id) VALUES ('hacked'); --";
+      const task: TaskRequest = {
+        taskId: 'compound-test',
+        taskType: 'test',
+        description: compoundPayload,
+        from: generatePeerId(),
+        timestamp: Date.now(),
+      };
+
+      queue.add(task);
+      
+      const retrieved = queue.get('compound-test');
+      expect(retrieved).toBeDefined();
+      expect(retrieved?.description).toBe(compoundPayload);
+      
+      // 验证没有插入额外的任务
+      const hackedTask = queue.get('hacked');
+      expect(hackedTask).toBeUndefined();
     });
   });
 });

@@ -8,6 +8,12 @@ import { FriendStatus, type Contact } from '../src/contact-types.js';
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import {
+  generateXssPayloads,
+  generateLongStringPayload,
+  generateSpecialCharPayloads,
+  generatePeerId,
+} from './utils/test-helpers.js';
 
 describe('ContactManager', () => {
   let tempDir: string;
@@ -393,6 +399,196 @@ describe('ContactManager', () => {
       const dataPath = join(tempDir, 'contacts.json');
       const content = JSON.parse(readFileSync(dataPath, 'utf-8'));
       expect(content.contacts).toHaveLength(1);
+    });
+  });
+
+  // P1-5: 恶意输入测试
+  describe('恶意输入防护', () => {
+    const xssPayloads = generateXssPayloads();
+    const specialCharPayloads = generateSpecialCharPayloads();
+
+    describe('XSS 注入防护', () => {
+      it.each(xssPayloads)('应该安全处理 XSS payload: %s', (payload) => {
+        const peerId = generatePeerId();
+        const contact = manager.addContact({
+          name: payload,
+          peerId,
+          tags: [payload],
+        });
+
+        expect(contact).toBeDefined();
+        expect(contact!.name).toBe(payload);
+        expect(contact!.tags).toContain(payload);
+
+        // 验证数据可以正确读取
+        const retrieved = manager.getContactByPeerId(peerId);
+        expect(retrieved).toBeDefined();
+        expect(retrieved!.name).toBe(payload);
+      });
+
+      it('XSS payload 不应该影响 JSON 存储', () => {
+        const xssName = '<script>alert("xss")</script>';
+        const contact = manager.addContact({
+          name: xssName,
+          peerId: generatePeerId(),
+        });
+
+        manager.flush();
+
+        // 验证文件是有效的 JSON
+        const dataPath = join(tempDir, 'contacts.json');
+        const content = JSON.parse(readFileSync(dataPath, 'utf-8'));
+        expect(content.contacts[0].name).toBe(xssName);
+      });
+    });
+
+    describe('超长字符串处理', () => {
+      it('应该接受合理长度的 name', () => {
+        const maxLengthName = 'A'.repeat(100); // 常见最大长度限制
+        const contact = manager.addContact({
+          name: maxLengthName,
+          peerId: generatePeerId(),
+        });
+
+        expect(contact).toBeDefined();
+        expect(contact!.name.length).toBe(100);
+      });
+
+      it('应该处理超长 name 字符串', () => {
+        const tooLongName = generateLongStringPayload(10000);
+        const contact = manager.addContact({
+          name: tooLongName,
+          peerId: generatePeerId(),
+        });
+
+        // 根据实现，可能截断、拒绝或接受
+        expect(contact).toBeDefined();
+        if (contact) {
+          expect(contact.name.length).toBeLessThanOrEqual(10000);
+        }
+      });
+
+      it('应该处理超长 notes 字符串', () => {
+        const contact = manager.addContact({
+          name: 'LongNotes',
+          peerId: generatePeerId(),
+          notes: generateLongStringPayload(5000),
+        });
+
+        expect(contact).toBeDefined();
+        expect(contact!.notes!.length).toBeLessThanOrEqual(5000);
+      });
+
+      it('边界长度名称后数据库应正常工作', () => {
+        // 添加多个边界长度联系人
+        for (let i = 0; i < 5; i++) {
+          manager.addContact({
+            name: 'B'.repeat(100),
+            peerId: generatePeerId(),
+          });
+        }
+
+        // 添加正常联系人
+        const normalContact = manager.addContact({
+          name: 'NormalContact',
+          peerId: generatePeerId(),
+        });
+
+        expect(normalContact).toBeDefined();
+        expect(manager.getContacts().length).toBeGreaterThanOrEqual(1);
+      });
+    });
+
+    describe('特殊字符处理', () => {
+      it.each(specialCharPayloads)('应该安全处理特殊字符: %s', (payload) => {
+        const contact = manager.addContact({
+          name: payload,
+          peerId: generatePeerId(),
+        });
+
+        expect(contact).toBeDefined();
+        expect(contact!.name).toBe(payload);
+      });
+
+      it('应该处理包含 Emoji 的名称', () => {
+        const emojiName = '🔥🎮🐱 Agent Name';
+        const contact = manager.addContact({
+          name: emojiName,
+          peerId: generatePeerId(),
+        });
+
+        expect(contact!.name).toBe(emojiName);
+      });
+
+      it('应该处理 Unicode 方向控制字符', () => {
+        // RTL override 可以用于欺骗性文本显示
+        const deceptiveName = '\u202EAgent\u202D';
+        const contact = manager.addContact({
+          name: deceptiveName,
+          peerId: generatePeerId(),
+        });
+
+        expect(contact!.name).toBe(deceptiveName);
+      });
+
+      it('应该处理包含控制字符的 tags', () => {
+        const controlChars = '\u0000\u0001\u0002';
+        const contact = manager.addContact({
+          name: 'ControlChars',
+          peerId: generatePeerId(),
+          tags: [controlChars, 'normal-tag'],
+        });
+
+        expect(contact!.tags).toContain(controlChars);
+      });
+    });
+
+    describe('边界情况', () => {
+      it('应该处理空字符串 name', () => {
+        const contact = manager.addContact({
+          name: '',
+          peerId: generatePeerId(),
+        });
+
+        // 空字符串可能被拒绝或接受，取决于验证规则
+        expect(contact === null || contact!.name === '').toBe(true);
+      });
+
+      it('应该处理只包含空格的 name', () => {
+        const spacesName = '   ';
+        const contact = manager.addContact({
+          name: spacesName,
+          peerId: generatePeerId(),
+        });
+
+        // 空格字符串可能被接受或被 trim
+        expect(contact).toBeDefined();
+      });
+
+      it('应该处理 null bytes 在 name 中', () => {
+        const nullByteName = 'test\u0000agent';
+        const contact = manager.addContact({
+          name: nullByteName,
+          peerId: generatePeerId(),
+        });
+
+        expect(contact!.name).toBe(nullByteName);
+      });
+
+      it('更新时也应该安全处理恶意输入', () => {
+        const contact = manager.addContact({
+          name: 'Original',
+          peerId: generatePeerId(),
+        });
+
+        const updated = manager.updateContact(contact!.id, {
+          name: '<script>updated()</script>',
+          notes: "'; DROP TABLE contacts; --",
+        });
+
+        expect(updated!.name).toBe('<script>updated()</script>');
+        expect(updated!.notes).toBe("'; DROP TABLE contacts; --");
+      });
     });
   });
 });

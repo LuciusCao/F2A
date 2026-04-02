@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { F2APlugin } from '../src/connector.js';
 import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
+import { createMockApi } from './utils/test-helpers.js';
 import { join } from 'path';
 
 // Helper to create mock F2A instance
@@ -58,15 +59,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该正确清理已初始化的 F2A 实例', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -93,15 +86,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该正确清理 WebhookServer', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -123,15 +108,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该正确清理 ContactManager 和 HandshakeProtocol', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -159,15 +136,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该正确清理 TaskQueue', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -192,15 +161,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该正确清理 ReputationSystem', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -225,15 +186,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该正确清理 AnnouncementQueue', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -258,15 +211,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该处理 F2A 停止失败', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -287,15 +232,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该处理所有组件同时存在的关闭', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -339,15 +276,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该处理多次连续关闭', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -374,15 +303,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
 
       expect(plugin.isInitialized()).toBe(false);
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -400,15 +321,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该跳过已启用的插件', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -429,15 +342,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该处理 webhook 配置', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -456,15 +361,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该处理 enableMDNS 配置', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -483,15 +380,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该处理 bootstrapPeers 配置', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -512,15 +401,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该在 WebhookServer 存在时尝试注册', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -544,15 +425,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该在无 WebhookServer 时跳过注册', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -572,15 +445,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该通过反射调用 registerToNode 方法', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -615,15 +480,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('registerToNode 应该在无 webhookServer 时提前返回', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -651,15 +508,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该处理 F2A stop 抛出错误', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -678,15 +527,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该处理 WebhookServer stop 抛出错误', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -706,15 +547,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该处理 TaskQueue close 抛出错误', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -739,15 +572,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该支持初始化-启用-关闭完整流程', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       // 初始化
       await plugin.initialize({
@@ -772,15 +597,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该支持多次初始化-关闭循环', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       // 第一次循环
       await plugin.initialize({
@@ -808,15 +625,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该正确清理 F2A 实例和 _f2aStartTime', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -841,15 +650,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该正确处理 F2A stop 失败并继续清理', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -884,15 +685,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该在 shutdown 后正确设置 _initialized 为 false', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -925,15 +718,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('应该正确创建 webhook handler', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -959,15 +744,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('onStatus 应该返回空闲状态当 TaskQueue 未初始化', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -993,15 +770,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('onStatus 应该返回正确状态当 TaskQueue 已初始化', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -1032,15 +801,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('onMessage 应该拒绝无效 PeerID', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -1066,15 +827,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('onMessage 应该拒绝过长的消息', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -1102,15 +855,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('onDiscover 应该拒绝不允许的请求者', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -1141,15 +886,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
     it('onDelegate 应该拒绝信誉过低的任务', async () => {
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,
@@ -1182,15 +919,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
       const validPeerId = '12D3KooWHighReputationPeer123456789abcdefghjkmnpq';
       plugin = new F2APlugin();
 
-      const mockApi = {
-        config: {
-          agents: {
-            defaults: {
-              workspace: tempDir,
-            },
-          },
-        },
-      };
+      const mockApi = createMockApi(tempDir);
 
       await plugin.initialize({
         api: mockApi as any,

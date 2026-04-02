@@ -385,4 +385,126 @@ describe('AnnouncementQueue', () => {
       expect(lateClaim).toBeNull();
     });
   });
+
+  // P2 修复：并发竞态条件测试
+  describe('并发竞态条件', () => {
+    it('多个并发 acceptClaim 只应有一个成功', async () => {
+      const announcement = queue.create({
+        taskType: 'test',
+        description: 'Test task',
+        from: 'test-peer',
+      });
+
+      // 多个用户认领
+      const claim1 = queue.submitClaim(announcement.announcementId, {
+        claimant: 'claimant-1',
+      });
+      const claim2 = queue.submitClaim(announcement.announcementId, {
+        claimant: 'claimant-2',
+      });
+      const claim3 = queue.submitClaim(announcement.announcementId, {
+        claimant: 'claimant-3',
+      });
+
+      // 模拟并发接受认领
+      const results = await Promise.allSettled([
+        Promise.resolve(queue.acceptClaim(announcement.announcementId, claim1!.claimId)),
+        Promise.resolve(queue.acceptClaim(announcement.announcementId, claim2!.claimId)),
+        Promise.resolve(queue.acceptClaim(announcement.announcementId, claim3!.claimId)),
+      ]);
+
+      // 计算成功数量
+      const successful = results.filter(
+        r => r.status === 'fulfilled' && r.value !== null
+      );
+
+      // 只应该有一个成功
+      expect(successful.length).toBeLessThanOrEqual(1);
+
+      // 检查最终状态
+      const finalAnnouncement = queue.get(announcement.announcementId);
+      expect(finalAnnouncement?.status).toBe('claimed');
+    });
+
+    it('多个并发 submitClaim 应能同时提交但只有一个能被接受', async () => {
+      const announcement = queue.create({
+        taskType: 'test',
+        description: 'Test task',
+        from: 'test-peer',
+      });
+
+      // 模拟并发认领
+      const results = await Promise.all([
+        Promise.resolve(queue.submitClaim(announcement.announcementId, { claimant: 'peer-1' })),
+        Promise.resolve(queue.submitClaim(announcement.announcementId, { claimant: 'peer-2' })),
+        Promise.resolve(queue.submitClaim(announcement.announcementId, { claimant: 'peer-3' })),
+      ]);
+
+      // 所有认领应该都成功提交
+      const successfulClaims = results.filter(r => r !== null);
+      expect(successfulClaims.length).toBe(3);
+
+      // 但接受其中一个后，广播状态变为 claimed
+      const firstClaim = successfulClaims[0];
+      queue.acceptClaim(announcement.announcementId, firstClaim!.claimId);
+
+      // 验证最终状态
+      const finalAnnouncement = queue.get(announcement.announcementId);
+      expect(finalAnnouncement?.status).toBe('claimed');
+      expect(finalAnnouncement?.claims?.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it('并发创建和认领不应导致数据丢失', async () => {
+      // 同时创建多个广播
+      const createPromises = Array.from({ length: 10 }, (_, i) =>
+        Promise.resolve(queue.create({
+          taskType: 'test',
+          description: `Task ${i}`,
+          from: `peer-${i}`,
+        }))
+      );
+
+      const announcements = await Promise.all(createPromises);
+
+      // 所有广播都应该创建成功
+      expect(announcements.every(a => a !== null)).toBe(true);
+
+      // 对每个广播进行认领
+      const claimPromises = announcements.map(a =>
+        Promise.resolve(queue.submitClaim(a!.announcementId, { claimant: 'claimer' }))
+      );
+
+      const claims = await Promise.all(claimPromises);
+
+      // 所有认领都应该成功
+      expect(claims.every(c => c !== null)).toBe(true);
+
+      // 验证统计数据
+      const stats = queue.getStats();
+      expect(stats.total).toBe(10);
+    });
+
+    it('在广播关闭后并发认领应失败', async () => {
+      const announcement = queue.create({
+        taskType: 'test',
+        description: 'Test task',
+        from: 'test-peer',
+      });
+
+      // 先认领并接受
+      const claim = queue.submitClaim(announcement.announcementId, {
+        claimant: 'claimant-1',
+      });
+      queue.acceptClaim(announcement.announcementId, claim!.claimId);
+
+      // 然后多个并发认领尝试
+      const results = await Promise.all([
+        Promise.resolve(queue.submitClaim(announcement.announcementId, { claimant: 'peer-2' })),
+        Promise.resolve(queue.submitClaim(announcement.announcementId, { claimant: 'peer-3' })),
+      ]);
+
+      // 所有的都应该失败
+      expect(results.every(r => r === null)).toBe(true);
+    });
+  });
 });

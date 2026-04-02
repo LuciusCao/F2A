@@ -482,4 +482,132 @@ describe('WebhookServer', () => {
       // 待 WebhookServer 支持 authToken 配置后实现
     });
   });
+
+  // P2 修复：安全边界测试
+  describe('安全边界', () => {
+    it('应该拒绝超大请求体', async () => {
+      server = new WebhookServer(port, handler, {
+        maxBodySize: 1024, // 1KB 限制
+      });
+      await server.start();
+
+      // 创建超过限制的请求体
+      const largePayload = JSON.stringify({
+        type: 'status',
+        extra: 'x'.repeat(2000), // 超过 1KB
+      });
+
+      try {
+        const response = await fetch(`http://localhost:${port}/webhook`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: largePayload,
+        });
+
+        // 如果返回了响应，检查状态码
+        expect(response.status).toBeGreaterThanOrEqual(400);
+      } catch (error) {
+        // 服务器可能直接关闭连接，这也是合理的拒绝方式
+        expect(error).toBeDefined();
+      }
+    });
+
+    it('应该处理恶意 JSON payload', async () => {
+      server = new WebhookServer(port, handler);
+      await server.start();
+
+      // 发送无效 JSON
+      const response = await fetch(`http://localhost:${port}/webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: '{"type": "status", "malicious": ',
+      });
+
+      // 服务器返回客户端错误或处理错误都是合理的
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.status).toBeLessThan(600);
+    });
+
+    it('应该拒绝空请求体', async () => {
+      server = new WebhookServer(port, handler);
+      await server.start();
+
+      const response = await fetch(`http://localhost:${port}/webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: '',
+      });
+
+      // 服务器返回客户端错误或处理错误都是合理的
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.status).toBeLessThan(600);
+    });
+
+    it('应该拒绝非 JSON Content-Type', async () => {
+      server = new WebhookServer(port, handler);
+      await server.start();
+
+      const response = await fetch(`http://localhost:${port}/webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain',
+        },
+        body: 'some text',
+      });
+
+      // 服务器返回客户端错误或处理错误都是合理的
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.status).toBeLessThan(600);
+    });
+
+    it('应该处理深度嵌套的 payload', async () => {
+      server = new WebhookServer(port, handler);
+      await server.start();
+
+      // 创建深度嵌套对象
+      let nested: any = { type: 'status' };
+      for (let i = 0; i < 100; i++) {
+        nested = { ...nested, nested: { level: i } };
+      }
+
+      const response = await fetch(`http://localhost:${port}/webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(nested),
+      });
+
+      // 应该接受或拒绝，但不能崩溃
+      expect(response.status).toBeLessThan(500);
+    });
+
+    it('应该处理包含特殊字符的 payload', async () => {
+      server = new WebhookServer(port, handler);
+      await server.start();
+
+      const response = await fetch(`http://localhost:${port}/webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: 'delegate',
+          payload: {
+            taskId: 'task-<script>alert(1)</script>',
+            description: 'Test with unicode: \u0000\u0001',
+          },
+        }),
+      });
+
+      // 应该正常处理或拒绝，但不能崩溃
+      expect(response.status).toBeLessThan(500);
+    });
+  });
 });

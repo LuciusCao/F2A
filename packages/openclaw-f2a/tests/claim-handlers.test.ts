@@ -60,6 +60,51 @@ describe('ClaimHandlers', () => {
       expect(result.content).toContain('estimated_complexity');
     });
 
+    // P2 修复：estimated_complexity 边界测试
+    it('应该拒绝负数的 estimated_complexity', async () => {
+      const result = await handlers.handleAnnounce({
+        task_type: 'test',
+        description: 'Test task',
+        estimated_complexity: -1,
+      });
+
+      expect(result.content).toContain('estimated_complexity');
+      expect(result.content).toMatch(/必须|之间|无效|错误|超出范围/);
+    });
+
+    it('应该拒绝 NaN 的 estimated_complexity', async () => {
+      const result = await handlers.handleAnnounce({
+        task_type: 'test',
+        description: 'Test task',
+        estimated_complexity: NaN,
+      });
+
+      expect(result.content).toContain('estimated_complexity');
+      expect(result.content).toMatch(/必须|有效|数字|无效|错误|NaN|数值/);
+    });
+
+    it('应该拒绝 Infinity 的 estimated_complexity', async () => {
+      const result = await handlers.handleAnnounce({
+        task_type: 'test',
+        description: 'Test task',
+        estimated_complexity: Infinity,
+      });
+
+      expect(result.content).toContain('estimated_complexity');
+      expect(result.content).toMatch(/必须|有效|数字|无效|错误|超出范围|Infinity/);
+    });
+
+    it('应该拒绝 -Infinity 的 estimated_complexity', async () => {
+      const result = await handlers.handleAnnounce({
+        task_type: 'test',
+        description: 'Test task',
+        estimated_complexity: -Infinity,
+      });
+
+      expect(result.content).toContain('estimated_complexity');
+      expect(result.content).toMatch(/必须|有效|数字|无效|错误|超出范围|Infinity/);
+    });
+
     it('应该成功广播任务', async () => {
       const result = await handlers.handleAnnounce({
         task_type: 'code-review',

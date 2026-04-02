@@ -70,7 +70,7 @@ describe('F2APlugin - 消息处理测试', () => {
           capability: 'code-generation',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理无参数的请求', async () => {
@@ -79,7 +79,7 @@ describe('F2APlugin - 消息处理测试', () => {
         
         const result = await discoverTool!.handler({});
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 min_reputation 参数', async () => {
@@ -91,7 +91,7 @@ describe('F2APlugin - 消息处理测试', () => {
           min_reputation: 50,
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -105,7 +105,7 @@ describe('F2APlugin - 消息处理测试', () => {
           task: 'test task description',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理带 context 的请求', async () => {
@@ -118,7 +118,7 @@ describe('F2APlugin - 消息处理测试', () => {
           context: 'additional context',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理带 timeout 的请求', async () => {
@@ -131,7 +131,7 @@ describe('F2APlugin - 消息处理测试', () => {
           timeout: 5000,
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -145,7 +145,7 @@ describe('F2APlugin - 消息处理测试', () => {
           task: 'test task',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 min_responses 参数', async () => {
@@ -158,7 +158,7 @@ describe('F2APlugin - 消息处理测试', () => {
           min_responses: 3,
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -169,7 +169,7 @@ describe('F2APlugin - 消息处理测试', () => {
         
         const result = await statusTool!.handler({});
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
         // 结果格式可能是 { status: ... } 或其他
       });
     });
@@ -183,7 +183,7 @@ describe('F2APlugin - 消息处理测试', () => {
           action: 'list',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 view action', async () => {
@@ -195,7 +195,7 @@ describe('F2APlugin - 消息处理测试', () => {
           peer_id: 'test-peer-id',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 block action', async () => {
@@ -207,7 +207,7 @@ describe('F2APlugin - 消息处理测试', () => {
           peer_id: 'test-peer-id',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 unblock action', async () => {
@@ -219,7 +219,7 @@ describe('F2APlugin - 消息处理测试', () => {
           peer_id: 'test-peer-id',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -230,7 +230,7 @@ describe('F2APlugin - 消息处理测试', () => {
         
         const result = await pollTool!.handler({});
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 status 参数', async () => {
@@ -241,7 +241,7 @@ describe('F2APlugin - 消息处理测试', () => {
           status: 'pending',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 limit 参数', async () => {
@@ -252,7 +252,7 @@ describe('F2APlugin - 消息处理测试', () => {
           limit: 10,
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -267,7 +267,7 @@ describe('F2APlugin - 消息处理测试', () => {
           status: 'success',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理错误结果提交', async () => {
@@ -280,7 +280,7 @@ describe('F2APlugin - 消息处理测试', () => {
           status: 'error',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -294,7 +294,7 @@ describe('F2APlugin - 消息处理测试', () => {
           description: 'test task description',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理带 reward 的请求', async () => {
@@ -307,7 +307,7 @@ describe('F2APlugin - 消息处理测试', () => {
           reward: 100,
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理带 required_capabilities 的请求', async () => {
@@ -320,7 +320,7 @@ describe('F2APlugin - 消息处理测试', () => {
           required_capabilities: ['code-generation', 'file-operation'],
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理带 timeout 的请求', async () => {
@@ -333,7 +333,7 @@ describe('F2APlugin - 消息处理测试', () => {
           timeout: 30000,
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -344,7 +344,7 @@ describe('F2APlugin - 消息处理测试', () => {
         
         const result = await listTool!.handler({});
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 capability 参数', async () => {
@@ -355,7 +355,7 @@ describe('F2APlugin - 消息处理测试', () => {
           capability: 'code-generation',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 limit 参数', async () => {
@@ -366,7 +366,7 @@ describe('F2APlugin - 消息处理测试', () => {
           limit: 10,
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -379,7 +379,7 @@ describe('F2APlugin - 消息处理测试', () => {
           announcement_id: 'test-announcement-id',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理带 estimated_time 的请求', async () => {
@@ -391,7 +391,7 @@ describe('F2APlugin - 消息处理测试', () => {
           estimated_time: 30000,
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理带 confidence 的请求', async () => {
@@ -403,7 +403,7 @@ describe('F2APlugin - 消息处理测试', () => {
           confidence: 0.8,
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -417,7 +417,7 @@ describe('F2APlugin - 消息处理测试', () => {
           announcement_id: 'test-announcement-id',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 accept action', async () => {
@@ -430,7 +430,7 @@ describe('F2APlugin - 消息处理测试', () => {
           claim_id: 'test-claim-id',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 reject action', async () => {
@@ -443,7 +443,7 @@ describe('F2APlugin - 消息处理测试', () => {
           claim_id: 'test-claim-id',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -454,7 +454,7 @@ describe('F2APlugin - 消息处理测试', () => {
         
         const result = await myClaimsTool!.handler({});
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 status 参数', async () => {
@@ -465,7 +465,7 @@ describe('F2APlugin - 消息处理测试', () => {
           status: 'pending',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -476,7 +476,7 @@ describe('F2APlugin - 消息处理测试', () => {
         
         const result = await statsTool!.handler({});
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -490,7 +490,7 @@ describe('F2APlugin - 消息处理测试', () => {
           description: 'test task description',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理带 required_capabilities 的请求', async () => {
@@ -503,7 +503,7 @@ describe('F2APlugin - 消息处理测试', () => {
           required_capabilities: ['code-generation'],
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -516,7 +516,7 @@ describe('F2APlugin - 消息处理测试', () => {
           task_id: 'test-task-id',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -527,7 +527,7 @@ describe('F2APlugin - 消息处理测试', () => {
         
         const result = await capabilitiesTool!.handler({});
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 peer_id 参数', async () => {
@@ -538,7 +538,7 @@ describe('F2APlugin - 消息处理测试', () => {
           peer_id: 'test-peer-id',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -551,7 +551,7 @@ describe('F2APlugin - 消息处理测试', () => {
           action: 'list',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 get action', async () => {
@@ -563,7 +563,7 @@ describe('F2APlugin - 消息处理测试', () => {
           contact_id: 'test-contact-id',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 add action', async () => {
@@ -576,7 +576,7 @@ describe('F2APlugin - 消息处理测试', () => {
           name: 'Test Contact',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 remove action', async () => {
@@ -588,7 +588,7 @@ describe('F2APlugin - 消息处理测试', () => {
           contact_id: 'test-contact-id',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 update action', async () => {
@@ -601,7 +601,7 @@ describe('F2APlugin - 消息处理测试', () => {
           name: 'Updated Name',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 block action', async () => {
@@ -613,7 +613,7 @@ describe('F2APlugin - 消息处理测试', () => {
           contact_id: 'test-contact-id',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 unblock action', async () => {
@@ -625,7 +625,7 @@ describe('F2APlugin - 消息处理测试', () => {
           contact_id: 'test-contact-id',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 status 参数', async () => {
@@ -637,7 +637,7 @@ describe('F2APlugin - 消息处理测试', () => {
           status: 'friend',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 group 参数', async () => {
@@ -649,7 +649,7 @@ describe('F2APlugin - 消息处理测试', () => {
           group: 'test-group',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -662,7 +662,7 @@ describe('F2APlugin - 消息处理测试', () => {
           action: 'list',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 create action', async () => {
@@ -674,7 +674,7 @@ describe('F2APlugin - 消息处理测试', () => {
           name: 'Test Group',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 update action', async () => {
@@ -687,7 +687,7 @@ describe('F2APlugin - 消息处理测试', () => {
           name: 'Updated Group',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 delete action', async () => {
@@ -699,7 +699,7 @@ describe('F2APlugin - 消息处理测试', () => {
           group_id: 'test-group-id',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -712,7 +712,7 @@ describe('F2APlugin - 消息处理测试', () => {
           peer_id: 'test-peer-id',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理带 message 的请求', async () => {
@@ -724,7 +724,7 @@ describe('F2APlugin - 消息处理测试', () => {
           message: 'Hello, I want to be friends!',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -737,7 +737,7 @@ describe('F2APlugin - 消息处理测试', () => {
           action: 'list',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 accept action', async () => {
@@ -749,7 +749,7 @@ describe('F2APlugin - 消息处理测试', () => {
           request_id: 'test-request-id',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 reject action', async () => {
@@ -761,7 +761,7 @@ describe('F2APlugin - 消息处理测试', () => {
           request_id: 'test-request-id',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理带 reason 的 reject', async () => {
@@ -774,7 +774,7 @@ describe('F2APlugin - 消息处理测试', () => {
           reason: 'Not interested',
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -785,7 +785,7 @@ describe('F2APlugin - 消息处理测试', () => {
         
         const result = await exportTool!.handler({});
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
 
@@ -798,7 +798,7 @@ describe('F2APlugin - 消息处理测试', () => {
           data: { contacts: [] },
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
 
       it('应该处理 merge 参数', async () => {
@@ -810,7 +810,7 @@ describe('F2APlugin - 消息处理测试', () => {
           merge: true,
         });
         
-        expect(result).toBeDefined();
+        expect(result).toHaveProperty('content');
       });
     });
   });

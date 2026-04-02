@@ -62,7 +62,7 @@ describe('F2APlugin - 高级测试', () => {
       
       // 调用 handler
       const result = await discoverTool!.handler({});
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_status handler 应该可调用', async () => {
@@ -73,7 +73,7 @@ describe('F2APlugin - 高级测试', () => {
       
       // 调用 handler
       const result = await statusTool!.handler({});
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_delegate handler 应该可调用', async () => {
@@ -87,7 +87,7 @@ describe('F2APlugin - 高级测试', () => {
         agent: 'test-agent',
         task: 'test task',
       });
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_broadcast handler 应该可调用', async () => {
@@ -101,7 +101,7 @@ describe('F2APlugin - 高级测试', () => {
         capability: 'test-capability',
         task: 'test task',
       });
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_poll_tasks handler 应该可调用', async () => {
@@ -112,7 +112,7 @@ describe('F2APlugin - 高级测试', () => {
       
       // 调用 handler
       const result = await pollTool!.handler({});
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_task_stats handler 应该可调用', async () => {
@@ -123,7 +123,7 @@ describe('F2APlugin - 高级测试', () => {
       
       // 调用 handler
       const result = await statsTool!.handler({});
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_submit_result handler 应该可调用', async () => {
@@ -138,7 +138,7 @@ describe('F2APlugin - 高级测试', () => {
         result: 'test result',
         status: 'success',
       });
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_announce handler 应该可调用', async () => {
@@ -152,7 +152,7 @@ describe('F2APlugin - 高级测试', () => {
         task_type: 'test-task',
         description: 'test description',
       });
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_list_announcements handler 应该可调用', async () => {
@@ -163,7 +163,7 @@ describe('F2APlugin - 高级测试', () => {
       
       // 调用 handler
       const result = await listTool!.handler({});
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_claim handler 应该可调用', async () => {
@@ -176,7 +176,7 @@ describe('F2APlugin - 高级测试', () => {
       const result = await claimTool!.handler({
         announcement_id: 'test-announcement-id',
       });
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_reputation handler 应该可调用', async () => {
@@ -187,7 +187,7 @@ describe('F2APlugin - 高级测试', () => {
       
       // 调用 handler
       const result = await reputationTool!.handler({});
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_contacts handler 应该可调用', async () => {
@@ -200,7 +200,7 @@ describe('F2APlugin - 高级测试', () => {
       const result = await contactsTool!.handler({
         action: 'list',
       });
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_friend_request handler 应该可调用', async () => {
@@ -213,7 +213,7 @@ describe('F2APlugin - 高级测试', () => {
       const result = await friendTool!.handler({
         peer_id: 'test-peer-id',
       });
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_pending_requests handler 应该可调用', async () => {
@@ -226,7 +226,7 @@ describe('F2APlugin - 高级测试', () => {
       const result = await pendingTool!.handler({
         action: 'list',
       });
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_contact_groups handler 应该可调用', async () => {
@@ -239,7 +239,7 @@ describe('F2APlugin - 高级测试', () => {
       const result = await groupsTool!.handler({
         action: 'list',
       });
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_contacts_export handler 应该可调用', async () => {
@@ -250,7 +250,7 @@ describe('F2APlugin - 高级测试', () => {
       
       // 调用 handler
       const result = await exportTool!.handler({});
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_contacts_import handler 应该可调用', async () => {
@@ -263,7 +263,7 @@ describe('F2APlugin - 高级测试', () => {
       const result = await importTool!.handler({
         data: { contacts: [] },
       });
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_manage_claims handler 应该可调用', async () => {
@@ -277,7 +277,7 @@ describe('F2APlugin - 高级测试', () => {
         action: 'list',
         announcement_id: 'test-id',
       });
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_my_claims handler 应该可调用', async () => {
@@ -288,7 +288,7 @@ describe('F2APlugin - 高级测试', () => {
       
       // 调用 handler
       const result = await myClaimsTool!.handler({});
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_announcement_stats handler 应该可调用', async () => {
@@ -299,7 +299,7 @@ describe('F2APlugin - 高级测试', () => {
       
       // 调用 handler
       const result = await statsTool!.handler({});
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_estimate_task handler 应该可调用', async () => {
@@ -313,7 +313,7 @@ describe('F2APlugin - 高级测试', () => {
         task_type: 'test-task',
         description: 'test description',
       });
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_review_task handler 应该可调用', async () => {
@@ -328,7 +328,7 @@ describe('F2APlugin - 高级测试', () => {
         workload: 50,
         value: 50,
       }, { sessionId: 'test-session' });
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_get_reviews handler 应该可调用', async () => {
@@ -341,7 +341,7 @@ describe('F2APlugin - 高级测试', () => {
       const result = await getReviewsTool!.handler({
         task_id: 'test-task-id',
       });
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
 
     it('f2a_get_capabilities handler 应该可调用', async () => {
@@ -352,7 +352,7 @@ describe('F2APlugin - 高级测试', () => {
       
       // 调用 handler
       const result = await capabilitiesTool!.handler({});
-      expect(result).toBeDefined();
+      expect(result).toHaveProperty('content');
     });
   });
 

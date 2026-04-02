@@ -522,3 +522,14 @@ export function generateSpecialCharPayloads(): string[] {
 export function generateExpiredTimestamp(daysAgo: number = 30): number {
   return Date.now() - daysAgo * 24 * 60 * 60 * 1000;
 }
+
+/**
+ * 创建标准 mockApi 对象
+ */
+export function createMockApi(workspace: string = '/test-workspace') {
+  return {
+    config: {
+      agents: { defaults: { workspace } },
+    },
+  };
+}

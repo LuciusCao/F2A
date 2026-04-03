@@ -95,14 +95,6 @@ describe('AgentManager', () => {
     });
   });
 
-  describe('异步初始化', () => {
-    it('应该支持异步初始化', async () => {
-      manager = new AgentManager(tempDir);
-      const identity = await manager.initialize();
-      expect(identity).toBeDefined();
-    });
-  });
-
   describe('exportIdentity', () => {
     it('应该能够导出身份', () => {
       manager = new AgentManager(tempDir, { name: 'ExportAgent' });

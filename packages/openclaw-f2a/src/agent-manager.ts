@@ -56,17 +56,6 @@ export class AgentManager {
   }
 
   /**
-   * 异步初始化（兼容旧 API）
-   * @deprecated 使用构造函数自动初始化
-   */
-  async initialize(): Promise<AgentIdentity> {
-    if (!this.identity) {
-      this.initializeSync();
-    }
-    return this.identity!;
-  }
-
-  /**
    * 获取当前 Agent 身份
    */
   getIdentity(): AgentIdentity | null {

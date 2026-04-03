@@ -307,15 +307,6 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
     return this.webhookManager.createHandler();
   }
 
-  /**
-   * 注册到 F2A Node（兼容性方法）
-   * @deprecated 已迁移到 F2ACore
-   */
-  private async registerToNode(): Promise<void> {
-    // 已迁移到 F2ACore，此方法保留用于测试兼容性
-    // 无操作
-  }
-
   // ========== 兼容性属性（测试用） ==========
 
   // 测试用存储（允许测试覆盖）

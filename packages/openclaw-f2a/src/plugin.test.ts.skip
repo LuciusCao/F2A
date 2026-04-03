@@ -56,6 +56,7 @@ vi.mock('./connector.js', () => {
     initialize: mockInitialize,
     shutdown: mockShutdown,
     getTools: vi.fn(() => mockTools),
+    isInitialized: vi.fn(() => true),
     _getMockTools: () => mockTools,
     _resetMockTools: () => {
       const newTools = createMockTools();

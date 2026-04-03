@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, rmSync, existsSync } from 'fs';
 import { F2AOpenClawAdapter } from './connector.js';
-import { ReputationSystem } from './reputation.js';
+import { ReputationSystem } from '@f2a/network';
 import { CapabilityDetector } from './capability-detector.js';
 import { TaskQueue } from './task-queue.js';
 import type { F2APluginConfig, AgentCapability, AgentInfo, TaskRequest } from './types.js';

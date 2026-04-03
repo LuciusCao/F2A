@@ -170,7 +170,7 @@ describe('Plugin register 函数', () => {
       await register(mockApi);
       
       expect(mockInitialize).toHaveBeenCalled();
-      expect(mockApi.logger?.info).toHaveBeenCalledWith('[F2A Adapter] 初始化完成');
+      expect(mockApi.logger?.info).toHaveBeenCalledWith('[F2A Plugin] 初始化完成（延迟模式）');
     });
 
     it('应该从配置中提取插件配置并传递给 adapter', async () => {
@@ -205,7 +205,7 @@ describe('Plugin register 函数', () => {
       await expect(register(mockApi)).rejects.toThrow('F2A Adapter 初始化失败: 初始化失败');
       
       expect(mockShutdown).toHaveBeenCalled();
-      expect(mockApi.logger?.error).toHaveBeenCalledWith('[F2A Adapter] 初始化失败: 初始化失败');
+      expect(mockApi.logger?.error).toHaveBeenCalledWith('[F2A Plugin] 初始化失败: 初始化失败');
     });
 
     it('应该在清理资源失败时记录警告', async () => {
@@ -216,7 +216,7 @@ describe('Plugin register 函数', () => {
       
       await expect(register(mockApi)).rejects.toThrow('F2A Adapter 初始化失败: 初始化失败');
       
-      expect(mockApi.logger?.warn).toHaveBeenCalledWith('[F2A Adapter] 清理资源时出错: 清理失败');
+      expect(mockApi.logger?.warn).toHaveBeenCalledWith('[F2A Plugin] 清理资源时出错: 清理失败');
     });
 
     it('初始化失败时不应该注册任何工具或服务', async () => {
@@ -258,7 +258,7 @@ describe('Plugin register 函数', () => {
       
       await register(mockApi);
       
-      expect(mockApi.logger?.info).toHaveBeenCalledWith('[F2A Adapter] 已注册 3 个工具');
+      expect(mockApi.logger?.info).toHaveBeenCalledWith('[F2A Plugin] 已注册 3 个工具');
     });
   });
 
@@ -289,7 +289,7 @@ describe('Plugin register 函数', () => {
       const service = registeredServices[0];
       service.start();
       
-      expect(mockApi.logger?.info).toHaveBeenCalledWith('[F2A Adapter] 服务已启动');
+      expect(mockApi.logger?.info).toHaveBeenCalledWith('[F2A Plugin] 服务已启动');
     });
 
     it('服务 stop 应该调用 shutdown', async () => {
@@ -302,7 +302,7 @@ describe('Plugin register 函数', () => {
       await service.stop();
       
       expect(mockShutdown).toHaveBeenCalled();
-      expect(mockApi.logger?.info).toHaveBeenCalledWith('[F2A Adapter] 正在停止服务...');
+      expect(mockApi.logger?.info).toHaveBeenCalledWith('[F2A Plugin] 正在停止服务...');
     });
   });
 
@@ -407,7 +407,7 @@ describe('Plugin register 函数', () => {
       await expect(tool.execute('session-123', {})).rejects.toThrow('工具执行失败');
       
       expect(mockApi.logger?.error).toHaveBeenCalledWith(
-        '[F2A Adapter] 工具 failing_tool 执行失败: 工具执行失败'
+        '[F2A Plugin] 工具 failing_tool 执行失败: 工具执行失败'
       );
     });
 

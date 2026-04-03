@@ -39,6 +39,7 @@
   "dependencies": {
     "@f2a/network": "^0.4.12",
     "better-sqlite3": "^11.0.0",
+    "eventemitter3": "^5.0.4",
     "zod": "^3.22.4"
   },
   "devDependencies": {

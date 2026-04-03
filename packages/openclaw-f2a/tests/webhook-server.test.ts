@@ -1,249 +1,681 @@
-/**
- * WebhookServer 测试
- * 
- * 测试 Webhook 服务器功能。
- */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { WebhookServer, WebhookHandler } from '../src/webhook-server';
+import { AgentCapability } from '../src/types';
+import { createServer, IncomingMessage, ServerResponse } from 'http';
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { WebhookServer, WebhookHandler } from '../src/webhook-server.js';
-import type { DiscoverWebhookPayload, DelegateWebhookPayload } from '../src/types.js';
-import getPort from 'get-port';
-
-// 创建模拟 handler
-function createMockHandler(): WebhookHandler {
-  return {
-    onDiscover: async () => ({
-      capabilities: [],
-      reputation: 50,
-    }),
-    onDelegate: async () => ({
-      accepted: true,
-      taskId: 'test-task',
-    }),
-    onStatus: async () => ({
-      status: 'available' as const,
-      load: 0,
-    }),
-    onMessage: async () => ({
-      response: 'OK',
-    }),
-  };
-}
+// 使用真实的 http 模块进行集成测试
+vi.unmock('http');
 
 describe('WebhookServer', () => {
   let server: WebhookServer;
-  let handler: WebhookHandler;
-  let port: number;
+  let mockHandler: WebhookHandler;
+  let testPort: number;
+
+  const mockCapabilities: AgentCapability[] = [
+    {
+      name: 'file-operation',
+      description: 'File operations',
+      tools: ['read', 'write'],
+    },
+  ];
+
+  // 获取可用端口
+  async function getAvailablePort(): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const tempServer = createServer();
+      tempServer.listen(0, () => {
+        const address = tempServer.address();
+        if (address && typeof address === 'object') {
+          const port = address.port;
+          tempServer.close(() => resolve(port));
+        } else {
+          reject(new Error('Failed to get port'));
+        }
+      });
+    });
+  }
 
   beforeEach(async () => {
-    handler = createMockHandler();
-    port = await getPort();
+    vi.clearAllMocks();
+    testPort = await getAvailablePort();
+    mockHandler = {
+      onDiscover: vi.fn().mockResolvedValue({
+        capabilities: mockCapabilities,
+        reputation: 80,
+      }),
+      onDelegate: vi.fn().mockResolvedValue({
+        accepted: true,
+        taskId: 'task-123',
+      }),
+      onStatus: vi.fn().mockResolvedValue({
+        status: 'available',
+        load: 0.5,
+      }),
+    };
   });
 
   afterEach(async () => {
     if (server) {
       await server.stop();
+      // P1 修复：等待端口完全释放，避免 EADDRINUSE 错误
+      await new Promise(resolve => setTimeout(resolve, 50));
     }
   });
 
-  describe('构造函数', () => {
-    it('应该能够创建服务器实例', async () => {
-      server = new WebhookServer(port, handler);
-      expect(server).toBeDefined();
-    });
+  // 辅助函数：发送 HTTP 请求
+  async function sendRequest(
+    options: {
+      method?: string;
+      path?: string;
+      headers?: Record<string, string>;
+      body?: unknown;
+      bodySize?: number; // 用于测试大请求体
+    } = {}
+  ): Promise<{ status: number; body: unknown; headers: Record<string, string> }> {
+    return new Promise((resolve, reject) => {
+      const req = {
+        hostname: 'localhost',
+        port: testPort,
+        path: options.path || '/',
+        method: options.method || 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
+      };
 
-    it('应该接受自定义配置', async () => {
-      const customPort = await getPort();
-      server = new WebhookServer(customPort, handler, {
-        maxBodySize: 1024 * 1024,
-        allowedOrigins: ['http://localhost:3000'],
+      const httpReq = require('http').request(req, (res: any) => {
+        let data = '';
+        const responseHeaders: Record<string, string> = {};
+        for (const [key, value] of Object.entries(res.headers)) {
+          if (typeof value === 'string') {
+            responseHeaders[key] = value;
+          } else if (Array.isArray(value)) {
+            responseHeaders[key] = value.join(', ');
+          }
+        }
+        res.on('data', (chunk: Buffer) => (data += chunk));
+        res.on('end', () => {
+          try {
+            const body = data ? JSON.parse(data) : {};
+            resolve({ status: res.statusCode, body, headers: responseHeaders });
+          } catch {
+            resolve({ status: res.statusCode, body: data, headers: responseHeaders });
+          }
+        });
       });
-      expect(server).toBeDefined();
+
+      httpReq.on('error', reject);
+
+      if (options.bodySize) {
+        // 发送指定大小的请求体
+        httpReq.setHeader('Content-Length', options.bodySize);
+        httpReq.write('x'.repeat(options.bodySize));
+      } else if (options.body) {
+        httpReq.write(JSON.stringify(options.body));
+      }
+
+      httpReq.end();
+    });
+  }
+
+  describe('start', () => {
+    it('should start server successfully', async () => {
+      server = new WebhookServer(testPort, mockHandler);
+      await expect(server.start()).resolves.not.toThrow();
     });
   });
 
-  describe('启动和停止', () => {
-    it('应该能够启动服务器', async () => {
-      server = new WebhookServer(port, handler);
+  describe('stop', () => {
+    it('should stop server gracefully', async () => {
+      server = new WebhookServer(testPort, mockHandler);
       await server.start();
-      
-      const response = await fetch(`http://localhost:${port}/webhook`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+      await expect(server.stop()).resolves.not.toThrow();
+    });
+
+    it('should not throw when stopping unstarted server', async () => {
+      server = new WebhookServer(testPort, mockHandler);
+      await expect(server.stop()).resolves.not.toThrow();
+    });
+  });
+
+  describe('getUrl', () => {
+    it('should return correct URL', async () => {
+      server = new WebhookServer(testPort, mockHandler);
+      expect(server.getUrl()).toBe(`http://localhost:${testPort}/webhook`);
+    });
+  });
+
+  describe('请求体大小限制测试', () => {
+    it('应该接受正常大小的请求体', async () => {
+      server = new WebhookServer(testPort, mockHandler);
+      await server.start();
+
+      const response = await sendRequest({
+        body: {
           type: 'status',
-        }),
+          payload: {},
+          timestamp: Date.now(),
+        },
       });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('status', 'available');
+    });
+
+    it('应该拒绝超过大小限制的请求体', async () => {
+      // 设置最大请求体大小为 100 字节
+      server = new WebhookServer(testPort, mockHandler, { maxBodySize: 100 });
+      await server.start();
+
+      // 发送超过 100 字节的请求体
+      const largeBody = {
+        type: 'discover',
+        payload: {
+          query: { capability: 'x'.repeat(200) }, // 超过限制
+          requester: 'test-requester',
+        },
+        timestamp: Date.now(),
+      };
+
+      // 当请求体过大时，服务器会销毁连接或返回 500
+      try {
+        const response = await sendRequest({ body: largeBody });
+        // 如果收到响应，应该是 500 错误
+        expect(response.status).toBe(500);
+        expect(response.body).toHaveProperty('error');
+      } catch (error: any) {
+        // 如果连接被销毁，这是预期的行为（防止 DoS 攻击）
+        expect(error.code).toBe('ECONNRESET');
+      }
+    });
+
+    it('应该使用默认 64KB 限制', async () => {
+      server = new WebhookServer(testPort, mockHandler);
+      await server.start();
+
+      // 发送一个较大的但不超过 64KB 的请求
+      const largeButValidBody = {
+        type: 'discover',
+        payload: {
+          query: { capability: 'x'.repeat(10000) }, // 约 10KB
+          requester: 'test-requester',
+        },
+        timestamp: Date.now(),
+      };
+
+      const response = await sendRequest({ body: largeButValidBody });
       expect(response.status).toBe(200);
     });
 
-    it('应该能够停止服务器', async () => {
-      server = new WebhookServer(port, handler);
+    it('应该在请求体过大时销毁连接', async () => {
+      server = new WebhookServer(testPort, mockHandler, { maxBodySize: 100 });
       await server.start();
-      await server.stop();
-      
-      // 停止后不应该能连接
+
+      // 当请求体过大时，服务器会销毁连接，导致 socket hang up
+      // 这是正确的行为（防止 DoS 攻击），所以我们需要捕获这个错误
       try {
-        await fetch(`http://localhost:${port}/webhook`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            type: 'status',
-          }),
+        await sendRequest({
+          bodySize: 1000, // 超过 100 字节限制
         });
-        expect(true).toBe(false); // 不应该到达这里
-      } catch (error) {
-        // 预期的错误
-        expect(error).toBeDefined();
+        // 如果没有抛出错误，说明服务器发送了响应（这也是可接受的）
+      } catch (error: any) {
+        // 连接被销毁是预期的行为
+        expect(error.code).toBe('ECONNRESET');
       }
     });
   });
 
-  describe('CORS', () => {
-    it('应该处理 CORS 预检请求', async () => {
-      server = new WebhookServer(port, handler, {
-        allowedOrigins: ['http://localhost:3000'],
+  describe('CORS 测试', () => {
+    it('应该为允许的来源设置 CORS 头', async () => {
+      server = new WebhookServer(testPort, mockHandler, {
+        allowedOrigins: ['http://localhost', 'http://example.com'],
       });
       await server.start();
 
-      const response = await fetch(`http://localhost:${port}/webhook`, {
+      const response = await sendRequest({
+        headers: { Origin: 'http://example.com' },
+        body: { type: 'status', payload: {}, timestamp: Date.now() },
+      });
+
+      expect(response.headers['access-control-allow-origin']).toBe('http://example.com');
+    });
+
+    it('应该拒绝不在白名单中的来源', async () => {
+      server = new WebhookServer(testPort, mockHandler, {
+        allowedOrigins: ['http://localhost', 'http://example.com'],
+      });
+      await server.start();
+
+      const response = await sendRequest({
+        headers: { Origin: 'http://malicious.com' },
+        body: { type: 'status', payload: {}, timestamp: Date.now() },
+      });
+
+      // 应该使用默认的 localhost 而不是恶意来源
+      expect(response.headers['access-control-allow-origin']).toBe('http://localhost');
+    });
+
+    it('应该处理 OPTIONS 预检请求', async () => {
+      server = new WebhookServer(testPort, mockHandler, {
+        allowedOrigins: ['http://localhost', 'http://example.com'],
+      });
+      await server.start();
+
+      const response = await sendRequest({
         method: 'OPTIONS',
-        headers: {
-          'Origin': 'http://localhost:3000',
-          'Access-Control-Request-Method': 'POST',
-        },
+        headers: { Origin: 'http://example.com' },
       });
 
       expect(response.status).toBe(200);
+      expect(response.headers['access-control-allow-origin']).toBe('http://example.com');
+      expect(response.headers['access-control-allow-methods']).toBe('POST, OPTIONS');
     });
-  });
 
-  describe('健康检查', () => {
-    it('应该返回健康状态', async () => {
-      server = new WebhookServer(port, handler);
+    it('应该设置正确的 CORS 方法头', async () => {
+      server = new WebhookServer(testPort, mockHandler);
       await server.start();
 
-      const response = await fetch(`http://localhost:${port}/webhook`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          type: 'status',
-        }),
+      const response = await sendRequest({
+        body: { type: 'status', payload: {}, timestamp: Date.now() },
       });
 
-      expect(response.status).toBe(200);
-      const data = await response.json();
-      expect(data.status).toBeDefined();
+      expect(response.headers['access-control-allow-methods']).toBe('POST, OPTIONS');
+      expect(response.headers['access-control-allow-headers']).toBe('Content-Type');
+    });
+
+    it('默认只允许 localhost', async () => {
+      server = new WebhookServer(testPort, mockHandler);
+      await server.start();
+
+      const response = await sendRequest({
+        headers: { Origin: 'http://unknown-origin.com' },
+        body: { type: 'status', payload: {}, timestamp: Date.now() },
+      });
+
+      expect(response.headers['access-control-allow-origin']).toBe('http://localhost');
     });
   });
 
-  describe('事件处理', () => {
-    it('应该处理 discover 事件', async () => {
-      const mockHandler: WebhookHandler = {
-        onDiscover: async () => ({
-          capabilities: [{ name: 'test', description: 'Test capability', tools: [] }],
-          reputation: 80,
-        }),
-        onDelegate: async () => ({ accepted: true, taskId: 'test' }),
-        onStatus: async () => ({ status: 'available' }),
-      };
-
-      server = new WebhookServer(port, mockHandler);
+  describe('错误处理测试', () => {
+    it('应该拒绝非 POST 请求', async () => {
+      server = new WebhookServer(testPort, mockHandler);
       await server.start();
 
-      const response = await fetch(`http://localhost:${port}/webhook`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          type: 'discover',
+      const response = await sendRequest({
+        method: 'GET',
+      });
+
+      expect(response.status).toBe(405);
+      expect(response.body).toHaveProperty('error', 'Method not allowed');
+    });
+
+    it('应该拒绝非 POST 请求 (PUT)', async () => {
+      server = new WebhookServer(testPort, mockHandler);
+      await server.start();
+
+      const response = await sendRequest({
+        method: 'PUT',
+      });
+
+      expect(response.status).toBe(405);
+    });
+
+    it('应该拒绝非 POST 请求 (DELETE)', async () => {
+      server = new WebhookServer(testPort, mockHandler);
+      await server.start();
+
+      const response = await sendRequest({
+        method: 'DELETE',
+      });
+
+      expect(response.status).toBe(405);
+    });
+
+    it('应该返回 400 对于未知事件类型', async () => {
+      server = new WebhookServer(testPort, mockHandler);
+      await server.start();
+
+      const response = await sendRequest({
+        body: {
+          type: 'unknown-event',
           payload: {},
-        }),
-      });
-
-      expect(response.status).toBe(200);
-      const data = await response.json();
-      expect(data.capabilities).toBeDefined();
-    });
-
-    it('应该处理 delegate 事件', async () => {
-      const mockHandler: WebhookHandler = {
-        onDiscover: async () => ({ capabilities: [], reputation: 50 }),
-        onDelegate: async () => ({ accepted: true, taskId: 'task-123' }),
-        onStatus: async () => ({ status: 'available' }),
-      };
-
-      server = new WebhookServer(port, mockHandler);
-      await server.start();
-
-      const response = await fetch(`http://localhost:${port}/webhook`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+          timestamp: Date.now(),
         },
-        body: JSON.stringify({
-          type: 'delegate',
-          payload: {
-            taskId: 'task-123',
-            taskType: 'test',
-            description: 'Test task',
-            from: 'test-peer',
-          },
-        }),
-      });
-
-      expect(response.status).toBe(200);
-      const data = await response.json();
-      expect(data.accepted).toBe(true);
-    });
-
-    it('应该处理 status 事件', async () => {
-      const mockHandler: WebhookHandler = {
-        onDiscover: async () => ({ capabilities: [], reputation: 50 }),
-        onDelegate: async () => ({ accepted: true, taskId: 'test' }),
-        onStatus: async () => ({ status: 'busy', load: 0.8 }),
-      };
-
-      server = new WebhookServer(port, mockHandler);
-      await server.start();
-
-      const response = await fetch(`http://localhost:${port}/webhook`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          type: 'status',
-        }),
-      });
-
-      expect(response.status).toBe(200);
-      const data = await response.json();
-      expect(data.status).toBe('busy');
-    });
-
-    it('应该拒绝未知事件类型', async () => {
-      server = new WebhookServer(port, handler);
-      await server.start();
-
-      const response = await fetch(`http://localhost:${port}/webhook`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          type: 'unknown',
-        }),
       });
 
       expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
+      expect((response.body as { error: string }).error).toContain('Unknown event type');
+    });
+
+    it('应该返回 500 对于无效 JSON', async () => {
+      server = new WebhookServer(testPort, mockHandler);
+      await server.start();
+
+      const response = await new Promise<{ status: number; body: unknown }>((resolve, reject) => {
+        const httpReq = require('http').request(
+          {
+            hostname: 'localhost',
+            port: testPort,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+          },
+          (res: any) => {
+            let data = '';
+            res.on('data', (chunk: Buffer) => (data += chunk));
+            res.on('end', () => {
+              try {
+                resolve({ status: res.statusCode, body: JSON.parse(data) });
+              } catch {
+                resolve({ status: res.statusCode, body: data });
+              }
+            });
+          }
+        );
+        httpReq.on('error', reject);
+        httpReq.write('not a valid json');
+        httpReq.end();
+      });
+
+      expect(response.status).toBe(500);
+      expect(response.body).toHaveProperty('error', 'Invalid JSON');
+    });
+
+    it('应该返回 500 当 handler 抛出异常', async () => {
+      const errorHandler: WebhookHandler = {
+        onDiscover: vi.fn().mockRejectedValue(new Error('Handler error')),
+        onDelegate: vi.fn().mockResolvedValue({ accepted: true, taskId: 'task-123' }),
+        onStatus: vi.fn().mockResolvedValue({ status: 'available' }),
+      };
+
+      server = new WebhookServer(testPort, errorHandler);
+      await server.start();
+
+      const response = await sendRequest({
+        body: {
+          type: 'discover',
+          payload: { query: {}, requester: 'test' },
+          timestamp: Date.now(),
+        },
+      });
+
+      expect(response.status).toBe(500);
+      expect(response.body).toHaveProperty('error', 'Handler error');
+    });
+
+    it('应该处理 onDelegate handler 异常', async () => {
+      const errorHandler: WebhookHandler = {
+        onDiscover: vi.fn().mockResolvedValue({ capabilities: mockCapabilities }),
+        onDelegate: vi.fn().mockRejectedValue(new Error('Delegate failed')),
+        onStatus: vi.fn().mockResolvedValue({ status: 'available' }),
+      };
+
+      server = new WebhookServer(testPort, errorHandler);
+      await server.start();
+
+      const response = await sendRequest({
+        body: {
+          type: 'delegate',
+          payload: {
+            taskId: 'task-1',
+            taskType: 'test',
+            description: 'test task',
+            from: 'peer-1',
+            timestamp: Date.now(),
+            timeout: 30,
+          },
+          timestamp: Date.now(),
+        },
+      });
+
+      expect(response.status).toBe(500);
+      expect(response.body).toHaveProperty('error', 'Delegate failed');
+    });
+
+    it('应该处理 onStatus handler 异常', async () => {
+      const errorHandler: WebhookHandler = {
+        onDiscover: vi.fn().mockResolvedValue({ capabilities: mockCapabilities }),
+        onDelegate: vi.fn().mockResolvedValue({ accepted: true, taskId: 'task-123' }),
+        onStatus: vi.fn().mockRejectedValue(new Error('Status check failed')),
+      };
+
+      server = new WebhookServer(testPort, errorHandler);
+      await server.start();
+
+      const response = await sendRequest({
+        body: {
+          type: 'status',
+          payload: {},
+          timestamp: Date.now(),
+        },
+      });
+
+      expect(response.status).toBe(500);
+      expect(response.body).toHaveProperty('error', 'Status check failed');
+    });
+  });
+
+  describe('事件处理测试', () => {
+    it('应该正确处理 discover 事件', async () => {
+      server = new WebhookServer(testPort, mockHandler);
+      await server.start();
+
+      const response = await sendRequest({
+        body: {
+          type: 'discover',
+          payload: {
+            query: { capability: 'file-operation' },
+            requester: 'peer-123',
+          },
+          timestamp: Date.now(),
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(mockHandler.onDiscover).toHaveBeenCalledWith({
+        query: { capability: 'file-operation' },
+        requester: 'peer-123',
+      });
+      expect(response.body).toEqual({
+        capabilities: mockCapabilities,
+        reputation: 80,
+      });
+    });
+
+    it('应该正确处理 delegate 事件', async () => {
+      server = new WebhookServer(testPort, mockHandler);
+      await server.start();
+
+      const delegatePayload = {
+        taskId: 'task-abc',
+        taskType: 'file-read',
+        description: 'Read a file',
+        parameters: { path: '/test/file.txt' },
+        from: 'peer-456',
+        timestamp: Date.now(),
+        timeout: 60,
+      };
+
+      const response = await sendRequest({
+        body: {
+          type: 'delegate',
+          payload: delegatePayload,
+          timestamp: Date.now(),
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(mockHandler.onDelegate).toHaveBeenCalledWith(delegatePayload);
+      expect(response.body).toEqual({
+        accepted: true,
+        taskId: 'task-123',
+      });
+    });
+
+    it('应该正确处理 status 事件', async () => {
+      server = new WebhookServer(testPort, mockHandler);
+      await server.start();
+
+      const response = await sendRequest({
+        body: {
+          type: 'status',
+          payload: {},
+          timestamp: Date.now(),
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(mockHandler.onStatus).toHaveBeenCalled();
+      expect(response.body).toEqual({
+        status: 'available',
+        load: 0.5,
+      });
+    });
+  });
+
+  describe('自定义配置测试', () => {
+    it('应该使用自定义请求体大小限制', async () => {
+      server = new WebhookServer(testPort, mockHandler, { maxBodySize: 1024 });
+      await server.start();
+
+      // 发送一个刚好在限制内的请求
+      const validBody = {
+        type: 'status',
+        payload: {},
+        timestamp: Date.now(),
+      };
+
+      const response = await sendRequest({ body: validBody });
+      expect(response.status).toBe(200);
+    });
+
+    it('应该使用自定义允许来源列表', async () => {
+      server = new WebhookServer(testPort, mockHandler, {
+        allowedOrigins: ['http://custom-origin.com', 'http://another.com'],
+      });
+      await server.start();
+
+      const response = await sendRequest({
+        headers: { Origin: 'http://custom-origin.com' },
+        body: { type: 'status', payload: {}, timestamp: Date.now() },
+      });
+
+      expect(response.headers['access-control-allow-origin']).toBe('http://custom-origin.com');
+    });
+
+    it('空允许来源列表应该使用默认值', async () => {
+      server = new WebhookServer(testPort, mockHandler, { allowedOrigins: [] });
+      await server.start();
+
+      const response = await sendRequest({
+        headers: { Origin: 'http://some-origin.com' },
+        body: { type: 'status', payload: {}, timestamp: Date.now() },
+      });
+
+      // 空数组时，应该使用默认值 'http://localhost'
+      expect(response.headers['access-control-allow-origin']).toBe('http://localhost');
+    });
+  });
+
+  describe('生产环境 CORS 验证测试 (P2 安全修复)', () => {
+    const originalEnv = process.env.NODE_ENV;
+
+    afterEach(() => {
+      // 恢复原始环境变量
+      process.env.NODE_ENV = originalEnv;
+      delete process.env.F2A_WEBHOOK_ALLOWED_ORIGINS;
+    });
+
+    it('生产环境使用默认 localhost 配置应该记录警告', async () => {
+      process.env.NODE_ENV = 'production';
+      
+      // webhookLogger 使用 console.error 输出错误日志
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      
+      // 使用默认配置（只包含 localhost）
+      server = new WebhookServer(testPort, mockHandler);
+      await server.start();
+      
+      // 应该记录警告日志
+      const calls = errorSpy.mock.calls.map(call => call.join(' '));
+      const hasCorsWarning = calls.some(msg => 
+        msg.includes('CORS') && msg.includes('localhost')
+      );
+      expect(hasCorsWarning).toBe(true);
+      
+      errorSpy.mockRestore();
+    });
+
+    it('生产环境使用通配符 origin 应该抛出错误', () => {
+      process.env.NODE_ENV = 'production';
+      
+      // 使用通配符配置应该抛出错误
+      expect(() => {
+        new WebhookServer(testPort, mockHandler, {
+          allowedOrigins: ['*']
+        });
+      }).toThrow('Wildcard CORS origin is not allowed in production');
+    });
+
+    it('生产环境使用明确的域名配置应该正常工作', async () => {
+      process.env.NODE_ENV = 'production';
+      
+      // 使用明确的域名配置
+      server = new WebhookServer(testPort, mockHandler, {
+        allowedOrigins: ['https://example.com', 'https://api.example.com']
+      });
+      await server.start();
+
+      const response = await sendRequest({
+        headers: { Origin: 'https://example.com' },
+        body: { type: 'status', payload: {}, timestamp: Date.now() },
+      });
+
+      expect(response.headers['access-control-allow-origin']).toBe('https://example.com');
+    });
+
+    it('开发环境允许使用 localhost 配置', async () => {
+      process.env.NODE_ENV = 'development';
+      
+      // 开发环境应该允许使用默认 localhost 配置
+      server = new WebhookServer(testPort, mockHandler);
+      await server.start();
+
+      const response = await sendRequest({
+        headers: { Origin: 'http://localhost' },
+        body: { type: 'status', payload: {}, timestamp: Date.now() },
+      });
+
+      expect(response.headers['access-control-allow-origin']).toBe('http://localhost');
+    });
+
+    it('开发环境允许使用通配符配置', async () => {
+      process.env.NODE_ENV = 'development';
+      
+      // 开发环境应该允许使用通配符配置
+      server = new WebhookServer(testPort, mockHandler, {
+        allowedOrigins: ['*']
+      });
+      await server.start();
+      
+      // 应该正常启动
+      expect(server.getUrl()).toContain('localhost');
+    });
+
+    it('应该支持从环境变量读取 CORS 配置', async () => {
+      process.env.NODE_ENV = 'development';
+      process.env.F2A_WEBHOOK_ALLOWED_ORIGINS = 'https://env-origin.com,https://another.com';
+      
+      server = new WebhookServer(testPort, mockHandler);
+      await server.start();
+
+      const response = await sendRequest({
+        headers: { Origin: 'https://env-origin.com' },
+        body: { type: 'status', payload: {}, timestamp: Date.now() },
+      });
+
+      expect(response.headers['access-control-allow-origin']).toBe('https://env-origin.com');
     });
   });
 });

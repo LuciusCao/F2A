@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { F2APlugin } from './connector';
+import { F2APlugin } from '../src/connector';
 
 describe('F2APlugin', () => {
   let adapter: F2APlugin;

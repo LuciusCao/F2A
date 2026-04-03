@@ -4,8 +4,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { F2APlugin } from './connector.js';
-import type { AgentInfo } from './types.js';
+import { F2APlugin } from '../src/connector.js';
+import type { AgentInfo } from '../src/types.js';
 
 describe('F2APlugin 业务逻辑', () => {
   let plugin: F2APlugin;

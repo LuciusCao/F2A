@@ -4,8 +4,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { F2ANodeManager } from './node-manager.js';
-import type { F2ANodeConfig } from './types.js';
+import { F2ANodeManager } from '../src/node-manager.js';
+import type { F2ANodeConfig } from '../src/types.js';
 
 // Mock child_process
 vi.mock('child_process', () => ({

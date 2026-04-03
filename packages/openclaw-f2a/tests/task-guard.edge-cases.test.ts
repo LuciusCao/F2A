@@ -4,8 +4,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { TaskGuard, DEFAULT_TASK_GUARD_CONFIG } from './task-guard.js';
-import type { TaskRequest } from './types.js';
+import { TaskGuard, DEFAULT_TASK_GUARD_CONFIG } from '../src/task-guard.js';
+import type { TaskRequest } from '../src/types.js';
 import * as fs from 'fs';
 
 // Mock fs 用于持久化测试

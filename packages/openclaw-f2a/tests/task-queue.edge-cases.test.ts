@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { TaskQueue } from './task-queue.js';
+import { TaskQueue } from '../src/task-queue.js';
 import fs from 'fs';
 import path from 'path';
 

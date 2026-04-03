@@ -60,7 +60,7 @@
     "@multiformats/multiaddr": "^13.0.1",
     "@noble/curves": "^2.0.1",
     "better-sqlite3": "^11.0.0",
-    "eventemitter3": "^5.0.0",
+    "eventemitter3": "^5.0.4",
     "libp2p": "^3.1.6",
     "uint8arrays": "^5.0.0",
     "zod": "^3.22.0"

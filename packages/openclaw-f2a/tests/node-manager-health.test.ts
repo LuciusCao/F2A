@@ -56,8 +56,8 @@ global.fetch = mockFetch;
 vi.spyOn(process, 'kill').mockImplementation(() => true);
 
 // Import after mocking
-import { F2ANodeManager } from './node-manager.js';
-import type { Logger } from './logger.js';
+import { F2ANodeManager } from '../src/node-manager.js';
+import type { Logger } from '../src/logger.js';
 
 describe('F2ANodeManager - waitForReady 超时', () => {
   let manager: F2ANodeManager | null = null;

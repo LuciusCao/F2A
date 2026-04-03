@@ -1,177 +1,266 @@
-/**
- * F2ANetworkClient 测试
- * 
- * 测试与 F2A Node 的 HTTP API 通信。
- */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { F2ANetworkClient } from '../src/network-client';
+import { F2ANodeConfig } from '../src/types';
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { F2ANetworkClient } from '../src/network-client.js';
-import { createServer, IncomingMessage, ServerResponse } from 'http';
+// Mock global fetch
+const mockFetch = vi.fn();
+global.fetch = mockFetch;
 
 describe('F2ANetworkClient', () => {
   let client: F2ANetworkClient;
-  let server: ReturnType<typeof createServer>;
-  let port: number;
+  const mockConfig: F2ANodeConfig = {
+    nodePath: './F2A',
+    controlPort: 9001,
+    controlToken: 'test-token',
+    p2pPort: 9000,
+    enableMDNS: true,
+  };
 
-  beforeEach(async () => {
-    // 创建测试服务器
-    server = createServer((req: IncomingMessage, res: ServerResponse) => {
-      let body = '';
-      req.on('data', chunk => {
-        body += chunk;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    client = new F2ANetworkClient(mockConfig);
+  });
+
+  describe('HTTP request handling', () => {
+    it('should include correct headers in requests', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true, data: [] }),
       });
-      req.on('end', () => {
-        // 设置 CORS
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Content-Type', 'application/json');
 
-        // 简单的路由
-        if (req.url === '/discover' && req.method === 'POST') {
-          res.end(JSON.stringify({
-            success: true,
-            data: [
-              { peerId: 'test-peer-1', displayName: 'Agent1', capabilities: [] },
-            ],
-          }));
-        } else if (req.url === '/peers' && req.method === 'GET') {
-          res.end(JSON.stringify({
-            success: true,
-            data: [
-              { peerId: 'peer-1', connected: true },
-            ],
-          }));
-        } else if (req.url === '/delegate' && req.method === 'POST') {
-          res.end(JSON.stringify({
-            success: true,
-            data: { taskId: 'task-1' },
-          }));
-        } else {
-          res.statusCode = 404;
-          res.end(JSON.stringify({ error: 'Not found' }));
-        }
+      await client.getConnectedPeers();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:9001/peers',
+        expect.objectContaining({
+          headers: {
+            'Authorization': 'Bearer test-token',
+            'Content-Type': 'application/json',
+          },
+        })
+      );
+    });
+
+    it('should handle HTTP errors correctly', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        text: async () => 'Unauthorized',
       });
-    });
 
-    // 启动服务器
-    await new Promise<void>((resolve) => {
-      server.listen(0, () => {
-        const address = server.address();
-        if (address && typeof address === 'object') {
-          port = address.port;
-          resolve();
-        }
-      });
-    });
-
-    // 创建客户端
-    client = new F2ANetworkClient({
-      controlPort: port,
-      controlToken: 'test-token',
-    });
-  });
-
-  afterEach(async () => {
-    await new Promise<void>((resolve) => {
-      server.close(() => resolve());
-    });
-  });
-
-  describe('构造函数', () => {
-    it('应该能够创建客户端实例', () => {
-      expect(client).toBeDefined();
-    });
-  });
-
-  describe('discoverAgents', () => {
-    it('应该能够发现 Agents', async () => {
-      const result = await client.discoverAgents();
-      expect(result.success).toBe(true);
-    });
-
-    it('应该能够按能力过滤', async () => {
-      const result = await client.discoverAgents('code-generation');
-      expect(result.success).toBe(true);
-    });
-  });
-
-  describe('getConnectedPeers', () => {
-    it('应该能够获取已连接的 Peers', async () => {
       const result = await client.getConnectedPeers();
-      expect(result.success).toBe(true);
+
+      expect(result.success).toBe(false);
+      // 新的 Result 类型中 error 是 F2AError 对象
+      if (!result.success) {
+        expect(result.error.message).toContain('401');
+        expect(result.error.code).toBe('CONNECTION_FAILED');
+      }
     });
-  });
 
-  describe('delegateTask', () => {
-    it('应该能够委托任务', async () => {
-      const result = await client.delegateTask({
-        agent: 'test-peer-1',
-        task: 'Test task',
-      });
-      expect(result.success).toBe(true);
+    it('should handle network errors', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Connection refused'));
+
+      const result = await client.getConnectedPeers();
+
+      expect(result.success).toBe(false);
+      // 新的 Result 类型中 error 是 F2AError 对象
+      if (!result.success) {
+        expect(result.error.message).toBe('Connection refused');
+        expect(result.error.code).toBe('CONNECTION_FAILED');
+      }
     });
-  });
 
-  describe('错误处理', () => {
-    it('应该处理连接失败', async () => {
-      // 创建一个连接到无效端口的客户端
-      const badClient = new F2ANetworkClient({
-        controlPort: 1, // 无效端口
-        controlToken: 'test-token',
-        timeoutMs: 100, // 短超时
+    it('should handle JSON parsing errors', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => { throw new Error('Invalid JSON'); },
       });
 
-      const result = await badClient.discoverAgents();
+      const result = await client.getConnectedPeers();
+
       expect(result.success).toBe(false);
     });
   });
 
-  describe('sendTaskResponse', () => {
-    it('应该能够发送任务响应', async () => {
-      // 添加 /response 路由到测试服务器
-      const result = await client.sendTaskResponse('task-1', {
-        status: 'success',
-        output: 'Test output',
+  describe('discoverAgents', () => {
+    it('should discover agents without capability filter', async () => {
+      const mockAgents = [
+        { peerId: 'peer-1', displayName: 'Agent 1', capabilities: [] },
+      ];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockAgents,
       });
-      // 由于测试服务器没有 /response 路由，会返回 404
-      // 但我们验证方法可以被调用
-      expect(result).toBeDefined();
+
+      const result = await client.discoverAgents();
+
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual(mockAgents);
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:9001/discover',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ capability: undefined }),
+        })
+      );
+    });
+
+    it('should discover agents with capability filter', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true, data: [] }),
+      });
+
+      await client.discoverAgents('code-generation');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:9001/discover',
+        expect.objectContaining({
+          body: JSON.stringify({ capability: 'code-generation' }),
+        })
+      );
+    });
+  });
+
+  describe('delegateTask', () => {
+    it('should send task delegation request', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true, data: { result: 'done' } }),
+      });
+
+      const result = await client.delegateTask({
+        peerId: 'peer-1',
+        taskType: 'test-task',
+        description: 'Test description',
+        parameters: { key: 'value' },
+        timeout: 30000,
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:9001/delegate',
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('peer-1'),
+        })
+      );
+    });
+  });
+
+  describe('sendTaskResponse', () => {
+    it('should send task response with all fields', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true }),
+      });
+
+      const result = await client.sendTaskResponse('peer-1', {
+        taskId: 'task-123',
+        status: 'success',
+        result: { output: 'hello' },
+        latency: 100,
+      });
+
+      expect(result.success).toBe(true);
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody).toMatchObject({
+        peerId: 'peer-1',
+        taskId: 'task-123',
+        status: 'success',
+      });
     });
   });
 
   describe('registerWebhook', () => {
-    it('应该能够注册 Webhook', async () => {
-      const result = await client.registerWebhook('http://localhost:8080/webhook');
-      expect(result).toBeDefined();
+    it('should register webhook with default events', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true }),
+      });
+
+      const result = await client.registerWebhook('http://localhost:9002/webhook');
+
+      expect(result.success).toBe(true);
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody).toEqual({
+        url: 'http://localhost:9002/webhook',
+        events: ['discover', 'delegate', 'status'],
+      });
     });
   });
 
   describe('updateAgentInfo', () => {
-    it('应该能够更新 Agent 信息', async () => {
-      const result = await client.updateAgentInfo({
-        displayName: 'TestAgent',
+    it('should update agent info', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true }),
       });
-      expect(result).toBeDefined();
+
+      const result = await client.updateAgentInfo({
+        displayName: 'Test Agent',
+        capabilities: [{ name: 'test', description: 'Test capability', tools: [] }],
+      });
+
+      expect(result.success).toBe(true);
     });
   });
 
   describe('getPendingTasks', () => {
-    it('应该能够获取待处理任务', async () => {
+    it('should get pending tasks', async () => {
+      const mockTasks = [{ taskId: 'task-1', description: 'Test' }];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockTasks,
+      });
+
       const result = await client.getPendingTasks();
-      expect(result).toBeDefined();
+
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual(mockTasks);
     });
   });
 
   describe('confirmConnection', () => {
-    it('应该能够确认连接', async () => {
+    it('should confirm connection', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true }),
+      });
+
       const result = await client.confirmConnection('peer-1');
-      expect(result).toBeDefined();
+
+      expect(result.success).toBe(true);
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody).toEqual({ peerId: 'peer-1' });
     });
   });
 
   describe('rejectConnection', () => {
-    it('应该能够拒绝连接', async () => {
-      const result = await client.rejectConnection('peer-1', 'Blocked');
-      expect(result).toBeDefined();
+    it('should reject connection with reason', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true }),
+      });
+
+      const result = await client.rejectConnection('peer-1', 'suspicious');
+
+      expect(result.success).toBe(true);
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody).toEqual({ peerId: 'peer-1', reason: 'suspicious' });
+    });
+
+    it('should reject connection without reason', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true }),
+      });
+
+      await client.rejectConnection('peer-1');
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody).toEqual({ peerId: 'peer-1', reason: undefined });
     });
   });
 });

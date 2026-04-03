@@ -4,8 +4,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { F2APlugin } from './connector.js';
-import type { OpenClawPluginApi } from './types.js';
+import { F2APlugin } from '../src/connector.js';
+import type { OpenClawPluginApi } from '../src/types.js';
 
 describe('F2APlugin - 高价值边缘情况', () => {
   let plugin: F2APlugin;

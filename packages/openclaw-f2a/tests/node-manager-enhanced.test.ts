@@ -35,8 +35,8 @@ const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
 // Import after mocking
-import { F2ANodeManager } from './node-manager.js';
-import type { Logger } from './logger.js';
+import { F2ANodeManager } from '../src/node-manager.js';
+import type { Logger } from '../src/logger.js';
 
 describe('F2ANodeManager - 启动流程', () => {
   let manager: F2ANodeManager;

@@ -4,8 +4,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { F2APlugin } from './connector.js';
-import type { OpenClawPluginApi } from './types.js';
+import { F2APlugin } from '../src/connector.js';
+import type { OpenClawPluginApi } from '../src/types.js';
 
 describe('网络故障恢复测试', () => {
   let plugin: F2APlugin;

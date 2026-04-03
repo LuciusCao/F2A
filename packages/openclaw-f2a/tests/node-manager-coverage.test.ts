@@ -111,8 +111,8 @@ const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
 // Import after mocking
-import { F2ANodeManager } from './node-manager.js';
-import type { Logger } from './logger.js';
+import { F2ANodeManager } from '../src/node-manager.js';
+import type { Logger } from '../src/logger.js';
 
 describe('F2A Node Manager - 进程事件处理', () => {
   let manager: F2ANodeManager | null = null;

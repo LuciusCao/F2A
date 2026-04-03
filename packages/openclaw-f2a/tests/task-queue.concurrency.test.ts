@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { TaskQueue } from './task-queue.js';
+import { TaskQueue } from '../src/task-queue.js';
 import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
 import path from 'path';
 import fs from 'fs';
@@ -18,7 +18,7 @@ const TEST_DIR = './test-tmp-concurrency';
 // Worker 脚本内容
 const workerScript = `
 import { parentPort, workerData } from 'worker_threads';
-import { TaskQueue } from './task-queue.js';
+import { TaskQueue } from '../src/task-queue.js';
 
 const { action, taskId, persistDir } = workerData;
 

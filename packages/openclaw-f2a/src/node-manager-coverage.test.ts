@@ -162,7 +162,7 @@ describe('F2A Node Manager - 进程事件处理', () => {
 
       expect(mockLogger.info).toHaveBeenCalledWith(
         expect.stringContaining('Node stdout'),
-        'Node started successfully'
+        { output: 'Node started successfully' }
       );
     });
 
@@ -179,7 +179,7 @@ describe('F2A Node Manager - 进程事件处理', () => {
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         expect.stringContaining('Node stderr'),
-        'Warning: low memory'
+        { output: 'Warning: low memory' }
       );
     });
   });
@@ -197,9 +197,8 @@ describe('F2A Node Manager - 进程事件处理', () => {
       mockProcess._triggerExit(0, null);
 
       expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining('Node 进程退出'),
-        0,
-        null
+        'Node process exited',
+        { code: 0, signal: undefined }
       );
       expect(fs.unlinkSync).toHaveBeenCalled(); // PID 文件被删除
     });
@@ -216,9 +215,8 @@ describe('F2A Node Manager - 进程事件处理', () => {
       mockProcess._triggerExit(1, 'SIGTERM');
 
       expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining('Node 进程退出'),
-        1,
-        'SIGTERM'
+        expect.stringContaining('Node process exited'),
+        { code: 1, signal: 'SIGTERM' }
       );
       expect(fs.unlinkSync).toHaveBeenCalled();
     });
@@ -237,8 +235,8 @@ describe('F2A Node Manager - 进程事件处理', () => {
       mockProcess._triggerError(new Error('Process spawn failed'));
 
       expect(mockLogger.error).toHaveBeenCalledWith(
-        expect.stringContaining('Node 进程错误'),
-        'Process spawn failed'
+        expect.stringContaining('Node process error'),
+        { error: 'Process spawn failed' }
       );
       expect(fs.unlinkSync).toHaveBeenCalled();
     });
@@ -286,8 +284,8 @@ describe('F2A Node Manager - PID 文件操作', () => {
         expect.any(Object)
       );
       expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining('PID 文件已保存'),
-        expect.any(String)
+        expect.stringContaining('PID file saved'),
+        { path: expect.any(String), pid: 67890 }
       );
     });
 
@@ -308,8 +306,8 @@ describe('F2A Node Manager - PID 文件操作', () => {
       expect(result.success).toBe(true);
 
       expect(mockLogger.warn).toHaveBeenCalledWith(
-        expect.stringContaining('保存 PID 文件失败'),
-        'Permission denied'
+        expect.stringContaining('Failed to save PID file'),
+        { error: 'Permission denied' }
       );
     });
   });
@@ -370,8 +368,8 @@ describe('F2A Node Manager - PID 文件操作', () => {
       await stopPromise;
 
       expect(mockLogger.warn).toHaveBeenCalledWith(
-        expect.stringContaining('删除 PID 文件失败'),
-        'File not found'
+        expect.stringContaining('Failed to delete PID file'),
+        { error: 'File not found' }
       );
       
       vi.useRealTimers();
@@ -578,8 +576,8 @@ describe('F2A Node Manager - 停止流程详细测试', () => {
     
     // 检查是否尝试从 PID 文件读取并终止残留进程
     expect(mockLogger.info).toHaveBeenCalledWith(
-      expect.stringContaining('尝试终止残留进程'),
-      99999
+      expect.stringContaining('Attempting to terminate residual process'),
+      { pid: 99999 }
     );
     
     vi.useRealTimers();
@@ -762,9 +760,8 @@ describe('F2A Node Manager - 孤儿进程清理详细测试', () => {
     await new Promise(resolve => setTimeout(resolve, 50));
 
     expect(mockLogger.warn).toHaveBeenCalledWith(
-      expect.stringContaining('无法终止孤儿进程'),
-      66666,
-      'Permission denied'
+      expect.stringContaining('Failed to terminate orphan process'),
+      { pid: 66666, error: 'Permission denied' }
     );
   });
 

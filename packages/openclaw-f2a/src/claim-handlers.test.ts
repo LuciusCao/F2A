@@ -20,19 +20,27 @@ const createMockAnnouncementQueue = () => ({
   getStats: vi.fn()
 });
 
-const createMockAdapter = () => ({
-  announcementQueue: createMockAnnouncementQueue(),
-  api: {
+const createMockAdapter = () => {
+  const announcementQueue = createMockAnnouncementQueue();
+  const api = {
     runtime: {
       system: {
         requestHeartbeatNow: vi.fn()
       }
     }
-  },
-  config: {
+  };
+  const config = {
     agentName: 'Test Agent'
-  }
-});
+  };
+  return {
+    announcementQueue,
+    getAnnouncementQueue: vi.fn(() => announcementQueue),
+    api,
+    getApi: vi.fn(() => api),
+    config,
+    getConfig: vi.fn(() => config)
+  };
+};
 
 // 创建 mock SessionContext
 const createMockSessionContext = (): SessionContext => ({

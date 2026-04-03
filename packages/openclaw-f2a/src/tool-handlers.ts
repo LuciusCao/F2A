@@ -126,7 +126,7 @@ export class ToolHandlers {
     const reputationSystem = this.reputationSystem;
     
     // 新架构：优先使用 discoverAgents 方法
-    let result = await this.plugin.discoverAgents(params.capability);
+    let result = await this.networkClient.discoverAgents(params.capability);
     
     if (!result.success) {
       const errorMsg = result.error?.message || String(result.error) || 'Unknown error';

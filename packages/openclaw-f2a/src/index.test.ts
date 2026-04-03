@@ -1,17 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { F2AOpenClawAdapter } from './connector';
+import { F2APlugin } from './connector';
 
-describe('F2AOpenClawAdapter', () => {
-  let adapter: F2AOpenClawAdapter;
+describe('F2APlugin', () => {
+  let adapter: F2APlugin;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    adapter = new F2AOpenClawAdapter();
+    adapter = new F2APlugin();
   });
 
   describe('basic properties', () => {
     it('should have correct name and version', () => {
-      expect(adapter.name).toBe('f2a-openclaw-adapter');
+      expect(adapter.name).toBe('f2a-openclaw-f2a');
       expect(adapter.version).toBe('0.3.0');
     });
   });

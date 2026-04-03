@@ -46,36 +46,38 @@ const createMockReviewCommittee = () => ({
   finalizeReview: vi.fn()
 });
 
-const createMockAdapter = () => ({
-  networkClient: createMockNetworkClient(),
-  reputationSystem: createMockReputationSystem(),
-  taskQueue: createMockTaskQueue(),
-  nodeManager: createMockNodeManager(),
-  config: {
+const createMockAdapter = () => {
+  const networkClient = createMockNetworkClient();
+  const reputationSystem = createMockReputationSystem();
+  const taskQueue = createMockTaskQueue();
+  const nodeManager = createMockNodeManager();
+  const reviewCommittee = createMockReviewCommittee();
+  const config = {
     security: {
       requireConfirmation: false,
       whitelist: [] as string[],
       blacklist: [] as string[],
       maxTasksPerMinute: 10
     }
-  },
-  reviewCommittee: createMockReviewCommittee(),
-  // 添加 getter 方法
-  getNetworkClient: vi.fn(() => createMockNetworkClient()),
-  getReputationSystem: vi.fn(() => createMockReputationSystem()),
-  getTaskQueue: vi.fn(() => createMockTaskQueue()),
-  getNodeManager: vi.fn(() => createMockNodeManager()),
-  getReviewCommittee: vi.fn(() => createMockReviewCommittee()),
-  getConfig: vi.fn(() => ({
-    security: {
-      requireConfirmation: false,
-      whitelist: [] as string[],
-      blacklist: [] as string[],
-      maxTasksPerMinute: 10
-    }
-  })),
-  getApi: vi.fn(() => undefined)
-});
+  };
+  
+  return {
+    networkClient,
+    reputationSystem,
+    taskQueue,
+    nodeManager,
+    config,
+    reviewCommittee,
+    // Getter methods return the same mock instances
+    getNetworkClient: vi.fn(() => networkClient),
+    getReputationSystem: vi.fn(() => reputationSystem),
+    getTaskQueue: vi.fn(() => taskQueue),
+    getNodeManager: vi.fn(() => nodeManager),
+    getReviewCommittee: vi.fn(() => reviewCommittee),
+    getConfig: vi.fn(() => config),
+    getApi: vi.fn(() => undefined)
+  };
+};
 
 // 创建 mock SessionContext
 const createMockSessionContext = (): SessionContext => ({
@@ -86,7 +88,7 @@ const createMockSessionContext = (): SessionContext => ({
 
 // 创建测试用的 AgentInfo
 const createMockAgent = (overrides: Partial<AgentInfo> = {}): AgentInfo => ({
-  peerId: 'peer-test-12345678901234567890',
+  peerId: '12D3KooWTest12345678901234567890abcdef',
   displayName: 'Test Agent',
   capabilities: [{ name: 'code-generation', description: 'Code generation capability' }],
   ...overrides
@@ -124,8 +126,8 @@ describe('ToolHandlers', () => {
   describe('handleDiscover', () => {
     it('应该成功发现 Agents 并返回格式化内容', async () => {
       const agents = [
-        createMockAgent({ displayName: 'Agent A', peerId: 'peer-a-12345678901234567890' }),
-        createMockAgent({ displayName: 'Agent B', peerId: 'peer-b-12345678901234567890' })
+        createMockAgent({ displayName: 'Agent A', peerId: '12D3KooWAgentA12345678901234567890a' }),
+        createMockAgent({ displayName: 'Agent B', peerId: '12D3KooWAgentB12345678901234567890b' })
       ];
 
       mockAdapter.networkClient.discoverAgents.mockResolvedValue({
@@ -156,8 +158,8 @@ describe('ToolHandlers', () => {
 
     it('应该按最低信誉过滤 Agents', async () => {
       const agents = [
-        createMockAgent({ peerId: 'peer-high', displayName: 'High Rep Agent' }),
-        createMockAgent({ peerId: 'peer-low', displayName: 'Low Rep Agent' })
+        createMockAgent({ peerId: '12D3KooWHighRep12345678901234567890', displayName: 'High Rep Agent' }),
+        createMockAgent({ peerId: '12D3KooWLowRep12345678901234567890ab', displayName: 'Low Rep Agent' })
       ];
 
       mockAdapter.networkClient.discoverAgents.mockResolvedValue({
@@ -166,10 +168,10 @@ describe('ToolHandlers', () => {
       });
 
       // getReputation 会被调用多次：过滤时调用，显示时也调用
-      // peer-high: 过滤时返回 90，显示时返回 90
-      // peer-low: 过滤时返回 30（被过滤掉，不会显示）
+      // 12D3KooWHighRep: 过滤时返回 90，显示时返回 90
+      // 12D3KooWLowRep: 过滤时返回 30（被过滤掉，不会显示）
       mockAdapter.reputationSystem.getReputation.mockImplementation((peerId: string) => {
-        if (peerId === 'peer-high') {
+        if (peerId === '12D3KooWHighRep12345678901234567890') {
           return { score: 90 };
         }
         return { score: 30 };
@@ -1161,7 +1163,7 @@ describe('ToolHandlers', () => {
   describe('handleGetCapabilities', () => {
     it('应该返回指定 Agent 的能力列表', async () => {
       const agent = createMockAgent({
-        peerId: 'peer-target-123',
+        peerId: '12D3KooWPeerTarget123456789abcdefghijk',
         displayName: 'Target Agent',
         capabilities: [
           { name: 'code-generation', description: '生成代码' },

@@ -247,7 +247,9 @@ describe('TaskGuard', () => {
       const report = guard.check(task);
 
       const repResult = report.results.find(r => r.ruleId === 'reputation');
-      expect(repResult?.passed).toBe(true);
+      // 无信誉记录时 passed: false, needsConfirmation: true（更安全的行为）
+      expect(repResult?.passed).toBe(false);
+      expect(repResult?.details?.needsConfirmation).toBe(true);
     });
   });
 

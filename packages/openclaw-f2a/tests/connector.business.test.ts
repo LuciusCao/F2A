@@ -171,9 +171,10 @@ describe('F2APlugin 业务逻辑', () => {
       expect(plugin.api).toBe(mockApi);
     });
 
-    it.skip('未初始化时 config 行为取决于内部实现', () => {
-      // 跳过：此测试依赖于内部实现细节
+    it('未初始化时 config 返回默认配置对象', async () => {
       // 初始化后 config 会有明确的值
+      await plugin.initialize({});
+      expect(plugin.config).toBeDefined();
     });
   });
 

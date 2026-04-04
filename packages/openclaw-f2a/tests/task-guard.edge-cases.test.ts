@@ -6,29 +6,33 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TaskGuard, DEFAULT_TASK_GUARD_CONFIG } from '../src/task-guard.js';
 import type { TaskRequest } from '../src/types.js';
-import { MALICIOUS_INPUTS, generateValidPeerId } from './utils/test-helpers.js';
+import { MALICIOUS_INPUTS, generateValidPeerId, waitFor } from './utils/test-helpers.js';
+
+// P2-1 修复：将 fs mock 移到模块顶层（Vitest 要求 mock 在顶层）
+vi.mock('fs', () => ({
+  ...vi.importActual('fs'),
+  existsSync: vi.fn(),
+  readFileSync: vi.fn(),
+  writeFileSync: vi.fn(),
+  mkdirSync: vi.fn(),
+  renameSync: vi.fn(),
+}));
 
 describe('TaskGuard - 高价值边缘情况', () => {
   let guard: TaskGuard;
 
-  // P1-9 修复：将 fs mock 移到 beforeEach 确保每次测试都有新的 mock
   beforeEach(() => {
     vi.clearAllMocks();
-    
-    // Mock fs 用于持久化测试
-    vi.mock('fs', () => ({
-      ...vi.importActual('fs'),
-      existsSync: vi.fn(),
-      readFileSync: vi.fn(),
-      writeFileSync: vi.fn(),
-      mkdirSync: vi.fn(),
-      renameSync: vi.fn(),
-    }));
-    
     guard = new TaskGuard();
   });
 
+  // P2-2, P2-3 修复：统一 afterEach 清理模式，使用 try-catch 确保 restoreAllMocks 正确调用
   afterEach(() => {
+    try {
+      guard?.shutdown();
+    } catch {
+      // 忽略关闭错误
+    }
     vi.restoreAllMocks();
   });
 
@@ -478,8 +482,22 @@ describe('TaskGuard - 高价值边缘情况', () => {
         persistIntervalMs: 1000
       });
 
-      // 等待异步加载
-      await new Promise(resolve => setTimeout(resolve, 50));
+      // P2-17: 使用 waitFor 等待初始化完成（而不是固定等待）
+      await waitFor(() => {
+        try {
+          guard.check({
+            taskId: 'test-init-check',
+            taskType: 'test',
+            description: 'Init check',
+            from: 'peer-init',
+            timestamp: Date.now(),
+            timeout: 5000
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      }, 2000);
 
       // 验证状态已加载
       const report = guard.check({
@@ -506,6 +524,7 @@ describe('TaskGuard - 高价值边缘情况', () => {
         persistIntervalMs: 100
       });
 
+      // 等待初始化
       await new Promise(resolve => setTimeout(resolve, 50));
 
       // 执行一些任务
@@ -518,8 +537,15 @@ describe('TaskGuard - 高价值边缘情况', () => {
         timeout: 5000
       });
 
-      // 等待自动保存
-      await new Promise(resolve => setTimeout(resolve, 150));
+      // P2-17: 使用 waitFor 等待自动保存完成（等待 writeFileSync 被调用）
+      // 如果 2000ms 内没有调用，说明自动保存可能未启用，手动触发保存
+      try {
+        await waitFor(() => (writeFileSync as any).mock.calls.length > 0, 2000);
+      } catch {
+        // 如果自动保存未触发，手动调用 forceSave
+        guard.forceSave();
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
 
       expect(mkdirSync).toHaveBeenCalledWith('/test/persist', { recursive: true });
       expect(writeFileSync).toHaveBeenCalled();

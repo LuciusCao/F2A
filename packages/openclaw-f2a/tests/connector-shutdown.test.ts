@@ -9,6 +9,14 @@ import { F2APlugin } from '../src/connector.js';
 import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import {
+  createShutdownTestDir,
+  cleanupShutdownTestDir,
+  safeShutdown,
+  createShutdownMockApi,
+  expectPluginShutdownState,
+  executeFullLifecycleTest
+} from './utils/test-helpers.js';
 
 // Helper to create mock F2A instance
 function createMockF2A() {
@@ -29,7 +37,7 @@ describe('F2APlugin - shutdown 深度测试', () => {
   let plugin: F2APlugin;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), `f2a-plugin-shutdown-test-${Date.now()}-`));
+    tempDir = createShutdownTestDir(`f2a-plugin-shutdown-test-${Date.now()}-`);
 
     // 创建 IDENTITY.md
     writeFileSync(
@@ -41,17 +49,10 @@ describe('F2APlugin - shutdown 深度测试', () => {
     mkdirSync(join(tempDir, '.openclaw'), { recursive: true });
   });
 
+  // P2-2, P2-3, P2-16 修复：使用统一的 afterEach 清理模式
   afterEach(async () => {
-    if (plugin) {
-      try {
-        await plugin.shutdown();
-      } catch (e) {
-        // 忽略关闭错误
-      }
-    }
-    if (existsSync(tempDir)) {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
+    await safeShutdown(plugin);
+    cleanupShutdownTestDir(tempDir);
   });
 
   describe('shutdown 清理路径', () => {

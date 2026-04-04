@@ -9,6 +9,7 @@ import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { waitFor } from './utils/test-helpers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -71,10 +72,19 @@ describe('TaskQueue 真实并发测试', () => {
     });
   });
 
+  // P2-2, P2-3 修复：统一 afterEach 清理模式，使用 try-catch
   afterEach(() => {
-    queue.close();
-    if (fs.existsSync(TEST_DIR)) {
-      fs.rmSync(TEST_DIR, { recursive: true });
+    try {
+      queue?.close();
+    } catch {
+      // 忽略关闭错误
+    }
+    try {
+      if (fs.existsSync(TEST_DIR)) {
+        fs.rmSync(TEST_DIR, { recursive: true });
+      }
+    } catch {
+      // 忽略清理错误
     }
   });
 

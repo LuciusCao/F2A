@@ -433,7 +433,34 @@ export const MALICIOUS_INPUTS = {
     'A'.repeat(10000),
     'A'.repeat(100000),
     { nested: { deep: { value: 'A'.repeat(1000) } } }
-  ]
+  ],
+  // P2-13: 扩展 XXE/SSRF 测试数据
+  xxe: [
+    '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo>',
+    '<?xml version="1.0"?><!DOCTYPE data [<!ENTITY xxe SYSTEM "http://internal-server/secret">]><data>&xxe;</data>',
+    '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "expect://id">]><foo>&xxe;</foo>',
+    '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "php://filter/convert.base64-encode/resource=/etc/passwd">]><foo>&xxe;</foo>'
+  ],
+  ssrf: [
+    'http://169.254.169.254/latest/meta-data/',
+    'http://metadata.google.internal/computeMetadata/v1/',
+    'http://127.0.0.1:8080/admin',
+    'http://[::1]/admin',
+    'file:///etc/passwd',
+    'gopher://internal-host:70/GET%20/admin',
+    'dict://internal-host:11211/stats',
+    'http://localhost:6379/'
+  ],
+  // P2-14: 时序攻击测试数据（用于注释说明）
+  // 注意：时序攻击防护通常在实现代码中处理，测试应验证：
+  // 1. 密码比较使用恒定时间算法
+  // 2. Token 验证不泄露信息
+  // 3. 错误响应时间一致
+  timingAttack: {
+    validTokens: ['valid-token-1', 'valid-token-2'],
+    invalidTokens: ['invalid-token-a', 'invalid-token-b'],
+    // 测试时应验证 valid 和 invalid token 的响应时间差异在可接受范围内
+  }
 };
 
 /**
@@ -604,4 +631,89 @@ export function expectEmptyConfigHandled(plugin: any) {
   expect(config).toBeDefined();
   // 验证默认值存在
   expect(config.agentName).toBeDefined();
+}
+
+// ==================== P2-16: Shutdown 测试辅助函数 ====================
+
+/**
+ * 创建临时测试目录（用于 shutdown 测试）
+ */
+export function createShutdownTestDir(prefix: string = 'f2a-shutdown-test-'): string {
+  return mkdtempSync(join(tmpdir(), prefix));
+}
+
+/**
+ * 清理临时测试目录（带 try-catch 保护）
+ */
+export function cleanupShutdownTestDir(dirPath: string): void {
+  try {
+    if (dirPath && existsSync(dirPath)) {
+      rmSync(dirPath, { recursive: true, force: true });
+    }
+  } catch {
+    // 忽略清理错误
+  }
+}
+
+/**
+ * 安全执行 shutdown（带 try-catch 保护）
+ */
+export async function safeShutdown(plugin: any): Promise<void> {
+  try {
+    if (plugin && typeof plugin.shutdown === 'function') {
+      await plugin.shutdown();
+    }
+  } catch {
+    // 忽略关闭错误
+  }
+}
+
+/**
+ * 创建标准 shutdown 测试 mock API
+ */
+export function createShutdownMockApi(tempDir: string, extraConfig: Record<string, any> = {}) {
+  return {
+    config: {
+      agents: {
+        defaults: {
+          workspace: tempDir,
+        },
+      },
+    },
+    ...extraConfig
+  };
+}
+
+/**
+ * 验证插件 shutdown 后状态正确
+ */
+export function expectPluginShutdownState(plugin: any, shouldBeInitialized: boolean = false) {
+  expect(plugin.isInitialized()).toBe(shouldBeInitialized);
+  
+  const pluginAny = plugin as any;
+  if (!shouldBeInitialized) {
+    expect(pluginAny._f2a).toBeUndefined();
+    expect(pluginAny._f2aStartTime).toBeUndefined();
+  }
+}
+
+/**
+ * 执行完整的生命周期测试（初始化-启用-关闭）
+ */
+export async function executeFullLifecycleTest(
+  plugin: any,
+  mockApi: any,
+  config: Record<string, any> = {}
+): Promise<void> {
+  await plugin.initialize({
+    api: mockApi as any,
+    _api: mockApi as any,
+    config: { autoStart: false, ...config },
+  });
+
+  await plugin.enable();
+  expect(plugin.isInitialized()).toBe(true);
+
+  await safeShutdown(plugin);
+  expect(plugin.isInitialized()).toBe(false);
 }

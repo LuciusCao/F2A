@@ -15,7 +15,8 @@ import {
   createMockTaskRequest,
   createMockQueuedTask,
   generateValidPeerId,
-  SPECIAL_NUMERIC_VALUES
+  SPECIAL_NUMERIC_VALUES,
+  MALICIOUS_INPUTS
 } from './utils/test-helpers.js';
 
 describe('ToolHandlers', () => {
@@ -819,7 +820,8 @@ describe('ToolHandlers', () => {
     });
 
     // P1-12 修复：添加 NaN/Infinity 测试用例
-    it('应该处理 NaN 参数', async () => {
+    // P2-7 修复：完善 NaN/Infinity 处理的行为断言
+    it('应该处理 NaN 参数并返回有效结果', async () => {
       for (const nanValue of SPECIAL_NUMERIC_VALUES.nan) {
         const result = await toolHandlers.handleEstimateTask({
           task_type: 'test',
@@ -827,12 +829,20 @@ describe('ToolHandlers', () => {
           estimated_complexity: nanValue as any
         }, mockContext);
 
+        // NaN 应该被检测并返回有效结果（不是 undefined 或抛出异常）
+        expect(result).toBeDefined();
         expect(result.content).toBeDefined();
-        // NaN 应该被检测并返回错误或使用默认值
+        expect(typeof result.content).toBe('string');
+        expect(result.content).toContain('任务评估结果');
+        // 验证返回的数值是有效的（不是 NaN）
+        if (result.data) {
+          expect(Number.isNaN((result.data as any).workload)).toBe(false);
+          expect(Number.isNaN((result.data as any).complexity)).toBe(false);
+        }
       }
     });
 
-    it('应该处理 Infinity 参数', async () => {
+    it('应该处理 Infinity 参数并返回有效结果', async () => {
       for (const infinityValue of SPECIAL_NUMERIC_VALUES.infinity) {
         const result = await toolHandlers.handleEstimateTask({
           task_type: 'test',
@@ -840,8 +850,15 @@ describe('ToolHandlers', () => {
           estimated_complexity: infinityValue as any
         }, mockContext);
 
+        // Infinity 应该被检测并返回有效结果
+        expect(result).toBeDefined();
         expect(result.content).toBeDefined();
-        // Infinity 应该被检测并返回错误或使用默认值
+        expect(typeof result.content).toBe('string');
+        // 验证返回的数值在有效范围内（不是 Infinity）
+        if (result.data) {
+          expect((result.data as any).workload).toBeLessThanOrEqual(100);
+          expect((result.data as any).complexity).toBeLessThanOrEqual(10);
+        }
       }
     });
   });
@@ -1093,6 +1110,174 @@ describe('ToolHandlers', () => {
       }, mockContext);
 
       expect(result.content).toContain('暂无能力信息');
+    });
+  });
+
+  // ========== P2-6: 超大输入测试 ==========
+  describe('超大输入安全测试', () => {
+    it('应该拒绝超长的任务描述', async () => {
+      const agent = createMockAgentInfo();
+      
+      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+        success: true,
+        data: [agent]
+      });
+      
+      mockAdapter.reputationSystem.isAllowed.mockReturnValue(true);
+      mockAdapter.reputationSystem.getReputation.mockReturnValue({ score: 80 });
+
+      // 使用 MALICIOUS_INPUTS.overflow 测试超大输入
+      const overflowInput = MALICIOUS_INPUTS.overflow[0] as string;
+      const result = await toolHandlers.handleDelegate({
+        agent: 'Test Agent',
+        task: overflowInput
+      }, mockContext);
+
+      // 应该要么处理成功（截断），要么返回错误（拒绝过大输入）
+      expect(result.content).toBeDefined();
+      expect(typeof result.content).toBe('string');
+      expect(result.content.length).toBeLessThan(overflowInput.length + 100);
+    });
+
+    it('应该拒绝超大的 capability 参数', async () => {
+      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+        success: true,
+        data: []
+      });
+
+      // 使用超大 capability 名称
+      const overflowCapability = 'A'.repeat(10000);
+      const result = await toolHandlers.handleBroadcast({
+        capability: overflowCapability,
+        task: 'Test task'
+      }, mockContext);
+
+      expect(result.content).toBeDefined();
+      // 超大 capability 应该被处理（可能返回未发现）
+      expect(typeof result.content).toBe('string');
+    });
+
+    it('应该拒绝超大的 task_id 参数', async () => {
+      mockAdapter.taskQueue.get.mockReturnValue(null);
+
+      const overflowTaskId = 'A'.repeat(10000);
+      const result = await toolHandlers.handleSubmitResult({
+        task_id: overflowTaskId,
+        result: 'Result',
+        status: 'success'
+      }, mockContext);
+
+      expect(result.content).toBeDefined();
+      expect(result.content).toContain('找不到任务');
+    });
+
+    it('应该拒绝超大的 peer_id 参数', async () => {
+      mockAdapter.reputationSystem.getReputation.mockReturnValue({ score: 50 });
+
+      const overflowPeerId = '12D3KooW' + 'A'.repeat(10000);
+      const result = await toolHandlers.handleReputation({
+        action: 'view',
+        peer_id: overflowPeerId
+      }, mockContext);
+
+      expect(result.content).toBeDefined();
+      // 超大 peer_id 应该被处理
+      expect(typeof result.content).toBe('string');
+    });
+
+    it('应该拒绝嵌套超深的结果对象', async () => {
+      const task = createMockQueuedTask();
+      
+      mockAdapter.taskQueue.get.mockReturnValue(task);
+      mockAdapter.networkClient.sendTaskResponse.mockResolvedValue({ success: true });
+
+      // 使用嵌套超深的对象
+      const nestedOverflow = MALICIOUS_INPUTS.overflow[2] as object;
+      const result = await toolHandlers.handleSubmitResult({
+        task_id: 'task-test-123',
+        result: JSON.stringify(nestedOverflow),
+        status: 'success'
+      }, mockContext);
+
+      expect(result.content).toBeDefined();
+      expect(typeof result.content).toBe('string');
+    });
+  });
+
+  // ========== P2-11: 敏感数据日志泄露测试 ==========
+  describe('敏感数据日志安全测试', () => {
+    it('logger 不应该在 handleDelegate 中输出 token/password', async () => {
+      const agent = createMockAgentInfo();
+      
+      mockAdapter.networkClient.discoverAgents.mockResolvedValue({
+        success: true,
+        data: [agent]
+      });
+      
+      mockAdapter.reputationSystem.isAllowed.mockReturnValue(true);
+      mockAdapter.reputationSystem.getReputation.mockReturnValue({ score: 80 });
+
+      // 任务中包含敏感数据
+      const result = await toolHandlers.handleDelegate({
+        agent: 'Test Agent',
+        task: 'Please use my token: secret-token-12345 and password: my-password-xyz'
+      }, mockContext);
+
+      // 验证 logger 没有被调用输出敏感数据
+      const loggerCalls = mockAdapter.api.logger?.info?.mock?.calls || [];
+      const allLoggedContent = loggerCalls.flat().join(' ');
+      
+      // 确保敏感数据没有被日志输出
+      expect(allLoggedContent).not.toContain('secret-token-12345');
+      expect(allLoggedContent).not.toContain('my-password-xyz');
+      
+      // 结果本身可能包含任务描述，但不应通过日志泄露
+      expect(result.content).toBeDefined();
+    });
+
+    it('logger 不应该在 handleSubmitResult 中输出敏感数据', async () => {
+      const task = createMockQueuedTask();
+      
+      mockAdapter.taskQueue.get.mockReturnValue(task);
+      mockAdapter.networkClient.sendTaskResponse.mockResolvedValue({ success: true });
+
+      // 结果中包含敏感数据
+      const result = await toolHandlers.handleSubmitResult({
+        task_id: 'task-test-123',
+        result: 'Completed with token: api-key-abcdef123 and password: admin-pass-999',
+        status: 'success'
+      }, mockContext);
+
+      // 验证 logger 没有被调用输出敏感数据
+      const loggerCalls = mockAdapter.api.logger?.info?.mock?.calls || [];
+      const allLoggedContent = loggerCalls.flat().join(' ');
+      
+      expect(allLoggedContent).not.toContain('api-key-abcdef123');
+      expect(allLoggedContent).not.toContain('admin-pass-999');
+      
+      expect(result.content).toBeDefined();
+    });
+
+    it('logger 不应该在 handleReputation 中输出敏感配置', async () => {
+      mockAdapter.config.security = {
+        requireConfirmation: false,
+        whitelist: ['trusted-peer-token-123'],
+        blacklist: ['blocked-peer-secret-xyz'],
+        maxTasksPerMinute: 10
+      };
+
+      mockAdapter.reputationSystem.getAllReputations.mockReturnValue([]);
+
+      const result = await toolHandlers.handleReputation({ action: 'list' }, mockContext);
+
+      // 验证 logger 没有输出 whitelist/blacklist 中的敏感数据
+      const loggerCalls = mockAdapter.api.logger?.info?.mock?.calls || [];
+      const allLoggedContent = loggerCalls.flat().join(' ');
+      
+      expect(allLoggedContent).not.toContain('trusted-peer-token-123');
+      expect(allLoggedContent).not.toContain('blocked-peer-secret-xyz');
+      
+      expect(result.content).toBeDefined();
     });
   });
 });

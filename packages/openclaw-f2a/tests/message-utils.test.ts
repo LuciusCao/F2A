@@ -222,6 +222,103 @@ describe('message-utils', () => {
       
       expect(cache.size).toBe(100);
     });
+
+    // P2-5: 补充缓存边界条件测试
+    it('应该处理 TTL 为 0 的边界情况', () => {
+      const now = Date.now();
+      cache.set('hash1', now);
+      
+      // TTL 为 0 时，所有条目的时间戳都会 <= now - 0 = now
+      // 所以 now 时间戳的条目会被删除（因为 now <= now - 0）
+      cleanupMessageHashCache(cache, now, 0);
+      
+      // now <= now - 0 为 false，所以不会被删除
+      expect(cache.size).toBe(1);
+    });
+
+    it('应该处理 TTL 为负数的边界情况', () => {
+      const now = Date.now();
+      cache.set('hash1', now);
+      cache.set('hash2', now - 100);
+      
+      // TTL 为负数时，now - ttl 会变大（now + |ttl|）
+      // 条件变为 timestamp <= now + |ttl|，大部分条目会被删除
+      cleanupMessageHashCache(cache, now, -1000);
+      
+      // now + 1000 会更大，所以大部分条目的时间戳会 <= now + 1000
+      expect(cache.size).toBe(0);
+    });
+
+    it('应该处理超大规模缓存清理', () => {
+      const now = Date.now();
+      const ttl = 1000;
+      
+      // 添加超过 MAX_MESSAGE_HASH_CACHE_SIZE 的条目（模拟内存压力）
+      for (let i = 0; i < 15000; i++) {
+        // 一半过期，一半未过期
+        const timestamp = i < 7500 ? now - ttl - 100 : now - ttl / 2;
+        cache.set(`hash${i}`, timestamp);
+      }
+      
+      cleanupMessageHashCache(cache, now, ttl);
+      
+      // 过期的条目应该被清理
+      expect(cache.size).toBeLessThan(15000);
+      expect(cache.size).toBe(7500);
+    });
+
+    it('应该处理时间戳为 NaN 的异常条目', () => {
+      const now = Date.now();
+      cache.set('hash1', NaN);
+      cache.set('hash2', now);
+      
+      // NaN 比较结果为 false，所以 NaN 条目应该被保留（不会被 <= now - ttl 过滤）
+      cleanupMessageHashCache(cache, now, 1000);
+      
+      // NaN 条目不会被删除（因为 NaN <= anything 返回 false）
+      expect(cache.has('hash1')).toBe(true);
+      expect(cache.has('hash2')).toBe(true);
+    });
+
+    it('应该处理时间戳为 Infinity 的异常条目', () => {
+      const now = Date.now();
+      cache.set('hash1', Infinity);
+      cache.set('hash2', -Infinity);
+      cache.set('hash3', now);
+      
+      cleanupMessageHashCache(cache, now, 1000);
+      
+      // Infinity > now - ttl，所以不会被删除
+      // -Infinity < now - ttl，所以会被删除
+      expect(cache.has('hash1')).toBe(true);
+      expect(cache.has('hash2')).toBe(false);
+      expect(cache.has('hash3')).toBe(true);
+    });
+
+    it('应该处理 now 参数为 0 的边界情况', () => {
+      cache.set('hash1', 0);
+      cache.set('hash2', -100);
+      cache.set('hash3', 100);
+      
+      cleanupMessageHashCache(cache, 0, 1000);
+      
+      // now = 0, ttl = 1000, 阈值 = -1000
+      // hash1 (0) > -1000，保留
+      // hash2 (-100) > -1000，保留
+      // hash3 (100) > -1000，保留
+      expect(cache.size).toBe(3);
+    });
+
+    it('应该处理超大 TTL 值', () => {
+      const now = Date.now();
+      cache.set('hash1', now - 1000000); // 很久以前
+      cache.set('hash2', now);
+      
+      // 超大 TTL（相当于几乎不过期）
+      cleanupMessageHashCache(cache, now, Number.MAX_SAFE_INTEGER);
+      
+      expect(cache.size).toBe(2);
+    });
   });
 
   describe('isDuplicateMessage', () => {

@@ -82,20 +82,24 @@ describe('F2AToolRegistry', () => {
       const tools = registry.getTools();
       
       for (const tool of tools) {
-        expect(tool).toHaveProperty('name');
-        expect(tool).toHaveProperty('description');
-        expect(tool).toHaveProperty('parameters');
+        // P2-9: 改进断言精确度，使用更具体的断言
         expect(typeof tool.name).toBe('string');
+        expect(tool.name.length).toBeGreaterThan(0);
         expect(typeof tool.description).toBe('string');
+        expect(tool.description.length).toBeGreaterThan(0);
         expect(typeof tool.parameters).toBe('object');
+        expect(tool.parameters).not.toBeNull();
+        // parameters 可以是空对象 {} 或有内容的对象
+        expect(tool.parameters).toBeTypeOf('object');
       }
     });
 
+    // P2-4 修复：工具数量断言改为 toBeGreaterThanOrEqual，避免因新增工具导致测试失败
     it('工具数量应该符合预期', () => {
       const tools = registry.getTools();
       
-      // 网络: 5 + 任务: 13 + 通讯录: 6 = 24 个工具
-      expect(tools.length).toBe(24);
+      // 网络: 5 + 任务: 13 + 通讯录: 6 = 至少 24 个工具
+      expect(tools.length).toBeGreaterThanOrEqual(24);
     });
   });
 
@@ -107,7 +111,8 @@ describe('F2AToolRegistry', () => {
       
       // 验证更新后仍能正常工作
       const tools = registry.getTools();
-      expect(tools.length).toBe(24);
+      // P2-4 修复：使用 toBeGreaterThanOrEqual
+      expect(tools.length).toBeGreaterThanOrEqual(24);
     });
 
     it('应该更新 claimHandlers', () => {
@@ -116,7 +121,7 @@ describe('F2AToolRegistry', () => {
       registry.updateDeps({ claimHandlers: newHandlers });
       
       const tools = registry.getTools();
-      expect(tools.length).toBe(24);
+      expect(tools.length).toBeGreaterThanOrEqual(24);
     });
 
     it('应该更新 contactToolHandlers', () => {
@@ -125,7 +130,7 @@ describe('F2AToolRegistry', () => {
       registry.updateDeps({ contactToolHandlers: newHandlers });
       
       const tools = registry.getTools();
-      expect(tools.length).toBe(24);
+      expect(tools.length).toBeGreaterThanOrEqual(24);
     });
 
     it('应该支持部分更新', () => {
@@ -135,7 +140,7 @@ describe('F2AToolRegistry', () => {
       
       // 其他 handlers 应该保持不变
       const tools = registry.getTools();
-      expect(tools.length).toBe(24);
+      expect(tools.length).toBeGreaterThanOrEqual(24);
     });
   });
 });

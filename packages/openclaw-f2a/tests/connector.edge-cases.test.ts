@@ -6,6 +6,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { F2APlugin } from '../src/connector.js';
 import type { OpenClawPluginApi } from '../src/types.js';
+import { expectConfigValueHandled, expectEmptyConfigHandled } from './utils/test-helpers.js';
 
 describe('F2APlugin - 高价值边缘情况', () => {
   let plugin: F2APlugin;
@@ -50,6 +51,38 @@ describe('F2APlugin - 高价值边缘情况', () => {
       await plugin.initialize({ _api: mockApi as any });
       
       expect(plugin.api).toBe(mockApi);
+    });
+
+    // P1-13 修复：验证配置值是否被正确处理
+    it('应该正确处理和存储配置值', async () => {
+      const testConfig = {
+        agentName: 'TestAgent123',
+        enableMDNS: true,
+        p2pPort: 9500
+      };
+      
+      await plugin.initialize(testConfig);
+      
+      expectConfigValueHandled(plugin, 'agentName', 'TestAgent123');
+      expectConfigValueHandled(plugin, 'enableMDNS', true);
+      expectConfigValueHandled(plugin, 'p2pPort', 9500);
+    });
+
+    it('应该为缺失配置使用默认值', async () => {
+      await plugin.initialize({});
+      
+      expectEmptyConfigHandled(plugin);
+    });
+
+    it('应该正确处理特殊字符配置值', async () => {
+      const specialConfig = {
+        agentName: 'Test-Agent_123.🎉'
+      };
+      
+      await plugin.initialize(specialConfig);
+      
+      // 配置应该被正确存储，不应该损坏
+      expectConfigValueHandled(plugin, 'agentName', 'Test-Agent_123.🎉');
     });
   });
 

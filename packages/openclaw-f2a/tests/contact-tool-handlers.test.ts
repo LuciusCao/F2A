@@ -11,16 +11,23 @@ import { FriendStatus } from '../src/contact-types.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { 
+  generateValidPeerId, 
+  type F2APluginPublicInterface 
+} from './utils/test-helpers.js';
 
-// Mock F2APluginPublicInterface
-const createMockPlugin = (contactManager: ContactManager, handshakeProtocol?: any, f2a?: any) => {
+// P0-3 修复：Mock plugin 使用类型推断
+const createMockPlugin = (
+  contactManager: ContactManager, 
+  handshakeProtocol?: any, 
+  f2a?: any
+): F2APluginPublicInterface => {
   const defaultF2A = handshakeProtocol ? {
     getConnectedPeers: () => [],
-    peerId: '12D3KooWTestPeerId12345678901234567890123456789012345678',
+    peerId: generateValidPeerId('Self'),
   } : undefined;
   
   return {
-    // F2APluginPublicInterface 方法
     getConfig: () => ({}),
     getApi: () => undefined,
     getNetworkClient: () => null,
@@ -49,21 +56,11 @@ const createMockPlugin = (contactManager: ContactManager, handshakeProtocol?: an
     rejectFriendRequest: async (requestId: string, reason?: string) => {
       return handshakeProtocol?.rejectRequest?.(requestId, reason) ?? false;
     },
-    // 兼容旧的直接属性访问
-    contactManager,
-    _handshakeProtocol: handshakeProtocol,
-    _f2a: f2a ?? defaultF2A,
-  };
+  } as F2APluginPublicInterface;
 };
 
 // Mock SessionContext
 const mockContext = {} as any;
-
-// 生成符合格式的 Peer ID（12D3KooW + 44 个 base58 字符）
-const generatePeerId = (suffix: string) => {
-  const padded = suffix.padEnd(44, 'A').slice(0, 44);
-  return `12D3KooW${padded}`;
-};
 
 describe('ContactToolHandlers', () => {
   let tempDir: string;
@@ -91,7 +88,7 @@ describe('ContactToolHandlers', () => {
     it('应该列出联系人', async () => {
       contactManager.addContact({
         name: '测试联系人',
-        peerId: generatePeerId('Test1'),
+        peerId: generateValidPeerId('Test1'),
       });
 
       const result = await handlers.handleContacts({ action: 'list' }, mockContext);
@@ -102,12 +99,12 @@ describe('ContactToolHandlers', () => {
     it('应该按状态过滤联系人', async () => {
       contactManager.addContact({
         name: '好友A',
-        peerId: generatePeerId('Friend1'),
+        peerId: generateValidPeerId('Friend1'),
         status: FriendStatus.FRIEND,
       });
       contactManager.addContact({
         name: '陌生人B',
-        peerId: generatePeerId('Stranger1'),
+        peerId: generateValidPeerId('Stranger1'),
         status: FriendStatus.STRANGER,
       });
 
@@ -122,7 +119,7 @@ describe('ContactToolHandlers', () => {
     it('应该获取联系人详情', async () => {
       const contact = contactManager.addContact({
         name: '测试用户',
-        peerId: generatePeerId('User1'),
+        peerId: generateValidPeerId('User1'),
         groups: ['测试组'],
         tags: ['测试标签'],
         notes: '测试备注',
@@ -140,7 +137,7 @@ describe('ContactToolHandlers', () => {
     });
 
     it('应该通过 peer_id 获取联系人', async () => {
-      const peerId = generatePeerId('ByPeerId1');
+      const peerId = generateValidPeerId('ByPeerId1');
       contactManager.addContact({
         name: '通过Peer获取',
         peerId,
@@ -172,7 +169,7 @@ describe('ContactToolHandlers', () => {
       const result = await handlers.handleContacts(
         {
           action: 'add',
-          peer_id: generatePeerId('New1'),
+          peer_id: generateValidPeerId('New1'),
           name: '新联系人',
         },
         mockContext
@@ -197,7 +194,7 @@ describe('ContactToolHandlers', () => {
     it('应该删除联系人', async () => {
       const contact = contactManager.addContact({
         name: '待删除',
-        peerId: generatePeerId('Delete1'),
+        peerId: generateValidPeerId('Delete1'),
       });
 
       const result = await handlers.handleContacts(
@@ -211,7 +208,7 @@ describe('ContactToolHandlers', () => {
     });
 
     it('应该通过 peer_id 删除联系人', async () => {
-      const peerId = generatePeerId('RemoveByPeer');
+      const peerId = generateValidPeerId('RemoveByPeer');
       contactManager.addContact({ name: '待删除', peerId });
 
       const result = await handlers.handleContacts(
@@ -224,7 +221,7 @@ describe('ContactToolHandlers', () => {
     it('应该更新联系人', async () => {
       const contact = contactManager.addContact({
         name: '旧名字',
-        peerId: generatePeerId('Update1'),
+        peerId: generateValidPeerId('Update1'),
       });
 
       const result = await handlers.handleContacts(
@@ -248,7 +245,7 @@ describe('ContactToolHandlers', () => {
     it('应该拉黑联系人', async () => {
       const contact = contactManager.addContact({
         name: '待拉黑',
-        peerId: generatePeerId('Block1'),
+        peerId: generateValidPeerId('Block1'),
       });
 
       const result = await handlers.handleContacts(
@@ -264,7 +261,7 @@ describe('ContactToolHandlers', () => {
     it('应该解除拉黑', async () => {
       const contact = contactManager.addContact({
         name: '已拉黑',
-        peerId: generatePeerId('Blocked1'),
+        peerId: generateValidPeerId('Blocked1'),
         status: FriendStatus.BLOCKED,
       });
 
@@ -329,7 +326,7 @@ describe('ContactToolHandlers', () => {
     it('应该导出通讯录', async () => {
       contactManager.addContact({
         name: '导出测试',
-        peerId: generatePeerId('Export1'),
+        peerId: generateValidPeerId('Export1'),
       });
 
       const result = await handlers.handleContactsExport({}, mockContext);
@@ -345,7 +342,7 @@ describe('ContactToolHandlers', () => {
         contacts: [{
           id: 'import-1',
           name: '导入联系人',
-          peerId: generatePeerId('Import1'),
+          peerId: generateValidPeerId('Import1'),
           status: FriendStatus.STRANGER,
           reputation: 50,
           groups: [],
@@ -381,7 +378,7 @@ describe('ContactToolHandlers', () => {
   describe('handleFriendRequest', () => {
     it('应该拒绝未初始化的请求', async () => {
       const result = await handlers.handleFriendRequest(
-        { peer_id: generatePeerId('Target1') },
+        { peer_id: generateValidPeerId('Target1') },
         mockContext
       );
       expect(result.content).toContain('❌');
@@ -400,7 +397,7 @@ describe('ContactToolHandlers', () => {
       const mockPlugin = createMockPlugin(contactManager, mockHandshakeProtocol);
       const handlersWithMock = new ContactToolHandlers(mockPlugin as any);
 
-      const peerId = generatePeerId('TargetSuccess');
+      const peerId = generateValidPeerId('TargetSuccess');
       const result = await handlersWithMock.handleFriendRequest(
         { peer_id: peerId, message: '你好，请加好友' },
         mockContext
@@ -418,7 +415,7 @@ describe('ContactToolHandlers', () => {
         getConnectedPeers: () => [
           { peerId: 'InvalidPeerIdNotValid' }, // 不符合 12D3KooW + 44字符格式
         ],
-        peerId: generatePeerId('Self'),
+        peerId: generateValidPeerId('Self'),
       };
 
       const mockHandshakeProtocol = {
@@ -447,7 +444,7 @@ describe('ContactToolHandlers', () => {
       const mockPlugin = createMockPlugin(contactManager, mockHandshakeProtocol);
       const handlersWithMock = new ContactToolHandlers(mockPlugin as any);
 
-      const peerId = generatePeerId('TargetFail');
+      const peerId = generateValidPeerId('TargetFail');
       const result = await handlersWithMock.handleFriendRequest(
         { peer_id: peerId },
         mockContext
@@ -475,7 +472,7 @@ describe('ContactToolHandlers', () => {
     // P1-4 修复：添加 accept 成功场景测试
     it('应该成功接受好友请求', async () => {
       // 先添加一个待处理的请求
-      const fromPeerId = generatePeerId('FromAccept');
+      const fromPeerId = generateValidPeerId('FromAccept');
       contactManager.addPendingHandshake({
         requestId: 'req-accept-test',
         from: fromPeerId,
@@ -502,7 +499,7 @@ describe('ContactToolHandlers', () => {
 
     // P1-4 修复：添加 reject 成功场景测试
     it('应该成功拒绝好友请求', async () => {
-      const fromPeerId = generatePeerId('FromReject');
+      const fromPeerId = generateValidPeerId('FromReject');
       contactManager.addPendingHandshake({
         requestId: 'req-reject-test',
         from: fromPeerId,

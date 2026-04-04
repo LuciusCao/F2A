@@ -14,9 +14,10 @@ import {
   type F2AMessageEvent,
   type MessageRouterConfig,
 } from '../src/F2AMessageRouter.js';
+import { generateValidPeerId } from './utils/test-helpers.js';
 
 // 创建 mock F2A
-const createMockF2A = (peerId: string = '12D3KooWTestPeer') => ({
+const createMockF2A = (peerId: string = generateValidPeerId('Router')) => ({
   peerId,  // 直接属性，不是方法
   getConnectedPeers: vi.fn(() => []),
   sendMessage: vi.fn(),
@@ -131,18 +132,23 @@ describe('F2AMessageRouter', () => {
     });
 
     it('应该检测来自自己的消息', () => {
+      const myPeerId = generateValidPeerId('Self');
+      const selfRouter = new F2AMessageRouter({
+        f2a: { peerId: myPeerId } as any,
+      });
+      
       const event: F2AMessageEvent = {
-        from: '12D3KooWTestPeer', // 与 mock F2A peerId 相同
+        from: myPeerId,
         content: 'test message',
         messageId: 'msg-7',
       };
       
-      expect(router.isEchoMessage(event)).toBe(true);
+      expect(selfRouter.isEchoMessage(event)).toBe(true);
     });
 
     it('应该通过正常消息', () => {
       const event: F2AMessageEvent = {
-        from: 'peer-2',
+        from: generateValidPeerId('Other'),
         content: 'normal message',
         messageId: 'msg-8',
       };
@@ -154,7 +160,7 @@ describe('F2AMessageRouter', () => {
       const noF2ARouter = new F2AMessageRouter({});
       
       const event: F2AMessageEvent = {
-        from: '12D3KooWTestPeer',
+        from: generateValidPeerId('Unknown'),
         content: 'test message',
         messageId: 'msg-9',
       };
@@ -232,13 +238,14 @@ describe('F2AMessageRouter', () => {
 
   describe('运行时更新', () => {
     it('应该更新 F2A 实例', () => {
-      const newF2A = createMockF2A('12D3KooWNewPeer');
+      const newPeerId = generateValidPeerId('Updated');
+      const newF2A = createMockF2A(newPeerId);
       
       router.updateF2A(newF2A as unknown as import('../src/types.js').F2APublicInterface);
       
       // 更新后应该使用新的 peerId
       const event: F2AMessageEvent = {
-        from: '12D3KooWNewPeer',
+        from: newPeerId,
         content: 'test',
         messageId: 'msg-1',
       };

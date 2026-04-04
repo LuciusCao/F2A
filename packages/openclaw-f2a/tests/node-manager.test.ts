@@ -1,3 +1,19 @@
+/**
+ * F2ANodeManager 单元测试
+ * 
+ * ⚠️ 注意：这些测试使用 mock 来隔离文件系统和进程操作。
+ * 由于 F2ANodeManager 需要与外部 F2A Node 二进制文件交互，
+ * 真实的行为验证需要：
+ * 
+ * 1. 集成测试环境：需要实际的 F2A Node 二进制文件
+ * 2. 端口可用性：控制端口 (9001) 和 P2P 端口 (9000)
+ * 3. 超时处理：进程启动可能需要数秒
+ * 
+ * 对于集成测试，请参考：
+ * - tests/integration/node-manager.integration.test.ts
+ * - 或者使用 Docker 容器运行 F2A Node
+ */
+
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { F2ANodeManager } from '../src/node-manager';
 import { F2ANodeConfig } from '../src/types';

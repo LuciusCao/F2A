@@ -7,47 +7,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ClaimHandlers, type ClaimHandlerParams } from '../src/claim-handlers.js';
 import type { F2AOpenClawAdapter } from '../src/connector.js';
 import type { SessionContext } from '../src/types.js';
-
-// 创建 mock 依赖
-const createMockAnnouncementQueue = () => ({
-  create: vi.fn(),
-  getOpen: vi.fn(),
-  get: vi.fn(),
-  submitClaim: vi.fn(),
-  acceptClaim: vi.fn(),
-  rejectClaim: vi.fn(),
-  getMyClaims: vi.fn(),
-  getStats: vi.fn()
-});
-
-const createMockAdapter = () => {
-  const announcementQueue = createMockAnnouncementQueue();
-  const api = {
-    runtime: {
-      system: {
-        requestHeartbeatNow: vi.fn()
-      }
-    }
-  };
-  const config = {
-    agentName: 'Test Agent'
-  };
-  return {
-    announcementQueue,
-    getAnnouncementQueue: vi.fn(() => announcementQueue),
-    api,
-    getApi: vi.fn(() => api),
-    config,
-    getConfig: vi.fn(() => config)
-  };
-};
-
-// 创建 mock SessionContext
-const createMockSessionContext = (): SessionContext => ({
-  sessionId: 'test-session-123',
-  workspace: '/tmp/test-workspace',
-  toJSON: vi.fn(() => ({ sessionId: 'test-session-123', workspace: '/tmp/test-workspace' }))
-});
+import { 
+  createMockAdapter,
+  createMockAnnouncementQueue,
+  createMockSessionContext,
+  SPECIAL_NUMERIC_VALUES
+} from './utils/test-helpers.js';
 
 // 创建测试用的广播对象
 const createMockAnnouncement = (overrides: any = {}) => ({
@@ -77,10 +42,25 @@ describe('ClaimHandlers', () => {
   let claimHandlers: ClaimHandlers;
   let mockAdapter: any;
   let mockContext: SessionContext;
+  let requestHeartbeatNowMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockAdapter = createMockAdapter();
+    // P1-4 修复：使用 test-helpers 的 createMockAdapter，添加 claim-handlers 特需的 api
+    // 创建固定的 mock 函数引用，确保 getApi() 返回同一个对象
+    requestHeartbeatNowMock = vi.fn();
+    const apiMock = {
+      runtime: {
+        system: {
+          requestHeartbeatNow: requestHeartbeatNowMock
+        }
+      }
+    };
+    
+    mockAdapter = createMockAdapter({
+      api: apiMock,
+      getApi: vi.fn(() => apiMock),
+    });
     mockContext = createMockSessionContext();
     claimHandlers = new ClaimHandlers(mockAdapter as F2AOpenClawAdapter);
   });
@@ -139,7 +119,8 @@ describe('ClaimHandlers', () => {
         description: 'Test task'
       }, mockContext);
 
-      expect(mockAdapter.api.runtime.system.requestHeartbeatNow).toHaveBeenCalled();
+      // 检查固定的 mock 函数引用
+      expect(requestHeartbeatNowMock).toHaveBeenCalled();
     });
 
     it('应该处理创建广播失败的情况', async () => {
@@ -403,7 +384,8 @@ describe('ClaimHandlers', () => {
         announcement_id: 'ann-test'
       }, mockContext);
 
-      expect(mockAdapter.api.runtime.system.requestHeartbeatNow).toHaveBeenCalled();
+      // 检查固定的 mock 函数引用
+      expect(requestHeartbeatNowMock).toHaveBeenCalled();
     });
   });
 
@@ -977,6 +959,52 @@ describe('ClaimHandlers', () => {
       }, mockContext);
 
       expect(result.content).toContain('认领已提交');
+    });
+
+    // P1-11 修复：使用安全的边界值测试方式（NaN/Infinity）
+    it('handleAnnounce 应该安全处理 NaN/Infinity 边界值', async () => {
+      // NaN 测试
+      const result1 = await claimHandlers.handleAnnounce({
+        task_type: 'test',
+        description: 'test',
+        estimated_complexity: NaN
+      }, mockContext);
+      expect(result1.content).toContain('estimated_complexity 必须是有效数字');
+
+      // Infinity 测试
+      const result2 = await claimHandlers.handleAnnounce({
+        task_type: 'test',
+        description: 'test',
+        reward: Infinity
+      }, mockContext);
+      expect(result2.content).toContain('reward 必须是有效数字');
+
+      // -Infinity 测试
+      const result3 = await claimHandlers.handleAnnounce({
+        task_type: 'test',
+        description: 'test',
+        timeout: -Infinity
+      }, mockContext);
+      expect(result3.content).toContain('timeout 必须是有效数字');
+    });
+
+    it('handleClaim 应该安全处理 NaN/Infinity 边界值', async () => {
+      const announcement = createMockAnnouncement();
+      mockAdapter.announcementQueue.get.mockReturnValue(announcement);
+
+      // NaN 测试
+      const result1 = await claimHandlers.handleClaim({
+        announcement_id: 'ann-test',
+        estimated_time: NaN
+      }, mockContext);
+      expect(result1.content).toContain('estimated_time 必须是有效数字');
+
+      // Infinity 测试
+      const result2 = await claimHandlers.handleClaim({
+        announcement_id: 'ann-test',
+        confidence: Infinity
+      }, mockContext);
+      expect(result2.content).toContain('confidence 必须是有效数字');
     });
   });
 });

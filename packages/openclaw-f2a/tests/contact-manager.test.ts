@@ -8,6 +8,7 @@ import { FriendStatus, type Contact } from '../src/contact-types.js';
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { generateValidPeerId, MALICIOUS_INPUTS } from './utils/test-helpers.js';
 
 describe('ContactManager', () => {
   let tempDir: string;
@@ -50,7 +51,7 @@ describe('ContactManager', () => {
     it('应该创建数据文件', () => {
       // ContactManager 在初始化时创建数据文件（如果没有保存操作可能延迟）
       // 添加联系人触发保存
-      manager.addContact({ name: 'Test', peerId: '12D3KooW' + 'T'.repeat(44) });
+      manager.addContact({ name: 'Test', peerId: generateValidPeerId('Test') });
       
       const dataPath = join(tempDir, 'contacts.json');
       expect(existsSync(dataPath)).toBe(true);
@@ -58,7 +59,7 @@ describe('ContactManager', () => {
 
     it('应该加载已有数据', () => {
       // 添加一个联系人
-      manager.addContact({ name: 'Test', peerId: '12D3KooW' + 'A'.repeat(44) });
+      manager.addContact({ name: 'Test', peerId: generateValidPeerId('TestA') });
       
       // 创建新的 manager 实例，应该加载已有数据
       const newManager = new ContactManager(tempDir, mockLogger);
@@ -72,7 +73,7 @@ describe('ContactManager', () => {
     it('应该成功添加联系人', () => {
       const contact = manager.addContact({
         name: 'Alice',
-        peerId: '12D3KooW' + 'A'.repeat(44),
+        peerId: generateValidPeerId('Alice'),
         groups: ['work'],
         tags: ['friend'],
       });
@@ -85,7 +86,7 @@ describe('ContactManager', () => {
     });
 
     it('应该拒绝重复的 peerId', () => {
-      const peerId = '12D3KooW' + 'B'.repeat(44);
+      const peerId = generateValidPeerId('Unique');
       manager.addContact({ name: 'First', peerId });
       
       const second = manager.addContact({ name: 'Second', peerId });
@@ -104,7 +105,7 @@ describe('ContactManager', () => {
       const readOnlyManager = new ContactManager(readOnlyDir, mockLogger);
       const contact = readOnlyManager.addContact({
         name: 'Test',
-        peerId: '12D3KooW' + 'C'.repeat(44),
+        peerId: generateValidPeerId('ReadOnly'),
       });
       
       // 根据文件系统权限，可能成功也可能失败
@@ -117,7 +118,7 @@ describe('ContactManager', () => {
     it('应该成功更新联系人', () => {
       const contact = manager.addContact({
         name: 'Bob',
-        peerId: '12D3KooW' + 'D'.repeat(44),
+        peerId: generateValidPeerId('Bob'),
       });
       
       const updated = manager.updateContact(contact!.id, {
@@ -141,7 +142,7 @@ describe('ContactManager', () => {
     it('应该成功删除联系人', () => {
       const contact = manager.addContact({
         name: 'ToDelete',
-        peerId: '12D3KooW' + 'E'.repeat(44),
+        peerId: generateValidPeerId('ToDelete'),
       });
       
       const success = manager.removeContact(contact!.id);
@@ -158,9 +159,9 @@ describe('ContactManager', () => {
   describe('查询功能', () => {
     beforeEach(() => {
       // 添加测试数据
-      manager.addContact({ name: 'Alice', peerId: '12D3KooW' + 'A'.repeat(44), tags: ['friend'] });
-      manager.addContact({ name: 'Bob', peerId: '12D3KooW' + 'B'.repeat(44), tags: ['work'] });
-      manager.addContact({ name: 'Charlie', peerId: '12D3KooW' + 'C'.repeat(44), tags: ['friend', 'work'] });
+      manager.addContact({ name: 'Alice', peerId: generateValidPeerId('Alice'), tags: ['friend'] });
+      manager.addContact({ name: 'Bob', peerId: generateValidPeerId('Bob'), tags: ['work'] });
+      manager.addContact({ name: 'Charlie', peerId: generateValidPeerId('Charlie'), tags: ['friend', 'work'] });
     });
 
     it('getContacts 应返回所有联系人', () => {
@@ -223,7 +224,7 @@ describe('ContactManager', () => {
     it('添加待处理请求', () => {
       manager.addPendingHandshake({
         requestId: 'req-1',
-        from: '12D3KooW' + 'X'.repeat(44),
+        from: generateValidPeerId('Requester'),
         fromName: 'Requester',
         capabilities: [{ name: 'test' }],
         receivedAt: Date.now(),
@@ -237,7 +238,7 @@ describe('ContactManager', () => {
     it('接受请求', () => {
       manager.addPendingHandshake({
         requestId: 'req-2',
-        from: '12D3KooW' + 'Y'.repeat(44),
+        from: generateValidPeerId('Friend'),
         fromName: 'Friend',
         capabilities: [],
         receivedAt: Date.now(),
@@ -254,7 +255,7 @@ describe('ContactManager', () => {
     it('拒绝请求', () => {
       manager.addPendingHandshake({
         requestId: 'req-3',
-        from: '12D3KooW' + 'Z'.repeat(44),
+        from: generateValidPeerId('Rejected'),
         fromName: 'Rejected',
         capabilities: [],
         receivedAt: Date.now(),
@@ -273,7 +274,7 @@ describe('ContactManager', () => {
     it('拉黑联系人', () => {
       const contact = manager.addContact({
         name: 'Spammer',
-        peerId: '12D3KooW' + 'S'.repeat(44),
+        peerId: generateValidPeerId('Spammer'),
       });
       
       manager.blockContact(contact!.id);
@@ -285,7 +286,7 @@ describe('ContactManager', () => {
     it('解除拉黑', () => {
       const contact = manager.addContact({
         name: 'Recovered',
-        peerId: '12D3KooW' + 'R'.repeat(44),
+        peerId: generateValidPeerId('Recovered'),
       });
       
       manager.blockContact(contact!.id);
@@ -297,8 +298,8 @@ describe('ContactManager', () => {
 
   describe('导入导出', () => {
     it('导出通讯录', () => {
-      manager.addContact({ name: 'Export1', peerId: '12D3KooW' + 'E1'.repeat(22) });
-      manager.addContact({ name: 'Export2', peerId: '12D3KooW' + 'E2'.repeat(22) });
+      manager.addContact({ name: 'Export1', peerId: generateValidPeerId('Export1') });
+      manager.addContact({ name: 'Export2', peerId: generateValidPeerId('Export2') });
       
       const exported = manager.exportContacts('node-1');
       
@@ -308,13 +309,13 @@ describe('ContactManager', () => {
     });
 
     it('导入通讯录（合并模式）', () => {
-      manager.addContact({ name: 'Existing', peerId: '12D3KooW' + 'EX'.repeat(22) });
+      manager.addContact({ name: 'Existing', peerId: generateValidPeerId('Existing') });
       
       const result = manager.importContacts({
         version: 1,
         contacts: [
-          { id: '1', name: 'New', peerId: '12D3KooW' + 'NE'.repeat(22), status: FriendStatus.STRANGER, capabilities: [], reputation: 0, groups: [], tags: [], lastCommunicationTime: 0, createdAt: Date.now(), updatedAt: Date.now() },
-          { id: '2', name: 'Existing', peerId: '12D3KooW' + 'EX'.repeat(22), status: FriendStatus.STRANGER, capabilities: [], reputation: 0, groups: [], tags: [], lastCommunicationTime: 0, createdAt: Date.now(), updatedAt: Date.now() },
+          { id: '1', name: 'New', peerId: generateValidPeerId('New'), status: FriendStatus.STRANGER, capabilities: [], reputation: 0, groups: [], tags: [], lastCommunicationTime: 0, createdAt: Date.now(), updatedAt: Date.now() },
+          { id: '2', name: 'Existing', peerId: generateValidPeerId('Existing'), status: FriendStatus.STRANGER, capabilities: [], reputation: 0, groups: [], tags: [], lastCommunicationTime: 0, createdAt: Date.now(), updatedAt: Date.now() },
         ],
         groups: [],
         pendingHandshakes: [],
@@ -332,7 +333,7 @@ describe('ContactManager', () => {
       const result = manager.importContacts({
         version: 1,
         contacts: [
-          { id: '1', name: 'Overwrite', peerId: '12D3KooW' + 'OW'.repeat(22), status: FriendStatus.FRIEND, capabilities: [], reputation: 0, groups: [], tags: [], lastCommunicationTime: 0, createdAt: Date.now(), updatedAt: Date.now() },
+          { id: '1', name: 'Overwrite', peerId: generateValidPeerId('Overwrite'), status: FriendStatus.FRIEND, capabilities: [], reputation: 0, groups: [], tags: [], lastCommunicationTime: 0, createdAt: Date.now(), updatedAt: Date.now() },
         ],
         groups: [],
         pendingHandshakes: [],
@@ -351,7 +352,7 @@ describe('ContactManager', () => {
       const handler = vi.fn();
       manager.on(handler);
       
-      manager.addContact({ name: 'Event', peerId: '12D3KooW' + 'EV'.repeat(22) });
+      manager.addContact({ name: 'Event', peerId: generateValidPeerId('Event') });
       
       expect(handler).toHaveBeenCalledWith('contact:added', expect.any(Object));
     });
@@ -360,7 +361,7 @@ describe('ContactManager', () => {
       const handler = vi.fn();
       manager.on(handler);
       
-      const contact = manager.addContact({ name: 'ToUpdate', peerId: '12D3KooW' + 'TU'.repeat(22) });
+      const contact = manager.addContact({ name: 'ToUpdate', peerId: generateValidPeerId('ToUpdate') });
       manager.updateContact(contact!.id, { name: 'Updated' });
       
       expect(handler).toHaveBeenCalledWith('contact:updated', expect.any(Object));
@@ -369,8 +370,8 @@ describe('ContactManager', () => {
 
   describe('统计信息', () => {
     it('getStats 应返回正确统计', () => {
-      manager.addContact({ name: 'Friend1', peerId: '12D3KooW' + 'F1'.repeat(22) });
-      manager.addContact({ name: 'Friend2', peerId: '12D3KooW' + 'F2'.repeat(22) });
+      manager.addContact({ name: 'Friend1', peerId: generateValidPeerId('Friend1') });
+      manager.addContact({ name: 'Friend2', peerId: generateValidPeerId('Friend2') });
       
       const contacts = manager.getContacts();
       manager.updateContact(contacts[0].id, { status: FriendStatus.FRIEND });
@@ -386,13 +387,46 @@ describe('ContactManager', () => {
 
   describe('持久化', () => {
     it('flush 应保存数据', () => {
-      manager.addContact({ name: 'Flush', peerId: '12D3KooW' + 'FL'.repeat(22) });
+      manager.addContact({ name: 'Flush', peerId: generateValidPeerId('Flush') });
       manager.flush();
       
       // 验证文件内容
       const dataPath = join(tempDir, 'contacts.json');
       const content = JSON.parse(readFileSync(dataPath, 'utf-8'));
       expect(content.contacts).toHaveLength(1);
+    });
+  });
+
+  // P1-1 修复：使用 MALICIOUS_INPUTS.xss 测试数据
+  describe('安全输入处理', () => {
+    it('应该安全处理 XSS 攻击输入', () => {
+      let index = 0;
+      for (const xssInput of MALICIOUS_INPUTS.xss) {
+        const uniquePeerId = generateValidPeerId(`XSS${index++}`);
+        const contact = manager.addContact({
+          name: xssInput, // XSS 输入作为名称
+          peerId: uniquePeerId,
+        });
+        
+        // 应该成功添加（不拒绝），但存储时应该是安全的
+        expect(contact).toBeDefined();
+        expect(contact.name).toBe(xssInput); // 原始输入被存储，但渲染时需要转义
+      }
+    });
+
+    it('应该安全处理路径遍历输入', () => {
+      let index = 0;
+      for (const pathTraversal of MALICIOUS_INPUTS.pathTraversal) {
+        const uniquePeerId = generateValidPeerId(`Path${index++}`);
+        const contact = manager.addContact({
+          name: 'SafeContact',
+          peerId: uniquePeerId,
+          tags: [pathTraversal], // 路径遍历作为标签
+        });
+        
+        // 应该成功添加
+        expect(contact).toBeDefined();
+      }
     });
   });
 });

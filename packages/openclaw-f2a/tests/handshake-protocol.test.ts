@@ -9,6 +9,7 @@ import { FriendStatus } from '../src/contact-types.js';
 import { mkdtempSync, rmSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { expectValidMessageJson, expectHandshakeMessageType } from './utils/test-helpers.js';
 
 describe('HandshakeProtocol', () => {
   let tempDir: string;
@@ -110,9 +111,12 @@ describe('HandshakeProtocol', () => {
         { type: 'handshake' }
       );
       
-      // 验证发送的消息内容
-      const sentMessage = JSON.parse(mockF2A.sendMessage.mock.calls[0][1]);
-      expect(sentMessage.type).toBe(HANDSHAKE_MESSAGE_TYPES.FRIEND_REQUEST);
+      // P0-5 修复：验证消息 JSON 结构完整性
+      const sentMessage = expectValidMessageJson(
+        mockF2A.sendMessage.mock.calls[0][1],
+        ['type', 'requestId', 'fromName', 'timestamp', 'message']
+      );
+      expectHandshakeMessageType(sentMessage, HANDSHAKE_MESSAGE_TYPES.FRIEND_REQUEST);
       expect(sentMessage.fromName).toBe('TestAgent');
       expect(sentMessage.message).toBe('Hello!');
     });

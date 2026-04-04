@@ -6,24 +6,30 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TaskGuard, DEFAULT_TASK_GUARD_CONFIG } from '../src/task-guard.js';
 import type { TaskRequest } from '../src/types.js';
-import * as fs from 'fs';
-
-// Mock fs 用于持久化测试
-vi.mock('fs', () => ({
-  ...vi.importActual('fs'),
-  existsSync: vi.fn(),
-  readFileSync: vi.fn(),
-  writeFileSync: vi.fn(),
-  mkdirSync: vi.fn(),
-  renameSync: vi.fn(),
-}));
+import { MALICIOUS_INPUTS, generateValidPeerId } from './utils/test-helpers.js';
 
 describe('TaskGuard - 高价值边缘情况', () => {
   let guard: TaskGuard;
 
+  // P1-9 修复：将 fs mock 移到 beforeEach 确保每次测试都有新的 mock
   beforeEach(() => {
     vi.clearAllMocks();
+    
+    // Mock fs 用于持久化测试
+    vi.mock('fs', () => ({
+      ...vi.importActual('fs'),
+      existsSync: vi.fn(),
+      readFileSync: vi.fn(),
+      writeFileSync: vi.fn(),
+      mkdirSync: vi.fn(),
+      renameSync: vi.fn(),
+    }));
+    
     guard = new TaskGuard();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   // ========== 1. 编码绕过检测 ==========
@@ -234,6 +240,26 @@ describe('TaskGuard - 高价值边缘情况', () => {
       
       const patternResult = report.results.find(r => r.ruleId === 'dangerous-patterns');
       expect(patternResult?.passed).toBe(false);
+    });
+
+    // P1-1 修复：使用 MALICIOUS_INPUTS.sqlInjection 测试数据
+    it('应该检测 SQL 注入攻击', () => {
+      for (const sqlInjection of MALICIOUS_INPUTS.sqlInjection) {
+        const task: TaskRequest = {
+          taskId: 'test-sql-injection',
+          taskType: 'database-query',
+          description: `Query database: ${sqlInjection}`,
+          from: generateValidPeerId('Attacker'),
+          timestamp: Date.now(),
+          timeout: 5000
+        };
+
+        const report = guard.check(task);
+
+        // SQL 注入包含危险字符，应该被检测到
+        const failedRules = report.results.filter(r => r.passed === false);
+        expect(failedRules.length).toBeGreaterThan(0);
+      }
     });
   });
 
@@ -749,6 +775,34 @@ describe('TaskGuard - 高价值边缘情况', () => {
       const fileResult = report.results.find(r => r.ruleId === 'file-operation');
       // 可能检测到，也可能检测不到（取决于实现）
       expect(report.results.length).toBeGreaterThan(0);
+    });
+
+    // P1-1 修复：使用 MALICIOUS_INPUTS.pathTraversal 测试数据
+    it('应该检测 MALICIOUS_INPUTS 中的路径遍历攻击', () => {
+      let index = 0;
+      let detectedCount = 0;
+      
+      for (const pathTraversal of MALICIOUS_INPUTS.pathTraversal) {
+        const task: TaskRequest = {
+          taskId: `test-path-malicious-${index++}`,
+          taskType: 'file-read',
+          description: `Read file: ${pathTraversal}`,
+          from: generateValidPeerId('Attacker'),
+          timestamp: Date.now(),
+          timeout: 5000
+        };
+
+        const report = guard.check(task);
+
+        // 路径遍历可能被文件操作规则检测到（取决于模式）
+        const fileWarning = report.warnings.find(r => r.ruleId === 'file-operation');
+        if (fileWarning) {
+          detectedCount++;
+        }
+      }
+      
+      // 至少有一个路径遍历模式被检测到
+      expect(detectedCount).toBeGreaterThan(0);
     });
   });
 

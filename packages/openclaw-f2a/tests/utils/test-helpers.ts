@@ -3,7 +3,36 @@
  * 提供可复用的 mock 创建、断言辅助和数据生成函数
  */
 
-import { vi } from 'vitest';
+import { vi, expect } from 'vitest';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+
+// ==================== 类型定义 ====================
+
+/**
+ * F2APluginPublicInterface 类型定义（用于类型约束）
+ */
+export interface F2APluginPublicInterface {
+  getConfig(): Record<string, any>;
+  getApi(): any;
+  getNetworkClient(): any;
+  getReputationSystem(): any;
+  getNodeManager(): any;
+  getTaskQueue(): any;
+  getAnnouncementQueue(): any;
+  getReviewCommittee(): any;
+  getContactManager(): any;
+  getHandshakeProtocol(): any;
+  getF2AStatus(): { running: boolean; peerId?: string };
+  getF2A(): any;
+  discoverAgents(capability?: string): Promise<any>;
+  getConnectedPeers(): Promise<any>;
+  sendMessage(peerId: string, content: string): Promise<any>;
+  sendFriendRequest?(peerId: string, message?: string): Promise<string | null>;
+  acceptFriendRequest?(requestId: string): Promise<boolean>;
+  rejectFriendRequest?(requestId: string, reason?: string): Promise<boolean>;
+}
 
 // ==================== Mock 工厂函数 ====================
 
@@ -42,6 +71,7 @@ export function createMockNetworkClient(overrides: Record<string, any> = {}) {
     discoverAgents: vi.fn().mockResolvedValue({ success: true, data: [] }),
     getConnectedPeers: vi.fn().mockResolvedValue({ success: true, data: [] }),
     sendMessage: vi.fn().mockResolvedValue({ success: true }),
+    sendTaskResponse: vi.fn().mockResolvedValue({ success: true }),
     registerWebhook: vi.fn().mockResolvedValue(undefined),
     updateAgentInfo: vi.fn().mockResolvedValue(undefined),
     ...overrides
@@ -57,7 +87,18 @@ export function createMockTaskQueue(overrides: Record<string, any> = {}) {
     getStats: vi.fn().mockReturnValue({ pending: 0, processing: 0, completed: 0, failed: 0 }),
     getPending: vi.fn().mockReturnValue([]),
     getAll: vi.fn().mockReturnValue([]),
-    markProcessing: vi.fn().mockReturnValue({ taskId: 'task-1', status: 'processing' }),
+    get: vi.fn(),
+    markProcessing: vi.fn().mockImplementation((taskId: string) => ({
+      taskId,
+      taskType: 'test-task',
+      description: 'Test task description',
+      from: generateValidPeerId('sender'),
+      parameters: {},
+      timeout: 60000,
+      status: 'processing',
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    })),
     complete: vi.fn(),
     close: vi.fn(),
     ...overrides
@@ -71,9 +112,55 @@ export function createMockReputationSystem(overrides: Record<string, any> = {}) 
   return {
     getReputation: vi.fn().mockReturnValue({ score: 50 }),
     isAllowed: vi.fn().mockReturnValue(true),
+    hasPermission: vi.fn().mockReturnValue(true),
     recordSuccess: vi.fn(),
     recordFailure: vi.fn(),
     flush: vi.fn(),
+    getAllReputations: vi.fn().mockReturnValue([]),
+    ...overrides
+  };
+}
+
+/**
+ * 创建 mock NodeManager
+ */
+export function createMockNodeManager(overrides: Record<string, any> = {}) {
+  return {
+    getStatus: vi.fn().mockResolvedValue({ success: true }),
+    start: vi.fn().mockResolvedValue({ success: true }),
+    stop: vi.fn().mockResolvedValue({ success: true }),
+    isRunning: vi.fn().mockReturnValue(false),
+    getConfig: vi.fn().mockReturnValue({}),
+    ...overrides
+  };
+}
+
+/**
+ * 创建 mock AnnouncementQueue
+ */
+export function createMockAnnouncementQueue(overrides: Record<string, any> = {}) {
+  return {
+    create: vi.fn(),
+    getOpen: vi.fn().mockReturnValue([]),
+    get: vi.fn(),
+    submitClaim: vi.fn(),
+    acceptClaim: vi.fn(),
+    rejectClaim: vi.fn(),
+    getMyClaims: vi.fn().mockReturnValue([]),
+    getStats: vi.fn().mockReturnValue({ open: 0, claimed: 0, delegated: 0, expired: 0, total: 0 }),
+    ...overrides
+  };
+}
+
+/**
+ * 创建 mock ReviewCommittee
+ */
+export function createMockReviewCommittee(overrides: Record<string, any> = {}) {
+  return {
+    submitReview: vi.fn().mockReturnValue({ success: true }),
+    isReviewComplete: vi.fn().mockReturnValue(false),
+    getReviewStatus: vi.fn().mockReturnValue(null),
+    finalizeReview: vi.fn(),
     ...overrides
   };
 }
@@ -82,14 +169,130 @@ export function createMockReputationSystem(overrides: Record<string, any> = {}) 
  * 创建 mock F2A 实例
  */
 export function createMockF2A(overrides: Record<string, any> = {}) {
-  const peerId = '12D3KooWTestPeer123456789012345678901234567890';
+  const peerId = generateValidPeerId();
   return {
     peerId,
     sendMessage: vi.fn().mockResolvedValue(undefined),
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
     isRunning: vi.fn().mockReturnValue(true),
+    getConnectedPeers: vi.fn().mockReturnValue([]),
+    on: vi.fn(),
     ...overrides
+  };
+}
+
+/**
+ * 创建 mock F2AOpenClawAdapter（完整的 adapter mock）
+ * 用于 tool-handlers.test.ts 等需要完整 adapter 的测试
+ */
+export function createMockAdapter(overrides: Record<string, any> = {}) {
+  const networkClient = createMockNetworkClient();
+  const reputationSystem = createMockReputationSystem();
+  const taskQueue = createMockTaskQueue();
+  const nodeManager = createMockNodeManager();
+  const reviewCommittee = createMockReviewCommittee();
+  const announcementQueue = createMockAnnouncementQueue();
+  
+  const config = {
+    security: {
+      requireConfirmation: false,
+      whitelist: [] as string[],
+      blacklist: [] as string[],
+      maxTasksPerMinute: 10
+    },
+    agentName: 'Test Agent'
+  };
+  
+  const mockF2A = createMockF2A();
+  
+  return {
+    networkClient,
+    reputationSystem,
+    taskQueue,
+    nodeManager,
+    reviewCommittee,
+    announcementQueue,
+    config,
+    _f2a: mockF2A,
+    // api 属性（默认包含 requestHeartbeatNow mock）
+    api: {
+      runtime: {
+        system: {
+          requestHeartbeatNow: vi.fn()
+        }
+      }
+    },
+    // Getter methods
+    getNetworkClient: vi.fn(() => networkClient),
+    getReputationSystem: vi.fn(() => reputationSystem),
+    getTaskQueue: vi.fn(() => taskQueue),
+    getNodeManager: vi.fn(() => nodeManager),
+    getReviewCommittee: vi.fn(() => reviewCommittee),
+    getAnnouncementQueue: vi.fn(() => announcementQueue),
+    getConfig: vi.fn(() => config),
+    getApi: vi.fn(() => undefined),
+    getF2AStatus: vi.fn(() => ({ running: true, peerId: mockF2A.peerId, uptime: 3600 })),
+    core: {
+      getF2A: vi.fn(() => mockF2A)
+    },
+    // f2aClient
+    f2aClient: {
+      getConnectedPeers: vi.fn().mockResolvedValue({ success: true, data: [] }),
+      discoverAgents: networkClient.discoverAgents,
+      sendMessage: vi.fn().mockResolvedValue(undefined)
+    },
+    ...overrides
+  };
+}
+
+// ==================== P1-4: Tool Handlers Mock 工厂 ====================
+
+/**
+ * 创建 mock ToolHandlers（用于 F2AToolRegistry 测试）
+ */
+export function createMockToolHandlers() {
+  return {
+    handleDiscover: vi.fn(),
+    handleDelegate: vi.fn(),
+    handleBroadcast: vi.fn(),
+    handleStatus: vi.fn(),
+    handleReputation: vi.fn(),
+    handlePollTasks: vi.fn(),
+    handleSubmitResult: vi.fn(),
+    handleTaskStats: vi.fn(),
+    handleEstimateTask: vi.fn(),
+    handleReviewTask: vi.fn(),
+    handleGetReviews: vi.fn(),
+    handleGetCapabilities: vi.fn(),
+  };
+}
+
+/**
+ * 创建 mock ClaimHandlers（用于 F2AToolRegistry 测试）
+ */
+export function createMockClaimHandlers() {
+  return {
+    handleAnnounce: vi.fn(),
+    handleListAnnouncements: vi.fn(),
+    handleClaim: vi.fn(),
+    handleManageClaims: vi.fn(),
+    handleMyClaims: vi.fn(),
+    handleAnnouncementStats: vi.fn(),
+  };
+}
+
+/**
+ * 创建 mock ContactToolHandlers（用于 F2AToolRegistry 测试）
+ */
+export function createMockContactToolHandlers() {
+  return {
+    handleContacts: vi.fn(),
+    handleContactGroups: vi.fn(),
+    handleFriendRequest: vi.fn(),
+    handlePendingRequests: vi.fn(),
+    handleContactsExport: vi.fn(),
+    handleContactsImport: vi.fn(),
   };
 }
 
@@ -97,11 +300,14 @@ export function createMockF2A(overrides: Record<string, any> = {}) {
 
 /**
  * 生成有效的 Peer ID (52 字符)
+ * 注意：Peer ID 格式要求 [A-Za-z1-9]，不允许 0
  */
 export function generateValidPeerId(suffix: string = ''): string {
   const base = '12D3KooW';
-  const padding = 'A'.repeat(44 - suffix.length);
-  return `${base}${suffix}${padding}`.slice(0, 52);
+  // 将 suffix 中的 0 替换为 X（因为 Peer ID 不允许 0）
+  const safeSuffix = suffix.replace(/0/g, 'X');
+  const padding = 'A'.repeat(44 - safeSuffix.length);
+  return `${base}${safeSuffix}${padding}`.slice(0, 52);
 }
 
 /**
@@ -132,6 +338,24 @@ export function createMockTaskRequest(overrides: Record<string, any> = {}): any 
     parameters: {},
     timeout: 60000,
     createdAt: Date.now(),
+    ...overrides
+  };
+}
+
+/**
+ * 创建 mock QueuedTask（包含状态信息）
+ */
+export function createMockQueuedTask(overrides: Record<string, any> = {}): any {
+  return {
+    taskId: `task-${Date.now()}`,
+    taskType: 'test-task',
+    description: 'Test task description',
+    from: generateValidPeerId('sender'),
+    parameters: {},
+    timeout: 60000,
+    status: 'pending',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
     ...overrides
   };
 }
@@ -221,3 +445,163 @@ export const BOUNDARY_VALUES = {
   unicode: ['🎉', '测试', '日本語', '한국어', '🇺🇸'],
   special: ['<>&"\'', 'line1\nline2', 'a\tb\tc', 'a\\nb']
 };
+
+/**
+ * 特殊数值测试用例（用于 NaN/Infinity 测试）
+ */
+export const SPECIAL_NUMERIC_VALUES = {
+  nan: [NaN, 'NaN', 'nan'],
+  infinity: [Infinity, -Infinity, 'Infinity', '-Infinity', '+Infinity'],
+  negative: [-1, -100, -0.001],
+  zero: [0, -0, 0.0],
+  large: [Number.MAX_SAFE_INTEGER, Number.MAX_VALUE, 1e308],
+  small: [Number.MIN_SAFE_INTEGER, Number.MIN_VALUE, -1e308]
+};
+
+// ==================== 临时目录管理 ====================
+
+/**
+ * 创建唯一的临时测试目录
+ * 使用 mkdtempSync 确保每次测试都有独立目录
+ */
+export function createTestTempDir(prefix: string = 'f2a-test-'): string {
+  return mkdtempSync(join(tmpdir(), prefix));
+}
+
+/**
+ * 清理临时测试目录
+ */
+export function cleanupTestTempDir(dirPath: string): void {
+  try {
+    if (dirPath && existsSync(dirPath)) {
+      rmSync(dirPath, { recursive: true, force: true });
+    }
+  } catch {
+    // 忽略清理错误
+  }
+}
+
+/**
+ * 检查路径是否存在
+ */
+export function existsSync(path: string): boolean {
+  try {
+    const fs = require('fs');
+    return fs.existsSync(path);
+  } catch {
+    return false;
+  }
+}
+
+// ==================== SessionContext Mock ====================
+
+/**
+ * 创建 mock SessionContext
+ */
+export function createMockSessionContext(): any {
+  return {
+    sessionId: 'test-session-123',
+    workspace: '/tmp/test-workspace',
+    toJSON: vi.fn(() => ({ sessionId: 'test-session-123', workspace: '/tmp/test-workspace' }))
+  };
+}
+
+// ==================== JSON 结构验证 ====================
+
+/**
+ * 验证消息 JSON 结构完整性
+ */
+export function expectValidMessageJson(jsonString: string, expectedFields: string[] = []) {
+  expect(jsonString).toBeDefined();
+  expect(typeof jsonString).toBe('string');
+  
+  let parsed: any;
+  try {
+    parsed = JSON.parse(jsonString);
+  } catch (e) {
+    throw new Error(`Invalid JSON: ${jsonString}`);
+  }
+  
+  expect(parsed).toBeDefined();
+  expect(typeof parsed).toBe('object');
+  
+  // 验证必需字段
+  for (const field of expectedFields) {
+    expect(parsed[field]).toBeDefined();
+  }
+  
+  return parsed;
+}
+
+/**
+ * 验证握手消息类型
+ */
+export function expectHandshakeMessageType(parsedJson: any, expectedType: string) {
+  expect(parsedJson.type).toBe(expectedType);
+  expect(parsedJson.timestamp).toBeDefined();
+  expect(typeof parsedJson.timestamp).toBe('number');
+}
+
+// ==================== 数据完整性验证 ====================
+
+/**
+ * 验证任务数据完整性（字段对比断言）
+ */
+export function expectTaskDataIntegrity(task: any, original: any) {
+  expect(task.taskId).toBe(original.taskId);
+  expect(task.taskType).toBe(original.taskType);
+  expect(task.from).toBe(original.from);
+  expect(task.timeout).toBe(original.timeout);
+  
+  // 验证时间戳
+  if (original.createdAt) {
+    expect(task.createdAt).toBeDefined();
+    expect(typeof task.createdAt).toBe('number');
+  }
+  
+  // 验证状态
+  expect(task.status).toBeDefined();
+  expect(['pending', 'processing', 'completed', 'failed'].includes(task.status)).toBe(true);
+}
+
+/**
+ * 验证统计数据完整性
+ */
+export function expectStatsIntegrity(stats: any) {
+  expect(stats).toBeDefined();
+  expect(typeof stats.pending).toBe('number');
+  expect(typeof stats.processing).toBe('number');
+  expect(typeof stats.completed).toBe('number');
+  expect(typeof stats.failed).toBe('number');
+  expect(typeof stats.total).toBe('number');
+  
+  expect(stats.pending).toBeGreaterThanOrEqual(0);
+  expect(stats.processing).toBeGreaterThanOrEqual(0);
+  expect(stats.completed).toBeGreaterThanOrEqual(0);
+  expect(stats.failed).toBeGreaterThanOrEqual(0);
+  expect(stats.total).toBeGreaterThanOrEqual(0);
+  
+  // 验证总计一致性
+  expect(stats.total).toBe(stats.pending + stats.processing + stats.completed + stats.failed);
+}
+
+// ==================== 配置值验证 ====================
+
+/**
+ * 验证配置值被正确处理（不丢失、不损坏）
+ */
+export function expectConfigValueHandled(plugin: any, key: string, expectedValue: any) {
+  const config = plugin.getConfig?.() || plugin.config;
+  expect(config).toBeDefined();
+  expect(config[key]).toBe(expectedValue);
+}
+
+/**
+ * 验证空配置被正确处理（使用默认值）
+ */
+export function expectEmptyConfigHandled(plugin: any) {
+  const config = plugin.getConfig?.() || plugin.config;
+  expect(config).toBeDefined();
+  // 验证默认值存在
+  expect(config.agentName).toBeDefined();
+}

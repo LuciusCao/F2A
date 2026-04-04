@@ -10,9 +10,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { F2AComponentRegistry, type ComponentRegistryConfig } from '../src/F2AComponentRegistry.js';
 import type { F2APluginConfig, F2ANodeConfig } from '../src/types.js';
-import { mkdirSync, rmSync, existsSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
+import { existsSync, rmSync } from 'fs';
+import { createTestTempDir, cleanupTestTempDir } from './utils/test-helpers.js';
 
 // 测试配置
 const createTestConfig = (): F2APluginConfig => ({
@@ -51,8 +50,8 @@ describe('F2AComponentRegistry', () => {
   let testDir: string;
 
   beforeEach(() => {
-    testDir = join(tmpdir(), `f2a-component-test-${Date.now()}`);
-    mkdirSync(testDir, { recursive: true });
+    // P1-2 修复：改用 mkdtempSync 创建唯一临时目录
+    testDir = createTestTempDir('f2a-component-test-');
     
     config = {
       pluginConfig: createTestConfig(),
@@ -65,9 +64,7 @@ describe('F2AComponentRegistry', () => {
 
   afterEach(() => {
     // 清理测试目录
-    if (existsSync(testDir)) {
-      rmSync(testDir, { recursive: true, force: true });
-    }
+    cleanupTestTempDir(testDir);
   });
 
   describe('构造函数', () => {

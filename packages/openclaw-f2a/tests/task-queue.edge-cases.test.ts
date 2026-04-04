@@ -4,22 +4,25 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { TaskQueue } from '../src/task-queue.js';
-import fs from 'fs';
-import path from 'path';
+import { mkdtempSync, rmSync, existsSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
-const TEST_DIR = './test-tmp';
+// P0-6 修复：使用唯一的临时目录
+function createUniqueTestDir(): string {
+  return mkdtempSync(join(tmpdir(), 'task-queue-edge-'));
+}
 
 describe('TaskQueue 边界问题', () => {
   let queue: TaskQueue;
+  let testDir: string;
 
   beforeEach(() => {
-    if (!fs.existsSync(TEST_DIR)) {
-      fs.mkdirSync(TEST_DIR, { recursive: true });
-    }
+    testDir = createUniqueTestDir();
     queue = new TaskQueue({
       maxSize: 5,
       maxAgeMs: 1000,
-      persistDir: TEST_DIR,
+      persistDir: testDir,
       persistEnabled: true
     });
   });
@@ -27,8 +30,8 @@ describe('TaskQueue 边界问题', () => {
   afterEach(() => {
     queue.close();
     // 清理测试目录
-    if (fs.existsSync(TEST_DIR)) {
-      fs.rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
     }
   });
 
@@ -116,7 +119,7 @@ describe('TaskQueue 边界问题', () => {
       // 重新打开
       const newQueue = new TaskQueue({
         maxSize: 5,
-        persistDir: TEST_DIR,
+        persistDir: testDir,
         persistEnabled: true
       });
 
@@ -175,6 +178,7 @@ describe('并发竞态条件', () => {
   });
 
   it('应该正确处理 taskId 输入验证', () => {
+    // P1-10 修复：验证参数错误消息内容
     // 空字符串应该抛出错误
     expect(() => queue.add({ taskId: '', taskType: 'test' })).toThrow('taskId must be a non-empty string');
     
@@ -208,23 +212,22 @@ describe('并发竞态条件', () => {
 // P1 修复：测试僵尸任务重置功能
 describe('resetProcessingTask', () => {
   let queue: TaskQueue;
+  let testDir: string;
 
   beforeEach(() => {
-    if (!fs.existsSync(TEST_DIR)) {
-      fs.mkdirSync(TEST_DIR, { recursive: true });
-    }
+    testDir = createUniqueTestDir();
     queue = new TaskQueue({
       maxSize: 5,
       maxAgeMs: 1000,
-      persistDir: TEST_DIR,
+      persistDir: testDir,
       persistEnabled: true
     });
   });
 
   afterEach(() => {
     queue.close();
-    if (fs.existsSync(TEST_DIR)) {
-      fs.rmSync(TEST_DIR, { recursive: true });
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
     }
   });
 
@@ -275,7 +278,7 @@ describe('resetProcessingTask', () => {
     const newQueue = new TaskQueue({
       maxSize: 5,
       maxAgeMs: 1000,
-      persistDir: TEST_DIR,
+      persistDir: testDir,
       persistEnabled: true
     });
     expect(newQueue.get('task-1')?.status).toBe('pending');

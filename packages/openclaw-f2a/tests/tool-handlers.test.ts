@@ -8,142 +8,26 @@ import { ToolHandlers, type ToolHandlerParams } from '../src/tool-handlers.js';
 import type { F2AOpenClawAdapter } from '../src/connector.js';
 import type { SessionContext, AgentInfo, TaskResponse } from '../src/types.js';
 import type { QueuedTask } from '../src/task-queue.js';
-
-// 创建 mock 依赖
-const createMockNetworkClient = () => ({
-  discoverAgents: vi.fn(),
-  delegateTask: vi.fn(),
-  getConnectedPeers: vi.fn(),
-  sendTaskResponse: vi.fn()
-});
-
-const createMockReputationSystem = () => ({
-  getReputation: vi.fn(),
-  isAllowed: vi.fn(),
-  recordSuccess: vi.fn(),
-  recordFailure: vi.fn(),
-  getAllReputations: vi.fn(),
-  hasPermission: vi.fn()
-});
-
-const createMockTaskQueue = () => ({
-  getStats: vi.fn(() => ({ pending: 5, processing: 2, completed: 10, failed: 1 })),
-  getPending: vi.fn(),
-  getAll: vi.fn(),
-  get: vi.fn(),
-  complete: vi.fn(),
-  markProcessing: vi.fn((taskId: string) => ({
-    taskId,
-    status: 'processing',
-    taskType: 'test-task',
-    description: 'Test task description',
-    from: 'test-sender',
-    parameters: {},
-    createdAt: Date.now(),
-    timeout: 60000
-  }))
-});
-
-const createMockNodeManager = () => ({
-  getStatus: vi.fn()
-});
-
-const createMockReviewCommittee = () => ({
-  submitReview: vi.fn(),
-  isReviewComplete: vi.fn(),
-  getReviewStatus: vi.fn(),
-  finalizeReview: vi.fn()
-});
-
-const createMockAdapter = () => {
-  const networkClient = createMockNetworkClient();
-  const reputationSystem = createMockReputationSystem();
-  const taskQueue = createMockTaskQueue();
-  const nodeManager = createMockNodeManager();
-  const reviewCommittee = createMockReviewCommittee();
-  const config = {
-    security: {
-      requireConfirmation: false,
-      whitelist: [] as string[],
-      blacklist: [] as string[],
-      maxTasksPerMinute: 10
-    }
-  };
-  
-  // Mock F2A instance for sendMessage (used by handleDelegate/handleBroadcast)
-  const mockF2A = {
-    peerId: '12D3KooWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-    sendMessage: vi.fn().mockResolvedValue(undefined)
-  };
-  
-  return {
-    networkClient,
-    reputationSystem,
-    taskQueue,
-    nodeManager,
-    config,
-    reviewCommittee,
-    // Getter methods return the same mock instances
-    getNetworkClient: vi.fn(() => networkClient),
-    getReputationSystem: vi.fn(() => reputationSystem),
-    getTaskQueue: vi.fn(() => taskQueue),
-    getNodeManager: vi.fn(() => nodeManager),
-    getReviewCommittee: vi.fn(() => reviewCommittee),
-    getConfig: vi.fn(() => config),
-    getApi: vi.fn(() => undefined),
-    // F2A status and instance mock
-    getF2AStatus: vi.fn(() => ({ running: true, peerId: '12D3KooWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', uptime: 3600 })),
-    core: {
-      getF2A: vi.fn(() => mockF2A)
-    },
-    _f2a: mockF2A,
-    // f2aClient uses same mocks as networkClient
-    f2aClient: {
-      getConnectedPeers: vi.fn().mockResolvedValue({ success: true, data: [] }),
-      discoverAgents: networkClient.discoverAgents,
-      sendMessage: vi.fn().mockResolvedValue(undefined)
-    }
-  };
-};
-
-// 创建 mock SessionContext
-const createMockSessionContext = (): SessionContext => ({
-  sessionId: 'test-session-123',
-  workspace: '/tmp/test-workspace',
-  toJSON: vi.fn(() => ({ sessionId: 'test-session-123', workspace: '/tmp/test-workspace' }))
-});
-
-// 创建测试用的 AgentInfo
-const createMockAgent = (overrides: Partial<AgentInfo> = {}): AgentInfo => ({
-  peerId: '12D3KooWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-  displayName: 'Test Agent',
-  capabilities: [{ name: 'code-generation', description: 'Code generation capability' }],
-  ...overrides
-});
-
-// 创建测试用的 QueuedTask
-const createMockTask = (overrides: Partial<QueuedTask> = {}): QueuedTask => ({
-  taskId: 'task-test-123',
-  taskType: 'openclaw-task',
-  description: 'Test task description',
-  from: 'peer-sender-123',
-  parameters: {},
-  status: 'pending',
-  createdAt: Date.now(),
-  timeout: 60000,
-  ...overrides
-});
+import { 
+  createMockAdapter, 
+  createMockSessionContext, 
+  createMockAgentInfo,
+  createMockTaskRequest,
+  createMockQueuedTask,
+  generateValidPeerId,
+  SPECIAL_NUMERIC_VALUES
+} from './utils/test-helpers.js';
 
 describe('ToolHandlers', () => {
   let toolHandlers: ToolHandlers;
-  let mockAdapter: any;
+  let mockAdapter: ReturnType<typeof createMockAdapter>;
   let mockContext: SessionContext;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockAdapter = createMockAdapter();
     mockContext = createMockSessionContext();
-    toolHandlers = new ToolHandlers(mockAdapter as F2AOpenClawAdapter);
+    toolHandlers = new ToolHandlers(mockAdapter as unknown as F2AOpenClawAdapter);
   });
 
   afterEach(() => {
@@ -153,8 +37,8 @@ describe('ToolHandlers', () => {
   describe('handleDiscover', () => {
     it('应该成功发现 Agents 并返回格式化内容', async () => {
       const agents = [
-        createMockAgent({ displayName: 'Agent A', peerId: '12D3KooWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }),
-        createMockAgent({ displayName: 'Agent B', peerId: '12D3KooWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' })
+        createMockAgentInfo({ displayName: 'Agent A', peerId: '12D3KooWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }),
+        createMockAgentInfo({ displayName: 'Agent B', peerId: '12D3KooWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' })
       ];
 
       mockAdapter.networkClient.discoverAgents.mockResolvedValue({
@@ -173,7 +57,7 @@ describe('ToolHandlers', () => {
     it('应该按能力过滤 Agents', async () => {
       mockAdapter.networkClient.discoverAgents.mockResolvedValue({
         success: true,
-        data: [createMockAgent()]
+        data: [createMockAgentInfo()]
       });
 
       mockAdapter.reputationSystem.getReputation.mockReturnValue({ score: 80 });
@@ -187,8 +71,8 @@ describe('ToolHandlers', () => {
       const highRepPeerId = '12D3KooWHighRepAgentAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
       const lowRepPeerId = '12D3KooWLowRepAgentAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
       const agents = [
-        createMockAgent({ peerId: highRepPeerId, displayName: 'High Rep Agent' }),
-        createMockAgent({ peerId: lowRepPeerId, displayName: 'Low Rep Agent' })
+        createMockAgentInfo({ peerId: highRepPeerId, displayName: 'High Rep Agent' }),
+        createMockAgentInfo({ peerId: lowRepPeerId, displayName: 'Low Rep Agent' })
       ];
 
       mockAdapter.networkClient.discoverAgents.mockResolvedValue({
@@ -247,7 +131,7 @@ describe('ToolHandlers', () => {
 
   describe('handleDelegate', () => {
     it('应该成功委托任务给 Agent', async () => {
-      const agent = createMockAgent();
+      const agent = createMockAgentInfo();
       
       mockAdapter.networkClient.discoverAgents.mockResolvedValue({
         success: true,
@@ -282,7 +166,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该处理信誉过低的情况', async () => {
-      const agent = createMockAgent();
+      const agent = createMockAgentInfo();
       
       mockAdapter.networkClient.discoverAgents.mockResolvedValue({
         success: true,
@@ -302,7 +186,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该处理委托失败的情况', async () => {
-      const agent = createMockAgent();
+      const agent = createMockAgentInfo();
       
       mockAdapter.networkClient.discoverAgents.mockResolvedValue({
         success: true,
@@ -325,8 +209,8 @@ describe('ToolHandlers', () => {
 
     it('应该支持 #索引 格式引用 Agent', async () => {
       const agents = [
-        createMockAgent({ displayName: 'First Agent' }),
-        createMockAgent({ displayName: 'Second Agent' })
+        createMockAgentInfo({ displayName: 'First Agent' }),
+        createMockAgentInfo({ displayName: 'Second Agent' })
       ];
       
       mockAdapter.networkClient.discoverAgents.mockResolvedValue({
@@ -346,7 +230,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该支持 peerId 精确匹配', async () => {
-      const agent = createMockAgent({ peerId: 'exact-peer-id-123' });
+      const agent = createMockAgentInfo({ peerId: 'exact-peer-id-123' });
       
       mockAdapter.networkClient.discoverAgents.mockResolvedValue({
         success: true,
@@ -365,7 +249,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该支持模糊匹配 Agent 名称', async () => {
-      const agent = createMockAgent({ displayName: 'Code Helper Bot' });
+      const agent = createMockAgentInfo({ displayName: 'Code Helper Bot' });
       
       mockAdapter.networkClient.discoverAgents.mockResolvedValue({
         success: true,
@@ -384,7 +268,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该传递自定义超时时间', async () => {
-      const agent = createMockAgent();
+      const agent = createMockAgentInfo();
       
       mockAdapter.networkClient.discoverAgents.mockResolvedValue({
         success: true,
@@ -407,8 +291,8 @@ describe('ToolHandlers', () => {
   describe('handleBroadcast', () => {
     it('应该成功广播任务给所有具备能力的 Agents', async () => {
       const agents = [
-        createMockAgent({ displayName: 'Agent A' }),
-        createMockAgent({ displayName: 'Agent B' })
+        createMockAgentInfo({ displayName: 'Agent A' }),
+        createMockAgentInfo({ displayName: 'Agent B' })
       ];
       
       mockAdapter.networkClient.discoverAgents.mockResolvedValue({
@@ -454,8 +338,8 @@ describe('ToolHandlers', () => {
 
     it('应该处理部分成功的情况', async () => {
       const agents = [
-        createMockAgent({ displayName: 'Agent A' }),
-        createMockAgent({ displayName: 'Agent B' })
+        createMockAgentInfo({ displayName: 'Agent A' }),
+        createMockAgentInfo({ displayName: 'Agent B' })
       ];
       
       mockAdapter.networkClient.discoverAgents.mockResolvedValue({
@@ -478,8 +362,8 @@ describe('ToolHandlers', () => {
 
     it('应该处理 min_responses 要求未满足的情况', async () => {
       const agents = [
-        createMockAgent({ displayName: 'Agent A' }),
-        createMockAgent({ displayName: 'Agent B' })
+        createMockAgentInfo({ displayName: 'Agent A' }),
+        createMockAgentInfo({ displayName: 'Agent B' })
       ];
       
       mockAdapter.networkClient.discoverAgents.mockResolvedValue({
@@ -501,7 +385,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该处理委托异常的情况', async () => {
-      const agent = createMockAgent();
+      const agent = createMockAgentInfo();
       
       mockAdapter.networkClient.discoverAgents.mockResolvedValue({
         success: true,
@@ -669,8 +553,8 @@ describe('ToolHandlers', () => {
   describe('handlePollTasks', () => {
     it('应该返回待处理任务并标记为 processing', async () => {
       const tasks = [
-        createMockTask({ taskId: 'task-1', status: 'pending' }),
-        createMockTask({ taskId: 'task-2', status: 'pending' })
+        createMockQueuedTask({ taskId: 'task-1', status: 'pending' }),
+        createMockQueuedTask({ taskId: 'task-2', status: 'pending' })
       ];
       
       mockAdapter.taskQueue.getPending.mockReturnValue(tasks);
@@ -684,7 +568,7 @@ describe('ToolHandlers', () => {
 
     it('应该按状态过滤任务', async () => {
       const tasks = [
-        createMockTask({ taskId: 'task-1', status: 'completed' })
+        createMockQueuedTask({ taskId: 'task-1', status: 'completed' })
       ];
       
       mockAdapter.taskQueue.getAll.mockReturnValue(tasks);
@@ -698,7 +582,7 @@ describe('ToolHandlers', () => {
 
     it('应该限制返回的任务数量', async () => {
       const tasks = Array.from({ length: 20 }, (_, i) => 
-        createMockTask({ taskId: `task-${i}`, status: 'pending' })
+        createMockQueuedTask({ taskId: `task-${i}`, status: 'pending' })
       );
       
       mockAdapter.taskQueue.getPending.mockReturnValue(tasks.slice(0, 5));
@@ -718,10 +602,10 @@ describe('ToolHandlers', () => {
 
     it('应该正确显示不同状态的任务图标', async () => {
       const tasks = [
-        createMockTask({ taskId: 'task-pending', status: 'pending' }),
-        createMockTask({ taskId: 'task-processing', status: 'processing' }),
-        createMockTask({ taskId: 'task-completed', status: 'completed' }),
-        createMockTask({ taskId: 'task-failed', status: 'failed' })
+        createMockQueuedTask({ taskId: 'task-pending', status: 'pending' }),
+        createMockQueuedTask({ taskId: 'task-processing', status: 'processing' }),
+        createMockQueuedTask({ taskId: 'task-completed', status: 'completed' }),
+        createMockQueuedTask({ taskId: 'task-failed', status: 'failed' })
       ];
       
       mockAdapter.taskQueue.getAll.mockReturnValue(tasks);
@@ -734,7 +618,7 @@ describe('ToolHandlers', () => {
 
   describe('handleSubmitResult', () => {
     it('应该成功提交任务结果', async () => {
-      const task = createMockTask();
+      const task = createMockQueuedTask();
       
       mockAdapter.taskQueue.get.mockReturnValue(task);
       mockAdapter.networkClient.sendTaskResponse.mockResolvedValue({ success: true });
@@ -765,7 +649,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该处理发送响应失败的情况', async () => {
-      const task = createMockTask();
+      const task = createMockQueuedTask();
       
       mockAdapter.taskQueue.get.mockReturnValue(task);
       mockAdapter.networkClient.sendTaskResponse.mockResolvedValue({
@@ -784,7 +668,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该正确处理错误状态的结果', async () => {
-      const task = createMockTask();
+      const task = createMockQueuedTask();
       
       mockAdapter.taskQueue.get.mockReturnValue(task);
       mockAdapter.networkClient.sendTaskResponse.mockResolvedValue({ success: true });
@@ -802,7 +686,7 @@ describe('ToolHandlers', () => {
 
     it('应该计算正确的响应延迟', async () => {
       const createdAt = Date.now() - 5000; // 5 秒前创建
-      const task = createMockTask({ createdAt });
+      const task = createMockQueuedTask({ createdAt });
       
       mockAdapter.taskQueue.get.mockReturnValue(task);
       mockAdapter.networkClient.sendTaskResponse.mockResolvedValue({ success: true });
@@ -932,6 +816,33 @@ describe('ToolHandlers', () => {
       }, mockContext);
 
       expect(result.content).toContain('请提供有效的 description 参数');
+    });
+
+    // P1-12 修复：添加 NaN/Infinity 测试用例
+    it('应该处理 NaN 参数', async () => {
+      for (const nanValue of SPECIAL_NUMERIC_VALUES.nan) {
+        const result = await toolHandlers.handleEstimateTask({
+          task_type: 'test',
+          description: 'test',
+          estimated_complexity: nanValue as any
+        }, mockContext);
+
+        expect(result.content).toBeDefined();
+        // NaN 应该被检测并返回错误或使用默认值
+      }
+    });
+
+    it('应该处理 Infinity 参数', async () => {
+      for (const infinityValue of SPECIAL_NUMERIC_VALUES.infinity) {
+        const result = await toolHandlers.handleEstimateTask({
+          task_type: 'test',
+          description: 'test',
+          estimated_complexity: infinityValue as any
+        }, mockContext);
+
+        expect(result.content).toBeDefined();
+        // Infinity 应该被检测并返回错误或使用默认值
+      }
     });
   });
 
@@ -1091,7 +1002,7 @@ describe('ToolHandlers', () => {
 
   describe('handleGetCapabilities', () => {
     it('应该返回指定 Agent 的能力列表', async () => {
-      const agent = createMockAgent({
+      const agent = createMockAgentInfo({
         peerId: '12D3KooWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
         displayName: 'Target Agent',
         capabilities: [
@@ -1116,7 +1027,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该支持按名称查找 Agent', async () => {
-      const agent = createMockAgent({
+      const agent = createMockAgentInfo({
         displayName: 'Code Helper',
         capabilities: [{ name: 'code-generation', description: '生成代码' }]
       });
@@ -1166,7 +1077,7 @@ describe('ToolHandlers', () => {
     });
 
     it('应该处理无能力信息的 Agent', async () => {
-      const agent = createMockAgent({
+      const agent = createMockAgentInfo({
         peerId: '12D3KooWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
         displayName: 'No Capabilities Agent',
         capabilities: []

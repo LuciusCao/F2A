@@ -9,40 +9,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { F2AToolRegistry, type ToolRegistryDeps } from '../src/F2AToolRegistry.js';
 import type { Tool } from '../src/types.js';
-
-// 创建 mock handlers
-const createMockToolHandlers = () => ({
-  handleDiscover: vi.fn(),
-  handleDelegate: vi.fn(),
-  handleBroadcast: vi.fn(),
-  handleStatus: vi.fn(),
-  handleReputation: vi.fn(),
-  handlePollTasks: vi.fn(),
-  handleSubmitResult: vi.fn(),
-  handleTaskStats: vi.fn(),
-  handleEstimateTask: vi.fn(),
-  handleReviewTask: vi.fn(),
-  handleGetReviews: vi.fn(),
-  handleGetCapabilities: vi.fn(),
-});
-
-const createMockClaimHandlers = () => ({
-  handleAnnounce: vi.fn(),
-  handleListAnnouncements: vi.fn(),
-  handleClaim: vi.fn(),
-  handleManageClaims: vi.fn(),
-  handleMyClaims: vi.fn(),
-  handleAnnouncementStats: vi.fn(),
-});
-
-const createMockContactToolHandlers = () => ({
-  handleContacts: vi.fn(),
-  handleContactGroups: vi.fn(),
-  handleFriendRequest: vi.fn(),
-  handlePendingRequests: vi.fn(),
-  handleContactsExport: vi.fn(),
-  handleContactsImport: vi.fn(),
-});
+import {
+  createMockToolHandlers,
+  createMockClaimHandlers,
+  createMockContactToolHandlers,
+} from './utils/test-helpers.js';
 
 describe('F2AToolRegistry', () => {
   let registry: F2AToolRegistry;

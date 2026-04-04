@@ -10,6 +10,7 @@ import type { TaskRequest } from '../src/types.js';
 import { mkdtempSync, rmSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { expectTaskDataIntegrity, expectStatsIntegrity } from './utils/test-helpers.js';
 
 describe('TaskQueue', () => {
   let tempDir: string;
@@ -113,6 +114,63 @@ describe('TaskQueue', () => {
       const retrieved = queue.get('test-task-5');
       expect(retrieved?.status).toBe('failed');
       expect(retrieved?.error).toBe('Task failed');
+    });
+
+    // P0-4 修复：添加字段对比断言验证数据完整性
+    it('应该保留所有任务字段数据', () => {
+      const originalTask: TaskRequest = {
+        taskId: 'test-integrity-1',
+        taskType: 'code-generation',
+        description: 'Task with full fields',
+        from: 'peer-12345678901234567890',
+        parameters: { language: 'typescript', complexity: 5 },
+        timeout: 120000,
+        timestamp: Date.now(),
+      };
+
+      queue.add(originalTask);
+      const retrieved = queue.get('test-integrity-1');
+
+      // 验证数据完整性
+      expectTaskDataIntegrity(retrieved, originalTask);
+      
+      // 额外字段验证
+      expect(retrieved?.description).toBe(originalTask.description);
+      expect(retrieved?.parameters).toEqual(originalTask.parameters);
+    });
+
+    it('应该验证统计数据完整性', () => {
+      // 添加多个不同状态的任务
+      queue.add({
+        taskId: 'pending-1',
+        taskType: 'test',
+        description: 'Pending task',
+        from: 'test-peer',
+        timestamp: Date.now(),
+      });
+      
+      queue.add({
+        taskId: 'processing-1',
+        taskType: 'test',
+        description: 'Processing task',
+        from: 'test-peer',
+        timestamp: Date.now(),
+      });
+      queue.markProcessing('processing-1');
+      
+      queue.add({
+        taskId: 'completed-1',
+        taskType: 'test',
+        description: 'Completed task',
+        from: 'test-peer',
+        timestamp: Date.now(),
+      });
+      queue.complete('completed-1', { status: 'success' });
+
+      const stats = queue.getStats();
+      
+      // 验证统计数据完整性
+      expectStatsIntegrity(stats);
     });
   });
 

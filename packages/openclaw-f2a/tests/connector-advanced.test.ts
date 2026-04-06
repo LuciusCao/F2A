@@ -83,9 +83,9 @@ describe('F2APlugin - 高级测试', () => {
       expect(result).toBeDefined();
     });
 
-    it('f2a_delegate handler 应该可调用', async () => {
+    it('f2a_send handler 应该可调用', async () => {
       const tools = plugin.getTools();
-      const delegateTool = tools.find(t => t.name === 'f2a_delegate');
+      const delegateTool = tools.find(t => t.name === 'f2a_send');
       
       expect(delegateTool).toBeDefined();
       

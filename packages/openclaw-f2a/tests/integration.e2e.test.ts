@@ -86,7 +86,7 @@ describe('F2A 集成测试', () => {
 
     it('delegate 工具应该存在', () => {
       const tools = plugin.getTools();
-      const delegateTool = tools.find(t => t.name === 'f2a_delegate');
+      const delegateTool = tools.find(t => t.name === 'f2a_send');
       
       expect(delegateTool).toBeDefined();
     });

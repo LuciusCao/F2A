@@ -332,7 +332,7 @@ describe('F2APlugin - 增强测试', () => {
       
       // 网络工具
       expect(toolNames).toContain('f2a_discover');
-      expect(toolNames).toContain('f2a_delegate');
+      expect(toolNames).toContain('f2a_send');
       expect(toolNames).toContain('f2a_broadcast');
       expect(toolNames).toContain('f2a_status');
       expect(toolNames).toContain('f2a_reputation');

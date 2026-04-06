@@ -35,14 +35,15 @@ describe('F2APlugin', () => {
       expect(discoverTool?.parameters.capability.required).toBe(false);
     });
 
-    it('should include f2a_delegate tool with correct parameters', () => {
+    it('should include f2a_send tool with correct parameters', () => {
       const tools = adapter.getTools();
-      const delegateTool = tools.find(t => t.name === 'f2a_delegate');
-      expect(delegateTool).toBeDefined();
-      expect(delegateTool?.description).toContain('委托');
-      expect(delegateTool?.parameters).toHaveProperty('agent');
-      expect(delegateTool?.parameters).toHaveProperty('task');
-      expect(delegateTool?.parameters.agent.required).toBe(true);
+      const sendTool = tools.find(t => t.name === 'f2a_send');
+      expect(sendTool).toBeDefined();
+      expect(sendTool?.description).toContain('发送');
+      expect(sendTool?.parameters).toHaveProperty('agent');
+      expect(sendTool?.parameters).toHaveProperty('message');
+      expect(sendTool?.parameters).toHaveProperty('topic');
+      expect(sendTool?.parameters.agent.required).toBe(true);
     });
 
     it('should include f2a_broadcast tool with correct parameters', () => {

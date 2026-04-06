@@ -165,7 +165,7 @@ describe('F2APlugin', () => {
       const toolNames = tools.map(t => t.name);
       
       expect(toolNames).toContain('f2a_discover');
-      expect(toolNames).toContain('f2a_delegate');
+      expect(toolNames).toContain('f2a_send');
       expect(toolNames).toContain('f2a_status');
     });
 
@@ -213,7 +213,7 @@ describe('F2APlugin', () => {
 
     it('工具应该有参数定义', () => {
       const tools = plugin.getTools();
-      const delegateTool = tools.find(t => t.name === 'f2a_delegate');
+      const delegateTool = tools.find(t => t.name === 'f2a_send');
       
       expect(delegateTool?.parameters).toBeDefined();
     });
@@ -681,7 +681,7 @@ describe('F2APlugin', () => {
       const toolNames = tools.map(t => t.name);
       
       expect(toolNames).toContain('f2a_discover');
-      expect(toolNames).toContain('f2a_delegate');
+      expect(toolNames).toContain('f2a_send');
     });
 
     it('应该包含任务工具', () => {

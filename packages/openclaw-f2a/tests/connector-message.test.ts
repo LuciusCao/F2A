@@ -95,10 +95,10 @@ describe('F2APlugin - 消息处理测试', () => {
       });
     });
 
-    describe('f2a_delegate', () => {
+    describe('f2a_send', () => {
       it('应该处理委托请求', async () => {
         const tools = plugin.getTools();
-        const delegateTool = tools.find(t => t.name === 'f2a_delegate');
+        const delegateTool = tools.find(t => t.name === 'f2a_send');
         
         const result = await delegateTool!.handler({
           agent: 'test-agent',
@@ -110,7 +110,7 @@ describe('F2APlugin - 消息处理测试', () => {
 
       it('应该处理带 context 的请求', async () => {
         const tools = plugin.getTools();
-        const delegateTool = tools.find(t => t.name === 'f2a_delegate');
+        const delegateTool = tools.find(t => t.name === 'f2a_send');
         
         const result = await delegateTool!.handler({
           agent: 'test-agent',
@@ -123,7 +123,7 @@ describe('F2APlugin - 消息处理测试', () => {
 
       it('应该处理带 timeout 的请求', async () => {
         const tools = plugin.getTools();
-        const delegateTool = tools.find(t => t.name === 'f2a_delegate');
+        const delegateTool = tools.find(t => t.name === 'f2a_send');
         
         const result = await delegateTool!.handler({
           agent: 'test-agent',

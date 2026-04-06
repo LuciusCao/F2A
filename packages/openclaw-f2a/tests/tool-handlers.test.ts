@@ -130,7 +130,7 @@ describe('ToolHandlers', () => {
     });
   });
 
-  describe('handleDelegate', () => {
+  describe('handleSend', () => {
     it('应该成功委托任务给 Agent', async () => {
       const agent = createMockAgentInfo();
       
@@ -142,9 +142,9 @@ describe('ToolHandlers', () => {
       mockAdapter.reputationSystem.isAllowed.mockReturnValue(true);
       mockAdapter.reputationSystem.getReputation.mockReturnValue({ score: 80 });
 
-      const result = await toolHandlers.handleDelegate({
+      const result = await toolHandlers.handleSend({
         agent: 'Test Agent',
-        task: 'Write some code'
+        message: 'Write some code'
       }, mockContext);
 
       // 新协议：发送消息
@@ -158,9 +158,9 @@ describe('ToolHandlers', () => {
         data: []
       });
 
-      const result = await toolHandlers.handleDelegate({
+      const result = await toolHandlers.handleSend({
         agent: 'Non-existent Agent',
-        task: 'Write code'
+        message: 'Write code'
       }, mockContext);
 
       expect(result.content).toContain('找不到 Agent');
@@ -177,9 +177,9 @@ describe('ToolHandlers', () => {
       mockAdapter.reputationSystem.isAllowed.mockReturnValue(false);
       mockAdapter.reputationSystem.getReputation.mockReturnValue({ score: 20 });
 
-      const result = await toolHandlers.handleDelegate({
+      const result = await toolHandlers.handleSend({
         agent: 'Test Agent',
-        task: 'Write code'
+        message: 'Write code'
       }, mockContext);
 
       // 新协议：发送消息（信誉警告但继续发送）
@@ -200,9 +200,9 @@ describe('ToolHandlers', () => {
       // Mock sendMessage 失败
       mockAdapter._f2a.sendMessage.mockRejectedValueOnce(new Error('Connection timeout'));
 
-      const result = await toolHandlers.handleDelegate({
+      const result = await toolHandlers.handleSend({
         agent: 'Test Agent',
-        task: 'Write code'
+        message: 'Write code'
       }, mockContext);
 
       expect(result.content).toContain('发送失败');
@@ -222,9 +222,9 @@ describe('ToolHandlers', () => {
       mockAdapter.reputationSystem.isAllowed.mockReturnValue(true);
       mockAdapter.reputationSystem.getReputation.mockReturnValue({ score: 80 });
 
-      const result = await toolHandlers.handleDelegate({
+      const result = await toolHandlers.handleSend({
         agent: '#1',
-        task: 'Test task'
+        message: 'Test task'
       }, mockContext);
 
       expect(result.content).toContain('消息已发送');
@@ -241,9 +241,9 @@ describe('ToolHandlers', () => {
       mockAdapter.reputationSystem.isAllowed.mockReturnValue(true);
       mockAdapter.reputationSystem.getReputation.mockReturnValue({ score: 80 });
 
-      const result = await toolHandlers.handleDelegate({
+      const result = await toolHandlers.handleSend({
         agent: 'exact-peer-id-123',
-        task: 'Test task'
+        message: 'Test task'
       }, mockContext);
 
       expect(result.content).toContain('消息已发送');
@@ -260,9 +260,9 @@ describe('ToolHandlers', () => {
       mockAdapter.reputationSystem.isAllowed.mockReturnValue(true);
       mockAdapter.reputationSystem.getReputation.mockReturnValue({ score: 80 });
 
-      const result = await toolHandlers.handleDelegate({
+      const result = await toolHandlers.handleSend({
         agent: 'helper',
-        task: 'Test task'
+        message: 'Test task'
       }, mockContext);
 
       expect(result.content).toContain('消息已发送');
@@ -279,9 +279,9 @@ describe('ToolHandlers', () => {
       mockAdapter.reputationSystem.isAllowed.mockReturnValue(true);
       mockAdapter.reputationSystem.getReputation.mockReturnValue({ score: 80 });
 
-      const result = await toolHandlers.handleDelegate({
+      const result = await toolHandlers.handleSend({
         agent: 'Test Agent',
-        task: 'Test task',
+        message: 'Test task',
         timeout: 120000
       }, mockContext);
 
@@ -1128,9 +1128,9 @@ describe('ToolHandlers', () => {
 
       // 使用 MALICIOUS_INPUTS.overflow 测试超大输入
       const overflowInput = MALICIOUS_INPUTS.overflow[0] as string;
-      const result = await toolHandlers.handleDelegate({
+      const result = await toolHandlers.handleSend({
         agent: 'Test Agent',
-        task: overflowInput
+        message: overflowInput
       }, mockContext);
 
       // 应该要么处理成功（截断），要么返回错误（拒绝过大输入）
@@ -1206,7 +1206,7 @@ describe('ToolHandlers', () => {
 
   // ========== P2-11: 敏感数据日志泄露测试 ==========
   describe('敏感数据日志安全测试', () => {
-    it('logger 不应该在 handleDelegate 中输出 token/password', async () => {
+    it('logger 不应该在 handleSend 中输出 token/password', async () => {
       const agent = createMockAgentInfo();
       
       mockAdapter.networkClient.discoverAgents.mockResolvedValue({
@@ -1218,9 +1218,9 @@ describe('ToolHandlers', () => {
       mockAdapter.reputationSystem.getReputation.mockReturnValue({ score: 80 });
 
       // 任务中包含敏感数据
-      const result = await toolHandlers.handleDelegate({
+      const result = await toolHandlers.handleSend({
         agent: 'Test Agent',
-        task: 'Please use my token: secret-token-12345 and password: my-password-xyz'
+        message: 'Please use my token: secret-token-12345 and password: my-password-xyz'
       }, mockContext);
 
       // 验证 logger 没有被调用输出敏感数据

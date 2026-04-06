@@ -254,7 +254,7 @@ describe('F2APlugin - enable/shutdown 流程', () => {
       const toolNames = tools.map(t => t.name);
       
       expect(toolNames).toContain('f2a_discover');
-      expect(toolNames).toContain('f2a_delegate');
+      expect(toolNames).toContain('f2a_send');
       expect(toolNames).toContain('f2a_broadcast');
       expect(toolNames).toContain('f2a_status');
     });

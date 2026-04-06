@@ -41,7 +41,7 @@ describe('F2AToolRegistry', () => {
       const toolNames = tools.map(t => t.name);
       
       expect(toolNames).toContain('f2a_discover');
-      expect(toolNames).toContain('f2a_delegate');
+      expect(toolNames).toContain('f2a_send');
       expect(toolNames).toContain('f2a_broadcast');
       expect(toolNames).toContain('f2a_status');
       expect(toolNames).toContain('f2a_reputation');

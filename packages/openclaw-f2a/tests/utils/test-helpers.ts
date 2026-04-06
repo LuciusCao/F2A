@@ -254,7 +254,7 @@ export function createMockAdapter(overrides: Record<string, any> = {}) {
 export function createMockToolHandlers() {
   return {
     handleDiscover: vi.fn(),
-    handleDelegate: vi.fn(),
+    handleSend: vi.fn(),
     handleBroadcast: vi.fn(),
     handleStatus: vi.fn(),
     handleReputation: vi.fn(),

@@ -433,6 +433,34 @@ export class F2AClient {
   }
 
   /**
+   * 获取已连接的 Peers
+   * 修复: tool-handlers.ts 调用此方法，但之前未实现
+   */
+  async getConnectedPeers(): Promise<DaemonResponse<PeerInfo[]>> {
+    try {
+      // 先获取所有 peers，然后过滤已连接的
+      const response = await this.fetch('/peers', {
+        method: 'GET',
+      });
+
+      if (response.success && Array.isArray(response.data)) {
+        const connectedPeers = (response.data as PeerInfo[]).filter(peer => peer.connected === true);
+        return { success: true, data: connectedPeers };
+      }
+      return response as DaemonResponse<PeerInfo[]>;
+    } catch (error) {
+      this.logger.error('Failed to get connected peers', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        code: 'GET_CONNECTED_PEERS_FAILED',
+      };
+    }
+  }
+
+  /**
    * 是否已注册
    */
   isRegistered(): boolean {

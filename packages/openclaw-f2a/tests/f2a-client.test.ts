@@ -560,6 +560,49 @@ describe('F2AClient', () => {
     });
   });
 
+  describe('getConnectedPeers', () => {
+    it('应返回已连接的 Peers', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => createMockResponse(true, [
+          { peerId: 'peer-1', displayName: 'Peer 1', connected: true },
+          { peerId: 'peer-2', displayName: 'Peer 2', connected: false },
+          { peerId: 'peer-3', displayName: 'Peer 3', connected: true },
+        ]),
+      });
+
+      const result = await client.getConnectedPeers();
+
+      expect(result.success).toBe(true);
+      expect(result.data).toHaveLength(2);
+      expect(result.data?.every(p => p.connected === true)).toBe(true);
+    });
+
+    it('所有 Peers 未连接时应返回空数组', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => createMockResponse(true, [
+          { peerId: 'peer-1', displayName: 'Peer 1', connected: false },
+          { peerId: 'peer-2', displayName: 'Peer 2', connected: false },
+        ]),
+      });
+
+      const result = await client.getConnectedPeers();
+
+      expect(result.success).toBe(true);
+      expect(result.data).toHaveLength(0);
+    });
+
+    it('获取失败应返回错误响应', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Network error'));
+
+      const result = await client.getConnectedPeers();
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('REQUEST_FAILED');
+    });
+  });
+
   describe('重试逻辑', () => {
     it('网络错误应触发重试', async () => {
       // 第一次失败，第二次成功

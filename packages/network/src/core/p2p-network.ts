@@ -328,7 +328,18 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           userAgent: `F2A/${this.agentInfo.version || '0.3.2'}`
         } as any,
         // libp2p v2.x 已兼容 @libp2p/ping@2.x，可以启用 ConnectionMonitor
-        services
+        services,
+        // P2P 连接保持配置 - 防止连接在 stream 关闭后被立即关闭
+        connectionManager: {
+          minConnections: 0,
+          maxConnections: 100,
+          autoDial: true,
+          autoDialPriority: ['private', 'public'] as any,
+          autoDialPeerRetryThreshold: 300000, // 5 分钟
+          maxPeerAddrsToDial: 10,
+          // 保持连接活跃，不因为没有活跃 stream 而关闭
+          maxIncomingPendingConnections: 10,
+        } as any,
       };
 
       // mDNS 本地发现（默认启用）

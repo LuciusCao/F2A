@@ -317,6 +317,40 @@ export class F2ACore {
       return;
     }
 
+    // 检测端口是否已被占用（热重启后旧实例残留或后台服务已启动）
+    const webhookPort = this.config.webhookPort || 9002;
+    const p2pPort = this.config.p2pPort || 9000;
+    const portsInUse = await this.checkPortsInUse(webhookPort, p2pPort);
+    
+    if (portsInUse.length > 0) {
+      // 端口被占用，可能是：
+      // 1. 后台服务已启动 F2A
+      // 2. 热重启后旧实例残留
+      // 假设是后台服务已启动，直接标记为已初始化
+      this.logger?.info('[F2A] 检测到端口已被占用，假设 F2A 已由后台服务启动', { 
+        ports: portsInUse 
+      });
+      
+      // 标记为已初始化，但不创建新实例
+      this.state.initialized = true;
+      this.state.runMode = 'embedded';
+      
+      // 尝试从持久化数据读取 peerId
+      try {
+        const dataDir = this.getDataDir();
+        const identityPath = join(dataDir, 'identity.json');
+        if (require('fs').existsSync(identityPath)) {
+          const identity = JSON.parse(require('fs').readFileSync(identityPath, 'utf-8'));
+          this.state.f2a = { peerId: identity.peerId } as any;
+          this.logger?.info('[F2A] 从持久化数据恢复 peerId', { peerId: identity.peerId?.slice(0, 20) });
+        }
+      } catch (err) {
+        this.logger?.debug?.('[F2A] 无法恢复 peerId', { error: extractErrorMessage(err) });
+      }
+      
+      return;
+    }
+
     this.onMessageCallback = onMessage;
 
     // 确定运行模式
@@ -794,6 +828,38 @@ export class F2ACore {
   }
 
   // ========== 辅助方法 ==========
+
+  /**
+   * 检测端口是否被占用
+   * @returns 被占用的端口号列表
+   */
+  private async checkPortsInUse(...ports: number[]): Promise<number[]> {
+    const inUse: number[] = [];
+    
+    for (const port of ports) {
+      try {
+        const net = require('net');
+        await new Promise<void>((resolve, reject) => {
+          const server = net.createServer();
+          server.once('error', (err: NodeJS.ErrnoException) => {
+            if (err.code === 'EADDRINUSE') {
+              inUse.push(port);
+            }
+            resolve();
+          });
+          server.once('listening', () => {
+            server.close();
+            resolve();
+          });
+          server.listen(port);
+        });
+      } catch {
+        // 如果检测失败，假设端口可用
+      }
+    }
+    
+    return inUse;
+  }
 
   /**
    * 获取数据目录

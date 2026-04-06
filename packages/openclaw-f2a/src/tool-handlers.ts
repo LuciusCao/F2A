@@ -42,7 +42,7 @@ interface BroadcastResult {
  */
 export interface ToolHandlerParams {
   discover: { capability?: string; min_reputation?: number };
-  delegate: { agent: string; task: string; context?: string; timeout?: number };
+  send: { agent: string; message: string; topic?: string; context?: string; timeout?: number };
   broadcast: { capability: string; task: string; min_responses?: number };
   reputation: { action: string; peer_id?: string };
   pollTasks: { limit?: number; status?: 'pending' | 'processing' | 'completed' | 'failed' };
@@ -169,19 +169,19 @@ ${agents.map((a: AgentInfo, i: number) => {
   }
 
   /**
-   * 处理 f2a_send 工具（原 f2a_delegate，按 PR #111 新协议重构）
-   * 发送消息给特定 Agent
+   * 处理 f2a_send 工具
+   * 发送消息给特定 Agent（PR #111 新协议：MESSAGE + topic）
    */
-  async handleDelegate(
-    params: ToolHandlerParams['delegate'],
+  async handleSend(
+    params: ToolHandlerParams['send'],
     context: SessionContext
   ): Promise<ToolResult> {
     // 输入验证
     if (!params.agent || typeof params.agent !== 'string' || params.agent.trim() === '') {
       return { content: '❌ 请提供有效的 agent 参数（Agent ID、名称或 #索引）' };
     }
-    if (!params.task || typeof params.task !== 'string' || params.task.trim() === '') {
-      return { content: '❌ 请提供有效的 task 参数（消息内容）' };
+    if (!params.message || typeof params.message !== 'string' || params.message.trim() === '') {
+      return { content: '❌ 请提供有效的 message 参数（消息内容）' };
     }
     
     const reputationSystem = (this.plugin as unknown as PluginInternalAccess).reputationSystem;
@@ -212,10 +212,12 @@ ${agents.map((a: AgentInfo, i: number) => {
     if (f2a && f2a.sendMessage && status?.running) {
       try {
         // PR #111 新协议：MESSAGE 类型 + StructuredMessagePayload
+        // topic 默认为 'chat'，可显式指定
+        const topic = params.topic || (params.context ? 'task.request' : 'chat');
         const messagePayload = {
-          topic: params.context ? 'task.request' : 'chat',
+          topic,
           content: {
-            text: params.task,
+            text: params.message,
             context: params.context,
             from: f2a.peerId,
             timestamp: Date.now()
@@ -227,8 +229,10 @@ ${agents.map((a: AgentInfo, i: number) => {
         logger.info(`消息已发送给 ${targetAgent.displayName}`);
         
         return {
-          content: `✅ 消息已发送给 ${targetAgent.displayName}:\n\n📝 ${params.task}\n\n⏳ 等待回复中...`,
-          data: { sent: true, agent: targetAgent.displayName, task: params.task }
+          content: `✅ 消息已发送给 ${targetAgent.displayName}:
+
+📝 ${params.message}\n\n⏳ 等待回复中...`,
+          data: { sent: true, agent: targetAgent.displayName, message: params.message, topic }
         };
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);

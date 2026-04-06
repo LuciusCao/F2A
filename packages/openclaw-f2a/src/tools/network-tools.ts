@@ -1,7 +1,7 @@
 /**
  * F2A 网络工具定义
  * 
- * 包含网络发现、委托、广播、状态、信誉等工具。
+ * 包含网络发现、发送消息、广播、状态、信誉等工具。
  */
 
 import type { Tool } from '../types.js';
@@ -12,7 +12,7 @@ import type { Tool } from '../types.js';
 export function getNetworkTools(
   handlers: {
     handleDiscover: Tool['handler'];
-    handleDelegate: Tool['handler'];
+    handleSend: Tool['handler'];
     handleBroadcast: Tool['handler'];
     handleStatus: Tool['handler'];
     handleReputation: Tool['handler'];
@@ -37,22 +37,27 @@ export function getNetworkTools(
       handler: handlers.handleDiscover,
     },
     {
-      name: 'f2a_delegate',
-      description: '委托任务给网络中的特定 Agent',
+      name: 'f2a_send',
+      description: '发送消息给网络中的特定 Agent',
       parameters: {
         agent: {
           type: 'string',
           description: '目标 Agent ID、名称或 #索引 (如 #1)',
           required: true,
         },
-        task: {
+        message: {
           type: 'string',
-          description: '任务描述',
+          description: '消息内容',
           required: true,
+        },
+        topic: {
+          type: 'string',
+          description: '消息主题（如 chat, task.request, task.response）',
+          required: false,
         },
         context: {
           type: 'string',
-          description: '任务上下文或附件',
+          description: '附加上下文或附件',
           required: false,
         },
         timeout: {
@@ -61,7 +66,7 @@ export function getNetworkTools(
           required: false,
         },
       },
-      handler: handlers.handleDelegate,
+      handler: handlers.handleSend,
     },
     {
       name: 'f2a_broadcast',

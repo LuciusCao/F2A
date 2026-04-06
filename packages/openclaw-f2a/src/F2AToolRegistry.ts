@@ -46,7 +46,7 @@ export class F2AToolRegistry {
     // 网络、状态、信誉工具
     const networkTools = getNetworkTools({
       handleDiscover: this.deps.toolHandlers.handleDiscover.bind(this.deps.toolHandlers),
-      handleDelegate: this.deps.toolHandlers.handleDelegate.bind(this.deps.toolHandlers),
+      handleSend: this.deps.toolHandlers.handleSend.bind(this.deps.toolHandlers),
       handleBroadcast: this.deps.toolHandlers.handleBroadcast.bind(this.deps.toolHandlers),
       handleStatus: this.deps.toolHandlers.handleStatus.bind(this.deps.toolHandlers),
       handleReputation: this.deps.toolHandlers.handleReputation.bind(this.deps.toolHandlers),

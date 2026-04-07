@@ -326,23 +326,34 @@ export class F2ACore {
       // 端口被占用，可能是：
       // 1. 后台服务已启动 F2A
       // 2. 热重启后旧实例残留
-      // 假设是后台服务已启动，直接标记为已初始化
-      this.logger?.info('[F2A] 检测到端口已被占用，假设 F2A 已由后台服务启动', { 
+      this.logger?.info('[F2A] 检测到端口已被占用，尝试获取实际 peerId', { 
         ports: portsInUse 
       });
       
-      // 标记为已初始化，但不创建新实例
+      // 尝试从 control server 获取实际 peerId
+      const actualPeerId = await this.tryGetActualPeerId(p2pPort);
+      
+      if (actualPeerId) {
+        // 成功获取实际 peerId，复用现有实例
+        this.state.initialized = true;
+        this.state.runMode = 'embedded';
+        this.state.f2a = { peerId: actualPeerId } as any;
+        this.logger?.info('[F2A] 成功获取实际 peerId，复用现有实例', { peerId: actualPeerId.slice(0, 20) });
+        return;
+      }
+      
+      // 无法获取实际 peerId，尝试从存储读取（可能不准确）
+      this.logger?.warn('[F2A] 无法获取实际 peerId，尝试从存储读取（可能不准确）');
       this.state.initialized = true;
       this.state.runMode = 'embedded';
       
-      // 尝试从持久化数据读取 peerId
       try {
         const dataDir = this.getDataDir();
         const identityPath = join(dataDir, 'identity.json');
         if (require('fs').existsSync(identityPath)) {
           const identity = JSON.parse(require('fs').readFileSync(identityPath, 'utf-8'));
           this.state.f2a = { peerId: identity.peerId } as any;
-          this.logger?.info('[F2A] 从持久化数据恢复 peerId', { peerId: identity.peerId?.slice(0, 20) });
+          this.logger?.info('[F2A] 从持久化数据恢复 peerId（可能不一致）', { peerId: identity.peerId?.slice(0, 20) });
         }
       } catch (err) {
         this.logger?.debug?.('[F2A] 无法恢复 peerId', { error: extractErrorMessage(err) });
@@ -859,6 +870,72 @@ export class F2ACore {
     }
     
     return inUse;
+  }
+
+  /**
+   * 尝试从 control server 获取实际 peerId
+   * 用于热重启后复用现有实例
+   */
+  private async tryGetActualPeerId(p2pPort: number): Promise<string | null> {
+    const dataDir = this.getDataDir();
+    const tokenPath = join(dataDir, 'token.json');
+    
+    // 读取 token
+    let token: string | undefined;
+    try {
+      const fs = require('fs');
+      if (fs.existsSync(tokenPath)) {
+        token = fs.readFileSync(tokenPath, 'utf-8').trim();
+      }
+    } catch (err) {
+      this.logger?.debug?.('[F2A] 无法读取 token', { error: extractErrorMessage(err) });
+    }
+    
+    if (!token) {
+      this.logger?.debug?.('[F2A] token 文件不存在，无法获取实际 peerId');
+      return null;
+    }
+    
+    // 调用 control server /status API
+    try {
+      const http = require('http');
+      const url = `http://localhost:${p2pPort}/status`;
+      
+      const response = await new Promise<{ success: boolean; peerId?: string; error?: string }>((resolve, reject) => {
+        const req = http.request(url, {
+          method: 'GET',
+          headers: { 'X-F2A-Token': token },
+          timeout: 3000,
+        }, (res) => {
+          let data = '';
+          res.on('data', chunk => data += chunk);
+          res.on('end', () => {
+            try {
+              resolve(JSON.parse(data));
+            } catch {
+              reject(new Error('Invalid JSON response'));
+            }
+          });
+        });
+        
+        req.on('error', reject);
+        req.on('timeout', () => {
+          req.destroy();
+          reject(new Error('Request timeout'));
+        });
+        req.end();
+      });
+      
+      if (response.success && response.peerId) {
+        return response.peerId;
+      }
+      
+      this.logger?.debug?.('[F2A] /status 返回失败', { error: response.error });
+      return null;
+    } catch (err) {
+      this.logger?.debug?.('[F2A] 无法连接 control server', { error: extractErrorMessage(err) });
+      return null;
+    }
   }
 
   /**

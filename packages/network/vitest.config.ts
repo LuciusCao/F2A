@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import path from 'path';
 
 export default defineConfig({
   test: {
@@ -39,5 +40,11 @@ export default defineConfig({
     // 项目引用配置
     include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
     exclude: ['node_modules', 'dist']
-  }
+  },
+  resolve: {
+    alias: {
+      '../../packages/openclaw-f2a/src/connector.js': path.resolve(__dirname, '../openclaw-f2a/src/connector.ts'),
+      '../../packages/openclaw-f2a/src/node-manager.js': path.resolve(__dirname, '../openclaw-f2a/src/node-manager.ts'),
+    },
+  },
 });

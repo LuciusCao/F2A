@@ -837,7 +837,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       // 使用协议流发送消息 (libp2p v3 Stream API)
       const stream = await peer.newStream(F2A_PROTOCOL);
       stream.send(data);
-      await stream.close();
+      // 不关闭 stream，让它保持打开供后续消息复用
+      // await stream.close();
 
       return success(undefined);
     } catch (error) {

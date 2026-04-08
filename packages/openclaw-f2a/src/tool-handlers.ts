@@ -154,7 +154,7 @@ ${agents.map((a: AgentInfo, i: number) => {
   const rep = reputationSystem.getReputation(a.peerId);
   return `${i + 1}. ${a.displayName} (信誉: ${rep.score})
    ID: ${a.peerId}
-   能力: ${a.capabilities?.map(c => c.name).join(', ') || '无'}`;
+   能力: ${a.capabilities?.map((c: any) => c.name).join(', ') || '无'}`;
 }).join('\n\n')}
 
 💡 使用方式:

@@ -15,6 +15,9 @@ export { P2PNetwork } from './core/p2p-network.js';
 export { TokenManager, defaultTokenManager } from './core/token-manager.js';
 export { E2EECrypto, defaultE2EECrypto } from './core/e2ee-crypto.js';
 
+// Daemon 组件
+export { ControlServer } from './daemon/control-server.js';
+
 // 信誉系统 (Phase 1-4)
 export { ReputationManager, REPUTATION_TIERS } from './core/reputation.js';
 export type { 

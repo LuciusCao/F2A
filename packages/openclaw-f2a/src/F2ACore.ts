@@ -1,13 +1,13 @@
 /**
  * F2A 核心生命周期管理
- * 
+ *
  * 负责 F2A 插件的初始化、启用和关闭。
- * 从 connector.ts 拆分（Issue #106），遵循单一职责原则。
- * 
- * Phase 3 扩展：支持 Daemon 模式
- * - embedded: 直接创建 F2A 实例（默认）
+ * 从 connector.ts 拆分(Issue #106),遵循单一职责原则。
+ *
+ * Phase 3 扩展:支持 Daemon 模式
+ * - embedded: 直接创建 F2A 实例(默认)
  * - daemon: 通过 F2AClient 连接到独立 Daemon
- * 
+ *
  * @module F2ACore
  */
 
@@ -64,10 +64,14 @@ export interface CoreLifecycleState {
   f2a?: F2A;
   /** F2A 客户端 (daemon 模式) */
   f2aClient?: F2AClient;
+  /** ControlServer (embedded 模式) */
+  controlServer?: any;
   /** 运行模式 */
   runMode: F2ARunMode;
   /** F2A 启动时间 */
   f2aStartTime?: number;
+  /** 复用的 peerId (热重启场景) */
+  peerId?: string;
   /** Webhook 服务器 */
   webhookServer?: WebhookServer;
   /** Webhook 推送器 */
@@ -79,7 +83,7 @@ export interface CoreLifecycleState {
 }
 
 /**
- * 消息回调（用于处理 P2P 消息）
+ * 消息回调(用于处理 P2P 消息)
  */
 export interface MessageCallback {
   (msg: { from: string; content: string; metadata?: Record<string, unknown>; messageId: string }): Promise<void>;
@@ -87,8 +91,8 @@ export interface MessageCallback {
 
 /**
  * F2A 核心生命周期管理器
- * 
- * 功能：
+ *
+ * 功能:
  * 1. 初始化配置和基本组件
  * 2. 启动 F2A 实例和 Webhook 服务器
  * 3. 处理清理和关闭
@@ -185,7 +189,7 @@ export class F2ACore {
   }
 
   /**
-   * 获取 F2A 客户端（daemon 模式）
+   * 获取 F2A 客户端(daemon 模式)
    */
   getF2AClient(): F2AClient | undefined {
     return this.state.f2aClient;
@@ -217,17 +221,28 @@ export class F2ACore {
         uptime: this.state.f2aStartTime ? Date.now() - this.state.f2aStartTime : undefined,
       };
     }
-    
-    // Embedded 模式
-    if (!this.state.f2a) {
-      return { running: false, mode: 'embedded' };
+
+    // Embedded 模式 - 检查内存中的实例
+    if (this.state.f2a) {
+      return {
+        running: true,
+        peerId: this.state.f2a.peerId,
+        uptime: this.state.f2aStartTime ? Date.now() - this.state.f2aStartTime : undefined,
+        mode: 'embedded',
+      };
     }
-    return {
-      running: true,
-      peerId: this.state.f2a.peerId,
-      uptime: this.state.f2aStartTime ? Date.now() - this.state.f2aStartTime : undefined,
-      mode: 'embedded',
-    };
+
+    // 热重启复用场景:state.peerId 已设置但 state.f2a 为空
+    if (this.state.peerId) {
+      return {
+        running: true,
+        peerId: this.state.peerId,
+        uptime: this.state.f2aStartTime ? Date.now() - this.state.f2aStartTime : undefined,
+        mode: 'embedded',
+      };
+    }
+
+    return { running: false, mode: 'embedded' };
   }
 
   /**
@@ -247,9 +262,9 @@ export class F2ACore {
   // ========== 初始化 ==========
 
   /**
-   * 初始化插件（延迟模式）
-   * 
-   * 只保存配置，不打开任何资源。
+   * 初始化插件(延迟模式)
+   *
+   * 只保存配置,不打开任何资源。
    * TaskQueue/WebhookServer 在首次访问时才初始化。
    */
   async initialize(
@@ -257,7 +272,7 @@ export class F2ACore {
   ): Promise<void> {
     // 保存 OpenClaw logger
     this.logger = rawConfig._api?.logger;
-    this.logger?.info('[F2A] 初始化（延迟模式）...');
+    this.logger?.info('[F2A] 初始化(延迟模式)...');
 
     // 保存 API 引用
     this.api = rawConfig._api;
@@ -274,7 +289,7 @@ export class F2ACore {
       dataDir: this.config.dataDir,
     };
 
-    // 初始化 Webhook 推送器（如果配置了）
+    // 初始化 Webhook 推送器(如果配置了)
     if (this.config.webhookPush?.enabled !== false && this.config.webhookPush?.url) {
       this.state.webhookPusher = new WebhookPusher(this.config.webhookPush, this.logger);
       this.logger?.info('[F2A] Webhook 推送已配置');
@@ -290,7 +305,7 @@ export class F2ACore {
       );
     }
 
-    this.logger?.info('[F2A] 初始化完成（延迟模式）');
+    this.logger?.info('[F2A] 初始化完成(延迟模式)');
     this.logger?.info('[F2A] Agent 名称', { agentName: this.config.agentName });
     this.logger?.info('[F2A] 能力数', { count: this.state.capabilities.length });
     this.logger?.info('[F2A] 资源将在首次使用时初始化');
@@ -300,11 +315,11 @@ export class F2ACore {
 
   /**
    * 启用适配器
-   * 
-   * 根据配置选择运行模式：
-   * - embedded: 直接创建 F2A 实例（默认）
+   *
+   * 根据配置选择运行模式:
+   * - embedded: 直接创建 F2A 实例(默认)
    * - daemon: 通过 F2AClient 连接到独立 Daemon
-   * 
+   *
    * @param webhookHandler - Webhook 处理器
    * @param onMessage - P2P 消息回调
    */
@@ -313,53 +328,47 @@ export class F2ACore {
     onMessage: MessageCallback
   ): Promise<void> {
     if (this.state.initialized) {
-      this.logger?.info('[F2A] 适配器已启用，跳过');
+      this.logger?.info('[F2A] 适配器已启用,跳过');
       return;
     }
 
-    // 检测端口是否已被占用（热重启后旧实例残留或后台服务已启动）
+    // 检测端口是否已被占用(热重启后旧实例残留或后台服务已启动)
     const webhookPort = this.config.webhookPort || 9002;
     const p2pPort = this.config.p2pPort || 9000;
     const portsInUse = await this.checkPortsInUse(webhookPort, p2pPort);
-    
+
     if (portsInUse.length > 0) {
-      // 端口被占用，可能是：
-      // 1. 后台服务已启动 F2A
-      // 2. 热重启后旧实例残留
-      this.logger?.info('[F2A] 检测到端口已被占用，尝试获取实际 peerId', { 
-        ports: portsInUse 
+      // 端口被占用,可能是:
+      // 1. 后台服务已启动 F2A(Daemon 模式)
+      // 2. 热重启后旧实例残留(同一个 Gateway 进程)
+      this.logger?.info('[F2A] 检测到端口已被占用,尝试获取实际 peerId', {
+        ports: portsInUse
       });
-      
+
       // 尝试从 control server 获取实际 peerId
       const actualPeerId = await this.tryGetActualPeerId(p2pPort);
-      
+
       if (actualPeerId) {
-        // 成功获取实际 peerId，复用现有实例
+        // 成功获取实际 peerId,说明 F2A 完整运行中,直接复用
         this.state.initialized = true;
         this.state.runMode = 'embedded';
-        this.state.f2a = { peerId: actualPeerId } as any;
-        this.logger?.info('[F2A] 成功获取实际 peerId，复用现有实例', { peerId: actualPeerId.slice(0, 20) });
+        this.state.peerId = actualPeerId;
+        this.state.f2aStartTime = Date.now();
+        this.logger?.info('[F2A] 成功获取实际 peerId,复用现有实例', { peerId: actualPeerId.slice(0, 20) });
         return;
       }
-      
-      // 无法获取实际 peerId，尝试从存储读取（可能不准确）
-      this.logger?.warn('[F2A] 无法获取实际 peerId，尝试从存储读取（可能不准确）');
-      this.state.initialized = true;
-      this.state.runMode = 'embedded';
-      
-      try {
-        const dataDir = this.getDataDir();
-        const identityPath = join(dataDir, 'identity.json');
-        if (require('fs').existsSync(identityPath)) {
-          const identity = JSON.parse(require('fs').readFileSync(identityPath, 'utf-8'));
-          this.state.f2a = { peerId: identity.peerId } as any;
-          this.logger?.info('[F2A] 从持久化数据恢复 peerId（可能不一致）', { peerId: identity.peerId?.slice(0, 20) });
-        }
-      } catch (err) {
-        this.logger?.debug?.('[F2A] 无法恢复 peerId', { error: extractErrorMessage(err) });
-      }
-      
-      return;
+
+      // 无法获取实际 peerId,说明旧实例不完整,需要杀掉并重新启动
+      this.logger?.warn('[F2A] 无法获取实际 peerId,旧实例不完整,强制杀掉');
+
+      // 强制杀掉占用端口的进程
+      await this.killProcessOnPort(p2pPort);
+
+      // 等待端口释放
+      await this.waitForPortRelease(p2pPort, 5000);
+
+      this.logger?.info('[F2A] 旧实例已清理,将继续正常启动流程');
+      // 继续执行下面的正常启动流程
     }
 
     this.onMessageCallback = onMessage;
@@ -367,7 +376,7 @@ export class F2ACore {
     // 确定运行模式
     const runMode = this.determineRunMode();
     this.state.runMode = runMode;
-    
+
     this.logger?.info('[F2A] 启用适配器', { mode: runMode });
     this.state.initialized = true;
 
@@ -375,10 +384,10 @@ export class F2ACore {
     this.registerCleanupHandlers();
 
     if (runMode === 'daemon') {
-      // Daemon 模式：使用 F2AClient
+      // Daemon 模式:使用 F2AClient
       await this.startDaemonMode(webhookHandler);
     } else {
-      // Embedded 模式：直接创建 F2A 实例
+      // Embedded 模式:直接创建 F2A 实例
       await this.startEmbeddedMode(webhookHandler);
     }
 
@@ -400,12 +409,12 @@ export class F2ACore {
     if (mode === 'daemon') {
       return 'daemon';
     }
-    
+
     // 检查是否配置了 daemonUrl
     if ((this.config as any).daemonUrl) {
       return 'daemon';
     }
-    
+
     // 默认使用 embedded 模式
     return 'embedded';
   }
@@ -417,7 +426,7 @@ export class F2ACore {
     try {
       const daemonUrl = (this.config as any).daemonUrl || 'http://localhost:7788';
       const agentId = (this.config as any).agentId || 'main';
-      
+
       // 从 IDENTITY.md 读取 agent 名字
       const workspace = (this.api?.config as OpenClawConfig)?.agents?.defaults?.workspace;
       const identityName = readAgentNameFromIdentity(workspace);
@@ -439,14 +448,14 @@ export class F2ACore {
       // 检查 Daemon 是否可用
       const healthOk = await this.state.f2aClient.checkHealth();
       if (!healthOk) {
-        this.logger?.warn('[F2A] Daemon 不可用，尝试启动本地 Daemon...');
-        
+        this.logger?.warn('[F2A] Daemon 不可用,尝试启动本地 Daemon...');
+
         // 尝试启动本地 Daemon
         const started = await this.tryStartLocalDaemon();
         if (!started) {
           throw new Error('Daemon 不可用且无法启动');
         }
-        
+
         // 再次检查健康状态
         const retryOk = await this.state.f2aClient.checkHealth();
         if (!retryOk) {
@@ -460,14 +469,14 @@ export class F2ACore {
         throw new Error(`Agent 注册失败: ${registerResult.error}`);
       }
 
-      // 启动消息轮询（从 Daemon 获取消息）
+      // 启动消息轮询(从 Daemon 获取消息)
       this.startDaemonMessagePolling();
 
       // 启动 Webhook 服务器
       await this.startWebhookServer(webhookHandler);
 
       this.state.f2aStartTime = Date.now();
-      
+
       this.logger?.info('[F2A] Daemon 模式已启用', {
         daemonUrl,
         agentId,
@@ -476,8 +485,8 @@ export class F2ACore {
     } catch (err) {
       const errorMsg = extractErrorMessage(err);
       this.logger?.error('[F2A] Daemon 模式启动失败', { error: errorMsg });
-      this.logger?.warn('[F2A] F2A Plugin 将以降级模式运行，P2P 功能不可用');
-      
+      this.logger?.warn('[F2A] F2A Plugin 将以降级模式运行,P2P 功能不可用');
+
       // 清理失败的客户端
       if (this.state.f2aClient) {
         await this.state.f2aClient.close();
@@ -492,24 +501,24 @@ export class F2ACore {
   private async tryStartLocalDaemon(): Promise<boolean> {
     try {
       const { spawn } = await import('child_process');
-      
+
       return new Promise((resolve) => {
         this.logger?.info('[F2A] 尝试启动本地 F2A Daemon...');
-        
+
         const child = spawn('f2a', ['daemon', 'start'], {
           detached: true,
           stdio: 'ignore',
         });
-        
+
         child.on('error', (err) => {
           this.logger?.warn('[F2A] 启动 Daemon 失败', { error: err.message });
           resolve(false);
         });
-        
+
         child.on('spawn', () => {
           this.logger?.info('[F2A] Daemon 启动命令已发送');
           child.unref();
-          
+
           // 等待 Daemon 就绪
           setTimeout(async () => {
             if (this.state.f2aClient) {
@@ -540,7 +549,7 @@ export class F2ACore {
 
       try {
         const result = await this.state.f2aClient.getMessages(10);
-        
+
         if (result.success && result.data?.messages && result.data.messages.length > 0) {
           for (const msg of result.data.messages) {
             // 调用消息回调
@@ -551,7 +560,7 @@ export class F2ACore {
               messageId: msg.messageId,
             });
           }
-          
+
           // 清除已处理的消息
           const messageIds = result.data.messages.map(m => m.messageId);
           await this.state.f2aClient.clearMessages(messageIds);
@@ -564,7 +573,7 @@ export class F2ACore {
     if (pollTimer.unref) {
       pollTimer.unref();
     }
-    
+
     // 保存定时器引用以便清理
     (this.state as any).daemonPollTimer = pollTimer;
   }
@@ -573,7 +582,7 @@ export class F2ACore {
    * 启动 Embedded 模式
    */
   private async startEmbeddedMode(webhookHandler: WebhookHandler): Promise<void> {
-    this.logger?.info('[F2A] 启用适配器（直接管理模式）...');
+    this.logger?.info('[F2A] 启用适配器(直接管理模式)...');
 
     // 创建 F2A 实例
     await this.startF2AInstance();
@@ -635,6 +644,18 @@ export class F2ACore {
         this.logger?.info('[F2A] Peer 断开', { peerId: event.peerId.slice(0, 16) });
       });
 
+      // 启动 ControlServer（用于热重启时获取实际 peerId）
+      try {
+        const { ControlServer } = await import('@f2a/network');
+        const controlPort = this.config.controlPort || 9001;
+        const controlServer = new ControlServer(this.state.f2a!, controlPort);
+        await controlServer.start();
+        this.state.controlServer = controlServer as any;
+        this.logger?.info('[F2A] ControlServer 已启动', { controlPort });
+      } catch (err) {
+        this.logger?.warn('[F2A] ControlServer 启动失败', { error: extractErrorMessage(err) });
+      }
+
       // 启动 F2A（带超时保护）
       const START_TIMEOUT_MS = 10000;
       const startPromise = this.state.f2a.start();
@@ -662,14 +683,14 @@ export class F2ACore {
     } catch (err) {
       const errorMsg = extractErrorMessage(err);
       this.logger?.error('[F2A] 创建 F2A 实例失败', { error: errorMsg });
-      this.logger?.warn('[F2A] F2A Plugin 将以降级模式运行，P2P 功能不可用');
+      this.logger?.warn('[F2A] F2A Plugin 将以降级模式运行,P2P 功能不可用');
 
       // 清理失败的实例
       if (this.state.f2a) {
         try {
           await this.state.f2a.stop();
         } catch {
-          this.logger?.debug?.('[F2A] F2A 实例停止失败（清理阶段）');
+          this.logger?.debug?.('[F2A] F2A 实例停止失败(清理阶段)');
         }
         this.state.f2a = undefined;
         this.state.f2aStartTime = undefined;
@@ -760,7 +781,7 @@ export class F2ACore {
 
           if (processingTime > maxAllowedTime) {
             this.logger?.warn?.(
-              `[F2A] 检测到僵尸任务 ${queuedTask.taskId.slice(0, 8)}... (processing ${Math.round(processingTime / 1000)}s)，重置为 pending`
+              `[F2A] 检测到僵尸任务 ${queuedTask.taskId.slice(0, 8)}... (processing ${Math.round(processingTime / 1000)}s),重置为 pending`
             );
             taskQueue.resetProcessingTask(queuedTask.taskId);
           }
@@ -797,7 +818,7 @@ export class F2ACore {
       clearInterval(this.state.pollTimer);
       this.state.pollTimer = undefined;
     }
-    
+
     // 停止 Daemon 消息轮询
     if ((this.state as any).daemonPollTimer) {
       clearInterval((this.state as any).daemonPollTimer);
@@ -809,14 +830,14 @@ export class F2ACore {
       await this.componentRegistry.cleanup();
     }
 
-    // 停止 F2A 客户端（daemon 模式）
+    // 停止 F2A 客户端(daemon 模式)
     if (this.state.f2aClient) {
       await this.state.f2aClient.close();
       this.logger?.info('[F2A] F2A 客户端已关闭');
       this.state.f2aClient = undefined;
     }
 
-    // 停止 F2A 实例（embedded 模式）
+    // 停止 F2A 实例(embedded 模式)
     if (this.state.f2a) {
       try {
         await this.state.f2a.stop();
@@ -846,7 +867,7 @@ export class F2ACore {
    */
   private async checkPortsInUse(...ports: number[]): Promise<number[]> {
     const inUse: number[] = [];
-    
+
     for (const port of ports) {
       try {
         const net = require('net');
@@ -865,10 +886,10 @@ export class F2ACore {
           server.listen(port);
         });
       } catch {
-        // 如果检测失败，假设端口可用
+        // 如果检测失败,假设端口可用
       }
     }
-    
+
     return inUse;
   }
 
@@ -878,8 +899,8 @@ export class F2ACore {
    */
   private async tryGetActualPeerId(p2pPort: number): Promise<string | null> {
     const dataDir = this.getDataDir();
-    const tokenPath = join(dataDir, 'token.json');
-    
+    const tokenPath = join(dataDir, 'control-token');
+
     // 读取 token
     let token: string | undefined;
     try {
@@ -890,25 +911,26 @@ export class F2ACore {
     } catch (err) {
       this.logger?.debug?.('[F2A] 无法读取 token', { error: extractErrorMessage(err) });
     }
-    
+
     if (!token) {
-      this.logger?.debug?.('[F2A] token 文件不存在，无法获取实际 peerId');
+      this.logger?.debug?.('[F2A] token 文件不存在,无法获取实际 peerId');
       return null;
     }
-    
-    // 调用 control server /status API
+
+    // 调用 control server /status API(使用 controlPort 而非 p2pPort)
+    const controlPort = this.config.controlPort || 9001;
     try {
       const http = require('http');
-      const url = `http://localhost:${p2pPort}/status`;
-      
+      const url = `http://localhost:${controlPort}/status`;
+
       const response = await new Promise<{ success: boolean; peerId?: string; error?: string }>((resolve, reject) => {
         const req = http.request(url, {
           method: 'GET',
           headers: { 'X-F2A-Token': token },
           timeout: 3000,
-        }, (res) => {
+        }, (res: any) => {
           let data = '';
-          res.on('data', chunk => data += chunk);
+          res.on('data', (chunk: any) => data += chunk);
           res.on('end', () => {
             try {
               resolve(JSON.parse(data));
@@ -917,7 +939,7 @@ export class F2ACore {
             }
           });
         });
-        
+
         req.on('error', reject);
         req.on('timeout', () => {
           req.destroy();
@@ -925,11 +947,11 @@ export class F2ACore {
         });
         req.end();
       });
-      
+
       if (response.success && response.peerId) {
         return response.peerId;
       }
-      
+
       this.logger?.debug?.('[F2A] /status 返回失败', { error: response.error });
       return null;
     } catch (err) {
@@ -955,6 +977,46 @@ export class F2ACore {
   }
 
   /**
+   * 杀掉占用端口的进程
+   */
+  private async killProcessOnPort(port: number): Promise<void> {
+    try {
+      const { execSync } = require('child_process');
+      const output = execSync(`lsof -t -i :${port}`, { encoding: 'utf-8' }).trim();
+
+      if (output) {
+        const pids = output.split('\n');
+        this.logger?.info('[F2A] 杀掉占用端口的进程', { port, pids });
+
+        for (const pid of pids) {
+          try {
+            process.kill(parseInt(pid), 'SIGTERM');
+          } catch {
+            // 进程可能已经不存在
+          }
+        }
+      }
+    } catch (err) {
+      this.logger?.debug?.('[F2A] killProcessOnPort 异常', { error: String(err) });
+    }
+  }
+
+  /**
+   * 等待端口释放
+   */
+  private async waitForPortRelease(port: number, timeout: number): Promise<void> {
+    const startTime = Date.now();
+    while (Date.now() - startTime < timeout) {
+      const inUse = await this.checkPortsInUse(port, port);
+      if (inUse.length === 0) {
+        return;
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    this.logger?.warn('[F2A] 等待端口释放超时', { port, timeout });
+  }
+
+  /**
    * 获取 Webhook 推送器
    */
   getWebhookPusher(): WebhookPusher | undefined {
@@ -962,7 +1024,7 @@ export class F2ACore {
   }
 
   /**
-   * 触发心跳（用于通知 OpenClaw 有新任务）
+   * 触发心跳(用于通知 OpenClaw 有新任务)
    */
   requestHeartbeat(): void {
     this.api?.runtime?.system?.requestHeartbeatNow?.();

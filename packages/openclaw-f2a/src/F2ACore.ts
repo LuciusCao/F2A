@@ -648,7 +648,7 @@ export class F2ACore {
       try {
         const { ControlServer } = await import('@f2a/network');
         const controlPort = this.config.controlPort || 9001;
-        const controlServer = new ControlServer(this.state.f2a!, controlPort);
+        const controlServer = new ControlServer(this.state.f2a!, controlPort, undefined, { dataDir: this.getDataDir() });
         await controlServer.start();
         this.state.controlServer = controlServer as any;
         this.logger?.info('[F2A] ControlServer 已启动', { controlPort });

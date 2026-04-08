@@ -94,6 +94,11 @@ export class E2EECrypto implements Disposable {
   private static readonly CHALLENGE_EXPIRY_MS = 5 * 60 * 1000;
   /** P1-1 修复：清理间隔（每分钟） */
   private static readonly CHALLENGE_CLEANUP_INTERVAL_MS = 60 * 1000;
+  
+  /** 修复：已停止状态 */
+  private stopped = false;
+  /** 修复：待处理的公钥（等待 keyPair 初始化后处理） */
+  private pendingPublicKeys: Map<string, string> = new Map();
 
   constructor() {
     this.logger = new Logger({ component: 'E2EE' });
@@ -160,8 +165,11 @@ export class E2EECrypto implements Disposable {
    * P1-1 修复：停止清理定时器，释放资源
    * P1-4 修复：清理共享密钥前先零填充
    * R2-1 修复：零填充 privateKey，最敏感的密钥材料
+   * 修复：设置 stopped 标志并清理待处理的公钥
    */
   stop(): void {
+    this.stopped = true;
+    
     if (this.challengeCleanupTimer) {
       clearInterval(this.challengeCleanupTimer);
       this.challengeCleanupTimer = null;
@@ -184,6 +192,7 @@ export class E2EECrypto implements Disposable {
     this.usedIVs.clear();
     this.sharedSecrets.clear();
     this.peerPublicKeys.clear();
+    this.pendingPublicKeys.clear();
     
     this.logger.info('E2EECrypto stopped and all resources cleaned');
   }
@@ -197,6 +206,7 @@ export class E2EECrypto implements Disposable {
 
   /**
    * 初始化密钥对
+   * 修复：初始化后处理待处理的公钥
    */
   async initialize(): Promise<void> {
     // 生成 X25519 密钥对用于加密
@@ -204,11 +214,16 @@ export class E2EECrypto implements Disposable {
     const publicKey = x25519.getPublicKey(privateKey);
 
     this.keyPair = { publicKey, privateKey };
+    this.stopped = false;
+    
+    // 修复：处理待处理的公钥
+    await this.processPendingPublicKeys();
   }
 
   /**
    * 从已有密钥初始化
    * P1-2: 添加输入验证
+   * 修复：初始化后处理待处理的公钥
    */
   initializeWithKeyPair(privateKey: Uint8Array, publicKey: Uint8Array): void {
     // 验证私钥长度 (X25519 私钥应为 32 字节)
@@ -233,9 +248,34 @@ export class E2EECrypto implements Disposable {
     }
     
     this.keyPair = { privateKey, publicKey };
+    this.stopped = false;
+    
     this.logger.info('Key pair initialized successfully', {
       publicKeyPrefix: Buffer.from(publicKey).toString('hex').slice(0, 16)
     });
+    
+    // 修复：处理待处理的公钥
+    this.processPendingPublicKeys();
+  }
+
+  /**
+   * 修复：处理待处理的公钥
+   * 当 keyPair 初始化后，处理之前收到的但无法处理的公钥
+   */
+  private processPendingPublicKeys(): void {
+    if (this.pendingPublicKeys.size === 0) return;
+    
+    this.logger.info('Processing pending public keys', {
+      count: this.pendingPublicKeys.size
+    });
+    
+    const pending = new Map(this.pendingPublicKeys);
+    this.pendingPublicKeys.clear();
+    
+    for (const [peerId, publicKeyBase64] of pending) {
+      // 重新注册（这次 keyPair 已经初始化了）
+      this.registerPeerPublicKey(peerId, publicKeyBase64);
+    }
   }
 
   /**
@@ -249,8 +289,20 @@ export class E2EECrypto implements Disposable {
   /**
    * 注册对等方的公钥
    * P2-3 修复：使用 Uint8Array.slice() 创建不可变副本
+   * 
+   * 修复：处理 keyPair 为 null 的情况
+   * - 如果已停止，记录警告并返回
+   * - 如果 keyPair 为 null，保存到 pendingPublicKeys 等待初始化后处理
    */
   registerPeerPublicKey(peerId: string, publicKeyBase64: string): void {
+    // 修复：如果已停止，拒绝操作
+    if (this.stopped) {
+      this.logger.warn('Cannot register key: E2EECrypto has been stopped', {
+        peerId: peerId.slice(0, 16)
+      });
+      return;
+    }
+
     try {
       const publicKey = Buffer.from(publicKeyBase64, 'base64');
       
@@ -269,6 +321,15 @@ export class E2EECrypto implements Disposable {
         if (!this.usedIVs.has(peerId)) {
           this.usedIVs.set(peerId, new Set());
         }
+        
+        this.logger.debug('Shared secret computed', { peerId: peerId.slice(0, 16) });
+      } else {
+        // 修复：keyPair 未初始化，保存到待处理列表
+        this.pendingPublicKeys.set(peerId, publicKeyBase64);
+        this.logger.warn('E2EE not initialized, public key saved for later', {
+          peerId: peerId.slice(0, 16),
+          pendingCount: this.pendingPublicKeys.size
+        });
       }
     } catch (error) {
       this.logger.error('Failed to register public key', { peerId, error });

@@ -964,15 +964,12 @@ export class F2ACore {
    * 获取数据目录
    */
   private getDataDir(): string {
+    // 优先使用配置的 dataDir
     if (this.config.dataDir) {
       return this.config.dataDir;
     }
 
-    const workspace = (this.api?.config as OpenClawConfig)?.agents?.defaults?.workspace;
-    if (workspace) {
-      return join(workspace, '.f2a');
-    }
-
+    // 默认使用用户根目录下的 .f2a
     return join(homedir(), '.f2a');
   }
 

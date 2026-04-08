@@ -633,7 +633,7 @@ export class F2ACore {
       });
 
       // 监听 P2P 消息
-      (this.state.f2a as any).on('message', this.onMessageCallback!);
+      (this.state.f2a as any).on('message:received', this.onMessageCallback!);
 
       // 监听其他事件
       this.state.f2a.on('peer:connected', (event: { peerId: string }) => {

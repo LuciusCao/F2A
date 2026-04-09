@@ -790,14 +790,23 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     }
 
     try {
-      // 检查是否已连接
-      const connections = this.node.getConnections();
-      const existingConn = connections.find(c => c.remotePeer.toString() === peerId);
+      // 【修复】优先使用 connectedPeers 索引判断连接状态
+      // 因为 libp2p getConnections() 可能返回已关闭的连接
+      const isConnected = this.connectedPeers.has(peerId);
       
       let connection;
-      if (existingConn) {
-        connection = existingConn;
-      } else {
+      if (isConnected) {
+        // 连接索引显示已连接，获取连接对象
+        const connections = this.node.getConnections();
+        connection = connections.find(c => c.remotePeer.toString() === peerId);
+        
+        if (!connection) {
+          // 连接索引有记录但 libp2p 没有，说明状态不一致，清除索引
+          this.connectedPeers.delete(peerId);
+        }
+      }
+      
+      if (!connection) {
         // 未连接，需要 dial
         const peerInfo = this.peerTable.get(peerId);
         if (!peerInfo || peerInfo.multiaddrs.length === 0) {
@@ -846,6 +855,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           error: getErrorMessage(newStreamError)
         });
         
+        // 清除连接索引
+        this.connectedPeers.delete(peerId);
+        
         const peerInfo = this.peerTable.get(peerId);
         if (peerInfo && peerInfo.multiaddrs.length > 0) {
           try {
@@ -864,6 +876,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         // 发送完成后关闭 stream 释放资源
         await stream.close();
       } catch (streamError) {
+        // 发送失败，清除连接索引
+        this.connectedPeers.delete(peerId);
         // 发送失败时确保 stream 被关闭
         try { await stream.close(); } catch {}
         throw streamError;

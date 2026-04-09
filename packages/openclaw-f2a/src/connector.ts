@@ -99,24 +99,28 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
     metadata?: Record<string, unknown>;
     messageId: string;
   }): boolean {
-    const { metadata, content, from } = msg;
+    const { metadata, content, from, messageId } = msg;
     if (isEchoMessageByMetadata(metadata)) return true;
     if (isEchoMessageByContent(content)) return true;
     
     const f2a = this.core?.getF2A();
     if (f2a && from === f2a.peerId) return true;
 
-    if (content && content.length > MESSAGE_HASH_THRESHOLD) {
-      const messageHash = computeMessageHash(from, content);
-      const now = Date.now();
-      if (isDuplicateMessage(this._processedMessageHashes, messageHash, now)) {
-        return true;
-      }
-      this._processedMessageHashes.set(messageHash, now);
-      if (this._processedMessageHashes.size > MAX_MESSAGE_HASH_CACHE_SIZE) {
-        cleanupMessageHashCache(this._processedMessageHashes, now);
-      }
+    // 【修复】使用 messageId 去重，而不是内容哈希
+    // 问题：之前只在 content.length > 100 时才去重，导致短消息重复处理
+    // 解决：所有消息都用 messageId 去重
+    const now = Date.now();
+    if (this._processedMessageHashes.has(messageId)) {
+      this.core?.getLogger()?.info('[F2A] 跳过重复消息', { messageId: messageId.slice(0, 16) });
+      return true;
     }
+    this._processedMessageHashes.set(messageId, now);
+    
+    // 清理缓存（如果太大）
+    if (this._processedMessageHashes.size > MAX_MESSAGE_HASH_CACHE_SIZE) {
+      cleanupMessageHashCache(this._processedMessageHashes, now);
+    }
+    
     return false;
   }
 
@@ -253,7 +257,9 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
         const reply = await this.invokeOpenClawAgent(msg.from, msg.content, msg.messageId);
         const f2a = this.core?.getF2A();
         if (reply && f2a) {
-          await (f2a as any).sendMessage(msg.from, reply, { type: 'reply', replyTo: msg.messageId });
+          // 【修复】使用正确的方法名和参数格式
+          // sendMessageToPeer(peerId, content, topic?)
+          await (f2a as any).sendMessageToPeer(msg.from, reply, 'chat');
           logger?.info('[F2A] 回复已发送', { to: msg.from.slice(0, 16) });
         }
       } catch (err) { logger?.error('[F2A] 处理消息失败', { error: extractErrorMessage(err) }); }

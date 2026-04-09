@@ -747,10 +747,18 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private async broadcast(message: F2AMessage): Promise<void> {
     if (!this.node) return;
 
-    // 向所有已连接的对等节点发送
-    const peers = this.node.getPeers();
+    // 【关键修复】使用 connectedPeers 而非 node.getPeers()
+    // 问题：node.getPeers() 返回路由表中的所有 peer，包括已断开的
+    // 解决：只向真正已连接的 peer 发送消息
+    const connectedPeerIds = Array.from(this.connectedPeers);
+    
+    if (connectedPeerIds.length === 0) {
+      this.logger.debug('No connected peers to broadcast to');
+      return;
+    }
+    
     const results = await Promise.allSettled(
-      peers.map(peer => this.sendMessage(peer.toString(), message))
+      connectedPeerIds.map(peerId => this.sendMessage(peerId, message))
     );
 
     // 记录发送失败的情况（包含详细错误信息）
@@ -790,8 +798,10 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     }
 
     try {
-      // 【修复】优先使用 connectedPeers 索引判断连接状态
-      // 因为 libp2p getConnections() 可能返回已关闭的连接
+      // 【关键修复】优先使用 connectedPeers 索引判断连接状态
+      // 背景：libp2p getConnections() 可能返回已关闭的连接
+      // 原因：peer:disconnect 事件在某些情况下不会触发（网络中断、重启残留）
+      // 解决：维护自己的连接索引，并在失败时清除
       const isConnected = this.connectedPeers.has(peerId);
       
       let connection;
@@ -801,7 +811,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         connection = connections.find(c => c.remotePeer.toString() === peerId);
         
         if (!connection) {
-          // 连接索引有记录但 libp2p 没有，说明状态不一致，清除索引
+          // 【防御性代码】索引有记录但 libp2p 没有 = 状态不一致
+          // 清除索引，触发重新连接
+          this.logger.warn('Connection index inconsistent, clearing', {
+            peerId: peerId.slice(0, 16)
+          });
           this.connectedPeers.delete(peerId);
         }
       }
@@ -812,7 +826,30 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         if (!peerInfo || peerInfo.multiaddrs.length === 0) {
           return failureFromError('PEER_NOT_FOUND', `Peer ${peerId} not found`);
         }
-        connection = await this.node.dial(peerInfo.multiaddrs[0]);
+        
+        // 【关键修复】选择合适的 multiaddr（过滤掉 localhost）
+        // 问题：peerTable 中的 multiaddrs 可能包含 127.0.0.1，导致 dial 到自己
+        // 解决：优先选择非 localhost 地址，除非只有 localhost 可选
+        const localhostPatterns = [/127\.0\.0\.1/, /0\.0\.0\.0/, /::1/, /localhost/];
+        const isLocalhost = (addr: string) => localhostPatterns.some(p => p.test(addr));
+        
+        const nonLocalhostAddrs = peerInfo.multiaddrs.filter(
+          (addr: any) => !isLocalhost(addr.toString())
+        );
+        
+        // 优先使用非 localhost 地址，如果没有则使用 localhost（本地测试场景）
+        const targetAddr = nonLocalhostAddrs.length > 0 
+          ? nonLocalhostAddrs[0] 
+          : peerInfo.multiaddrs[0];
+        
+        this.logger.debug('Dialing peer', {
+          peerId: peerId.slice(0, 16),
+          targetAddr: targetAddr.toString().slice(0, 50),
+          totalAddrs: peerInfo.multiaddrs.length,
+          nonLocalhostAddrs: nonLocalhostAddrs.length
+        });
+        
+        connection = await this.node.dial(targetAddr);
       }
 
       // 准备消息数据（根据是否启用 E2EE 加密）
@@ -861,7 +898,17 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         const peerInfo = this.peerTable.get(peerId);
         if (peerInfo && peerInfo.multiaddrs.length > 0) {
           try {
-            connection = await this.node.dial(peerInfo.multiaddrs[0]);
+            // 【关键修复】选择合适的 multiaddr（过滤掉 localhost）
+            const localhostPatterns = [/127\.0\.0\.1/, /0\.0\.0\.0/, /::1/, /localhost/];
+            const isLocalhost = (addr: string) => localhostPatterns.some(p => p.test(addr));
+            const nonLocalhostAddrs = peerInfo.multiaddrs.filter(
+              (addr: any) => !isLocalhost(addr.toString())
+            );
+            const targetAddr = nonLocalhostAddrs.length > 0 
+              ? nonLocalhostAddrs[0] 
+              : peerInfo.multiaddrs[0];
+            
+            connection = await this.node.dial(targetAddr);
             stream = await connection.newStream(F2A_PROTOCOL);
           } catch (dialError) {
             return failureFromError('CONNECTION_FAILED', `Failed to reconnect: ${getErrorMessage(dialError)}`);
@@ -873,8 +920,10 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       
       try {
         await stream.send(data);
-        // 发送完成后关闭 stream 释放资源
-        await stream.close();
+        // 【关键修复】发送后关闭写入端，让接收方知道数据发送完毕
+        // 问题：send() 后不关闭写入端，接收方的 for await (chunk of stream) 会一直等待
+        // 解决：sendCloseWrite() 告诉接收方"我发送完了"，但保持读取端打开
+        await stream.sendCloseWrite();
       } catch (streamError) {
         // 发送失败，清除连接索引
         this.connectedPeers.delete(peerId);
@@ -1106,6 +1155,23 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       this.logger.info('Initiating connection to mDNS peer for discovery', {
         peerId: peerId.slice(0, 16)
       });
+
+      // 【关键修复】等待 peer:connect 事件处理完成
+      // dial() 只是发起连接，peer:connect 事件是异步触发的
+      // sendMessage 会检查 connectedPeers，需要等待事件处理器更新
+      let retries = 0;
+      const maxRetries = 10;
+      while (!this.connectedPeers.has(peerId) && retries < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        retries++;
+      }
+      
+      if (!this.connectedPeers.has(peerId)) {
+        this.logger.warn('Connection established but peer:connect event not received', {
+          peerId: peerId.slice(0, 16),
+          waitMs: retries * 100
+        });
+      }
 
       // 发送 DISCOVER 消息获取真实 AgentInfo
       // 低-1 修复：有意不检查返回值 - 发现消息发送失败不影响主流程，
@@ -1566,19 +1632,30 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
     // 仅对 DISCOVER 请求响应，避免发现响应循环
     if (shouldRespond) {
-      const responseResult = await this.sendMessage(peerId, {
-        id: randomUUID(),
-        type: 'DISCOVER_RESP',
-        from: this.agentInfo.peerId,
-        to: peerId,
-        timestamp: Date.now(),
-        payload: { agentInfo: this.agentInfo } as DiscoverPayload
-      });
+      this.logger.info('Sending DISCOVER_RESP', { peerId: peerId.slice(0, 16) });
+      
+      try {
+        const responseResult = await this.sendMessage(peerId, {
+          id: randomUUID(),
+          type: 'DISCOVER_RESP',
+          from: this.agentInfo.peerId,
+          to: peerId,
+          timestamp: Date.now(),
+          payload: { agentInfo: this.agentInfo } as DiscoverPayload
+        }, false); // DISCOVER_RESP 不需要加密
 
-      if (!responseResult.success) {
-        this.logger.warn('Failed to send discover response', {
+        if (!responseResult.success) {
+          this.logger.warn('Failed to send discover response', {
+            peerId: peerId.slice(0, 16),
+            error: responseResult.error
+          });
+        } else {
+          this.logger.info('Sent DISCOVER_RESP successfully', { peerId: peerId.slice(0, 16) });
+        }
+      } catch (err) {
+        this.logger.error('Exception sending DISCOVER_RESP', {
           peerId: peerId.slice(0, 16),
-          error: responseResult.error
+          error: err instanceof Error ? err.message : String(err)
         });
       }
     }

@@ -354,6 +354,33 @@ export class F2ACore {
         this.state.runMode = 'embedded';
         this.state.peerId = actualPeerId;
         this.state.f2aStartTime = Date.now();
+        
+        // 【关键修复】即使复用现有实例，也需要注册消息回调
+        this.onMessageCallback = onMessage;
+        
+        // 【关键修复】如果 state.f2a 不存在，说明是热重启后的残留实例
+        // 需要从 P2P 网络获取实例引用
+        if (!this.state.f2a) {
+          // 尝试从全局获取 F2A 实例
+          // 在 startF2AInstance 中，实例会被保存到全局变量
+          const globalF2A = (global as any).__F2A_INSTANCE__;
+          if (globalF2A) {
+            this.state.f2a = globalF2A;
+            this.logger?.info('[F2A] 从全局获取到 F2A 实例');
+          }
+        }
+        
+        // 注册消息监听到现有 P2P 实例
+        if (this.state.f2a) {
+          (this.state.f2a as any).on('peer:message', this.onMessageCallback!);
+          this.logger?.info('[F2A] 复用实例：消息监听已注册');
+        } else {
+          this.logger?.warn('[F2A] 无法获取 F2A 实例引用，消息监听未注册');
+        }
+        
+        // 启动 webhook 服务器
+        await this.startWebhookServer(webhookHandler);
+        
         this.logger?.info('[F2A] 成功获取实际 peerId,复用现有实例', { peerId: actualPeerId.slice(0, 20) });
         return;
       }
@@ -584,11 +611,22 @@ export class F2ACore {
   private async startEmbeddedMode(webhookHandler: WebhookHandler): Promise<void> {
     this.logger?.info('[F2A] 启用适配器(直接管理模式)...');
 
+    // 【关键修复】确保 onMessageCallback 已设置
+    // 因为 enable() 可能在 startEmbeddedMode() 之后才设置 onMessageCallback
+    // 我们需要在创建实例前先保存回调引用
+    
     // 创建 F2A 实例
     await this.startF2AInstance();
 
     // 启动 Webhook 服务器
     await this.startWebhookServer(webhookHandler);
+    
+    // 【关键修复】在实例创建后再次注册消息监听
+    // 因为 onMessageCallback 可能是在 enable() 中后续设置的
+    if (this.state.f2a && this.onMessageCallback) {
+      (this.state.f2a as any).on('peer:message', this.onMessageCallback!);
+      this.logger?.info('[F2A] Embedded 模式：消息监听已注册');
+    }
   }
 
   /**
@@ -631,9 +669,13 @@ export class F2ACore {
           enableDHT: false,
         },
       });
+      
+      // 【关键修复】保存到全局，供热重启后复用
+      (global as any).__F2A_INSTANCE__ = this.state.f2a;
+      this.logger?.info('[F2A] F2A 实例已保存到全局');
 
       // 监听 P2P 消息
-      (this.state.f2a as any).on('message:received', this.onMessageCallback!);
+      (this.state.f2a as any).on('peer:message', this.onMessageCallback!);
 
       // 监听其他事件
       this.state.f2a.on('peer:connected', (event: { peerId: string }) => {

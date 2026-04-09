@@ -368,23 +368,19 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
       this.node = await createLibp2p(libp2pOptions);
 
-      // 设置事件监听
-      this.setupEventHandlers();
-
-      // 启动节点
-      await this.node.start();
-
-      // 获取实际监听地址
+      // 获取实际监听地址（节点创建后即可获取）
       const addrs = this.node.getMultiaddrs().map(ma => ma.toString());
       
       // 从节点获取 peer ID
       const peerId = this.node.peerId;
       
-      // 更新 agentInfo
+      // 更新 agentInfo（在启动前设置）
       this.agentInfo.peerId = peerId.toString();
       this.agentInfo.multiaddrs = addrs;
 
-      // 初始化 E2EE 加密 - 使用持久化的密钥对或生成新的
+      // 【关键修复】初始化 E2EE 加密必须在 node.start() 之前
+      // 否则 peer:discovery 事件可能在 encryptionPublicKey 设置前触发
+      // 导致 DISCOVER 消息不包含加密公钥
       if (this.identityManager?.isLoaded()) {
         const e2eeKeyPair = this.identityManager.getE2EEKeyPair();
         if (e2eeKeyPair) {
@@ -398,6 +394,12 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       this.logger.info('E2EE encryption enabled', {
         publicKey: this.agentInfo.encryptionPublicKey?.slice(0, 16)
       });
+
+      // 设置事件监听（E2EE 初始化后）
+      this.setupEventHandlers();
+
+      // 启动节点
+      await this.node.start();
 
       // 连接引导节点
       if (this.config.bootstrapPeers) {
@@ -792,17 +794,16 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       const connections = this.node.getConnections();
       const existingConn = connections.find(c => c.remotePeer.toString() === peerId);
       
-      let peer;
+      let connection;
       if (existingConn) {
-        // 已连接，直接使用现有连接
-        peer = existingConn;
+        connection = existingConn;
       } else {
         // 未连接，需要 dial
         const peerInfo = this.peerTable.get(peerId);
         if (!peerInfo || peerInfo.multiaddrs.length === 0) {
           return failureFromError('PEER_NOT_FOUND', `Peer ${peerId} not found`);
         }
-        peer = await this.node.dial(peerInfo.multiaddrs[0]);
+        connection = await this.node.dial(peerInfo.multiaddrs[0]);
       }
 
       // 准备消息数据（根据是否启用 E2EE 加密）
@@ -835,10 +836,38 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       }
 
       // 使用协议流发送消息 (libp2p v3 Stream API)
-      const stream = await peer.newStream(F2A_PROTOCOL);
-      stream.send(data);
-      // 不关闭 stream，让它保持打开供后续消息复用
-      // await stream.close();
+      let stream;
+      try {
+        stream = await connection.newStream(F2A_PROTOCOL);
+      } catch (newStreamError) {
+        // newStream 失败可能是连接已关闭，尝试重新 dial
+        this.logger.warn('Failed to create stream, reconnecting', {
+          peerId: peerId.slice(0, 16),
+          error: getErrorMessage(newStreamError)
+        });
+        
+        const peerInfo = this.peerTable.get(peerId);
+        if (peerInfo && peerInfo.multiaddrs.length > 0) {
+          try {
+            connection = await this.node.dial(peerInfo.multiaddrs[0]);
+            stream = await connection.newStream(F2A_PROTOCOL);
+          } catch (dialError) {
+            return failureFromError('CONNECTION_FAILED', `Failed to reconnect: ${getErrorMessage(dialError)}`);
+          }
+        } else {
+          return failureFromError('CONNECTION_FAILED', getErrorMessage(newStreamError));
+        }
+      }
+      
+      try {
+        await stream.send(data);
+        // 发送完成后关闭 stream 释放资源
+        await stream.close();
+      } catch (streamError) {
+        // 发送失败时确保 stream 被关闭
+        try { await stream.close(); } catch {}
+        throw streamError;
+      }
 
       return success(undefined);
     } catch (error) {

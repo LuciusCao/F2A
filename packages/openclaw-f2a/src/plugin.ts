@@ -15,19 +15,34 @@ import { F2APlugin } from './connector.js';
 /** 全局单例 - 防止重复创建插件实例 */
 let _pluginInstance: F2APlugin | null = null;
 
+/** 记录创建实例的进程 PID，用于检测 Gateway 是否重启 */
+let _instancePid: number | null = null;
+
 /**
  * OpenClaw 插件注册函数
  * 这是 OpenClaw 加载插件时调用的入口
  */
 export default async function register(api: OpenClawPluginApi) {
-  // 如果已经有实例，直接复用
-  if (_pluginInstance) {
-    api.logger?.info('[F2A Plugin] 复用已存在的插件实例');
+  const currentPid = process.pid;
+  
+  // 如果已经有实例且是同一个进程，直接复用
+  if (_pluginInstance && _instancePid === currentPid) {
+    api.logger?.info('[F2A Plugin] 复用已存在的插件实例', { pid: currentPid });
     return;
+  }
+  
+  // 如果是新的 Gateway 进程，重新创建实例
+  if (_pluginInstance && _instancePid !== currentPid) {
+    api.logger?.info('[F2A Plugin] 检测到 Gateway 重启，重新创建插件实例', { 
+      oldPid: _instancePid, 
+      newPid: currentPid 
+    });
+    _pluginInstance = null;
   }
   
   const plugin = new F2APlugin();
   _pluginInstance = plugin;
+  _instancePid = currentPid;
   
   // 从 OpenClaw 配置中获取插件配置
   const pluginsConfig = api.config.plugins;

@@ -766,12 +766,12 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
         failures.push({
-          peerId: peers[index].toString().slice(0, 16),
+          peerId: connectedPeerIds[index].toString().slice(0, 16),
           error: result.reason?.message || String(result.reason)
         });
       } else if (!result.value.success) {
         failures.push({
-          peerId: peers[index].toString().slice(0, 16),
+          peerId: connectedPeerIds[index].toString().slice(0, 16),
           error: result.value.error?.message || 'Unknown error'
         });
       }
@@ -780,7 +780,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     if (failures.length > 0) {
       this.logger.warn('Broadcast failed to some peers', {
         failed: failures.length,
-        total: peers.length,
+        total: connectedPeerIds.length,
         details: failures
       });
     }
@@ -923,7 +923,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         // 【关键修复】发送后关闭写入端，让接收方知道数据发送完毕
         // 问题：send() 后不关闭写入端，接收方的 for await (chunk of stream) 会一直等待
         // 解决：sendCloseWrite() 告诉接收方"我发送完了"，但保持读取端打开
-        await stream.sendCloseWrite();
+        // 类型断言：libp2p stream 实际有此方法，但类型定义缺失
+        await (stream as any).sendCloseWrite?.();
       } catch (streamError) {
         // 发送失败，清除连接索引
         this.connectedPeers.delete(peerId);

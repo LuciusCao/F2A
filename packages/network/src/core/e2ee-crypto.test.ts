@@ -619,6 +619,79 @@ describe('E2EECrypto', () => {
     });
   });
 
+  describe('生命周期管理 (#130)', () => {
+    it('should reject registration after stop', async () => {
+      // stop() 后拒绝注册（无法计算共享密钥，无法加密）
+      const crypto = new E2EECrypto();
+      await crypto.initialize();
+      crypto.registerPeerPublicKey('peer-1', cryptoB.getPublicKey()!);
+      expect(crypto.canEncryptTo('peer-1')).toBe(true);
+
+      crypto.stop();
+
+      // stop() 后注册公钥可以成功（存储公钥），但没有共享密钥
+      crypto.registerPeerPublicKey('peer-2', cryptoB.getPublicKey()!);
+      expect(crypto.canEncryptTo('peer-2')).toBe(false); // 无法加密
+
+      crypto.stop();
+    });
+
+    it('should process pending keys after re-initialization', async () => {
+      // 初始化后自动处理 pending keys（需要重新注册才能计算共享密钥）
+      const crypto = new E2EECrypto();
+      await crypto.initialize();
+      crypto.registerPeerPublicKey('peer-1', cryptoB.getPublicKey()!);
+      expect(crypto.canEncryptTo('peer-1')).toBe(true);
+
+      crypto.stop();
+
+      // 重新初始化
+      await crypto.initialize();
+      // peer-1 的公钥已被清理，需要重新注册
+      expect(crypto.canEncryptTo('peer-1')).toBe(false);
+      expect(crypto.getPeerPublicKey('peer-1')).toBeNull();
+
+      // 重新注册 peer 后可以加密
+      crypto.registerPeerPublicKey('peer-1', cryptoB.getPublicKey()!);
+      expect(crypto.canEncryptTo('peer-1')).toBe(true);
+
+      const encrypted = crypto.encrypt('peer-1', 'test message');
+      expect(encrypted).not.toBeNull();
+
+      crypto.stop();
+    });
+
+    it('should clear pending keys on stop', async () => {
+      // stop() 清理 pending keys（所有 peer 公钥和共享密钥）
+      const crypto = new E2EECrypto();
+      await crypto.initialize();
+      crypto.registerPeerPublicKey('peer-1', cryptoB.getPublicKey()!);
+      crypto.registerPeerPublicKey('peer-2', cryptoB.getPublicKey()!);
+      crypto.registerPeerPublicKey('peer-3', cryptoB.getPublicKey()!);
+
+      expect(crypto.getRegisteredPeerCount()).toBe(3);
+      expect(crypto.canEncryptTo('peer-1')).toBe(true);
+      expect(crypto.canEncryptTo('peer-2')).toBe(true);
+      expect(crypto.canEncryptTo('peer-3')).toBe(true);
+
+      crypto.stop();
+
+      // 所有 pending keys 已清理
+      expect(crypto.getRegisteredPeerCount()).toBe(0);
+      expect(crypto.getPublicKey()).toBeNull();
+      expect(crypto.canEncryptTo('peer-1')).toBe(false);
+      expect(crypto.canEncryptTo('peer-2')).toBe(false);
+      expect(crypto.canEncryptTo('peer-3')).toBe(false);
+
+      // 重新初始化后无法恢复 pending keys
+      await crypto.initialize();
+      expect(crypto.getRegisteredPeerCount()).toBe(0);
+      expect(crypto.canEncryptTo('peer-1')).toBe(false);
+
+      crypto.stop();
+    });
+  });
+
   describe('stop() 和 Disposable 接口', () => {
     it('应该能够调用 stop() 清理所有资源', async () => {
       const crypto = new E2EECrypto();

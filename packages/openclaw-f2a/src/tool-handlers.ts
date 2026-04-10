@@ -205,8 +205,8 @@ ${agents.map((a: AgentInfo, i: number) => {
     // 新协议：使用 MESSAGE 类型 + StructuredMessagePayload
     const plugin = this.plugin as unknown as PluginInternalAccess;
     
-    // 获取 F2A 实例（embedded 模式通过 core 访问）
-    const f2a = (plugin as any).core?.getF2A?.();
+    // 获取 F2A 实例
+    const f2a = plugin.getF2A?.();
     const status = plugin.getF2AStatus?.();
     
     if (f2a && f2a.sendMessage && status?.running) {

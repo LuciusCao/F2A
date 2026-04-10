@@ -69,6 +69,9 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
   // 消息哈希去重缓存
   private _processedMessageHashes: Map<string, number> = new Map();
 
+  // 启动锁 - 防止并发调用 enable()
+  private _enablePromise?: Promise<void>;
+
   // 配置
   private _pluginConfig!: F2APluginConfig;
   private _nodeConfig!: F2ANodeConfig;
@@ -237,6 +240,24 @@ export class F2APlugin implements OpenClawPlugin, F2APluginPublicInterface {
   }
 
   async enable(): Promise<void> {
+    // 如果已经有启动过程在进行，等待它完成
+    if (this._enablePromise) {
+      this.core?.getLogger()?.debug?.('[F2A] 等待正在进行的启动过程...');
+      await this._enablePromise;
+      return;
+    }
+    
+    // 创建启动锁
+    this._enablePromise = this._doEnable();
+    
+    try {
+      await this._enablePromise;
+    } finally {
+      this._enablePromise = undefined;
+    }
+  }
+
+  private async _doEnable(): Promise<void> {
     const logger = this.core?.getLogger();
 
     this.webhookManager = new F2AWebhookManager({

@@ -12,12 +12,22 @@
 import type { OpenClawPluginApi } from './types.js';
 import { F2APlugin } from './connector.js';
 
+/** 全局单例 - 防止重复创建插件实例 */
+let _pluginInstance: F2APlugin | null = null;
+
 /**
  * OpenClaw 插件注册函数
  * 这是 OpenClaw 加载插件时调用的入口
  */
 export default async function register(api: OpenClawPluginApi) {
+  // 如果已经有实例，直接复用
+  if (_pluginInstance) {
+    api.logger?.info('[F2A Plugin] 复用已存在的插件实例');
+    return;
+  }
+  
   const plugin = new F2APlugin();
+  _pluginInstance = plugin;
   
   // 从 OpenClaw 配置中获取插件配置
   const pluginsConfig = api.config.plugins;
@@ -42,6 +52,9 @@ export default async function register(api: OpenClawPluginApi) {
     } catch (shutdownError: any) {
       api.logger?.warn('[F2A Plugin] 清理资源时出错:', { error: shutdownError.message });
     }
+    
+    // 重置单例
+    _pluginInstance = null;
     
     // 不抛出异常，让插件以降级模式加载
     api.logger?.warn('[F2A Plugin] 插件将以降级模式运行，功能受限');

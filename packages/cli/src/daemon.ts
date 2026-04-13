@@ -245,7 +245,7 @@ export async function startForeground(): Promise<void> {
   console.log('[F2A] 按 Ctrl+C 停止');
 
   // 动态导入 daemon 模块并启动
-  const { F2ADaemon } = await import('../daemon/index.js');
+  const { F2ADaemon } = await import('@f2a/daemon');
   
   // 读取配置获取 agentName 作为 displayName
   const config = loadConfig();

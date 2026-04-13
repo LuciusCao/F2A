@@ -10,9 +10,9 @@ import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, statSync } 
 import { join, basename } from 'path';
 import { tmpdir, homedir } from 'os';
 import { importIdentityInternal, ImportResult, showIdentityStatus, exportIdentity, importIdentity, showIdentityHelp, AgentImportConfirmation } from './identity.js';
-import { success, failure, createError } from '../types/index.js';
-import { NodeIdentityManager } from '../core/identity/node-identity.js';
-import { AgentIdentityManager } from '../core/identity/agent-identity.js';
+import { success, failure, createError } from '@f2a/network';
+import { NodeIdentityManager } from '@f2a/network';
+import { AgentIdentityManager } from '@f2a/network';
 
 // 测试用的临时目录
 const TEST_DIR = join(tmpdir(), 'f2a-identity-cli-test-' + Date.now());

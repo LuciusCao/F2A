@@ -10,13 +10,13 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync } from 'fs';
 import { join, basename, dirname, isAbsolute } from 'path';
 import { homedir, tmpdir } from 'os';
-import { NodeIdentityManager, isValidNodeId } from '../core/identity/node-identity.js';
-import { AgentIdentityManager } from '../core/identity/agent-identity.js';
-import { IdentityDelegator } from '../core/identity/delegator.js';
-import type { ExportedNodeIdentity, ExportedAgentIdentity, AgentIdentity } from '../core/identity/types.js';
-import { success, failure, failureFromError, Result, createError } from '../types/index.js';
-import { secureWipe } from '../utils/crypto-utils.js';
-import { Logger } from '../utils/logger.js';
+import { NodeIdentityManager, isValidNodeId } from '@f2a/network';
+import { AgentIdentityManager } from '@f2a/network';
+import { IdentityDelegator } from '@f2a/network';
+import type { ExportedNodeIdentity, ExportedAgentIdentity, AgentIdentity } from '@f2a/network';
+import { success, failure, failureFromError, Result, createError } from '@f2a/network';
+import { secureWipe } from '@f2a/network';
+import { Logger } from '@f2a/network';
 
 const logger = new Logger({ component: 'IdentityCLI' });
 

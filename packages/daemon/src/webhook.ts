@@ -7,8 +7,8 @@ import { request as httpRequest } from 'http';
 import { lookup } from 'dns';
 import { isIPv6 } from 'net';
 import { promisify } from 'util';
-import { WebhookConfig } from '../types/index.js';
-import { Logger } from '../utils/logger.js';
+import { WebhookConfig } from '@f2a/network';
+import { Logger } from '@f2a/network';
 
 const dnsLookup = promisify(lookup);
 

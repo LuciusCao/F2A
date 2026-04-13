@@ -4,7 +4,7 @@
  */
 
 import { F2ADaemon } from './index.js';
-import { Logger } from '../utils/logger.js';
+import { Logger } from '@f2a/network';
 
 const logger = new Logger({ component: 'daemon' });
 
@@ -39,7 +39,7 @@ process.on('SIGTERM', async () => {
 });
 
 // 启动
-daemon.start().catch((error) => {
+daemon.start().catch((error: unknown) => {
   logger.error('Failed to start daemon', {
     error: error instanceof Error ? error.message : String(error),
     stack: error instanceof Error ? error.stack : undefined

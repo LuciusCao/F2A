@@ -15,6 +15,9 @@
   },
   "references": [
     { "path": "./packages/network" },
-    { "path": "./packages/openclaw-f2a" }
+    { "path": "./packages/cli" },
+    { "path": "./packages/daemon" },
+    { "path": "./packages/openclaw-f2a" },
+    { "path": "./packages/dashboard" }
   ]
 }

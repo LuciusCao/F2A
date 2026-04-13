@@ -3,7 +3,7 @@
  * 处理 Daemon 内部 Agent 之间的消息路由
  */
 
-import { Logger } from '../utils/logger.js';
+import { Logger } from '@f2a/network';
 import type { AgentRegistration } from './agent-registry.js';
 
 /**

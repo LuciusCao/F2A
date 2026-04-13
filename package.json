@@ -14,6 +14,7 @@
     "build:daemon": "npm run build -w @f2a/daemon",
     "build:openclaw-f2a": "npm run build -w @f2a/openclaw-f2a",
     "build:dashboard": "npm run build -w @f2a/dashboard",
+    "build:all": "npm run build:core && npm run build:cli && npm run build:daemon && npm run build:openclaw-f2a && npm run build:dashboard",
     "lint": "npm run lint --workspaces",
     "clean": "npm run clean --workspaces && rm -rf node_modules",
     "test": "npm run test --workspaces",

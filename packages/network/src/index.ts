@@ -15,6 +15,16 @@ export { P2PNetwork } from './core/p2p-network.js';
 export { TokenManager, defaultTokenManager } from './core/token-manager.js';
 export { E2EECrypto, defaultE2EECrypto } from './core/e2ee-crypto.js';
 
+// 身份管理（Phase 1）
+export { NodeIdentityManager, isValidNodeId } from './core/identity/node-identity.js';
+export { AgentIdentityManager } from './core/identity/agent-identity.js';
+export { IdentityDelegator } from './core/identity/delegator.js';
+export type {
+  ExportedNodeIdentity,
+  ExportedAgentIdentity,
+  AgentIdentity,
+} from './core/identity/types.js';
+
 // Daemon 组件
 export { ControlServer } from './daemon/control-server.js';
 
@@ -69,6 +79,7 @@ export type {
 // 工具模块
 export { Logger } from './utils/logger.js';
 export { RateLimiter, createRateLimitMiddleware } from './utils/rate-limiter.js';
+export { secureWipe } from './utils/crypto-utils.js';
 export { 
   RequestSigner, 
   loadSignatureConfig, 

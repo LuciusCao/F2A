@@ -3,8 +3,8 @@
  * 管理注册到 Daemon 的 Agent 实例
  */
 
-import { Logger } from '../utils/logger.js';
-import type { AgentCapability } from '../types/index.js';
+import { Logger } from '@f2a/network';
+import type { AgentCapability } from '@f2a/network';
 
 /**
  * Agent 注册信息

@@ -7,14 +7,14 @@
 
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
 import { randomUUID } from 'crypto';
-import { F2A } from '../core/f2a.js';
-import { TokenManager } from '../core/token-manager.js';
-import { Logger } from '../utils/logger.js';
-import { RateLimiter } from '../utils/rate-limiter.js';
-import { getErrorMessage } from '../utils/error-utils.js';
+import { F2A } from '@f2a/network';
+import { TokenManager } from '@f2a/network';
+import { Logger } from '@f2a/network';
+import { RateLimiter } from '@f2a/network';
+import { getErrorMessage } from '@f2a/network';
 import { AgentRegistry, AgentRegistration } from './agent-registry.js';
 import { MessageRouter, RoutableMessage } from './message-router.js';
-import type { AgentCapability } from '../types/index.js';
+import type { AgentCapability } from '@f2a/network';
 
 export interface ControlServerOptions {
   /** 端口，如果不传则使用构造函数传入的 port */

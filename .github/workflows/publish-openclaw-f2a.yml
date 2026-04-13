@@ -26,9 +26,20 @@ jobs:
           mkdir -p /tmp/openclaw-f2a-publish
           cp -r packages/openclaw-f2a/* /tmp/openclaw-f2a-publish/
           cp packages/openclaw-f2a/.npmignore /tmp/openclaw-f2a-publish/ 2>/dev/null || true
-          # 复制 @f2a/network 作为依赖（解决 tsconfig references 问题）
+          # 复制 @f2a/network 作为依赖
           mkdir -p /tmp/openclaw-f2a-publish/node_modules/@f2a
           cp -r packages/network /tmp/openclaw-f2a-publish/node_modules/@f2a/network
+          # 移除 tsconfig.json 中的 references（独立发布不需要）
+          cd /tmp/openclaw-f2a-publish
+          python3 -c "
+          import json
+          with open('tsconfig.json', 'r') as f:
+              config = json.load(f)
+          config.pop('references', None)
+          with open('tsconfig.json', 'w') as f:
+              json.dump(config, f, indent=2)
+          "
+          cat tsconfig.json
       
       # 在独立目录安装依赖
       - run: npm install

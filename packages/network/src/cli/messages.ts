@@ -4,14 +4,9 @@
  */
 
 import { request, RequestOptions } from 'http';
-import { readFileSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import { getControlTokenLazy } from './control-token.js';
 
 const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 /**
  * 发送 HTTP 请求到 ControlServer
@@ -66,19 +61,21 @@ async function sendRequest(
  */
 export async function sendMessage(peerId: string, content: string, topic?: string): Promise<void> {
   if (!peerId) {
-    console.error('❌ 错误: 缺少 --to 参数');
-    console.error('用法: f2a send --to <peer_id> "消息内容"');
+    console.error('❌ 错误：缺少 --to 参数');
+    console.error('用法：f2a send --to <peer_id> "消息内容"');
     process.exit(1);
   }
 
   if (!content) {
-    console.error('❌ 错误: 缺少消息内容');
-    console.error('用法: f2a send --to <peer_id> "消息内容"');
+    console.error('❌ 错误：缺少消息内容');
+    console.error('用法：f2a send --to <peer_id> "消息内容"');
     process.exit(1);
   }
 
   try {
-    const result = await sendRequest('POST', '/api/messages', {
+    // 使用 /control 端点的 send action（发送到 P2P 网络）
+    const result = await sendRequest('POST', '/control', {
+      action: 'send',
       peerId,
       content,
       topic: topic || 'chat'
@@ -92,13 +89,13 @@ export async function sendMessage(peerId: string, content: string, topic?: strin
         console.log(`   Message ID: ${result.messageId}`);
       }
     } else {
-      console.error(`❌ 发送失败: ${result.error}`);
+      console.error(`❌ 发送失败：${result.error}`);
       process.exit(1);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`❌ 无法连接到 F2A Daemon: ${message}`);
-    console.error('请确保 Daemon 正在运行: f2a daemon start');
+    console.error('请确保 Daemon 正在运行：f2a daemon start');
     process.exit(1);
   }
 }
@@ -151,7 +148,7 @@ export async function getMessages(options: {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`❌ 无法连接到 F2A Daemon: ${message}`);
-    console.error('请确保 Daemon 正在运行: f2a daemon start');
+    console.error('请确保 Daemon 正在运行：f2a daemon start');
     process.exit(1);
   }
 }

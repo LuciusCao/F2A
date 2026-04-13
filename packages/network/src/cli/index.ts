@@ -90,9 +90,9 @@ function parseArgs(): Args {
     return { command: 'help', helpTarget: args[1] };
   }
 
-  // 解析子命令（daemon, config, identity）
+  // 解析子命令（daemon, config, identity, agent）
   let subcommand: string | undefined;
-  if ((command === 'daemon' || command === 'config' || command === 'identity') && args[1]) {
+  if ((command === 'daemon' || command === 'config' || command === 'identity' || command === 'agent') && args[1]) {
     // 检查是否是 help 请求
     if (args[1] === '-h' || args[1] === '--help') {
       return { command: 'help', helpTarget: command };

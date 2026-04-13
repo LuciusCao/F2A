@@ -114,7 +114,8 @@ export type NetworkMessageType =
   | 'DISCOVER_RESP' // 发现响应
   | 'PING'          // 心跳
   | 'PONG'          // 心跳响应
-  | 'DECRYPT_FAILED'; // 解密失败通知
+  | 'DECRYPT_FAILED' // 解密失败通知
+  | 'KEY_EXCHANGE';  // Phase 1: 公钥交换
 
 // Layer 2: Agent 协议层（语义层）
 // 这些消息携带 Agent 需要理解的语义内容

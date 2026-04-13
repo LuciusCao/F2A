@@ -388,6 +388,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           this.logger.info('Using persisted E2EE key pair');
         }
       } else {
+        // Phase 1 修复：即使 identityManager 未加载，也要初始化 E2EE
+        this.logger.info('IdentityManager not loaded, initializing E2EE without persisted keys');
         await this.e2eeCrypto.initialize();
       }
       this.agentInfo.encryptionPublicKey = this.e2eeCrypto.getPublicKey() || undefined;
@@ -1056,6 +1058,19 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         
         // P2.4 修复：维护连接索引
         this.connectedPeers.add(peerId);
+        
+        // Phase 1 修复：连接建立后自动交换公钥
+        if (this.enableE2EE && this.e2eeCrypto && this.agentInfo.encryptionPublicKey) {
+          try {
+            await this.sendPublicKey(peerId);
+            this.logger.info('Public key sent', { peerId: peerId.slice(0, 16) });
+          } catch (err) {
+            this.logger.warn('Failed to send public key', { 
+              peerId: peerId.slice(0, 16),
+              error: getErrorMessage(err)
+            });
+          }
+        }
       } catch (error) {
         this.logger.error('Error in peer:connect handler', {
           error: getErrorMessage(error)
@@ -1372,6 +1387,10 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         await this.handleDecryptFailedMessage(message, peerId);
         break;
 
+      case 'KEY_EXCHANGE':  // Phase 1: 处理公钥交换
+        await this.handleKeyExchange(message, peerId);
+        break;
+
       case 'PING':
       case 'PONG':
         // 心跳消息由 libp2p 自动处理
@@ -1508,6 +1527,59 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     
     const payload = message.payload as DiscoverPayload;
     await this.handleDiscover(payload.agentInfo, peerId, shouldRespond);
+  }
+
+  // ============================================================================
+  // Phase 1: 公钥交换
+  // ============================================================================
+
+  /**
+   * 发送公钥给指定 Peer
+   */
+  private async sendPublicKey(peerId: string): Promise<void> {
+    if (!this.agentInfo.encryptionPublicKey) {
+      this.logger.warn('No public key available, skipping key exchange');
+      return;
+    }
+
+    const keyExchangeMessage: F2AMessage = {
+      id: randomUUID(),
+      type: 'KEY_EXCHANGE',
+      from: this.agentInfo.peerId,
+      to: peerId,
+      timestamp: Date.now(),
+      payload: {
+        publicKey: this.agentInfo.encryptionPublicKey
+      }
+    };
+
+    await this.sendMessage(peerId, keyExchangeMessage, false);
+  }
+
+  /**
+   * 处理公钥交换消息
+   */
+  private async handleKeyExchange(message: F2AMessage, peerId: string): Promise<void> {
+    const { publicKey } = message.payload as { publicKey?: string };
+    
+    if (!publicKey) {
+      this.logger.warn('Received KEY_EXCHANGE without public key', {
+        peerId: peerId.slice(0, 16)
+      });
+      return;
+    }
+
+    // 注册对方公钥
+    this.e2eeCrypto.registerPeerPublicKey(peerId, publicKey);
+    this.logger.info('Peer public key registered', {
+      peerId: peerId.slice(0, 16),
+      publicKey: publicKey.slice(0, 16)
+    });
+
+    // 如果还没有发送过公钥，回复自己的公钥
+    if (!this.e2eeCrypto.canEncryptTo(peerId)) {
+      await this.sendPublicKey(peerId);
+    }
   }
 
   /**

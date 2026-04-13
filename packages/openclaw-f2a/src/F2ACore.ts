@@ -698,6 +698,25 @@ export class F2ACore {
       // 监听其他事件
       this.state.f2a.on('peer:connected', (event: { peerId: string }) => {
         this.logger?.info('[F2A] Peer 连接', { peerId: event.peerId.slice(0, 16) });
+        
+        // Phase 1 修复：连接建立后自动触发握手协议
+        try {
+          const handshake = this.componentRegistry?.getHandshakeProtocol();
+          if (handshake) {
+            this.logger?.info('[F2A] 触发握手协议', { peerId: event.peerId.slice(0, 16) });
+            // 发送握手请求
+            handshake.sendFriendRequest(event.peerId, 'Hello!').catch((err: unknown) => {
+              this.logger?.warn('[F2A] 握手请求发送失败', { 
+                peerId: event.peerId.slice(0, 16), 
+                error: extractErrorMessage(err) 
+              });
+            });
+          } else {
+            this.logger?.warn('[F2A] 握手协议未初始化');
+          }
+        } catch (err) {
+          this.logger?.warn('[F2A] 触发握手失败', { error: extractErrorMessage(err) });
+        }
       });
 
       this.state.f2a.on('peer:disconnected', (event: { peerId: string }) => {

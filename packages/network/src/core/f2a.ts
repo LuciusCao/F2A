@@ -262,7 +262,9 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       lastSeen: Date.now(),
       multiaddrs: [],
       // Phase 1: 添加 Agent ID
-      agentId: agentIdentity.id
+      agentId: agentIdentity.id,
+      // Phase 1 修复：添加加密公钥用于 E2EE
+      encryptionPublicKey: agentIdentity.publicKey
     };
 
     // 创建 P2P 网络

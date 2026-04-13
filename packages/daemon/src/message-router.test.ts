@@ -8,7 +8,7 @@ import { MessageRouter, RoutableMessage, MessageQueue } from './message-router.j
 import type { AgentRegistration } from './agent-registry.js';
 
 // Mock Logger
-vi.mock('../utils/logger.js', () => ({
+vi.mock('@f2a/network', () => ({
   Logger: vi.fn().mockImplementation(() => ({
     info: vi.fn(),
     warn: vi.fn(),

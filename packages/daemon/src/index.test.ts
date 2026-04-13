@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { F2ADaemon } from './index.js';
 
 // Mock dependencies
-vi.mock('../core/f2a', () => ({
+vi.mock('@f2a/network', () => ({
   F2A: {
     create: vi.fn().mockResolvedValue({
       start: vi.fn().mockResolvedValue({ success: true }),

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ControlServer } from './control-server.js';
-import { TokenManager } from '../core/token-manager.js';
+import { TokenManager } from '@f2a/network';
 
 // Track mock server instances
 let lastMockServer: any = null;
@@ -25,7 +25,7 @@ vi.mock('http', () => ({
 }));
 
 // Mock TokenManager
-vi.mock('../core/token-manager', () => ({
+vi.mock('@f2a/network', () => ({
   TokenManager: vi.fn().mockImplementation(() => ({
     getToken: vi.fn().mockReturnValue(TEST_TOKEN),
     verifyToken: vi.fn((token) => token === TEST_TOKEN),
@@ -35,7 +35,7 @@ vi.mock('../core/token-manager', () => ({
 }));
 
 // Mock F2A
-vi.mock('../core/f2a', () => ({
+vi.mock('@f2a/network', () => ({
   F2A: vi.fn()
 }));
 
@@ -73,7 +73,7 @@ const createMockF2A = () => ({
 
 // Mock RateLimiter - we'll control this in tests
 let mockRateLimiterAllow = true;
-vi.mock('../utils/rate-limiter', () => ({
+vi.mock('@f2a/network', () => ({
   RateLimiter: vi.fn().mockImplementation(() => ({
     allowRequest: vi.fn(() => mockRateLimiterAllow),
     stop: vi.fn()

@@ -8,7 +8,7 @@ import { AgentRegistry, AgentRegistration } from './agent-registry.js';
 import type { AgentCapability } from '@f2a/network';
 
 // Mock Logger
-vi.mock('../utils/logger.js', () => ({
+vi.mock('@f2a/network', () => ({
   Logger: vi.fn().mockImplementation(() => ({
     info: vi.fn(),
     warn: vi.fn(),

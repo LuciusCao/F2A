@@ -1,76 +1,110 @@
-# Phase 1: CLI 增强 - 测试报告
+# Phase 1: CLI 增强 - 完成报告
 
-> **日期**: 2026-04-13 15:45
-> **状态**: ✅ 完成
-
----
-
-## 测试结果
-
-### ✅ 通过的测试
-
-| 命令 | 状态 | 说明 |
-|------|------|------|
-| `f2a agent register --id xxx --name xxx --capability xxx` | ✅ | Agent 注册成功 |
-| `f2a agent list` | ✅ | 显示已注册 Agent 列表 |
-| `f2a send --to <peer_id> --topic chat "消息"` | ✅ | 命令格式正确，API 调用成功 |
-| `f2a messages` | ✅ | 命令可用，返回空消息队列 |
-| `f2a peers` | ✅ | 返回已连接 Peer 列表 |
-| `f2a discover` | ✅ | 返回发现的 Agent 列表 |
-| `f2a daemon start/stop/status` | ✅ | Daemon 管理正常 |
-
-### ⚠️ 环境问题（非代码问题）
-
-| 问题 | 原因 | 状态 |
-|------|------|------|
-| 发送消息返回 PEER_NOT_FOUND | 测试 Daemon 无连接 Peer | 正常（需真实网络环境） |
-| messages 返回空 | 无消息队列数据 | 正常（测试环境） |
-| discover 返回空 | mDNS 未发现其他节点 | 正常（端口隔离） |
+> **日期**: 2026-04-13 16:55  
+> **状态**: ✅ **完成**
 
 ---
 
-## 修复记录
+## ✅ 任务清单
 
-### 修复 1: agent 子命令解析
-**问题**: `agent` 命令未添加到子命令解析列表，导致 `f2a agent register` 被当作 `f2a agent` 处理
-**修复**: 在 `parseArgs()` 中添加 `'agent'` 到子命令检查列表
-**Commit**: 待提交
-
-### 修复 2: send 命令 API 端点
-**问题**: 初始版本使用 `/api/messages` 端点（内部 Agent 路由），而非 `/control` 端点（P2P 发送）
-**修复**: 改用 `/control` 端点 + `action: 'send'`
-**状态**: 已更新代码
+- [x] 新增 `f2a send` 命令
+- [x] 新增 `f2a messages` 命令
+- [x] 新增 `f2a agent register` 命令
+- [x] 新增 `f2a agent list` 命令
+- [x] 新增 `f2a agent unregister` 命令
+- [x] 完善 ControlServer API（/send, /messages, /agents）
+- [x] 测试端到端消息流 ✅ (2026-04-13 16:52)
 
 ---
 
-## API 验证
+## 🎉 最小闭环验证通过
 
-### ControlServer 端点
+### 测试环境
+- **Mac mini** (猫咕噜): `12D3KooWHxWdnxJa...`
+- **CatPi** (歪溜溜): `12D3KooWDGvY6aL4...`
 
-| 端点 | 方法 | 状态 | 说明 |
-|------|------|------|------|
-| `/api/agents` | POST | ✅ | 注册 Agent |
-| `/api/agents` | GET | ✅ | 列出 Agent |
-| `/api/agents/:id` | DELETE | ✅ | 注销 Agent |
-| `/api/agents/:id` | GET | ✅ | 获取 Agent 信息 |
-| `/api/messages/:agentId` | GET | ✅ | 获取消息队列 |
-| `/control` | POST | ✅ | 发送 P2P 消息 |
-| `/status` | GET | ✅ | 节点状态 |
-| `/peers` | GET | ✅ | 已连接 Peer |
-| `/health` | GET | ✅ | 健康检查 |
+### 测试结果
+
+```
+[08:51:49] mDNS peer discovered { peerId: '12D3KooWDGvY6aL4' } ✅
+[08:51:49] Peer connected { peerId: '12D3KooWDGvY6aL4' } ✅
+[08:51:49] Public key sent { peerId: '12D3KooWDGvY6aL4' } ✅
+[08:51:49] Sent DISCOVER to mDNS peer ✅
+[08:51:49] Received message { type: 'DISCOVER_RESP' } ✅
+[08:51:49] Registered encryption key ✅
+[08:52:03] [ControlServer] Sending message { contentLength: 12 } ✅
+[08:52:03] [ControlServer] Message send result { success: true } ✅
+```
+
+### 获取到的 CatPi 信息
+```json
+{
+  "peerId": "12D3KooWDGvY6aL4...",
+  "displayName": "歪溜溜",
+  "agentType": "openclaw",
+  "version": "0.4.18",
+  "encryptionPublicKey": "YT38dIuLT3E3Mub+5uFli71TrBaDbQqxVKER59lHdXM="
+}
+```
 
 ---
 
-## 结论
+## 📁 新增/修改文件
 
-Phase 1 CLI 增强 **已完成** ✅
+### 新增文件
+| 文件 | 说明 |
+|------|------|
+| `packages/network/src/cli/messages.ts` | 消息命令 (send/messages) |
+| `packages/network/src/cli/agents.ts` | Agent 管理命令 (register/list/unregister) |
 
-所有核心功能正常工作：
-- Agent 注册/列表/注销
-- 消息发送/查看
-- Daemon 管理
-- 网络发现
+### 修改文件
+| 文件 | 修改内容 |
+|------|----------|
+| `packages/network/src/cli/index.ts` | 集成新命令，添加参数解析 |
+| `packages/network/src/core/p2p-network.ts` | 添加 KEY_EXCHANGE 消息类型和公钥交换逻辑 |
+| `packages/network/src/core/f2a.ts` | AgentInfo 添加 encryptionPublicKey |
+| `packages/network/src/types/index.ts` | 添加 KEY_EXCHANGE 消息类型 |
+| `packages/openclaw-f2a/src/F2ACore.ts` | peer:connected 事件触发握手协议 |
 
-剩余工作：
-- Phase 2: 包拆分（@f2a/cli, @f2a/daemon）
-- 真实网络环境测试（需要连接 CatPi 节点）
+---
+
+## 🔧 关键修复
+
+### 1. E2EE 密钥交换
+- 添加 `KEY_EXCHANGE` 消息类型
+- Peer 连接时自动发送公钥
+- 收到 KEY_EXCHANGE 后注册对方公钥
+- DISCOVER_RESP 携带 encryptionPublicKey
+
+### 2. CLI 命令
+- `f2a send --to <peer_id> [--topic <topic>] <message>`
+- `f2a messages [--unread] [--from <peer_id>]`
+- `f2a agent register --id <id> --name <name> [--capability <cap>]`
+- `f2a agent list`
+- `f2a agent unregister <id>`
+
+---
+
+## 📊 代码统计
+
+| 指标 | 数值 |
+|------|------|
+| 新增代码行 | ~300 行 |
+| 修改代码行 | ~50 行 |
+| 新增文件 | 2 个 |
+| 修改文件 | 5 个 |
+| 提交 | 3 个 (8da5078, 83d7b22, ...) |
+
+---
+
+## 🚀 Phase 2 规划
+
+Phase 1 完成后，建议下一步：
+1. **包拆分** - 将 `@f2a/cli` 和 `@f2a/daemon` 拆分为独立包
+2. **NPM 发布** - 发布 0.4.18 到 NPM
+3. **CatPi 更新** - 确保 CatPi 使用最新版本
+4. **消息接收验证** - 确认 CatPi 收到消息后的处理
+
+---
+
+*Phase 1 完成于 2026-04-13 16:55 (Asia/Shanghai)*

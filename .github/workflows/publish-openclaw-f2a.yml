@@ -26,6 +26,9 @@ jobs:
           mkdir -p /tmp/openclaw-f2a-publish
           cp -r packages/openclaw-f2a/* /tmp/openclaw-f2a-publish/
           cp packages/openclaw-f2a/.npmignore /tmp/openclaw-f2a-publish/ 2>/dev/null || true
+          # 复制 @f2a/network 作为依赖（解决 tsconfig references 问题）
+          mkdir -p /tmp/openclaw-f2a-publish/node_modules/@f2a
+          cp -r packages/network /tmp/openclaw-f2a-publish/node_modules/@f2a/network
       
       # 在独立目录安装依赖
       - run: npm install
@@ -38,3 +41,5 @@ jobs:
       # 发布
       - run: npm publish
         working-directory: /tmp/openclaw-f2a-publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

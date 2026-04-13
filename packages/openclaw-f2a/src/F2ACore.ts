@@ -699,24 +699,10 @@ export class F2ACore {
       this.state.f2a.on('peer:connected', (event: { peerId: string }) => {
         this.logger?.info('[F2A] Peer 连接', { peerId: event.peerId.slice(0, 16) });
         
-        // Phase 1 修复：连接建立后自动触发握手协议
-        try {
-          const handshake = this.componentRegistry?.getHandshakeProtocol();
-          if (handshake) {
-            this.logger?.info('[F2A] 触发握手协议', { peerId: event.peerId.slice(0, 16) });
-            // 发送握手请求
-            handshake.sendFriendRequest(event.peerId, 'Hello!').catch((err: unknown) => {
-              this.logger?.warn('[F2A] 握手请求发送失败', { 
-                peerId: event.peerId.slice(0, 16), 
-                error: extractErrorMessage(err) 
-              });
-            });
-          } else {
-            this.logger?.warn('[F2A] 握手协议未初始化');
-          }
-        } catch (err) {
-          this.logger?.warn('[F2A] 触发握手失败', { error: extractErrorMessage(err) });
-        }
+        // Phase 1 修复：连接建立后自动发送公钥
+        // 注意：不使用 HandshakeProtocol.sendFriendRequest()，因为插件的 F2A 实例不支持 sendMessage
+        // 公钥交换已经由 @f2a/network 的 peer:connect 事件处理（p2p-network.ts 中的 sendPublicKey）
+        this.logger?.info('[F2A] 公钥交换将由底层 P2P 网络自动处理', { peerId: event.peerId.slice(0, 16) });
       });
 
       this.state.f2a.on('peer:disconnected', (event: { peerId: string }) => {

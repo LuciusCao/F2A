@@ -54,6 +54,17 @@
         "description": "Display name for this agent",
         "default": "OpenClaw Agent"
       },
+      "mode": {
+        "type": "string",
+        "enum": ["embedded", "daemon"],
+        "description": "Run mode: embedded (creates own F2A instance) or daemon (connects to external daemon)",
+        "default": "daemon"
+      },
+      "daemonUrl": {
+        "type": "string",
+        "description": "URL of external F2A daemon (only used when mode=daemon)",
+        "default": "http://127.0.0.1:9001"
+      },
       "capabilities": {
         "type": "array",
         "items": { "type": "string" },
@@ -100,6 +111,8 @@
     "enableMDNS": { "label": "Enable mDNS Discovery" },
     "bootstrapPeers": { "label": "Bootstrap Peers", "placeholder": ["/ip4/..."] },
     "agentName": { "label": "Agent Display Name" },
+    "mode": { "label": "Run Mode", "description": "embedded=own instance, daemon=connect to external" },
+    "daemonUrl": { "label": "Daemon URL", "placeholder": "http://127.0.0.1:9001" },
     "capabilities": { "label": "Custom Capabilities" },
     "dataDir": { "label": "Data Directory" },
     "maxQueuedTasks": { "label": "Max Queued Tasks" }

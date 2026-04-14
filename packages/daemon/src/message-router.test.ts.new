@@ -1,0 +1,57 @@
+/**
+ * Message Router 测试
+ * 测试路由逻辑、广播、队列溢出、消息过期
+ */
+
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { MessageRouter, RoutableMessage, MessageQueue } from './message-router.js';
+import type { AgentRegistration } from './agent-registry.js';
+
+// Mock Logger
+vi.mock('@f2a/network', async (importOriginal) => {
+  const actual = await importOriginal() as any;
+  return {
+    ...actual,
+    Logger: vi.fn().mockImplementation(() => ({
+      info: vi.fn(),
+      warn: vi.fn(),
+      debug: vi.fn(),
+      error: vi.fn(),
+    })),
+  };
+});
+
+describe('MessageRouter', () => {
+  let router: MessageRouter;
+  let mockAgentRegistry: Map<string, AgentRegistration>;
+
+  const createAgent = (agentId: string): AgentRegistration => ({
+    agentId,
+    name: `Agent ${agentId}`,
+    capabilities: [],
+    peerId: 'test-peer-id',
+    signature: 'test-sig',
+    registeredAt: new Date(),
+    lastActiveAt: new Date(),
+  });
+
+  const createMessage = (
+    messageId: string,
+    fromAgentId: string,
+    toAgentId?: string,
+    type: RoutableMessage['type'] = 'message'
+  ): RoutableMessage => ({
+    messageId,
+    fromAgentId,
+    toAgentId,
+    content: `Message ${messageId}`,
+    type,
+    createdAt: new Date(),
+    metadata: {},
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAgentRegistry = new Map();
+    router = new MessageRouter(mockAgentRegistry, { maxQueueSize: 10 });
+  });

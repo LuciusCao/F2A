@@ -153,7 +153,11 @@ describe('ControlServer', () => {
       await server.start();
       
       const handler = lastMockServer._handler;
-      const req = createMockReq({ headers: {} });
+      const req = createMockReq({ 
+        method: 'GET',
+        url: '/status',
+        headers: {}  // 没有 token
+      });
       const res = createMockRes();
       
       handler(req, res);

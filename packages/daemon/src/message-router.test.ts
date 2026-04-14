@@ -6,26 +6,31 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MessageRouter, RoutableMessage, MessageQueue } from './message-router.js';
 import type { AgentRegistration } from './agent-registry.js';
-import { Logger } from '@f2a/network';
 
 // Mock Logger
-vi.mock('@f2a/network', () => ({
-  Logger: vi.fn().mockImplementation(() => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    debug: vi.fn(),
-    error: vi.fn(),
-  })),
-}));
+vi.mock('@f2a/network', async (importOriginal) => {
+  const actual = await importOriginal() as any;
+  return {
+    ...actual,
+    Logger: vi.fn().mockImplementation(() => ({
+      info: vi.fn(),
+      warn: vi.fn(),
+      debug: vi.fn(),
+      error: vi.fn(),
+    })),
+  };
+});
 
 describe('MessageRouter', () => {
   let router: MessageRouter;
-  let agentRegistry: Map<string, AgentRegistration>;
+  let mockAgentRegistry: Map<string, AgentRegistration>;
 
   const createAgent = (agentId: string): AgentRegistration => ({
     agentId,
     name: `Agent ${agentId}`,
     capabilities: [],
+    peerId: 'test-peer-id',
+    signature: 'test-sig',
     registeredAt: new Date(),
     lastActiveAt: new Date(),
   });
@@ -47,8 +52,8 @@ describe('MessageRouter', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    agentRegistry = new Map();
-    router = new MessageRouter(agentRegistry, { maxQueueSize: 10 });
+    mockAgentRegistry = new Map();
+    router = new MessageRouter(mockAgentRegistry, { maxQueueSize: 10 });
   });
 
   describe('createQueue', () => {
@@ -113,7 +118,7 @@ describe('MessageRouter', () => {
 
   describe('route', () => {
     it('应该路由消息到特定 Agent', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver');
 
       const message = createMessage('msg-1', 'sender', 'receiver');
@@ -134,7 +139,7 @@ describe('MessageRouter', () => {
     });
 
     it('目标队列不存在应返回 false', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
 
       const message = createMessage('msg-1', 'sender', 'unknown-receiver');
       const result = router.route(message);
@@ -143,7 +148,7 @@ describe('MessageRouter', () => {
     });
 
     it('未指定目标应广播消息', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver-1');
       router.createQueue('receiver-2');
       router.createQueue('receiver-3');
@@ -158,7 +163,7 @@ describe('MessageRouter', () => {
     });
 
     it('应该保留消息元数据', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver');
 
       const message = createMessage('msg-1', 'sender', 'receiver');
@@ -172,7 +177,7 @@ describe('MessageRouter', () => {
 
   describe('broadcast', () => {
     it('应该广播给所有 Agent（除发送方）', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('sender');
       router.createQueue('receiver-1');
       router.createQueue('receiver-2');
@@ -189,7 +194,7 @@ describe('MessageRouter', () => {
     });
 
     it('无其他 Agent 应返回 false', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('sender');
 
       const message = createMessage('msg-1', 'sender');
@@ -199,7 +204,7 @@ describe('MessageRouter', () => {
     });
 
     it('应该设置目标 Agent ID', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver');
 
       const message = createMessage('msg-1', 'sender');
@@ -210,7 +215,7 @@ describe('MessageRouter', () => {
     });
 
     it('应该支持不同消息类型广播', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver');
 
       const announcement = createMessage('msg-1', 'sender', undefined, 'announcement');
@@ -223,7 +228,7 @@ describe('MessageRouter', () => {
 
   describe('getMessages', () => {
     it('应该返回 Agent 的消息', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver');
 
       router.route(createMessage('msg-1', 'sender', 'receiver'));
@@ -235,7 +240,7 @@ describe('MessageRouter', () => {
     });
 
     it('应该支持限制返回数量', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver');
 
       for (let i = 0; i < 5; i++) {
@@ -256,7 +261,7 @@ describe('MessageRouter', () => {
 
   describe('clearMessages', () => {
     it('应该清除所有消息', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver');
 
       router.route(createMessage('msg-1', 'sender', 'receiver'));
@@ -269,7 +274,7 @@ describe('MessageRouter', () => {
     });
 
     it('应该清除指定消息', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver');
 
       router.route(createMessage('msg-1', 'sender', 'receiver'));
@@ -290,7 +295,7 @@ describe('MessageRouter', () => {
     });
 
     it('清除不存在的消息 ID 应返回 0', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver');
 
       router.route(createMessage('msg-1', 'sender', 'receiver'));
@@ -303,7 +308,7 @@ describe('MessageRouter', () => {
 
   describe('getStats', () => {
     it('应该返回正确的统计信息', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('agent-1');
       router.createQueue('agent-2');
 
@@ -329,7 +334,7 @@ describe('MessageRouter', () => {
 
   describe('cleanupExpired', () => {
     it('应该清理过期消息', async () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver');
 
       // 创建旧消息
@@ -347,7 +352,7 @@ describe('MessageRouter', () => {
     });
 
     it('无过期消息应返回 0', async () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver');
 
       router.route(createMessage('msg-1', 'sender', 'receiver'));
@@ -358,7 +363,7 @@ describe('MessageRouter', () => {
     });
 
     it('应该清理所有队列的过期消息', async () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver-1');
       router.createQueue('receiver-2');
 
@@ -379,7 +384,7 @@ describe('MessageRouter', () => {
 
   describe('队列溢出', () => {
     it('队列满时应移除最旧消息', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver', 3);
 
       // 添加 4 条消息，队列大小为 3
@@ -394,7 +399,7 @@ describe('MessageRouter', () => {
     });
 
     it('广播时队列溢出应移除最旧消息', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('sender');
       router.createQueue('receiver', 3);
 
@@ -412,7 +417,7 @@ describe('MessageRouter', () => {
     });
 
     it('队列溢出应记录警告', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver', 2);
 
       for (let i = 0; i < 3; i++) {
@@ -443,7 +448,7 @@ describe('MessageRouter', () => {
 
   describe('边界情况', () => {
     it('应该处理大量消息', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver', 1000);
 
       for (let i = 0; i < 500; i++) {
@@ -454,7 +459,7 @@ describe('MessageRouter', () => {
     });
 
     it('应该处理大量队列', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
 
       for (let i = 0; i < 100; i++) {
         router.createQueue(`agent-${i}`);
@@ -464,7 +469,7 @@ describe('MessageRouter', () => {
     });
 
     it('应该处理不同消息类型', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver');
 
       const types: RoutableMessage['type'][] = [
@@ -484,7 +489,7 @@ describe('MessageRouter', () => {
     });
 
     it('应该处理空消息内容', () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver');
 
       const message = createMessage('msg-1', 'sender', 'receiver');
@@ -498,7 +503,7 @@ describe('MessageRouter', () => {
 
   describe('并发操作', () => {
     it('应该支持并发路由', async () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver', 100);
 
       const operations = Array.from({ length: 50 }, (_, i) =>
@@ -511,7 +516,7 @@ describe('MessageRouter', () => {
     });
 
     it('应该支持并发广播', async () => {
-      agentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver-1', 100);
       router.createQueue('receiver-2', 100);
 

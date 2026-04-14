@@ -169,10 +169,54 @@ export class AgentRegistry {
   }
 
   /**
+   * 更新 Agent webhookUrl
+   */
+  updateWebhookUrl(agentId: string, webhookUrl: string | undefined): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      this.logger.warn('Agent not found for webhookUrl update', { agentId });
+      return false;
+    }
+
+    agent.webhookUrl = webhookUrl;
+    agent.lastActiveAt = new Date();
+    this.logger.info('Agent webhookUrl updated', { agentId, webhookUrl: webhookUrl || 'removed' });
+    return true;
+  }
+
+  /**
+   * 检查 Agent 是否存在
+   */
+  has(agentId: string): boolean {
+    return this.agents.has(agentId);
+  }
+
+  /**
    * 获取 Agent 信息
    */
   get(agentId: string): AgentRegistration | undefined {
     return this.agents.get(agentId);
+  }
+
+  /**
+   * 获取所有 Agent 的 entries
+   */
+  entries(): IterableIterator<[string, AgentRegistration]> {
+    return this.agents.entries();
+  }
+
+  /**
+   * 获取所有 Agent
+   */
+  getAll(): AgentRegistration[] {
+    return Array.from(this.agents.values());
+  }
+
+  /**
+   * 获取 Agent 数量
+   */
+  size(): number {
+    return this.agents.size;
   }
 
   /**

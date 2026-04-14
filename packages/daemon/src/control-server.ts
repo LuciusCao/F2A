@@ -109,10 +109,7 @@ export class ControlServer {
     const peerId = this.f2a.peerId;
     const signFunction = (data: string) => this.f2a.signData(data);
     this.agentRegistry = new AgentRegistry(peerId, signFunction);
-    this.messageRouter = new MessageRouter(
-      // 使用 getter 来访问注册表，因为 Map 是引用类型
-      new Map<string, AgentRegistration>()
-    );
+    this.messageRouter = new MessageRouter(this.agentRegistry);
   }
   
   /**
@@ -195,7 +192,7 @@ export class ControlServer {
     // 健康检查端点 (不需要认证)
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200);
-      res.end(JSON.stringify({ status: 'ok', peerId: this.f2a.peerId }));
+      res.end(JSON.stringify({ success: true, status: 'ok', peerId: this.f2a.peerId }));
       return;
     }
 
@@ -216,14 +213,21 @@ export class ControlServer {
     // DELETE /api/agents/:agentId - 注销 Agent
     const deleteAgentMatch = req.url?.match(/^\/api\/agents\/([^\/]+)$/);
     if (req.method === 'DELETE' && deleteAgentMatch) {
-      this.handleUnregisterAgent(deleteAgentMatch[1], res);
+      this.handleUnregisterAgent(decodeURIComponent(deleteAgentMatch[1]), res);
       return;
     }
     
     // GET /api/agents/:agentId - 获取 Agent 信息
     const getAgentMatch = req.url?.match(/^\/api\/agents\/([^\/]+)$/);
     if (req.method === 'GET' && getAgentMatch) {
-      this.handleGetAgent(getAgentMatch[1], res);
+      this.handleGetAgent(decodeURIComponent(getAgentMatch[1]), res);
+      return;
+    }
+    
+    // PATCH /api/agents/:agentId/webhook - 更新 Agent webhookUrl
+    const webhookMatch = req.url?.match(/^\/api\/agents\/([^\/]+)\/webhook$/);
+    if (req.method === 'PATCH' && webhookMatch) {
+      this.handleUpdateWebhook(decodeURIComponent(webhookMatch[1]), req, res);
       return;
     }
     
@@ -238,14 +242,14 @@ export class ControlServer {
     // GET /api/messages/:agentId - 获取 Agent 的消息队列
     const getMessagesMatch = req.url?.match(/^\/api\/messages\/([^\/]+)$/);
     if (req.method === 'GET' && getMessagesMatch) {
-      this.handleGetMessages(getMessagesMatch[1], req, res);
+      this.handleGetMessages(decodeURIComponent(getMessagesMatch[1]), req, res);
       return;
     }
     
     // DELETE /api/messages/:agentId - 清除消息
     const clearMessagesMatch = req.url?.match(/^\/api\/messages\/([^\/]+)$/);
     if (req.method === 'DELETE' && clearMessagesMatch) {
-      this.handleClearMessages(clearMessagesMatch[1], req, res);
+      this.handleClearMessages(decodeURIComponent(clearMessagesMatch[1]), req, res);
       return;
     }
 
@@ -804,6 +808,55 @@ export class ControlServer {
     }));
   }
 
+  /**
+   * 更新 Agent webhookUrl
+   */
+  private handleUpdateWebhook(agentId: string, req: IncomingMessage, res: ServerResponse): void {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        
+        const agent = this.agentRegistry.get(agentId);
+        if (!agent) {
+          res.writeHead(404);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Agent not found',
+            code: 'AGENT_NOT_FOUND',
+          }));
+          return;
+        }
+
+        const updated = this.agentRegistry.updateWebhookUrl(agentId, data.webhookUrl);
+        if (updated) {
+          this.logger.info('Agent webhookUrl updated via API', { agentId, webhookUrl: data.webhookUrl });
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            success: true,
+            agentId,
+            webhookUrl: data.webhookUrl,
+          }));
+        } else {
+          res.writeHead(500);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Failed to update webhookUrl',
+            code: 'UPDATE_FAILED',
+          }));
+        }
+      } catch (error) {
+        res.writeHead(400);
+        res.end(JSON.stringify({
+          success: false,
+          error: 'Invalid JSON',
+          code: 'INVALID_JSON',
+        }));
+      }
+    });
+  }
+
   // ========== Phase 1: 消息接口处理器 ==========
 
   /**
@@ -976,18 +1029,13 @@ export class ControlServer {
   }
 
   // ========== 辅助方法 ==========
-
-  /**
+/**
    * 同步 Agent 注册表到消息路由器
-   * 消息路由器需要知道哪些 Agent 已注册
+   * 
+   * P1-1 修复：MessageRouter 现在直接引用 AgentRegistry，不再需要同步
+   * 保留方法作为空操作，兼容旧调用
    */
   private syncAgentRegistryToRouter(): void {
-    // 获取所有注册的 Agent
-    const agents = this.agentRegistry.list();
-    
-    // 使用公开方法更新路由器的注册表
-    this.messageRouter.updateRegistry(new Map(
-      agents.map(a => [a.agentId, a])
-    ));
+    // MessageRouter 直接引用 AgentRegistry，无需同步
   }
 }

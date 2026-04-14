@@ -451,17 +451,17 @@ export class F2ACore {
   private determineRunMode(): F2ARunMode {
     // 检查配置中的 mode 字段
     const mode = (this.config as any).mode;
-    if (mode === 'daemon') {
+    if (mode === 'embedded') {
+      return 'embedded';
+    }
+
+    // 如果 mode=daemon 或有 daemonUrl，使用 daemon 模式
+    if (mode === 'daemon' || (this.config as any).daemonUrl) {
       return 'daemon';
     }
 
-    // 检查是否配置了 daemonUrl
-    if ((this.config as any).daemonUrl) {
-      return 'daemon';
-    }
-
-    // 默认使用 embedded 模式
-    return 'embedded';
+    // 默认使用 daemon 模式（连接到外部 daemon）
+    return 'daemon';
   }
 
   /**

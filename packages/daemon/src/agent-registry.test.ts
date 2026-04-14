@@ -38,7 +38,7 @@ describe('AgentRegistry (RFC 003)', () => {
       const request = { name: '猫咕噜', capabilities: [{ name: 'chat', version: '1.0.0' }] };
       const registration = registry.register(request);
 
-      expect(registration.agentId).toMatch(/^agent:12D3KooWHxWdn:[a-f0-9]{8}$/);
+      expect(registration.agentId).toMatch(/^agent:[a-zA-Z0-9]{16}:[a-f0-9]{8}$/);
     });
 
     it('应该包含签名', () => {

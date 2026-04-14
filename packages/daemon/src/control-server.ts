@@ -105,7 +105,10 @@ export class ControlServer {
     validateCorsConfig(this.allowedOrigins);
     
     // Phase 1: 初始化 Agent 注册表和消息路由器
-    this.agentRegistry = new AgentRegistry();
+    // RFC 003: AgentId 由节点签发
+    const peerId = this.f2a.peerId;
+    const signFunction = (data: string) => this.f2a.signData(data);
+    this.agentRegistry = new AgentRegistry(peerId, signFunction);
     this.messageRouter = new MessageRouter(
       // 使用 getter 来访问注册表，因为 Map 是引用类型
       new Map<string, AgentRegistration>()
@@ -669,57 +672,53 @@ export class ControlServer {
   }
 
   /**
-   * 注册 Agent
+   * 注册 Agent（RFC 003: AgentId 由节点签发）
+   * 
+   * 用户只需提供 name 和 capabilities
+   * 节点生成并签名 AgentId
    */
   private handleRegisterAgent(req: IncomingMessage, res: ServerResponse): void {
-    let body = '';
-    req.on('data', chunk => { body += chunk; });
-    req.on('end', () => {
+    let body = ''; req.on('data', chunk => { body += chunk; }); req.on('end', () => {
       try {
         const data = JSON.parse(body);
         
-        if (!data.agentId || !data.name) {
+        // RFC 003: 不再接受用户自定义 agentId
+        if (!data.name) {
           res.writeHead(400);
           res.end(JSON.stringify({
             success: false,
-            error: 'Missing required fields: agentId, name',
+            error: 'Missing required field: name',
             code: 'INVALID_REQUEST',
           }));
           return;
         }
 
-        // 检查是否已存在
-        const existing = this.agentRegistry.get(data.agentId);
-        if (existing) {
-          // 更新最后活跃时间
-          this.agentRegistry.updateLastActive(data.agentId);
-          res.writeHead(200);
-          res.end(JSON.stringify({
-            success: true,
-            agent: existing,
-            message: 'Agent already registered, updated lastActiveAt',
-          }));
-          return;
-        }
+        // 转换 capabilities 格式
+        const capabilities = (data.capabilities || []).map((cap: string | { name: string; version?: string }) => {
+          if (typeof cap === 'string') {
+            return { name: cap, version: '1.0.0' };
+          }
+          return cap;
+        });
 
-        // 注册新 Agent
+        // 注册新 Agent（节点签发 AgentId）
         const registration = this.agentRegistry.register({
-          agentId: data.agentId,
           name: data.name,
-          capabilities: data.capabilities || [],
+          capabilities,
           webhookUrl: data.webhookUrl,
           metadata: data.metadata,
         });
 
         // 创建消息队列
-        this.messageRouter.createQueue(data.agentId);
+        this.messageRouter.createQueue(registration.agentId);
 
         // 同步注册表到消息路由器
         this.syncAgentRegistryToRouter();
 
-        this.logger.info('Agent registered via API', {
-          agentId: data.agentId,
-          name: data.name,
+        this.logger.info('Agent registered via API (node-issued)', {
+          agentId: registration.agentId,
+          name: registration.name,
+          peerId: registration.peerId,
         });
 
         res.writeHead(201);

@@ -1,10 +1,11 @@
+// @ts-nocheck - vitest mock types conflict with global fetch types
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useF2AData } from './useF2AData';
 
 // Mock fetch
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+vi.stubGlobal('fetch', vi.fn());
+const mockFetch = vi.mocked(fetch);
 
 describe('useF2AData', () => {
   const mockApiUrl = 'http://localhost:9000';

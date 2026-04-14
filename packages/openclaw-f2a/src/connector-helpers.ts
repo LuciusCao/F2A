@@ -231,7 +231,7 @@ export function mergeConfig(config: Record<string, unknown> & { _api?: unknown }
   const workspace = api?.config?.agents?.defaults?.workspace;
   
   return {
-    autoStart: (config.autoStart as boolean) ?? true,
+    autoStart: (config.autoStart as boolean) ?? false,
     webhookPort: (config.webhookPort as number) ?? 9002,
     webhookToken: config.webhookToken as string | undefined,
     agentName: (config.agentName as string) ?? 'OpenClaw Agent',

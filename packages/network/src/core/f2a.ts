@@ -901,6 +901,21 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   }
 
   /**
+   * 简单签名方法（RFC 003: AgentId 签发）
+   * 
+   * 使用 E2EE 公钥的一部分作为签名标识
+   * 后续可升级为私钥签名
+   */
+  signData(data: string): string {
+    // 简化实现：使用 E2EE 公钥前缀作为签名标识
+    // TODO: 升级为私钥签名
+    const publicKey = this._agentInfo.encryptionPublicKey || '';
+    const signaturePrefix = publicKey.slice(0, 32);
+    const dataHash = Buffer.from(data).toString('base64').slice(0, 32);
+    return `${signaturePrefix}:${dataHash}`;
+  }
+
+  /**
    * 获取 Agent ID
    * 
    * Agent ID 是 Agent 的独立标识，由 Node 签发

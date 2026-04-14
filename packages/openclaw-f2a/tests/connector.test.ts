@@ -117,7 +117,7 @@ describe('F2APlugin', () => {
 
       await plugin.initialize({
         api: mockApi as any,
-        config: {},
+        config: { autoStart: false },
       });
 
       expect(plugin).toBeDefined();
@@ -138,9 +138,7 @@ describe('F2APlugin', () => {
 
       await plugin.initialize({
         api: mockApi as any,
-        config: {
-          minReputation: 50,
-        },
+        config: { minReputation: 50, autoStart: false },
       });
 
       expect(plugin).toBeDefined();
@@ -235,7 +233,7 @@ describe('F2APlugin', () => {
 
       await plugin.initialize({
         api: mockApi as any,
-        config: {},
+        config: { autoStart: false },
       });
 
       await plugin.enable();
@@ -287,7 +285,7 @@ describe('F2APlugin', () => {
 
       await plugin.initialize({
         api: mockApi as any,
-        config: {},
+        config: { autoStart: false },
       });
 
       await plugin.shutdown();
@@ -323,7 +321,7 @@ describe('F2APlugin', () => {
 
       await plugin.initialize({
         api: mockApi as any,
-        config: {},
+        config: { autoStart: false },
       });
 
       const status = plugin.getF2AStatus();
@@ -449,7 +447,7 @@ describe('F2APlugin', () => {
 
       await plugin.initialize({
         api: mockApi as any,
-        config: {},
+        config: { autoStart: false },
       });
 
       const status = plugin.getF2AStatus();
@@ -475,6 +473,7 @@ describe('F2APlugin', () => {
         config: {
           agentName: 'TestAgent',
           p2pPort: 4001,
+          autoStart: false,
         },
       });
 
@@ -588,7 +587,7 @@ describe('F2APlugin', () => {
 
       await plugin.initialize({
         api: mockApi as any,
-        config: {},
+        config: { autoStart: false },
       });
 
       await plugin.enable();

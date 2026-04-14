@@ -1,120 +1,45 @@
 {
   "id": "openclaw-f2a",
   "extension": "./dist/plugin.js",
-  "name": "F2A P2P Agent Network",
-  "description": "OpenClaw plugin for F2A P2P Agent network",
-  "version": "0.3.3",
+  "name": "F2A Webhook Handler",
+  "description": "Minimal OpenClaw plugin for F2A - receives webhooks and forwards messages to Agent",
+  "version": "0.4.0",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "f2aPath": {
+      "webhookPath": {
         "type": "string",
-        "description": "Path to F2A installation",
-        "default": "~/projects/F2A"
+        "description": "Webhook endpoint path",
+        "default": "/f2a/webhook"
       },
-      "autoStart": {
-        "type": "boolean",
-        "description": "Automatically start F2A node",
-        "default": true
-      },
-      "webhookPort": {
-        "type": "number",
-        "description": "Port for webhook server",
-        "default": 9002
+      "webhookToken": {
+        "type": "string",
+        "description": "Auth token for webhook requests",
+        "sensitive": true
       },
       "controlPort": {
         "type": "number",
-        "description": "Port for F2A control API",
+        "description": "Port for F2A daemon control API",
         "default": 9001
       },
       "controlToken": {
         "type": "string",
-        "description": "Auth token for F2A control API (auto-generated if not provided)",
+        "description": "Auth token for F2A daemon control API (auto-loaded from ~/.f2a/control-token)",
         "sensitive": true
       },
-      "p2pPort": {
+      "agentTimeout": {
         "type": "number",
-        "description": "Port for P2P network",
-        "default": 9000
-      },
-      "enableMDNS": {
-        "type": "boolean",
-        "description": "Enable mDNS discovery",
-        "default": true
-      },
-      "bootstrapPeers": {
-        "type": "array",
-        "items": { "type": "string" },
-        "description": "Bootstrap peer addresses",
-        "default": []
-      },
-      "agentName": {
-        "type": "string",
-        "description": "Display name for this agent",
-        "default": "OpenClaw Agent"
-      },
-      "mode": {
-        "type": "string",
-        "enum": ["embedded", "daemon"],
-        "description": "Run mode: embedded (creates own F2A instance) or daemon (connects to external daemon)",
-        "default": "daemon"
-      },
-      "daemonUrl": {
-        "type": "string",
-        "description": "URL of external F2A daemon (only used when mode=daemon)",
-        "default": "http://127.0.0.1:9001"
-      },
-      "capabilities": {
-        "type": "array",
-        "items": { "type": "string" },
-        "description": "Custom capabilities to advertise",
-        "default": []
-      },
-      "dataDir": {
-        "type": "string",
-        "description": "Directory for plugin data",
-        "default": "./f2a-data"
-      },
-      "maxQueuedTasks": {
-        "type": "number",
-        "description": "Maximum number of tasks to queue",
-        "default": 100
-      },
-      "reputation": {
-        "type": "object",
-        "properties": {
-          "enabled": { "type": "boolean", "default": true },
-          "initialScore": { "type": "number", "default": 50 },
-          "minScoreForService": { "type": "number", "default": 20 },
-          "decayRate": { "type": "number", "default": 0.01 }
-        }
-      },
-      "security": {
-        "type": "object",
-        "properties": {
-          "requireConfirmation": { "type": "boolean", "default": false },
-          "whitelist": { "type": "array", "items": { "type": "string" }, "default": [] },
-          "blacklist": { "type": "array", "items": { "type": "string" }, "default": [] },
-          "maxTasksPerMinute": { "type": "number", "default": 10 }
-        }
+        "description": "Timeout for Agent response (milliseconds)",
+        "default": 60000
       }
     }
   },
   "uiHints": {
-    "f2aPath": { "label": "F2A Path", "placeholder": "~/projects/F2A" },
-    "autoStart": { "label": "Auto Start F2A Node" },
-    "webhookPort": { "label": "Webhook Port" },
+    "webhookPath": { "label": "Webhook Path", "placeholder": "/f2a/webhook" },
+    "webhookToken": { "label": "Webhook Token", "sensitive": true },
     "controlPort": { "label": "Control Port" },
     "controlToken": { "label": "Control Token", "sensitive": true },
-    "p2pPort": { "label": "P2P Port" },
-    "enableMDNS": { "label": "Enable mDNS Discovery" },
-    "bootstrapPeers": { "label": "Bootstrap Peers", "placeholder": ["/ip4/..."] },
-    "agentName": { "label": "Agent Display Name" },
-    "mode": { "label": "Run Mode", "description": "embedded=own instance, daemon=connect to external" },
-    "daemonUrl": { "label": "Daemon URL", "placeholder": "http://127.0.0.1:9001" },
-    "capabilities": { "label": "Custom Capabilities" },
-    "dataDir": { "label": "Data Directory" },
-    "maxQueuedTasks": { "label": "Max Queued Tasks" }
+    "agentTimeout": { "label": "Agent Timeout (ms)" }
   }
 }

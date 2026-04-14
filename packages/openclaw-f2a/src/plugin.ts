@@ -1,162 +1,230 @@
 /**
- * F2A OpenClaw Plugin
- * OpenClaw 插件标准入口
+ * F2A Webhook Plugin (Simplified)
+ * Minimal OpenClaw plugin for F2A webhook handling
  *
- * 架构说明:
- * - register() 只调用 initialize(),保存配置,不打开资源
- * - registerService() 注册后台服务,在 Gateway 启动后异步启用 F2A
- * - 使用 setImmediate() 避免阻塞 Gateway 启动
- * - 所有网络资源和定时器都使用 unref(),确保 Gateway 可以正常退出
+ * Architecture per RFC004:
+ * - register() saves config, does not start services
+ * - registerService() starts webhook listener in background
+ * - handleWebhook() processes incoming messages and forwards to Agent
  */
 
-import type { OpenClawPluginApi } from './types.js';
-import { F2APlugin } from './connector.js';
+import type { OpenClawPluginApi, WebhookConfig, ApiLogger } from './types.js';
 
-/** 全局单例 - 防止重复创建插件实例 */
-let _pluginInstance: F2APlugin | null = null;
-
-/** 记录创建实例的进程 PID,用于检测 Gateway 是否重启 */
-let _instancePid: number | null = null;
+/** Default configuration */
+const DEFAULT_CONFIG: Required<WebhookConfig> = {
+  webhookPath: '/f2a/webhook',
+  webhookToken: '',
+  controlPort: 9001,
+  controlToken: '',
+  agentTimeout: 60000
+};
 
 /**
- * OpenClaw 插件注册函数
- * 这是 OpenClaw 加载插件时调用的入口
- * 
- * ⚠️ 重要：必须是同步函数，不能是 async！
- * Gateway 不支持异步插件注册，async register() 会被忽略。
- * 
- * ⚠️ Gateway 可能会多次调用 register()，每次都应该重新注册工具和服务。
- * 不使用单例检测，让 Gateway 自己处理重复注册。
+ * OpenClaw Plugin entry point
+ * This is called by OpenClaw Gateway when loading the plugin
+ *
+ * ⚠️ Important: Must be synchronous, Gateway doesn't support async register()
  */
 export default function register(api: OpenClawPluginApi) {
-  // 不使用单例，每次都重新注册
-  // Gateway 可能多次调用 register，每次都应该注册工具和服务
-  const plugin = new F2APlugin();
-  
-  // 从 OpenClaw 配置中获取插件配置
+  // Get plugin config from OpenClaw
   const pluginsConfig = api.config.plugins;
-  const config = pluginsConfig?.entries?.['openclaw-f2a']?.config || {}; 
-  
-  // 将 API 引用传递给插件（用于触发心跳等操作）
-  const fullConfig = {
-    ...config,
-    _api: api
+  const rawConfig = pluginsConfig?.entries?.['openclaw-f2a']?.config || {};
+
+  // Merge with defaults
+  const config: Required<WebhookConfig> = {
+    ...DEFAULT_CONFIG,
+    ...rawConfig
   };
 
-  // 初始化插件 - 同步保存配置，不启动服务
-  // ⚠️ 重要：initialize() 必须同步完成，不能 await
-  // 异步启动移到 registerService.start() 中
-  plugin.initialize(fullConfig);
-  api.logger?.info('[F2A Plugin] 初始化完成（延迟模式）');
+  api.logger?.info('[F2A Webhook] Initializing...', {
+    webhookPath: config.webhookPath,
+    controlPort: config.controlPort
+  });
 
-  // 注册所有工具
-  const tools = plugin.getTools();
-  for (const tool of tools) {
-    api.registerTool?.({
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-      async execute(sessionId: string, params: unknown) {
-        const toolName = tool.name;
-        const startTime = Date.now();
-
-        // 确保适配器已启用
-        if (!plugin.isInitialized()) {
-          api.logger?.info('[F2A Plugin] 首次使用工具，启用适配器...', { toolName, sessionId });
-          try {
-            await plugin.enable();
-          } catch (enableError: any) {
-            api.logger?.error('[F2A Plugin] 启用失败:', { toolName, sessionId, error: enableError.message });
-            throw new Error(`F2A Plugin 启用失败: ${enableError.message}`);
-          }
-        }
-
-        // 记录工具执行开始
-        api.logger?.info('[F2A Plugin] 工具执行开始:', { toolName, sessionId });
-
-        try {
-          const workspace = api.config.agents?.defaults?.workspace || '.';
-          const mockContext = {
-            sessionId,
-            workspace,
-            toJSON: () => ({})
-          };
-
-          const result = await tool.handler(params as Record<string, unknown>, mockContext);
-
-          // 记录工具执行完成
-          const duration = Date.now() - startTime;
-          api.logger?.info('[F2A Plugin] 工具执行完成:', {
-            toolName,
-            sessionId,
-            duration: `${duration}ms`,
-            success: true
-          });
-
-          if (typeof result === 'string') {
-            return { content: [{ type: 'text', text: result }] };
-          }
-
-          if (result?.content) {
-            return { content: [{ type: 'text', text: result.content }] };
-          }
-
-          return { content: [{ type: 'text', text: JSON.stringify(result) }] };
-        } catch (error: any) {
-          // 记录工具执行失败
-          const duration = Date.now() - startTime;
-          api.logger?.error('[F2A Plugin] 工具执行失败:', {
-            toolName,
-            sessionId,
-            duration: `${duration}ms`,
-            error: error.message,
-            stack: error.stack
-          });
-          throw error;
-        }
-      }
-    });
-  }
-
-  // 注册后台服务
-  // 使用 setImmediate 异步启动 F2A,避免阻塞 Gateway
+  // Register service for webhook handling
   api.registerService?.({
-    id: 'f2a-plugin-service',
+    id: 'f2a-webhook-service',
     start: () => {
-      api.logger?.info('[F2A Plugin] 服务已启动');
+      api.logger?.info('[F2A Webhook] Service started');
 
-      // 使用 setImmediate 在下一个事件循环中启动 F2A
-      // 这样不会阻塞 Gateway 的启动流程
+      // Start webhook listener asynchronously
       setImmediate(async () => {
         try {
-          // 检查是否配置了 autoStart(默认 true)
-          const autoStart = config.autoStart !== false;
-
-          if (autoStart) {
-            api.logger?.info('[F2A Plugin] 正在启用 F2A 实例(后台模式)...');
-            await plugin.enable();
-            api.logger?.info('[F2A Plugin] F2A 实例已启用');
-          }
-        } catch (error: any) {
-          // 启动失败不影响 Gateway 运行
-          api.logger?.warn('[F2A Plugin] F2A 实例启动失败:', { error: error.message });
-          api.logger?.warn('[F2A Plugin] P2P 功能将不可用,但 Gateway 可继续运行');
+          await startWebhookListener(api, config);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          api.logger?.warn('[F2A Webhook] Webhook listener failed to start', { error: msg });
         }
       });
     },
     stop: async () => {
-      api.logger?.info('[F2A Plugin] 正在停止服务...');
-      await plugin.shutdown?.();
-      api.logger?.info('[F2A Plugin] 服务已停止');
+      api.logger?.info('[F2A Webhook] Service stopped');
     }
   });
 
-  api.logger?.info('[F2A Plugin] 已注册工具:', { count: tools.length, mode: '延迟初始化' });
+  api.logger?.info('[F2A Webhook] Registered successfully');
 }
 
-// 重新导出主要类,供外部使用
-export { F2APlugin } from './connector.js';
+/**
+ * Start webhook listener
+ * Creates a simple HTTP server to receive F2A webhook requests
+ */
+async function startWebhookListener(
+  api: OpenClawPluginApi,
+  config: Required<WebhookConfig>
+): Promise<void> {
+  const http = await import('http');
+  const { exec } = await import('child_process');
+  const { readFile } = await import('fs/promises');
+  const { homedir } = await import('os');
+
+  // Load control token from ~/.f2a/control-token if not provided
+  let controlToken = config.controlToken;
+  if (!controlToken) {
+    try {
+      controlToken = await readFile(`${homedir()}/.f2a/control-token`, 'utf-8').then(s => s.trim());
+    } catch {
+      api.logger?.warn('[F2A Webhook] Could not load control token from ~/.f2a/control-token');
+    }
+  }
+
+  const server = http.createServer(async (req, res) => {
+    // Only handle POST to webhook path
+    if (req.method !== 'POST' || req.url !== config.webhookPath) {
+      res.writeHead(404);
+      res.end('Not found');
+      return;
+    }
+
+    // Validate token
+    const authHeader = req.headers['authorization'] || req.headers['x-f2a-token'];
+    const token = typeof authHeader === 'string' ? authHeader.replace('Bearer ', '') : '';
+    if (config.webhookToken && token !== config.webhookToken) {
+      res.writeHead(401);
+      res.end('Unauthorized');
+      return;
+    }
+
+    // Parse body
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    
+    let payload: { from?: string; fromAgentId?: string; content?: string; topic?: string };
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      res.writeHead(400);
+      res.end('Invalid JSON');
+      return;
+    }
+
+    const from = payload.from || payload.fromAgentId || '';
+    const message = payload.content || '';
+    
+    if (!from || !message) {
+      res.writeHead(400);
+      res.end('Missing from or content');
+      return;
+    }
+
+    api.logger?.info('[F2A Webhook] Received message', { from: from.slice(0, 16), length: message.length });
+
+    // Invoke Agent to generate reply
+    const reply = await invokeAgent(api, from, message, config.agentTimeout);
+
+    // Send reply via f2a CLI
+    if (reply) {
+      try {
+        exec(`f2a send --to "${from}" --message "${reply.replace(/"/g, '\\"')}"`, {
+          timeout: 10000
+        });
+        api.logger?.info('[F2A Webhook] Reply sent', { to: from.slice(0, 16) });
+      } catch (err) {
+        api.logger?.error('[F2A Webhook] Failed to send reply', { error: String(err) });
+      }
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true }));
+  });
+
+  // Use unref() to allow Gateway to exit cleanly
+  server.listen(0, () => {
+    const addr = server.address();
+    if (addr && typeof addr === 'object') {
+      api.logger?.info('[F2A Webhook] Listening on port', { port: addr.port });
+    }
+  });
+  server.unref();
+}
+
+/**
+ * Invoke Agent to generate reply
+ * Uses OpenClaw subagent API if available
+ */
+async function invokeAgent(
+  api: OpenClawPluginApi,
+  from: string,
+  message: string,
+  timeout: number
+): Promise<string | undefined> {
+  const logger = api.logger;
+
+  // Check if subagent API is available
+  if (api.runtime?.subagent?.run && api.runtime?.subagent?.waitForRun) {
+    try {
+      const sessionKey = `f2a-webhook-${from.slice(0, 16)}`;
+
+      const { runId } = await api.runtime.subagent.run({
+        sessionKey,
+        message,
+        deliver: true
+      });
+
+      const result = await api.runtime.subagent.waitForRun({
+        runId,
+        timeoutMs: timeout
+      });
+
+      if (result.status === 'ok') {
+        const messagesResult = await api.runtime.subagent.getSessionMessages({
+          sessionKey,
+          limit: 10
+        });
+
+        const messages = messagesResult.messages as any[];
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const msg = messages[i];
+          if (msg.role === 'assistant' && msg.content) {
+            const reply = typeof msg.content === 'string'
+              ? msg.content
+              : msg.content.find((c: any) => c.type === 'text')?.text;
+            if (reply) {
+              logger?.info('[F2A Webhook] Got Agent reply', { length: reply.length });
+              return reply;
+            }
+          }
+        }
+      }
+
+      if (result.status === 'timeout') {
+        logger?.warn('[F2A Webhook] Agent timeout');
+        return 'Sorry, I took too long to respond.';
+      }
+
+      logger?.error('[F2A Webhook] Agent error', { error: result.error });
+      return undefined;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger?.error('[F2A Webhook] Failed to invoke Agent', { error: msg });
+      return undefined;
+    }
+  }
+
+  // No subagent API available
+  logger?.warn('[F2A Webhook] Subagent API not available, cannot invoke Agent');
+  return undefined;
+}
+
+// Re-export types
 export * from './types.js';
-export { TaskQueue, QueuedTask, TaskQueueStats } from './task-queue.js';
-export { AnnouncementQueue, AnnouncementQueueStats } from './announcement-queue.js';
-export { TaskGuard, TaskGuardReport, TaskGuardRule, TaskGuardConfig, taskGuard } from './task-guard.js';

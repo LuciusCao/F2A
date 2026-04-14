@@ -1,7 +1,7 @@
 {
   "name": "@f2a/openclaw-f2a",
-  "version": "0.3.14",
-  "description": "OpenClaw plugin for F2A P2P Agent network",
+  "version": "0.4.0",
+  "description": "Minimal OpenClaw webhook plugin for F2A P2P Agent network",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -18,9 +18,6 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest run",
-    "test:unit": "vitest run tests/*.test.ts src/**/*.test.ts --exclude='tests/integration/**'",
-    "test:integration": "vitest run tests/integration/*.test.ts",
-    "test:all": "vitest run",
     "lint": "tsc --noEmit"
   },
   "keywords": [
@@ -28,6 +25,7 @@
     "f2a",
     "p2p",
     "agent",
+    "webhook",
     "plugin"
   ],
   "author": "F2A Team",
@@ -36,16 +34,9 @@
     "type": "git",
     "url": "https://github.com/LuciusCao/F2A.git"
   },
-  "dependencies": {
-    "@f2a/network": "^0.4.12",
-    "better-sqlite3": "^11.0.0",
-    "eventemitter3": "^5.0.4",
-    "zod": "^3.22.4"
-  },
+  "dependencies": {},
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.10.0",
-    "@types/ws": "^8.5.10",
     "typescript": "^5.9.3",
     "vitest": "^1.6.1"
   },

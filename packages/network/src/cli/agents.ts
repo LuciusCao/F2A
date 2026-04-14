@@ -56,18 +56,17 @@ async function sendRequest(
 }
 
 /**
- * 注册 Agent
- * f2a agent register --id <id> --name <name> [--capability <cap>]... [--webhook <url>]
+ * 注册 Agent（RFC 003: AgentId 由节点签发）
+ * f2a agent register --name <name> [--capability <cap>]... [--webhook <url>]
  */
 export async function registerAgent(options: {
-  id: string;
   name: string;
   capabilities?: string[];
   webhook?: string;
 }): Promise<void> {
-  if (!options.id || !options.name) {
-    console.error('❌ 错误: 缺少 --id 或 --name 参数');
-    console.error('用法: f2a agent register --id <id> --name <name> [--capability <cap>]...');
+  if (!options.name) {
+    console.error('❌ 错误: 缺少 --name 参数');
+    console.error('用法: f2a agent register --name <name> [--capability <cap>]...');
     process.exit(1);
   }
 
@@ -78,23 +77,26 @@ export async function registerAgent(options: {
       description: ''
     }));
 
+    // RFC 003: 不再发送 agentId，由节点签发
     const result = await sendRequest('POST', '/api/agents', {
-      agentId: options.id,
       name: options.name,
       capabilities,
       webhookUrl: options.webhook
     });
 
     if (result.success) {
-      console.log(`✅ Agent 已注册`);
-      console.log(`   ID: ${options.id}`);
-      console.log(`   Name: ${options.name}`);
+      const agent = result.agent as any;
+      console.log(`✅ Agent 已注册（节点签发）`);
+      console.log(`   AgentId: ${agent.agentId}`);
+      console.log(`   Name: ${agent.name}`);
+      console.log(`   PeerId: ${agent.peerId}`);
       if (capabilities.length > 0) {
         console.log(`   Capabilities: ${capabilities.map((c: any) => c.name).join(', ')}`);
       }
       if (options.webhook) {
         console.log(`   Webhook: ${options.webhook}`);
       }
+      console.log(`   Signature: ${agent.signature?.slice(0, 16)}...`);
     } else {
       console.error(`❌ 注册失败: ${result.error}`);
       process.exit(1);

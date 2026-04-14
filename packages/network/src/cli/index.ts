@@ -172,21 +172,25 @@ function parseArgs(): Args {
     }
   }
 
-  // 解析 agent 子命令的参数
+  // 解析 agent 子命令的参数（RFC 003: 不再需要 --id）
   let agentId: string | undefined;
   let agentName: string | undefined;
   let agentCap: string | undefined;
   let webhookUrl: string | undefined;
   if (command === 'agent' && subcommand) {
     if (subcommand === 'register') {
-      const idIndex = args.indexOf('--id');
-      if (idIndex !== -1 && args[idIndex + 1]) agentId = args[idIndex + 1];
       const nameIndex = args.indexOf('--name');
       if (nameIndex !== -1 && args[nameIndex + 1]) agentName = args[nameIndex + 1];
       const capIndex = args.indexOf('--capability');
       if (capIndex !== -1 && args[capIndex + 1]) agentCap = args[capIndex + 1];
       const webIndex = args.indexOf('--webhook');
       if (webIndex !== -1 && args[webIndex + 1]) webhookUrl = args[webIndex + 1];
+    } else if (subcommand === 'unregister') {
+      // unregister 命令的参数是 agent_id
+      const idArg = args[2];
+      if (idArg && !idArg.startsWith('-')) {
+        agentId = idArg;
+      }
     }
   }
 
@@ -439,17 +443,18 @@ Examples:
       console.log(`
 Usage: f2a agent [subcommand]
 
-Agent 管理命令。
+Agent 管理命令（RFC 003: AgentId 由节点签发）。
 
 Subcommands:
-  f2a agent register --id <id> --name <name> [--capability <cap>]... [--webhook <url>]
-  f2a agent list                    列出已注册的 Agent
+  f2a agent register --name <name> [--capability <cap>]... [--webhook <url>]
+                        注册 Agent（节点签发 AgentId）
+  f2a agent list        列出已注册的 Agent
   f2a agent unregister <agent_id>   注销 Agent
 
 Examples:
-  f2a agent register --id openclaw --name "猫咕噜" --capability code-generation
+  f2a agent register --name "猫咕噜" --capability code-generation
   f2a agent list
-  f2a agent unregister openclaw
+  f2a agent unregister agent:12D3KooWHxWdn:abc12345
 `);
       break;
 
@@ -870,7 +875,6 @@ async function handleAgentCommand(args: Args): Promise<void> {
   switch (subcommand) {
     case 'register':
       await registerAgent({
-        id: args.agentId || '',
         name: args.agentName || '',
         capabilities: args.agentCapabilities,
         webhook: args.webhookUrl

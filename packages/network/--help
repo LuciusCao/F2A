@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+  "exportedAt": "2026-04-13T11:43:23.527Z",
+  "node": {
+    "nodeId": "12D3KooWS5Q6qXLy",
+    "peerId": "12D3KooWS5Q6qXLyBknQTCK6zKwayLqayQV8W86kzeNkeMWw9tEu",
+    "privateKey": "CAESQLqaxf25LUqbSqBXDWlMLGx7RDRZRlw66aje5BrwBq1E8ZTjYPBqPQB7HXdtQsSH+xdmJh6LzDl8FTOIGI8AYZI="
+  },
+  "agent": {
+    "id": "b513dc68-42c2-4a20-a8ab-00cfafa40c67",
+    "name": "Mac-mini",
+    "capabilities": [],
+    "nodeId": "12D3KooWS5Q6qXLy",
+    "publicKey": "lcoYVr0xCGLz8TpL+Lahnxtlhj1MXHEPxDdSGx3TZt4=",
+    "signature": "SsN+7Fyy8Sc8SuFFvrUHjmKmeKSu8zy1FqhjfgLtbsp1wQ768lf404/EOHzpemoUYQCK0hE/66Rm3hOGFL53Dg==",
+    "createdAt": "2026-04-13T11:43:23.075Z",
+    "privateKey": "wEdBouArGuY6cNtjRLLxecLJkRK60kwz5bLHGk9w4iaVyhhWvTEIYvPxOkv4tqGfG2WGPUxccQ/EN1IbHdNm3g=="
+  }
+}

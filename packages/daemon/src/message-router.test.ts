@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MessageRouter, RoutableMessage, MessageQueue } from './message-router.js';
 import type { AgentRegistration } from './agent-registry.js';
+import { Logger } from '@f2a/network';
 
 // Mock Logger
 vi.mock('@f2a/network', () => ({

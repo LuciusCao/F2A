@@ -10,6 +10,19 @@ import type { AgentCapability } from '@f2a/network';
 import { randomBytes } from 'crypto';
 
 /**
+ * 本地消息回调类型
+ * 用于直接推送消息给本地 Agent
+ */
+export type MessageCallback = (message: {
+  messageId: string;
+  fromAgentId: string;
+  toAgentId: string;
+  content: string;
+  type: string;
+  createdAt: Date;
+}) => void;
+
+/**
  * Agent 注册信息
  */
 export interface AgentRegistration {
@@ -27,8 +40,10 @@ export interface AgentRegistration {
   registeredAt: Date;
   /** 最后活跃时间 */
   lastActiveAt: Date;
-  /** Webhook URL（用于推送消息给 Agent） */
+  /** Webhook URL（用于推送消息给远程 Agent） */
   webhookUrl?: string;
+  /** 本地消息回调（用于直接推送消息给本地 Agent，无需轮询） */
+  onMessage?: MessageCallback;
   /** Agent 元数据 */
   metadata?: Record<string, unknown>;
 }
@@ -41,8 +56,10 @@ export interface AgentRegistrationRequest {
   name: string;
   /** Agent 支持的能力列表 */
   capabilities: AgentCapability[];
-  /** Webhook URL（可选） */
+  /** Webhook URL（可选，用于远程 Agent） */
   webhookUrl?: string;
+  /** 本地消息回调（可选，用于本地 Agent 直接接收消息） */
+  onMessage?: MessageCallback;
   /** Agent 元数据（可选） */
   metadata?: Record<string, unknown>;
 }
@@ -104,6 +121,7 @@ export class AgentRegistry {
       registeredAt: new Date(),
       lastActiveAt: new Date(),
       webhookUrl: request.webhookUrl,
+      onMessage: request.onMessage,
       metadata: request.metadata,
     };
 
@@ -113,6 +131,7 @@ export class AgentRegistry {
       name: request.name,
       peerId: this.peerId,
       capabilities: request.capabilities.map(c => c.name),
+      isLocal: !!request.onMessage,
     });
 
     return registration;

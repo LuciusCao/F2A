@@ -89,6 +89,9 @@ export class MessageRouter {
 
   /**
    * 路由消息到特定 Agent
+   * 
+   * 如果目标 Agent 有本地回调（onMessage），直接调用回调
+   * 否则放入消息队列（等待 HTTP 轮询）
    */
   route(message: RoutableMessage): boolean {
     const { toAgentId, fromAgentId } = message;
@@ -101,6 +104,39 @@ export class MessageRouter {
 
     // 如果指定了目标 Agent，路由到该 Agent
     if (toAgentId) {
+      const targetAgent = this.agentRegistry.get(toAgentId);
+      if (!targetAgent) {
+        this.logger.warn('Target agent not registered', { toAgentId });
+        return false;
+      }
+
+      // 如果目标 Agent 有本地回调，直接调用（无需队列）
+      if (targetAgent.onMessage) {
+        try {
+          targetAgent.onMessage({
+            messageId: message.messageId,
+            fromAgentId: message.fromAgentId,
+            toAgentId: message.toAgentId || '',
+            content: message.content,
+            type: message.type,
+            createdAt: message.createdAt,
+          });
+          this.logger.debug('Message delivered via local callback', {
+            messageId: message.messageId,
+            toAgentId,
+            fromAgentId,
+          });
+          return true;
+        } catch (err) {
+          this.logger.error('Local callback error', {
+            toAgentId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          // 回调失败，降级到队列
+        }
+      }
+
+      // 无回调或回调失败，放入队列
       const queue = this.queues.get(toAgentId);
       if (!queue) {
         this.logger.warn('Target agent queue not found', { toAgentId });
@@ -109,13 +145,12 @@ export class MessageRouter {
 
       // 检查队列大小，防止溢出
       if (queue.messages.length >= queue.maxSize) {
-        // 移除最旧的消息
         queue.messages.shift();
         this.logger.warn('Queue overflow, removed oldest message', { toAgentId });
       }
 
       queue.messages.push(message);
-      this.logger.debug('Message routed to agent', {
+      this.logger.debug('Message routed to queue', {
         messageId: message.messageId,
         toAgentId,
         fromAgentId,
@@ -129,28 +164,56 @@ export class MessageRouter {
 
   /**
    * 广播消息给所有 Agent
+   * 
+   * 本地 Agent（有 onMessage 回调）直接调用回调
+   * 远程 Agent 放入队列
    */
   broadcast(message: RoutableMessage): boolean {
     const { fromAgentId } = message;
     let delivered = 0;
 
-    for (const [agentId, queue] of this.queues.entries()) {
+    for (const [agentId, agent] of this.agentRegistry.entries()) {
       // 不发送给自己
       if (agentId === fromAgentId) {
         continue;
       }
 
-      // 检查队列大小
-      if (queue.messages.length >= queue.maxSize) {
-        queue.messages.shift();
-        this.logger.warn('Queue overflow during broadcast', { agentId });
-      }
+      // 如果目标 Agent 有本地回调，直接调用
+      if (agent.onMessage) {
+        try {
+          agent.onMessage({
+            messageId: message.messageId,
+            fromAgentId: message.fromAgentId,
+            toAgentId: agentId,
+            content: message.content,
+            type: message.type,
+            createdAt: message.createdAt,
+          });
+          delivered++;
+        } catch (err) {
+          this.logger.error('Broadcast callback error', {
+            agentId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      } else {
+        // 无回调，放入队列
+        const queue = this.queues.get(agentId);
+        if (!queue) {
+          continue;
+        }
 
-      queue.messages.push({
-        ...message,
-        toAgentId: agentId, // 设置目标
-      });
-      delivered++;
+        if (queue.messages.length >= queue.maxSize) {
+          queue.messages.shift();
+          this.logger.warn('Queue overflow during broadcast', { agentId });
+        }
+
+        queue.messages.push({
+          ...message,
+          toAgentId: agentId,
+        });
+        delivered++;
+      }
     }
 
     this.logger.debug('Message broadcasted', {

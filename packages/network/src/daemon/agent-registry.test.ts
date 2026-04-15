@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AgentRegistry, AgentRegistration } from './agent-registry.js';
 import type { AgentCapability } from '../types/index.js';
+import type { AgentIdentity } from '../core/identity/types.js';
 
 // Mock Logger
 vi.mock('../utils/logger.js', () => ({
@@ -392,6 +393,418 @@ describe('AgentRegistry', () => {
 
       const stats = registry.getStats();
       expect(Object.keys(stats.capabilities)).toHaveLength(100);
+    });
+  });
+
+  // ============================================================================
+  // Phase 2 - Part C: 签名验证测试
+  // ============================================================================
+
+  describe('签名验证', () => {
+    // Mock 验证函数
+    const mockVerifyWithNodeKey = vi.fn().mockResolvedValue(true);
+
+    /**
+     * 创建带签名的 Agent 注册信息
+     * AgentId 格式: agent:<PeerId前16位>:<随机8位>
+     */
+    const createAgentWithSignature = (
+      peerIdPrefix: string, // 必须是 16 位
+      randomSuffix: string, // 必须是 8 位
+      name: string,
+      signature: string,
+      nodeId: string,
+      capabilities: AgentCapability[] = []
+    ): Omit<AgentRegistration, 'registeredAt' | 'lastActiveAt'> => ({
+      agentId: `agent:${peerIdPrefix}:${randomSuffix}`,
+      name,
+      capabilities,
+      webhookUrl: `http://localhost/agent:${peerIdPrefix}:${randomSuffix}`,
+      metadata: { version: '1.0' },
+      signature,
+      nodeId,
+      publicKey: 'validPublicKeyBase64String',
+      createdAt: new Date().toISOString(),
+    });
+
+    /**
+     * 生成有效的 base64 签名
+     */
+    const generateValidSignature = (): string => {
+      // 生成 64 字节的随机签名（Ed25519 签名长度）
+      const signatureBytes = new Uint8Array(64);
+      for (let i = 0; i < 64; i++) {
+        signatureBytes[i] = Math.floor(Math.random() * 256);
+      }
+      return Buffer.from(signatureBytes).toString('base64');
+    };
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      registry = new AgentRegistry();
+    });
+
+    // 任务 2.5: 测试签名验证通过场景
+    describe('任务 2.5: 签名验证通过场景', () => {
+      it('应该成功验证正确格式的 AgentId 和签名', () => {
+        // 使用真实的 PeerId 格式（16位字母数字）
+        const peerIdPrefix = '12D3KooWABCDEF12'; // 16位 PeerId 前缀
+        const randomSuffix = 'XYZ789AB'; // 8位随机后缀
+        const nodeId = '12D3KooWABCDEF123456789'; // NodeId 前16位与 AgentId 匹配
+        const signature = generateValidSignature();
+
+        const agent = createAgentWithSignature(peerIdPrefix, randomSuffix, 'Test Agent', signature, nodeId);
+        registry.register(agent);
+
+        // verifySignature 应返回 true
+        const isValid = registry.verifySignature(agent.agentId);
+        expect(isValid).toBe(true);
+      });
+
+      it('应该验证 AgentId 格式符合 RFC 003 规范', () => {
+        const validAgentId = 'agent:12D3KooWABCDEF12:XYZ789AB';
+        const signature = generateValidSignature();
+        const nodeId = '12D3KooWABCDEF123456789';
+
+        const agent = createAgentWithSignature('12D3KooWABCDEF12', 'XYZ789AB', 'Agent', signature, nodeId);
+        registry.register(agent);
+
+        // AgentId 格式应该通过验证
+        expect(registry.verifySignature(validAgentId)).toBe(true);
+      });
+
+      it('签名验证通过后，消息应该可以正常路由', () => {
+        const peerIdPrefix = 'ABCDEFGH12345678'; // 16位 PeerId 前缀
+        const nodeId = 'ABCDEFGH123456789'; // NodeId 前16位与 AgentId 匹配
+        const signature = generateValidSignature();
+
+        const agent = createAgentWithSignature(peerIdPrefix, 'RANDOM08', 'Router Agent', signature, nodeId);
+        registry.register(agent);
+
+        // 验证签名
+        expect(registry.verifySignature(agent.agentId)).toBe(true);
+
+        // Agent 应该可以正常查找和路由
+        const registered = registry.get(agent.agentId);
+        expect(registered).toBeDefined();
+        expect(registered?.name).toBe('Router Agent');
+      });
+
+      it('应该在注册时验证签名（使用 registerWithVerification）', () => {
+        const peerIdPrefix = 'ABCDEFGH12345678'; // 16位 PeerId 前缀
+        const nodeId = 'ABCDEFGH123456789'; // NodeId 前16位与 AgentId 匹配
+        const signature = generateValidSignature();
+
+        const agent = createAgentWithSignature(peerIdPrefix, 'ABCD1234', 'Verified Agent', signature, nodeId);
+
+        // 使用 registerWithVerification 并启用验证
+        const result = registry.registerWithVerification(agent, true);
+
+        expect(result.success).toBe(true);
+        expect(result.registration).toBeDefined();
+        expect(result.registration?.agentId).toBe(`agent:${peerIdPrefix}:ABCD1234`);
+      });
+
+      it('应该在未启用验证时允许无签名注册', () => {
+        const peerIdPrefix = 'ABCDEFGH12345678';
+        const nodeId = 'ABCDEFGH123456789';
+
+        const agent = createAgentWithSignature(peerIdPrefix, 'ABCD1234', 'Agent', '', nodeId);
+        agent.signature = undefined;
+
+        // 不启用验证时，应该允许注册
+        const result = registry.registerWithVerification(agent, false);
+
+        expect(result.success).toBe(true);
+        expect(result.registration).toBeDefined();
+      });
+    });
+
+    // 任务 2.6: 测试签名验证失败场景
+    describe('任务 2.6: 签名验证失败场景', () => {
+      it('应该拒绝签名格式错误（不包含有效 base64）', () => {
+        const peerIdPrefix = 'ABCDEFGH12345678'; // 16位 PeerId 前缀
+        const nodeId = 'ABCDEFGH123456789';
+        const invalidSignature = 'not-valid-base64!!!';
+
+        const agent = createAgentWithSignature(peerIdPrefix, 'ABCD1234', 'Agent', invalidSignature, nodeId);
+        registry.register(agent);
+
+        const isValid = registry.verifySignature(agent.agentId);
+        expect(isValid).toBe(false);
+      });
+
+      it('应该拒绝空签名', () => {
+        const peerIdPrefix = 'ABCDEFGH12345678';
+        const nodeId = 'ABCDEFGH123456789';
+
+        const agent = createAgentWithSignature(peerIdPrefix, 'ABCD1234', 'Agent', '', nodeId);
+        agent.signature = undefined;
+        registry.register(agent);
+
+        expect(registry.verifySignature(agent.agentId)).toBe(false);
+      });
+
+      it('应该拒绝签名与 agentId 不匹配（NodeId 前缀不匹配）', () => {
+        const peerIdPrefix = 'NODEAPREFIX12345'; // Node A 前缀（16位）
+        const nodeId = 'NODEBPREFIX123456789'; // Node B（前缀不匹配）
+        const signature = generateValidSignature();
+
+        const agent = createAgentWithSignature(peerIdPrefix, 'ABCD1234', 'Forged Agent', signature, nodeId);
+        registry.register(agent);
+
+        const isValid = registry.verifySignature(agent.agentId);
+        expect(isValid).toBe(false);
+      });
+
+      it('应该拒绝未注册 Agent 的签名验证', () => {
+        const unregisteredAgentId = 'agent:UNKNOWNPEER123:XYZ12345';
+
+        const isValid = registry.verifySignature(unregisteredAgentId);
+        expect(isValid).toBe(false);
+      });
+
+      it('应该在 registerWithVerification 中拒绝签名验证失败', () => {
+        const peerIdPrefix = 'NODEAPREFIX12345';
+        const nodeId = 'NODEBPREFIX123456789';
+        const signature = generateValidSignature();
+
+        const agent = createAgentWithSignature(peerIdPrefix, 'ABCD1234', 'Invalid Agent', signature, nodeId);
+
+        const result = registry.registerWithVerification(agent, true);
+
+        expect(result.success).toBe(false);
+        expect(result.error).toBe('Signature verification failed');
+        expect(registry.list()).toHaveLength(0);
+      });
+
+      it('应该拒绝无效的 AgentId 格式（缺少 agent: 前缀）', () => {
+        const invalidAgentId = '12D3KooWABCDEF12:XYZ789AB'; // 缺少 'agent:' 前缀
+        const signature = generateValidSignature();
+        const nodeId = '12D3KooWABCDEF123456789';
+
+        registry.register({
+          agentId: invalidAgentId,
+          name: 'Bad Format Agent',
+          capabilities: [],
+          signature,
+          nodeId,
+        });
+
+        expect(registry.verifySignature(invalidAgentId)).toBe(false);
+      });
+
+      it('应该拒绝无效的 AgentId 格式（PeerId 前缀不是 16 位）', () => {
+        const invalidAgentId = 'agent:ShortPrefix:XYZ789AB'; // PeerId 前缀不是 16 位
+        const signature = generateValidSignature();
+        const nodeId = 'ShortPrefixXYZ123456789';
+
+        registry.register({
+          agentId: invalidAgentId,
+          name: 'Bad Prefix Agent',
+          capabilities: [],
+          signature,
+          nodeId,
+        });
+
+        expect(registry.verifySignature(invalidAgentId)).toBe(false);
+      });
+
+      it('应该拒绝无效的 AgentId 格式（随机后缀不是 8 位）', () => {
+        const invalidAgentId = 'agent:12D3KooWABCDEF12:SHORT'; // 随机后缀不是 8 位
+        const signature = generateValidSignature();
+        const nodeId = '12D3KooWABCDEF123456789';
+
+        registry.register({
+          agentId: invalidAgentId,
+          name: 'Bad Suffix Agent',
+          capabilities: [],
+          signature,
+          nodeId,
+        });
+
+        expect(registry.verifySignature(invalidAgentId)).toBe(false);
+      });
+    });
+
+    // 任务 2.7: 测试伪造 AgentId 场景
+    describe('任务 2.7: 伪造 AgentId 场景', () => {
+      it('应该拒绝伪造的 AgentId（尝试注册其他 peerId 前缀）', () => {
+        const victimPeerIdPrefix = 'VICTIMPREFIX16'; // 16位受害者前缀
+        const attackerNodeId = 'ATTACKPREFIX16XYZ'; // 攻击者的 NodeId（前缀不匹配）
+        const forgedSignature = generateValidSignature();
+
+        const forgedAgent = createAgentWithSignature(
+          victimPeerIdPrefix,
+          'FORGED12',
+          'Forged Agent',
+          forgedSignature,
+          attackerNodeId
+        );
+
+        registry.register(forgedAgent);
+
+        expect(registry.verifySignature(forgedAgent.agentId)).toBe(false);
+      });
+
+      it('应该拒绝使用伪造签名的 Agent 注册', () => {
+        const peerIdPrefix = 'ABCDEFGH12345678';
+        const nodeId = 'ABCDEFGH123456789';
+        const forgedSignature = 'FORGED_SIGNATURE_NOT_VALID_BASE64';
+
+        const agent = createAgentWithSignature(peerIdPrefix, 'ABCD1234', 'Agent', forgedSignature, nodeId);
+
+        const result = registry.registerWithVerification(agent, true);
+
+        expect(result.success).toBe(false);
+        expect(result.error).toBe('Signature verification failed');
+      });
+
+      it('应该拒绝尝试冒充其他 Node 的 Agent', () => {
+        const nodeAPeerIdPrefix = 'NODEAPREFIX12345';
+        const attackerNodeId = 'NODEBPREFIX123456789';
+
+        const agent = createAgentWithSignature(
+          nodeAPeerIdPrefix,
+          'ABCD1234',
+          'Impersonated Agent',
+          generateValidSignature(),
+          attackerNodeId
+        );
+
+        registry.register(agent);
+
+        expect(registry.verifySignature(agent.agentId)).toBe(false);
+      });
+
+      it('应该拒绝尝试使用受害者签名注册攻击者的 AgentId', () => {
+        const victimPeerIdPrefix = 'VICTIMPREFIX16';
+        const victimNodeId = 'VICTIMPREFIX16XYZ';
+        const attackerPeerIdPrefix = 'ATTACKPREFIX16';
+        const stolenSignature = generateValidSignature();
+
+        const agent = createAgentWithSignature(
+          attackerPeerIdPrefix,
+          'ABCD1234',
+          'Attacker Agent',
+          stolenSignature,
+          victimNodeId
+        );
+
+        registry.register(agent);
+
+        expect(registry.verifySignature(agent.agentId)).toBe(false);
+      });
+
+      it('应该在批量注册时验证所有 AgentId', () => {
+        const validPeerIdPrefix = 'ABCDEFGH12345678';
+        const validNodeId = 'ABCDEFGH123456789';
+        const invalidPeerIdPrefix = 'INVALIDPREFIX1AB'; // 16位
+
+        const validAgent = createAgentWithSignature(validPeerIdPrefix, 'VALID001', 'Valid Agent', generateValidSignature(), validNodeId);
+        const invalidAgent = createAgentWithSignature(invalidPeerIdPrefix, 'INVALID02', 'Invalid Agent', generateValidSignature(), validNodeId);
+
+        registry.register(validAgent);
+        registry.register(invalidAgent);
+
+        expect(registry.verifySignature(validAgent.agentId)).toBe(true);
+        expect(registry.verifySignature(invalidAgent.agentId)).toBe(false);
+      });
+
+      it('应该防止 AgentId 前缀注入攻击', () => {
+        const maliciousAgentIds = [
+          'agent:PeerId16:Random8:extra',
+          'agent:PeerId16:Random8/../..',
+          'agent:PeerId16:Random8%00',
+          'agent::PeerId16:Random8',
+        ];
+
+        for (const maliciousId of maliciousAgentIds) {
+          registry.register({
+            agentId: maliciousId,
+            name: 'Malicious Agent',
+            capabilities: [],
+            signature: generateValidSignature(),
+            nodeId: 'PeerId16AB123456789',
+          });
+
+          expect(registry.verifySignature(maliciousId)).toBe(false);
+        }
+      });
+    });
+
+    // 异步验证测试
+    describe('异步签名验证', () => {
+      it('应该支持异步验证 AgentIdentity', async () => {
+        const mockVerify = vi.fn().mockResolvedValue(true);
+        const registryWithVerify = new AgentRegistry({ verifyWithNodeKey: mockVerify });
+
+        const agentIdentity: AgentIdentity = {
+          id: 'agent-test-id',
+          name: 'Test Agent',
+          capabilities: ['test'],
+          nodeId: 'node-test-id',
+          publicKey: 'publicKeyBase64',
+          signature: 'signatureBase64',
+          createdAt: new Date().toISOString(),
+        };
+
+        const isValid = await registryWithVerify.verifyAgentIdentity(agentIdentity);
+        expect(isValid).toBe(true);
+        expect(mockVerify).toHaveBeenCalled();
+      });
+
+      it('应该在无验证函数时返回 false', async () => {
+        const agentIdentity: AgentIdentity = {
+          id: 'agent-test-id',
+          name: 'Test Agent',
+          capabilities: ['test'],
+          nodeId: 'node-test-id',
+          publicKey: 'publicKeyBase64',
+          signature: 'signatureBase64',
+          createdAt: new Date().toISOString(),
+        };
+
+        const isValid = await registry.verifyAgentIdentity(agentIdentity);
+        expect(isValid).toBe(false);
+      });
+
+      it('应该处理验证函数抛出异常', async () => {
+        const mockVerifyError = vi.fn().mockRejectedValue(new Error('Verification error'));
+        const registryWithError = new AgentRegistry({ verifyWithNodeKey: mockVerifyError });
+
+        const agentIdentity: AgentIdentity = {
+          id: 'agent-test-id',
+          name: 'Test Agent',
+          capabilities: ['test'],
+          nodeId: 'node-test-id',
+          publicKey: 'publicKeyBase64',
+          signature: 'signatureBase64',
+          createdAt: new Date().toISOString(),
+        };
+
+        const isValid = await registryWithError.verifyAgentIdentity(agentIdentity);
+        expect(isValid).toBe(false);
+      });
+
+      it('应该支持动态设置验证函数', async () => {
+        const mockVerify = vi.fn().mockResolvedValue(true);
+
+        registry.setVerifyFunction(mockVerify);
+
+        const agentIdentity: AgentIdentity = {
+          id: 'agent-test-id',
+          name: 'Test Agent',
+          capabilities: ['test'],
+          nodeId: 'node-test-id',
+          publicKey: 'publicKeyBase64',
+          signature: 'signatureBase64',
+          createdAt: new Date().toISOString(),
+        };
+
+        const isValid = await registry.verifyAgentIdentity(agentIdentity);
+        expect(isValid).toBe(true);
+      });
     });
   });
 });

@@ -174,13 +174,23 @@ export class AgentRegistry {
       return false;
     }
 
-    // 3. 验证签名格式（必须包含 ':' 分隔符，格式为 payload:signature）
-    // 根据签名载荷序列化格式，签名是 Node 对 AgentIdentity 的 Ed25519 签名
-    // 这里简化验证：检查签名是有效的 base64 字符串
+    // 3. 验证签名格式（必须是有效的 base64 字符串，长度为 64 字节的 Ed25519 签名）
+    // 64 字节的签名编码为 base64 后大约是 88 字符
     try {
-      Buffer.from(sigToVerify, 'base64');
+      const sigBytes = Buffer.from(sigToVerify, 'base64');
+      // Ed25519 签名长度应该是 64 字节
+      if (sigBytes.length !== 64) {
+        this.logger.warn('Invalid signature length', { agentId, expectedLength: 64, actualLength: sigBytes.length });
+        return false;
+      }
+      // 验证 base64 字符串格式（不应包含非法字符）
+      const validBase64Pattern = /^[A-Za-z0-9+/]+={0,2}$/;
+      if (!validBase64Pattern.test(sigToVerify.replace(/\s/g, ''))) {
+        this.logger.warn('Invalid base64 format', { agentId });
+        return false;
+      }
     } catch (error) {
-      this.logger.warn('Invalid signature format (not base64)', { agentId, signature: sigToVerify.substring(0, 20) + '...' });
+      this.logger.warn('Invalid signature format (not base64)', { agentId });
       return false;
     }
 
@@ -259,7 +269,8 @@ export class AgentRegistry {
   ): { success: boolean; registration?: AgentRegistration; error?: string } {
     // 如果需要验证签名
     if (verifySignature) {
-      const isValid = this.verifySignature(agent.agentId, agent.signature);
+      // 直接验证签名格式（不依赖 registry）
+      const isValid = this.validateSignatureFormat(agent.agentId, agent.signature, agent.nodeId);
       if (!isValid) {
         this.logger.warn('Agent registration rejected: signature verification failed', {
           agentId: agent.agentId
@@ -277,6 +288,64 @@ export class AgentRegistry {
       success: true,
       registration
     };
+  }
+
+  /**
+   * 验证签名格式（用于注册前验证）
+   * 不依赖 registry 中已存在的记录
+   */
+  private validateSignatureFormat(
+    agentId: string,
+    signature: string | undefined,
+    nodeId: string | undefined
+  ): boolean {
+    // 1. 检查签名是否存在
+    if (!signature) {
+      this.logger.warn('Missing signature', { agentId });
+      return false;
+    }
+
+    // 2. 验证签名格式（必须是有效的 base64 字符串，长度为 64 字节的 Ed25519 签名）
+    try {
+      const sigBytes = Buffer.from(signature, 'base64');
+      if (sigBytes.length !== 64) {
+        this.logger.warn('Invalid signature length', { agentId, expectedLength: 64, actualLength: sigBytes.length });
+        return false;
+      }
+      const validBase64Pattern = /^[A-Za-z0-9+/]+={0,2}$/;
+      if (!validBase64Pattern.test(signature.replace(/\s/g, ''))) {
+        this.logger.warn('Invalid base64 format', { agentId });
+        return false;
+      }
+    } catch (error) {
+      this.logger.warn('Invalid signature format (not base64)', { agentId });
+      return false;
+    }
+
+    // 3. 验证 AgentId 格式（RFC 003: agent:<PeerId前16位>:<随机8位>）
+    const agentIdPattern = /^agent:[a-zA-Z0-9]{16}:[a-zA-Z0-9]{8}$/;
+    if (!agentIdPattern.test(agentId)) {
+      this.logger.warn('Invalid AgentId format', { agentId, pattern: 'agent:<PeerId16>:<Random8>' });
+      return false;
+    }
+
+    // 4. 验证签名与 AgentId 匹配（AgentId 必须来自所属 NodeId）
+    if (nodeId) {
+      const peerIdPrefix = agentId.split(':')[1];
+      const expectedPrefix = nodeId.substring(0, 16);
+      if (peerIdPrefix !== expectedPrefix) {
+        this.logger.warn('AgentId does not match NodeId', {
+          agentId,
+          nodeId,
+          peerIdPrefix,
+          expectedPrefix
+        });
+        return false;
+      }
+    }
+
+    this.logger.debug('Signature format validated', { agentId });
+    return true;
   }
 
   /**

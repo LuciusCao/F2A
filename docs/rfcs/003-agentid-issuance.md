@@ -1,6 +1,6 @@
 # RFC 003: AgentId 签发机制
 
-> **Status**: Draft
+> **Status**: Partial Implementation (核心签发机制已完成，签名验证待实现)
 > **Created**: 2026-04-14
 > **Author**: Discussion with user
 

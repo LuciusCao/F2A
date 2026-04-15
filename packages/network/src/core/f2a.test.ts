@@ -25,10 +25,18 @@ vi.mock('./p2p-network', () => ({
       { peerId: 'agent-2', displayName: 'Agent 2', capabilities: [{ name: 'echo' }] },
     ]),
     getConnectedPeers: vi.fn().mockReturnValue([]),
+    getAllPeers: vi.fn().mockReturnValue([]),
     sendTaskRequest: vi.fn().mockResolvedValue({ success: true, data: { result: 'ok' } }),
     sendTaskResponse: vi.fn().mockResolvedValue({ success: true }),
+    sendFreeMessage: vi.fn().mockResolvedValue({ success: true }),
     on: vi.fn(),
-    setIdentityManager: vi.fn()
+    setIdentityManager: vi.fn(),
+    useMiddleware: vi.fn(),
+    removeMiddleware: vi.fn().mockReturnValue(true),
+    listMiddlewares: vi.fn().mockReturnValue([]),
+    findPeerViaDHT: vi.fn().mockResolvedValue({ success: true, data: [] }),
+    getDHTPeerCount: vi.fn().mockReturnValue(0),
+    isDHTEnabled: vi.fn().mockReturnValue(false)
   }))
 }));
 
@@ -384,6 +392,236 @@ describe('F2A', () => {
         expect.objectContaining({
           taskId: 'task-123',
           taskType: 'echo'
+        })
+      );
+    });
+  });
+
+  // ============================================================================
+  // sendMessageToPeer - Agent 协议层消息发送
+  // ============================================================================
+
+  describe('sendMessageToPeer', () => {
+    it('should send message to remote peer via P2PNetwork', async () => {
+      const sendFreeMessageSpy = vi.fn().mockResolvedValue({ success: true });
+      (f2a as any).p2pNetwork.sendFreeMessage = sendFreeMessageSpy;
+
+      const result = await f2a.sendMessageToPeer('remote-peer-id', 'Hello world');
+
+      expect(result.success).toBe(true);
+      expect(sendFreeMessageSpy).toHaveBeenCalledWith(
+        'remote-peer-id',
+        'Hello world',
+        undefined
+      );
+    });
+
+    it('should send message with topic', async () => {
+      const sendFreeMessageSpy = vi.fn().mockResolvedValue({ success: true });
+      (f2a as any).p2pNetwork.sendFreeMessage = sendFreeMessageSpy;
+
+      const result = await f2a.sendMessageToPeer('remote-peer-id', 'Hello', 'chat');
+
+      expect(result.success).toBe(true);
+      expect(sendFreeMessageSpy).toHaveBeenCalledWith(
+        'remote-peer-id',
+        'Hello',
+        'chat'
+      );
+    });
+
+    it('should send structured content', async () => {
+      const sendFreeMessageSpy = vi.fn().mockResolvedValue({ success: true });
+      (f2a as any).p2pNetwork.sendFreeMessage = sendFreeMessageSpy;
+
+      const structuredContent = { text: 'Hello', metadata: { priority: 'high' } };      const result = await f2a.sendMessageToPeer('remote-peer-id', structuredContent);
+
+      expect(result.success).toBe(true);
+      expect(sendFreeMessageSpy).toHaveBeenCalledWith(
+        'remote-peer-id',
+        structuredContent,
+        undefined
+      );
+    });
+
+    it('should return failure when P2PNetwork fails', async () => {
+      const sendFreeMessageSpy = vi.fn().mockResolvedValue({
+        success: false,
+        error: { message: 'Connection failed' }
+      });
+      (f2a as any).p2pNetwork.sendFreeMessage = sendFreeMessageSpy;
+
+      const result = await f2a.sendMessageToPeer('remote-peer-id', 'Hello');
+
+      expect(result.success).toBe(false);
+      expect(result.error?.message || result.error).toContain('Connection failed');
+    });
+
+    it('should handle peer not connected', async () => {
+      const sendFreeMessageSpy = vi.fn().mockResolvedValue({
+        success: false,
+        error: { message: 'Peer not connected' }
+      });
+      (f2a as any).p2pNetwork.sendFreeMessage = sendFreeMessageSpy;
+
+      const result = await f2a.sendMessageToPeer('unknown-peer', 'Hello');
+
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // ============================================================================
+  // P2P 事件转发 - bindEvents 测试
+  // ============================================================================
+
+  describe('P2P event forwarding', () => {
+    it('should forward peer:discovered event from P2PNetwork', async () => {
+      const eventSpy = vi.fn();
+      f2a.on('peer:discovered', eventSpy);
+
+      // 触发 P2P 网络的 peer:discovered 事件
+      const discoveredEvent = {
+        peerId: 'discovered-peer-id',
+        displayName: 'Discovered Agent',
+        capabilities: [{ name: 'echo' }],
+        lastSeen: Date.now()
+      };      // 模拟 P2P 网络发出事件
+      // 在 bindEvents 中，f2a 注册了监听器来转发事件      // 通过调用 mock 的 on 方法注册的监听器
+      const onCalls = (f2a as any).p2pNetwork.on.mock.calls;
+      const discoveredListener = onCalls.find(
+        (call: any[]) => call[0] === 'peer:discovered'
+      );      
+      if (discoveredListener) {
+        discoveredListener[1](discoveredEvent);
+      }
+
+      expect(eventSpy).toHaveBeenCalledWith(discoveredEvent);
+    });
+
+    it('should forward peer:connected event from P2PNetwork', async () => {
+      const eventSpy = vi.fn();
+      f2a.on('peer:connected', eventSpy);
+
+      const connectedEvent = {
+        peerId: 'connected-peer-id',
+        agentInfo: {
+          peerId: 'connected-peer-id',
+          displayName: 'Connected Agent',
+          capabilities: []
+        }
+      };      const onCalls = (f2a as any).p2pNetwork.on.mock.calls;
+      const connectedListener = onCalls.find(
+        (call: any[]) => call[0] === 'peer:connected'
+      );      
+      if (connectedListener) {
+        connectedListener[1](connectedEvent);
+      }
+
+      expect(eventSpy).toHaveBeenCalledWith(connectedEvent);
+    });
+
+    it('should forward peer:disconnected event from P2PNetwork', async () => {
+      const eventSpy = vi.fn();
+      f2a.on('peer:disconnected', eventSpy);
+
+      const disconnectedEvent = {
+        peerId: 'disconnected-peer-id'
+      };      const onCalls = (f2a as any).p2pNetwork.on.mock.calls;
+      const disconnectedListener = onCalls.find(
+        (call: any[]) => call[0] === 'peer:disconnected'
+      );      
+      if (disconnectedListener) {
+        disconnectedListener[1](disconnectedEvent);
+      }
+
+      expect(eventSpy).toHaveBeenCalledWith(disconnectedEvent);
+    });
+
+    it('should forward error event from P2PNetwork', async () => {
+      const eventSpy = vi.fn();
+      f2a.on('error', eventSpy);
+
+      const errorObj = new Error('P2P network error');
+      const onCalls = (f2a as any).p2pNetwork.on.mock.calls;
+      const errorListener = onCalls.find(
+        (call: any[]) => call[0] === 'error'
+      );      
+      if (errorListener) {
+        errorListener[1](errorObj);
+      }
+
+      expect(eventSpy).toHaveBeenCalledWith(errorObj);
+    });
+
+    it('should handle message:received with task.request topic', async () => {
+      // 注册能力以便处理任务请求
+      f2a.registerCapability(
+        { name: 'echo', description: 'Echo', tools: [] },
+        async (params) => ({ echoed: params.message })
+      );
+
+      const sendResponseSpy = vi.fn().mockResolvedValue({ success: true });
+      (f2a as any).p2pNetwork.sendTaskResponse = sendResponseSpy;
+
+      const taskMessage = {
+        id: 'msg-123',
+        type: 'MESSAGE',
+        from: 'sender-peer-id',
+        to: 'test-peer-id',
+        timestamp: Date.now(),
+        payload: {
+          topic: 'task.request',
+          content: {
+            taskId: 'task-456',
+            taskType: 'echo',
+            description: 'Test task',
+            parameters: { message: 'hello' }
+          }
+        }
+      };      const onCalls = (f2a as any).p2pNetwork.on.mock.calls;
+      const messageListener = onCalls.find(
+        (call: any[]) => call[0] === 'message:received'
+      );      
+      if (messageListener) {
+        await messageListener[1](taskMessage, 'sender-peer-id');
+      }
+
+      expect(sendResponseSpy).toHaveBeenCalledWith(
+        'sender-peer-id',
+        'task-456',
+        'success',
+        { echoed: 'hello' }
+      );
+    });
+
+    it('should emit peer:message for non-task messages', async () => {
+      const eventSpy = vi.fn();
+      f2a.on('peer:message', eventSpy);
+
+      const chatMessage = {
+        id: 'msg-chat',
+        type: 'MESSAGE',
+        from: 'sender-peer-id',
+        to: 'test-peer-id',
+        timestamp: Date.now(),
+        payload: {
+          topic: 'chat',
+          content: 'Hello there!'
+        }
+      };      const onCalls = (f2a as any).p2pNetwork.on.mock.calls;
+      const messageListener = onCalls.find(
+        (call: any[]) => call[0] === 'message:received'
+      );      
+      if (messageListener) {
+        await messageListener[1](chatMessage, 'sender-peer-id');
+      }
+
+      expect(eventSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messageId: 'msg-chat',
+          from: 'sender-peer-id',
+          content: 'Hello there!',
+          topic: 'chat'
         })
       );
     });

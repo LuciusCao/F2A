@@ -297,7 +297,8 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     // Phase 1: 初始化 AgentRegistry 和 MessageRouter
     // 使用 nodePeerId 和 F2A 实例的 signData 方法
     // Phase 3: 传递 dataDir 以支持持久化
-    f2a.agentRegistry = new AgentRegistry(nodePeerId, f2a.signData.bind(f2a), { dataDir });
+    // P0 修复：使用异步工厂方法避免同步 I/O 阻塞
+    f2a.agentRegistry = await AgentRegistry.create(nodePeerId, f2a.signData.bind(f2a), { dataDir });
     f2a.messageRouter = new MessageRouter(new Map());
 
     return f2a;

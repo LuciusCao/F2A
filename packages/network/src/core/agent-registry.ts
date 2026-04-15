@@ -152,10 +152,13 @@ export class AgentRegistry {
     this.dataDir = options.dataDir || join(homedir(), DEFAULT_DATA_DIR);
     this.enablePersistence = options.enablePersistence ?? true;
 
-    // P0 修复：构造函数中不再同步加载
-    // 使用静态工厂方法 AgentRegistry.create() 进行异步初始化
-    // 或调用 loadAsync() 手动异步加载
-    // 同步 load() 仍保留用于 enablePersistence: false 或测试场景
+    // P0 修复说明：
+    // - 构造函数仍支持同步加载（向后兼容）
+    // - 推荐使用静态工厂方法 AgentRegistry.create() 进行异步初始化
+    // - 生产代码（如 F2A.create）应使用工厂方法避免阻塞
+    if (this.enablePersistence) {
+      this.load();
+    }
   }
 
   /**
@@ -467,6 +470,46 @@ export class AgentRegistry {
       } catch {
         // 忽略清理失败
       }
+    }
+  }
+
+  /**
+   * 将内存中的 Agent 数据保存到文件（异步版本）
+   * 
+   * P0 修复：避免阻塞主线程
+   * 使用 JSON 格式，便于调试和查看
+   * 自动排除 onMessage 回调（无法序列化）
+   */
+  async saveAsync(): Promise<void> {
+    if (!this.enablePersistence) return;
+
+    const filePath = join(this.dataDir, AGENT_REGISTRY_FILE);
+
+    // 转换为持久化格式
+    const persistedAgents: PersistedAgentRegistration[] = [];for (const agent of this.agents.values()) {      persistedAgents.push(this.toPersistedFormat(agent));
+    }
+
+    const data: PersistedAgentRegistry = {
+      version: 1,
+      agents: persistedAgents,
+      savedAt: new Date().toISOString(),
+    };
+
+    // 异步确保目录存在
+    if (!existsSync(this.dataDir)) {
+      await mkdir(this.dataDir, { recursive: true });
+    }
+
+    // 异步写入文件（简化版本，不使用原子写入）
+    // TODO: 实现异步原子写入（需要 fs.promises.rename）
+    try {
+      await writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+      this.logger.debug('Agents saved (async)', {
+        path: filePath,
+        count: persistedAgents.length,
+      });
+    } catch (err: any) {
+      this.logger.error('Failed to save agents (async)', { error: err.message, path: filePath });
     }
   }
 

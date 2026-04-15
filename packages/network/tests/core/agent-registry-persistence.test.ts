@@ -93,7 +93,7 @@ describe('AgentRegistry Persistence', () => {
   });
 
   describe('auto-load on startup', () => {
-    it('should load persisted agents on creation', () => {
+    it('should load persisted agents on creation (async)', async () => {
       // 先写入一个持久化文件
       const persistedData = {
         version: 1,
@@ -114,8 +114,8 @@ describe('AgentRegistry Persistence', () => {
       const filePath = join(testDir, AGENT_REGISTRY_FILE);
       writeFileSync(filePath, JSON.stringify(persistedData, null, 2), 'utf-8');
       
-      // 创建新的 registry（应该自动加载）
-      const registry = new AgentRegistry(mockPeerId, mockSignFunction, { dataDir: testDir });
+      // P0 修复：使用异步工厂方法
+      const registry = await AgentRegistry.create(mockPeerId, mockSignFunction, { dataDir: testDir });
       
       // 验证已加载
       const agents = registry.list();
@@ -123,24 +123,26 @@ describe('AgentRegistry Persistence', () => {
       expect(agents[0].name).toBe('Existing Agent');
     });
 
-    it('should start fresh when no persisted file', () => {
-      const registry = new AgentRegistry(mockPeerId, mockSignFunction, { dataDir: testDir });
+    it('should start fresh when no persisted file (async)', async () => {
+      // P0 修复：使用异步工厂方法
+      const registry = await AgentRegistry.create(mockPeerId, mockSignFunction, { dataDir: testDir });
       expect(registry.list().length).toBe(0);
     });
   });
 
   describe('save/load cycle', () => {
-    it('should preserve all agent data through save/load', () => {
-      // 注册 Agent
+    it('should preserve all agent data through save/load (async)', async () => {
+      // 注册 Agent（启用持久化）
       const registry1 = new AgentRegistry(mockPeerId, mockSignFunction, { dataDir: testDir });
       const agent1 = registry1.register({
         name: 'Agent 1',
         capabilities: [{ name: 'cap1', description: 'Cap 1' }],
         metadata: { key: 'value' },
       });
+      // 注册时已自动保存
       
-      // 创建新的 registry（应该加载）
-      const registry2 = new AgentRegistry(mockPeerId, mockSignFunction, { dataDir: testDir });
+      // P0 修复：使用异步工厂方法加载
+      const registry2 = await AgentRegistry.create(mockPeerId, mockSignFunction, { dataDir: testDir });
       
       // 验证数据完整
       const loadedAgent = registry2.get(agent1.agentId);
@@ -151,15 +153,15 @@ describe('AgentRegistry Persistence', () => {
       // 注意：onMessage 无法恢复（无法序列化）
     });
 
-    it('should handle multiple agents', () => {
+    it('should handle multiple agents (async)', async () => {
       const registry1 = new AgentRegistry(mockPeerId, mockSignFunction, { dataDir: testDir });
       registry1.register({ name: 'Agent 1', capabilities: [] });
       registry1.register({ name: 'Agent 2', capabilities: [] });
       registry1.register({ name: 'Agent 3', capabilities: [] });
+      // 每次注册时已自动保存
       
-      // 创建新的 registry
-      const registry2 = new AgentRegistry(mockPeerId, mockSignFunction, { dataDir: testDir });
-      
+      // P0 修复：使用异步工厂方法加载
+      const registry2 = await AgentRegistry.create(mockPeerId, mockSignFunction, { dataDir: testDir });
       expect(registry2.list().length).toBe(3);
     });
   });

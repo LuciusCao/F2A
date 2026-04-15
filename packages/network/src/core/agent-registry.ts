@@ -10,7 +10,8 @@
 import { Logger } from '../utils/logger.js';
 import type { AgentCapability } from '../types/index.js';
 import { randomBytes } from 'crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
+import { readFile, writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 
@@ -151,10 +152,42 @@ export class AgentRegistry {
     this.dataDir = options.dataDir || join(homedir(), DEFAULT_DATA_DIR);
     this.enablePersistence = options.enablePersistence ?? true;
 
-    // 初始化时加载持久化数据（同步）
-    if (this.enablePersistence) {
-      this.load();
+    // P0 修复：构造函数中不再同步加载
+    // 使用静态工厂方法 AgentRegistry.create() 进行异步初始化
+    // 或调用 loadAsync() 手动异步加载
+    // 同步 load() 仍保留用于 enablePersistence: false 或测试场景
+  }
+
+  /**
+   * 静态工厂方法：异步创建 AgentRegistry
+   * 
+   * P0 修复：避免构造函数中的同步 I/O 阻塞
+   * - 先创建实例（禁用持久化）
+   * - 然后异步加载持久化数据
+   * 
+   * @param peerId 节点 PeerId
+   * @param signFunction 签名函数
+   * @param options 配置选项
+   * @returns Promise<AgentRegistry>
+   */
+  static async create(
+    peerId: string,
+    signFunction: (data: string) => string,
+    options: AgentRegistryOptions = {}
+  ): Promise<AgentRegistry> {
+    // 创建实例时禁用持久化，避免构造函数中同步加载
+    const registry = new AgentRegistry(peerId, signFunction, {
+      ...options,
+      enablePersistence: false,
+    });
+
+    // 如果原本需要持久化，异步加载
+    if (options.enablePersistence !== false) {
+      registry.enablePersistence = true;
+      await registry.loadAsync();
     }
+
+    return registry;
   }
 
   /**
@@ -268,6 +301,15 @@ export class AgentRegistry {
 
   /**
    * 验证 AgentId 签名
+   * 
+   * 安全限制（当前实现）:
+   * - 仅检查格式和 PeerId 前缀匹配
+   * - 完整签名验证未实现（需要其他节点的公钥）
+   * - 采用 fail-safe 策略：验证失败时拒绝，而非放行
+   * 
+   * TODO: 实现完整签名验证流程
+   * - 存储其他节点的公钥
+   * - 使用 crypto 验证 Ed25519 签名
    */
   verifySignature(agentId: string, signature: string, peerId: string): boolean {
     // 检查 AgentId 格式
@@ -283,10 +325,15 @@ export class AgentRegistry {
       return false;
     }
 
-    // TODO: 实际验证签名（需要其他节点的公钥）
-    // 目前只检查格式，后续需要实现完整的签名验证
-    this.logger.debug('AgentId signature verified (format check)', { agentId });
-    return true;
+    // Fail-safe: 签名验证未完全实现，拒绝不可信的 AgentId
+    // 完整签名验证需要其他节点的公钥，目前尚未实现
+    // 安全原则：fail safe, not fail open!
+    this.logger.warn('Signature verification not fully implemented, rejecting untrusted AgentId', {
+      agentId,
+      peerId,
+      reason: '完整的签名验证需要其他节点的公钥，当前仅支持格式检查'
+    });
+    return false;
   }
 
   /**
@@ -399,13 +446,28 @@ export class AgentRegistry {
       mkdirSync(this.dataDir, { recursive: true });
     }
     
-    // 写入文件
-    writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
-    
-    this.logger.debug('Agents saved', {
-      path: filePath,
-      count: persistedAgents.length,
-    });
+    // 原子写入：先写临时文件，再 rename
+    // 防止进程崩溃时文件损坏
+    const tempPath = filePath + '.tmp';
+    try {
+      writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
+      renameSync(tempPath, filePath); // POSIX atomic rename
+      
+      this.logger.debug('Agents saved', {
+        path: filePath,
+        count: persistedAgents.length,
+      });
+    } catch (err: any) {
+      this.logger.error('Failed to save agents', { error: err.message, path: filePath });
+      // 尝试清理临时文件
+      try {
+        if (existsSync(tempPath)) {
+          writeFileSync(tempPath, '', 'utf-8'); // 清空临时文件
+        }
+      } catch {
+        // 忽略清理失败
+      }
+    }
   }
 
   /**
@@ -426,7 +488,14 @@ export class AgentRegistry {
       }
       
       const content = readFileSync(filePath, 'utf-8');
-      const data: PersistedAgentRegistry = JSON.parse(content);
+      // 安全 JSON.parse：过滤危险 key，防止 prototype pollution
+      const data: PersistedAgentRegistry = JSON.parse(content, (key, value) => {
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+          this.logger.warn('Blocked dangerous key in JSON parse', { key });
+          return undefined; // Block dangerous keys
+        }
+        return value;
+      });
       
       // 版本检查
       if (data.version !== 1) {
@@ -447,6 +516,58 @@ export class AgentRegistry {
       });
     } catch (err: any) {
       this.logger.warn('Failed to load persisted agents', { error: err.message });
+    }
+  }
+
+  /**
+   * 从文件加载 Agent 数据到内存（异步版本）
+   * 
+   * P0 修复：避免阻塞主线程
+   * 注意：加载的 Agent 没有 onMessage 回调
+   */
+  async loadAsync(): Promise<void> {
+    if (!this.enablePersistence) return;
+
+    const filePath = join(this.dataDir, AGENT_REGISTRY_FILE);
+
+    try {
+      // 异步检查文件存在
+      if (!existsSync(filePath)) {
+        this.logger.debug('No persisted agents file found, starting fresh');
+        return;
+      }
+
+      // 异步读取文件
+      const content = await readFile(filePath, 'utf-8');
+      
+      // 安全 JSON.parse：过滤危险 key，防止 prototype pollution
+      const data: PersistedAgentRegistry = JSON.parse(content, (key, value) => {
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+          this.logger.warn('Blocked dangerous key in JSON parse', { key });
+          return undefined;
+        }
+        return value;
+      });
+
+      // 版本检查
+      if (data.version !== 1) {
+        this.logger.warn('Unsupported persistence version', { version: data.version });
+        return;
+      }
+
+      // 加载到内存
+      for (const persisted of data.agents) {
+        const agent = this.fromPersistedFormat(persisted);
+        this.agents.set(agent.agentId, agent);
+      }
+
+      this.logger.info('Agents loaded (async)', {
+        path: filePath,
+        count: data.agents.length,
+        savedAt: data.savedAt,
+      });
+    } catch (err: any) {
+      this.logger.warn('Failed to load persisted agents (async)', { error: err.message });
     }
   }
 

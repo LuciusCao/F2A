@@ -4,7 +4,7 @@
  */
 
 import { Logger } from '../utils/logger.js';
-import type { AgentRegistration } from './agent-registry.js';
+import type { AgentRegistration, AgentRegistry } from './agent-registry.js';
 
 /**
  * 路由消息类型
@@ -24,6 +24,8 @@ export interface RoutableMessage {
   type: 'message' | 'task_request' | 'task_response' | 'announcement' | 'claim';
   /** 创建时间 */
   createdAt: Date;
+  /** 消息签名（用于验证发送方身份） */
+  signature?: string;
 }
 
 /**
@@ -44,16 +46,25 @@ export interface MessageQueue {
  */
 export class MessageRouter {
   private queues: Map<string, MessageQueue> = new Map();
-  private agentRegistry: Map<string, AgentRegistration>;
+  private agentRegistryMap: Map<string, AgentRegistration>; // 保持向后兼容
+  private agentRegistryInstance?: AgentRegistry; // AgentRegistry 实例，用于签名验证
   private logger: Logger;
   private defaultMaxQueueSize: number = 100;
 
   constructor(agentRegistry: Map<string, AgentRegistration>, options?: {
     maxQueueSize?: number;
   }) {
-    this.agentRegistry = agentRegistry;
+    this.agentRegistryMap = agentRegistry;
     this.logger = new Logger({ component: 'MessageRouter' });
     this.defaultMaxQueueSize = options?.maxQueueSize || 100;
+  }
+
+  /**
+   * 设置 AgentRegistry 实例（用于签名验证）
+   */
+  setAgentRegistry(instance: AgentRegistry): void {
+    this.agentRegistryInstance = instance;
+    this.logger.info('AgentRegistry instance set for signature verification');
   }
 
   /**
@@ -91,15 +102,34 @@ export class MessageRouter {
    * 路由消息到特定 Agent
    */
   route(message: RoutableMessage): boolean {
-    const { toAgentId, fromAgentId } = message;
+    const { toAgentId, fromAgentId, signature } = message;
 
-    // 验证发送方存在
-    if (!this.agentRegistry.has(fromAgentId)) {
+    // 1. 验证发送方签名（如果有 AgentRegistry 实例）
+    if (this.agentRegistryInstance) {
+      if (!this.agentRegistryInstance.verifySignature(fromAgentId, signature)) {
+        this.logger.warn('Invalid signature, message rejected', {
+          fromAgentId,
+          signature: signature || '(missing)',
+          messageId: message.messageId,
+          reason: 'signature verification failed',
+        });
+        return false;
+      }
+    } else {
+      // 没有 AgentRegistry 实例时，记录警告但继续处理（向后兼容）
+      this.logger.debug('Signature verification skipped (no AgentRegistry instance)', {
+        fromAgentId,
+        messageId: message.messageId,
+      });
+    }
+
+    // 2. 验证发送方已注册
+    if (!this.agentRegistryMap.has(fromAgentId)) {
       this.logger.warn('Sender agent not registered', { fromAgentId });
       return false;
     }
 
-    // 如果指定了目标 Agent，路由到该 Agent
+    // 3. 如果指定了目标 Agent，路由到该 Agent
     if (toAgentId) {
       const queue = this.queues.get(toAgentId);
       if (!queue) {
@@ -123,7 +153,7 @@ export class MessageRouter {
       return true;
     }
 
-    // 如果未指定目标 Agent，广播给所有 Agent（除了发送方）
+    // 4. 如果未指定目标 Agent，广播给所有 Agent（除了发送方）
     return this.broadcast(message);
   }
 
@@ -249,11 +279,11 @@ export class MessageRouter {
   }
 
   /**
-   * 更新 Agent 注册表
+   * 更新 Agent 注册表 Map（向后兼容）
    * 公开方法，允许外部更新注册表引用
    */
   updateRegistry(registry: Map<string, AgentRegistration>): void {
-    this.agentRegistry = registry;
+    this.agentRegistryMap = registry;
     this.logger.info('Agent registry updated', { count: registry.size });
   }
 }

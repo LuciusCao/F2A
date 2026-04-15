@@ -5,6 +5,9 @@
 
 import { Logger } from '../utils/logger.js';
 import type { AgentRegistration } from './agent-registry.js';
+import type { P2PNetwork } from './p2p-network.js';
+import type { Result, StructuredMessagePayload, MESSAGE_TOPICS } from '../types/index.js';
+import { success, failureFromError } from '../types/result.js';
 
 /**
  * 路由消息类型
@@ -45,13 +48,15 @@ export interface MessageQueue {
 export class MessageRouter {
   private queues: Map<string, MessageQueue> = new Map();
   private agentRegistry: Map<string, AgentRegistration>;
+  private p2pNetwork?: P2PNetwork;
   private logger: Logger;
   private defaultMaxQueueSize: number = 100;
 
-  constructor(agentRegistry: Map<string, AgentRegistration>, options?: {
+  constructor(agentRegistry: Map<string, AgentRegistration>, p2pNetwork?: P2PNetwork, options?: {
     maxQueueSize?: number;
   }) {
     this.agentRegistry = agentRegistry;
+    this.p2pNetwork = p2pNetwork;
     this.logger = new Logger({ component: 'MessageRouter' });
     this.defaultMaxQueueSize = options?.maxQueueSize || 100;
   }

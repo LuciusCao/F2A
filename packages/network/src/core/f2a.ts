@@ -20,6 +20,8 @@ import { AgentIdentityManager } from './identity/agent-identity.js';
 import { IdentityDelegator } from './identity/delegator.js';
 import { CapabilityManager } from './capability-manager.js';
 import { SkillExchangeManager } from './skill-exchange-manager.js';
+import { AgentRegistry } from './agent-registry.js';
+import { MessageRouter } from './message-router.js';
 import { Logger } from '../utils/logger.js';
 import { Middleware } from '../utils/middleware.js';
 import { validateAgentCapability, validateTaskDelegateOptions } from '../utils/validation.js';
@@ -109,6 +111,10 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   
   private capabilityManager?: CapabilityManager;
   private skillExchangeManager?: SkillExchangeManager;
+  
+  // Phase 1: Agent Registry 和 Message Router
+  private agentRegistry?: AgentRegistry;
+  private messageRouter?: MessageRouter;
 
   private constructor(
     agentInfo: AgentInfo,
@@ -287,6 +293,11 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     f2a.nodeIdentityManager = nodeIdentityManager;
     f2a.agentIdentityManager = agentIdentityManager;
     f2a.identityDelegator = identityDelegator;
+
+    // Phase 1: 初始化 AgentRegistry 和 MessageRouter
+    // 使用 nodePeerId 和 F2A 实例的 signData 方法
+    f2a.agentRegistry = new AgentRegistry(nodePeerId, f2a.signData.bind(f2a));
+    f2a.messageRouter = new MessageRouter(new Map());
 
     return f2a;
   }
@@ -1013,5 +1024,29 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     };
 
     return this.identityDelegator.renewAgent(currentIdentity, newExpiresAt, signWithNodeKey);
+  }
+
+  // ========================================================================
+  // Phase 1: Agent Registry 和 Message Router getter 方法
+  // ========================================================================
+
+  /**
+   * 获取 Agent Registry
+   */
+  getAgentRegistry(): AgentRegistry {
+    if (!this.agentRegistry) {
+      throw new Error('AgentRegistry not initialized');
+    }
+    return this.agentRegistry;
+  }
+
+  /**
+   * 获取 Message Router
+   */
+  getMessageRouter(): MessageRouter {
+    if (!this.messageRouter) {
+      throw new Error('MessageRouter not initialized');
+    }
+    return this.messageRouter;
   }
 }

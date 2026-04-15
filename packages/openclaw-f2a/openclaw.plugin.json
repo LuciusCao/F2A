@@ -23,16 +23,6 @@
         "description": "Auth token for webhook requests",
         "sensitive": true
       },
-      "controlPort": {
-        "type": "number",
-        "description": "Port for F2A daemon control API",
-        "default": 9001
-      },
-      "controlToken": {
-        "type": "string",
-        "description": "Auth token for F2A daemon control API (auto-loaded from ~/.f2a/control-token)",
-        "sensitive": true
-      },
       "agentTimeout": {
         "type": "number",
         "description": "Timeout for Agent response (milliseconds)",
@@ -44,8 +34,6 @@
     "webhookPath": { "label": "Webhook Path", "placeholder": "/f2a/webhook" },
     "webhookPort": { "label": "Webhook Port" },
     "webhookToken": { "label": "Webhook Token", "sensitive": true },
-    "controlPort": { "label": "Control Port" },
-    "controlToken": { "label": "Control Token", "sensitive": true },
     "agentTimeout": { "label": "Agent Timeout (ms)" }
   }
 }

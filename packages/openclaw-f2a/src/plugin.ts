@@ -15,8 +15,6 @@ const DEFAULT_CONFIG: Required<WebhookConfig> = {
   webhookPath: '/f2a/webhook',
   webhookPort: 9002,
   webhookToken: '',
-  controlPort: 9001,
-  controlToken: '',
   agentTimeout: 60000
 };
 
@@ -37,7 +35,7 @@ export default function register(api: OpenClawPluginApi) {
     ...rawConfig
   };
 
-  api.logger?.info(`[F2A Webhook] Initializing... webhookPath=${config.webhookPath} controlPort=${config.controlPort}`);
+  api.logger?.info(`[F2A Webhook] Initializing... webhookPath=${config.webhookPath} webhookPort=${config.webhookPort}`);
 
   // Register service for webhook handling
   api.registerService?.({
@@ -73,26 +71,28 @@ async function startWebhookListener(
 ): Promise<void> {
   const http = await import('http');
   const { exec } = await import('child_process');
-  const { readFile } = await import('fs/promises');
-  const { homedir } = await import('os');
-
-  // Load control token from ~/.f2a/control-token if not provided
-  let controlToken = config.controlToken;
-  if (!controlToken) {
-    try {
-      controlToken = await readFile(`${homedir()}/.f2a/control-token`, 'utf-8').then(s => s.trim());
-    } catch {
-      api.logger?.warn('[F2A Webhook] Could not load control token from ~/.f2a/control-token');
-    }
-  }
 
   const server = http.createServer(async (req, res) => {
-    // Only handle POST to webhook path
-    if (req.method !== 'POST' || req.url !== config.webhookPath) {
+    // Parse URL path - support both global webhook and agent-specific webhook
+    // Global: /f2a/webhook
+    // Agent-specific: /f2a/webhook/agent:<id_prefix>
+    const urlPath = req.url || '';
+    
+    // Check for agent-specific webhook path
+    // Agent ID prefix can include lowercase letters, numbers, and uppercase
+    const agentMatch = urlPath.match(/^\/f2a\/webhook\/agent:([a-zA-Z0-9]+)(?:\/|$)/);
+    const isAgentWebhook = agentMatch !== null;
+    const isGlobalWebhook = urlPath === config.webhookPath || urlPath === '/f2a/webhook';
+    
+    // Only handle POST to webhook paths
+    if (req.method !== 'POST' || (!isGlobalWebhook && !isAgentWebhook)) {
       res.writeHead(404);
       res.end('Not found');
       return;
     }
+    
+    // Extract agent ID prefix if present
+    const agentIdPrefix = isAgentWebhook ? agentMatch![1] : null;
 
     // Validate token
     const authHeader = req.headers['authorization'] || req.headers['x-f2a-token'];
@@ -125,10 +125,14 @@ async function startWebhookListener(
       return;
     }
 
-    api.logger?.info(`[F2A Webhook] Received message from ${from.slice(0, 16)}, length=${message.length}`);
+    // Log with webhook type info
+    const webhookType = isAgentWebhook ? `agent:${agentIdPrefix}` : 'global';
+    api.logger?.info(`[F2A Webhook] Received message (${webhookType}) from ${from.slice(0, 16)}, length=${message.length}`);
 
     // Invoke Agent to generate reply
-    const reply = await invokeAgent(api, from, message, config.agentTimeout);
+    // Use agentIdPrefix as session key if available, otherwise use from prefix
+    const sessionKeyPrefix = agentIdPrefix || from.slice(0, 16);
+    const reply = await invokeAgent(api, sessionKeyPrefix, message, config.agentTimeout);
 
     // Send reply via f2a CLI
     if (reply) {
@@ -156,10 +160,15 @@ async function startWebhookListener(
 /**
  * Invoke Agent to generate reply
  * Uses OpenClaw subagent API if available
+ * 
+ * @param api - OpenClaw plugin API
+ * @param sessionKeyPrefix - Prefix for session key (agentId or from prefix)
+ * @param message - Message content
+ * @param timeout - Timeout in milliseconds
  */
 async function invokeAgent(
   api: OpenClawPluginApi,
-  from: string,
+  sessionKeyPrefix: string,
   message: string,
   timeout: number
 ): Promise<string | undefined> {
@@ -168,7 +177,7 @@ async function invokeAgent(
   // Check if subagent API is available
   if (api.runtime?.subagent?.run && api.runtime?.subagent?.waitForRun) {
     try {
-      const sessionKey = `f2a-webhook-${from.slice(0, 16)}`;
+      const sessionKey = `f2a-webhook-${sessionKeyPrefix}`;
       const idempotencyKey = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 const { runId } = await api.runtime.subagent.run({

@@ -94,10 +94,7 @@ export interface WebhookConfig {
   webhookPort?: number;
   /** Auth token for webhook requests */
   webhookToken?: string;
-  /** F2A daemon control port */
-  controlPort?: number;
-  /** F2A daemon auth token */
-  controlToken?: string;
+
   /** Agent response timeout (milliseconds) */
   agentTimeout?: number;
 }

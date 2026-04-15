@@ -68,7 +68,36 @@ const createMockF2A = () => ({
     peerId: 'test-peer-id',
     onlinePeers: 0,
     isRunning: true
-  })
+  }),
+  // Phase 1: 添加 Agent Registry 和 Message Router mock
+  getAgentRegistry: vi.fn().mockReturnValue({
+    register: vi.fn().mockReturnValue({
+      agentId: 'agent:test-peer-id:12345678',
+      name: 'Test Agent',
+      capabilities: [],
+      peerId: 'test-peer-id',
+      signature: 'test-signature',
+      registeredAt: new Date(),
+      lastActiveAt: new Date(),
+    }),
+    unregister: vi.fn().mockReturnValue(true),
+    get: vi.fn(),
+    list: vi.fn().mockReturnValue([]),
+    findByCapability: vi.fn().mockReturnValue([]),
+    getStats: vi.fn().mockReturnValue({ total: 0, capabilities: {} }),
+  }),
+  getMessageRouter: vi.fn().mockReturnValue({
+    createQueue: vi.fn(),
+    deleteQueue: vi.fn(),
+    getQueue: vi.fn(),
+    route: vi.fn().mockReturnValue(true),
+    routeRemote: vi.fn().mockResolvedValue({ success: true }),
+    broadcast: vi.fn().mockReturnValue(true),
+    getMessages: vi.fn().mockReturnValue([]),
+    clearMessages: vi.fn().mockReturnValue(0),
+    getStats: vi.fn().mockReturnValue({ queues: 0, totalMessages: 0, queueStats: {} }),
+    setP2PNetwork: vi.fn(),
+  }),
 });
 
 // Mock RateLimiter - we'll control this in tests

@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { AgentRegistry, AgentRegistration, AgentRegistrationRequest } from './agent-registry.js';
+import { AgentRegistry, AgentRegistration, AgentRegistrationRequest } from '../core/agent-registry.js';
 import type { AgentCapability } from '../types/index.js';
 
 // Mock Logger

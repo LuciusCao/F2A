@@ -168,6 +168,143 @@ export class MessageRouter {
   }
 
   /**
+   * 路由远程消息给其他节点的 Agent
+   * 
+   * 通过 P2P 网络发送消息给远程节点上的 Agent
+   * AgentId 格式: agent:<PeerId前16位>:<随机8位>
+   * 
+   * @param message 路由消息
+   * @returns Result<void> 发送结果
+   */
+  async routeRemote(message: RoutableMessage): Promise<Result<void>> {
+    const { toAgentId, fromAgentId } = message;
+
+    // 验证 P2P 网络已配置
+    if (!this.p2pNetwork) {
+      return failureFromError('NETWORK_NOT_STARTED', 'P2P network not configured for remote routing');
+    }
+
+    // 验证发送方 Agent 存在
+    if (!this.agentRegistry.has(fromAgentId)) {
+      this.logger.warn('Sender agent not registered for remote routing', { fromAgentId });
+      return failureFromError('UNAUTHORIZED', `Sender agent not registered: ${fromAgentId}`);
+    }
+
+    // 验证目标 Agent ID
+    if (!toAgentId) {
+      return failureFromError('INVALID_PARAMS', 'Target AgentId required for remote routing');
+    }
+
+    // 解析 AgentId 提取 PeerId 前缀
+    // 格式: agent:<PeerId前16位>:<随机8位>
+    const agentIdParts = toAgentId.split(':');
+    if (agentIdParts.length !== 3 || agentIdParts[0] !== 'agent') {
+      return failureFromError('INVALID_PARAMS', `Invalid AgentId format: ${toAgentId}`);
+    }
+
+    const peerIdPrefix = agentIdParts[1];
+    if (peerIdPrefix.length !== 16) {
+      return failureFromError('INVALID_PARAMS', `Invalid PeerId prefix in AgentId: ${peerIdPrefix}`);
+    }
+
+    // 查找对应的 PeerId（通过 prefix 匹配）
+    const targetPeerId = await this.findPeerIdByPrefix(peerIdPrefix);
+    if (!targetPeerId) {
+      this.logger.warn('Target peer not found by AgentId prefix', { peerIdPrefix, toAgentId });
+      return failureFromError('PEER_NOT_FOUND', `Peer not found for AgentId: ${toAgentId}`);
+    }
+
+    // 构造 P2P 消息载荷
+    // topic: 'agent.message' 用于 Agent 间通信
+    const payload: StructuredMessagePayload = {
+      topic: 'agent.message',
+      content: {
+        messageId: message.messageId,
+        fromAgentId,
+        toAgentId,
+        content: message.content,
+        type: message.type,
+        metadata: message.metadata,
+        createdAt: message.createdAt.toISOString(),
+      },
+    };
+
+    // 调用 P2P 网络发送消息
+    this.logger.debug('Sending remote message via P2P', {
+      messageId: message.messageId,
+      toAgentId,
+      targetPeerId: targetPeerId.slice(0, 16),
+      fromAgentId,
+    });
+
+    const result = await this.p2pNetwork.sendFreeMessage(targetPeerId, payload.content, 'agent.message');
+
+    if (result.success) {
+      this.logger.info('Remote message sent successfully', {
+        messageId: message.messageId,
+        toAgentId,
+        targetPeerId: targetPeerId.slice(0, 16),
+      });
+      return success(undefined);
+    } else {
+      this.logger.error('Failed to send remote message', {
+        messageId: message.messageId,
+        toAgentId,
+        error: result.error,
+      });
+      return result;
+    }
+  }
+
+  /**
+   * 通过 PeerId 前缀查找完整的 PeerId
+   * 
+   * 从 P2P 网络的 peer 表中查找匹配前缀的 Peer
+   * 
+   * @param prefix PeerId 前缀（16 位）
+   * @returns 完整 PeerId 或 null
+   */
+  private async findPeerIdByPrefix(prefix: string): Promise<string | null> {
+    if (!this.p2pNetwork) {
+      return null;
+    }
+
+    // 获取所有已连接的 Peers
+    const connectedPeers = this.p2pNetwork.getConnectedPeers();
+    for (const peer of connectedPeers) {
+      if (peer.peerId.startsWith(prefix)) {
+        return peer.peerId;
+      }
+    }
+
+    // 如果未找到，尝试从所有已知 Peers 查找
+    const allPeers = this.p2pNetwork.getAllPeers();
+    for (const peer of allPeers) {
+      if (peer.peerId.startsWith(prefix)) {
+        return peer.peerId;
+      }
+    }
+
+    // 尝试通过 DHT 查找（如果启用）
+    if (this.p2pNetwork.isDHTEnabled()) {
+      // 构造可能的 PeerId（需要完整 PeerId 才能查询 DHT）
+      // 这里只能返回 null，因为 DHT 需要完整的 PeerId
+      this.logger.debug('DHT lookup not possible with prefix only', { prefix });
+    }
+
+    return null;
+  }
+
+  /**
+   * 设置 P2P 网络引用
+   * 用于后续配置 P2P 网络
+   */
+  setP2PNetwork(p2pNetwork: P2PNetwork): void {
+    this.p2pNetwork = p2pNetwork;
+    this.logger.info('P2P network configured for remote routing');
+  }
+
+  /**
    * 广播消息给所有 Agent
    * 
    * 本地 Agent（有 onMessage 回调）直接调用回调

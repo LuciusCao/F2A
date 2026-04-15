@@ -4,8 +4,8 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { MessageRouter, RoutableMessage, MessageQueue } from './message-router.js';
-import type { AgentRegistration } from './agent-registry.js';
+import { MessageRouter, RoutableMessage, MessageQueue } from '../core/message-router.js';
+import type { AgentRegistration } from '../core/agent-registry.js';
 
 // Mock Logger
 vi.mock('../utils/logger.js', () => ({
@@ -47,7 +47,7 @@ describe('MessageRouter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     agentRegistry = new Map();
-    router = new MessageRouter(agentRegistry, { maxQueueSize: 10 });
+    router = new MessageRouter(agentRegistry, undefined, { maxQueueSize: 10 });
   });
 
   describe('createQueue', () => {

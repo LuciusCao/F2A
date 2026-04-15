@@ -13,8 +13,8 @@ import { homedir } from 'os';
 import { Logger } from '../utils/logger.js';
 
 // Phase 1: 导出新增组件
-export { AgentRegistry, AgentRegistration, AgentRegistrationRequest } from './agent-registry.js';
-export { MessageRouter, RoutableMessage, MessageQueue } from './message-router.js';
+export { AgentRegistry, AgentRegistration, AgentRegistrationRequest } from '../core/agent-registry.js';
+export { MessageRouter, RoutableMessage, MessageQueue } from '../core/message-router.js';
 
 export interface DaemonOptions extends F2AOptions {
   webhook?: WebhookConfig;

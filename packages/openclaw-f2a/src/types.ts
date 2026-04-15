@@ -90,6 +90,8 @@ export interface OpenClawPluginApi {
 export interface WebhookConfig {
   /** Webhook endpoint path */
   webhookPath?: string;
+  /** Webhook listener port */
+  webhookPort?: number;
   /** Auth token for webhook requests */
   webhookToken?: string;
   /** F2A daemon control port */

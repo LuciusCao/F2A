@@ -13,6 +13,11 @@
         "description": "Webhook endpoint path",
         "default": "/f2a/webhook"
       },
+      "webhookPort": {
+        "type": "number",
+        "description": "Port for webhook listener",
+        "default": 9002
+      },
       "webhookToken": {
         "type": "string",
         "description": "Auth token for webhook requests",
@@ -37,6 +42,7 @@
   },
   "uiHints": {
     "webhookPath": { "label": "Webhook Path", "placeholder": "/f2a/webhook" },
+    "webhookPort": { "label": "Webhook Port" },
     "webhookToken": { "label": "Webhook Token", "sensitive": true },
     "controlPort": { "label": "Control Port" },
     "controlToken": { "label": "Control Token", "sensitive": true },

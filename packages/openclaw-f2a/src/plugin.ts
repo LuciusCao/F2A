@@ -13,6 +13,7 @@ import type { OpenClawPluginApi, WebhookConfig, ApiLogger } from './types.js';
 /** Default configuration */
 const DEFAULT_CONFIG: Required<WebhookConfig> = {
   webhookPath: '/f2a/webhook',
+  webhookPort: 9002,
   webhookToken: '',
   controlPort: 9001,
   controlToken: '',
@@ -36,10 +37,7 @@ export default function register(api: OpenClawPluginApi) {
     ...rawConfig
   };
 
-  api.logger?.info('[F2A Webhook] Initializing...', {
-    webhookPath: config.webhookPath,
-    controlPort: config.controlPort
-  });
+  api.logger?.info(`[F2A Webhook] Initializing... webhookPath=${config.webhookPath} controlPort=${config.controlPort}`);
 
   // Register service for webhook handling
   api.registerService?.({
@@ -53,7 +51,7 @@ export default function register(api: OpenClawPluginApi) {
           await startWebhookListener(api, config);
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
-          api.logger?.warn('[F2A Webhook] Webhook listener failed to start', { error: msg });
+          api.logger?.warn(`[F2A Webhook] Webhook listener failed to start: ${msg}`);
         }
       });
     },
@@ -127,7 +125,7 @@ async function startWebhookListener(
       return;
     }
 
-    api.logger?.info('[F2A Webhook] Received message', { from: from.slice(0, 16), length: message.length });
+    api.logger?.info(`[F2A Webhook] Received message from ${from.slice(0, 16)}, length=${message.length}`);
 
     // Invoke Agent to generate reply
     const reply = await invokeAgent(api, from, message, config.agentTimeout);
@@ -138,9 +136,9 @@ async function startWebhookListener(
         exec(`f2a send --to "${from}" --message "${reply.replace(/"/g, '\\"')}"`, {
           timeout: 10000
         });
-        api.logger?.info('[F2A Webhook] Reply sent', { to: from.slice(0, 16) });
+        api.logger?.info(`[F2A Webhook] Reply sent to ${from.slice(0, 16)}`);
       } catch (err) {
-        api.logger?.error('[F2A Webhook] Failed to send reply', { error: String(err) });
+        api.logger?.error(`[F2A Webhook] Failed to send reply: ${String(err)}`);
       }
     }
 
@@ -149,13 +147,10 @@ async function startWebhookListener(
   });
 
   // Use unref() to allow Gateway to exit cleanly
-  server.listen(0, () => {
-    const addr = server.address();
-    if (addr && typeof addr === 'object') {
-      api.logger?.info('[F2A Webhook] Listening on port', { port: addr.port });
-    }
+  server.listen(config.webhookPort, '127.0.0.1', () => {
+    api.logger?.info(`[F2A Webhook] Listening on http://127.0.0.1:${config.webhookPort}${config.webhookPath}`);
+    server.unref();
   });
-  server.unref();
 }
 
 /**
@@ -174,11 +169,13 @@ async function invokeAgent(
   if (api.runtime?.subagent?.run && api.runtime?.subagent?.waitForRun) {
     try {
       const sessionKey = `f2a-webhook-${from.slice(0, 16)}`;
+      const idempotencyKey = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-      const { runId } = await api.runtime.subagent.run({
+const { runId } = await api.runtime.subagent.run({
         sessionKey,
         message,
-        deliver: true
+        deliver: true,
+        idempotencyKey
       });
 
       const result = await api.runtime.subagent.waitForRun({
@@ -200,7 +197,7 @@ async function invokeAgent(
               ? msg.content
               : msg.content.find((c: any) => c.type === 'text')?.text;
             if (reply) {
-              logger?.info('[F2A Webhook] Got Agent reply', { length: reply.length });
+              logger?.info(`[F2A Webhook] Got Agent reply, length=${reply.length}`);
               return reply;
             }
           }
@@ -212,11 +209,11 @@ async function invokeAgent(
         return 'Sorry, I took too long to respond.';
       }
 
-      logger?.error('[F2A Webhook] Agent error', { error: result.error });
+      logger?.error(`[F2A Webhook] Agent error: ${result.error}`);
       return undefined;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger?.error('[F2A Webhook] Failed to invoke Agent', { error: msg });
+      logger?.error(`[F2A Webhook] Failed to invoke Agent: ${msg}`);
       return undefined;
     }
   }

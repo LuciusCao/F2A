@@ -296,7 +296,8 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
 
     // Phase 1: 初始化 AgentRegistry 和 MessageRouter
     // 使用 nodePeerId 和 F2A 实例的 signData 方法
-    f2a.agentRegistry = new AgentRegistry(nodePeerId, f2a.signData.bind(f2a));
+    // Phase 3: 传递 dataDir 以支持持久化
+    f2a.agentRegistry = new AgentRegistry(nodePeerId, f2a.signData.bind(f2a), { dataDir });
     f2a.messageRouter = new MessageRouter(new Map());
 
     return f2a;
@@ -317,6 +318,8 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     if (!result.success) {
       return result;
     }
+
+    // Phase 3: 加载已在 constructor 中自动完成
 
     // 更新 agentInfo
     this._agentInfo.peerId = result.data.peerId;
@@ -341,6 +344,11 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     if (!this.running) return;
 
     this.logger.info('Stopping');
+
+    // Phase 3: 保存已注册的 Agent（持久化）
+    if (this.agentRegistry) {
+      this.agentRegistry.save();
+    }
 
     await this.p2pNetwork.stop();
 

@@ -3,11 +3,22 @@
  * 管理注册到 Daemon 的 Agent 实例
  * 
  * RFC 003: AgentId 由节点签发，不能由用户自定义
+ * 
+ * Phase 3: 添加持久化支持（save/load）
  */
 
 import { Logger } from '../utils/logger.js';
 import type { AgentCapability } from '../types/index.js';
 import { randomBytes } from 'crypto';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
+
+/** Agent Registry 持久化文件名 */
+export const AGENT_REGISTRY_FILE = 'agent-registry.json';
+
+/** 默认数据目录 */
+export const DEFAULT_DATA_DIR = '.f2a';
 
 /**
  * 本地消息回调类型
@@ -65,6 +76,56 @@ export interface AgentRegistrationRequest {
 }
 
 /**
+ * 持久化的 Agent 注册信息
+ * 用于 JSON 序列化，Date 对象转换为 ISO 字符串
+ * 注意：不包含 onMessage 回调（无法序列化）
+ */
+export interface PersistedAgentRegistration {
+  /** Agent 唯一标识符 */
+  agentId: string;
+  /** Agent 显示名称 */
+  name: string;
+  /** Agent 支持的能力列表 */
+  capabilities: AgentCapability[];
+  /** 签发节点的 PeerId */
+  peerId: string;
+  /** AgentId 签名（Base64） */
+  signature: string;
+  /** 注册时间（ISO 字符串） */
+  registeredAt: string;
+  /** 最后活跃时间（ISO 字符串） */
+  lastActiveAt: string;
+  /** Webhook URL */
+  webhookUrl?: string;
+  /** Agent 元数据 */
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * 久化的 Agent Registry 数据结构
+ */
+export interface PersistedAgentRegistry {
+  /** 版本号，用于未来格式升级 */
+  version: number;
+  /** 所有注册的 Agent */
+  agents: PersistedAgentRegistration[];
+  /** 保存时间（ISO 字符串） */
+  savedAt: string;
+}
+
+/**
+ * AgentRegistry 配置选项
+ */
+export interface AgentRegistryOptions {
+  /** 数据目录路径 */
+  dataDir?: string;
+  /** 是否启用持久化 */
+  enablePersistence?: boolean;
+  /** 日志级别 */
+  logLevel?: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+}
+
+/**
  * Agent 注册表
  * 管理注册到 Daemon 的所有 Agent
  */
@@ -73,11 +134,27 @@ export class AgentRegistry {
   private logger: Logger;
   private peerId: string;
   private signFunction: (data: string) => string;
+  private dataDir: string;
+  private enablePersistence: boolean;
 
-  constructor(peerId: string, signFunction: (data: string) => string) {
-    this.logger = new Logger({ component: 'AgentRegistry' });
+  constructor(
+    peerId: string,
+    signFunction: (data: string) => string,
+    options: AgentRegistryOptions = {}
+  ) {
+    this.logger = new Logger({
+      component: 'AgentRegistry',
+      level: options.logLevel || 'INFO'
+    });
     this.peerId = peerId;
     this.signFunction = signFunction;
+    this.dataDir = options.dataDir || join(homedir(), DEFAULT_DATA_DIR);
+    this.enablePersistence = options.enablePersistence ?? true;
+
+    // 初始化时加载持久化数据（同步）
+    if (this.enablePersistence) {
+      this.load();
+    }
   }
 
   /**
@@ -126,6 +203,10 @@ export class AgentRegistry {
     };
 
     this.agents.set(agentId, registration);
+    
+    // 自动保存（同步，立即完成）
+    this.save();
+    
     this.logger.info('Agent registered (node-issued)', {
       agentId,
       name: request.name,
@@ -147,8 +228,13 @@ export class AgentRegistry {
       return false;
     }
 
+    const oldName = agent.name;
     this.agents.delete(agentId);
-    this.logger.info('Agent unregistered', { agentId, name: agent.name });
+    
+    // 自动保存（同步）
+    this.save();
+    
+    this.logger.info('Agent unregistered', { agentId, name: oldName });
     return true;
   }
 
@@ -162,9 +248,14 @@ export class AgentRegistry {
       return false;
     }
 
+    const oldName = agent.name;
     agent.name = newName;
     agent.lastActiveAt = new Date();
-    this.logger.info('Agent name updated', { agentId, oldName: agent.name, newName });
+    
+    // 自动保存（同步）
+    this.save();
+    
+    this.logger.info('Agent name updated', { agentId, oldName, newName });
     return true;
   }
 
@@ -266,6 +357,131 @@ export class AgentRegistry {
       }
     }
 
+    // 如果有清理，保存更新后的数据
+    if (cleaned > 0 && this.enablePersistence) {
+      this.save();
+    }
+
     return cleaned;
+  }
+
+  // ============================================================================
+  // 持久化方法
+  // ============================================================================
+
+  /**
+   * 将内存中的 Agent 数据保存到文件
+   * 
+   * 使用 JSON 格式，便于调试和查看
+   * 自动排除 onMessage 回调（无法序列化）
+   * 
+   * 同步版本（立即完成，适合 constructor 和关键操作后）
+   */
+  save(): void {
+    if (!this.enablePersistence) return;
+
+    const filePath = join(this.dataDir, AGENT_REGISTRY_FILE);
+    
+    // 转换为持久化格式
+    const persistedAgents: PersistedAgentRegistration[] = [];
+    for (const agent of this.agents.values()) {
+      persistedAgents.push(this.toPersistedFormat(agent));
+    }
+
+    const data: PersistedAgentRegistry = {
+      version: 1,
+      agents: persistedAgents,
+      savedAt: new Date().toISOString(),
+    };
+
+    // 确保目录存在
+    if (!existsSync(this.dataDir)) {
+      mkdirSync(this.dataDir, { recursive: true });
+    }
+    
+    // 写入文件
+    writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    
+    this.logger.debug('Agents saved', {
+      path: filePath,
+      count: persistedAgents.length,
+    });
+  }
+
+  /**
+   * 从文件加载 Agent 数据到内存
+   * 
+   * 注意：加载的 Agent 没有 onMessage 回调
+   * 同步版本（constructor 中使用）
+   */
+  load(): void {
+    if (!this.enablePersistence) return;
+
+    const filePath = join(this.dataDir, AGENT_REGISTRY_FILE);
+    
+    try {
+      if (!existsSync(filePath)) {
+        this.logger.debug('No persisted agents file found, starting fresh');
+        return;
+      }
+      
+      const content = readFileSync(filePath, 'utf-8');
+      const data: PersistedAgentRegistry = JSON.parse(content);
+      
+      // 版本检查
+      if (data.version !== 1) {
+        this.logger.warn('Unsupported persistence version', { version: data.version });
+        return;
+      }
+      
+      // 加载到内存
+      for (const persisted of data.agents) {
+        const agent = this.fromPersistedFormat(persisted);
+        this.agents.set(agent.agentId, agent);
+      }
+      
+      this.logger.info('Agents loaded', {
+        path: filePath,
+        count: data.agents.length,
+        savedAt: data.savedAt,
+      });
+    } catch (err: any) {
+      this.logger.warn('Failed to load persisted agents', { error: err.message });
+    }
+  }
+
+  /**
+   * 转换为持久化格式（Date → ISO string）
+   */
+  private toPersistedFormat(agent: AgentRegistration): PersistedAgentRegistration {
+    return {
+      agentId: agent.agentId,
+      name: agent.name,
+      capabilities: agent.capabilities,
+      peerId: agent.peerId,
+      signature: agent.signature,
+      registeredAt: agent.registeredAt.toISOString(),
+      lastActiveAt: agent.lastActiveAt.toISOString(),
+      webhookUrl: agent.webhookUrl,
+      metadata: agent.metadata,
+    };
+  }
+
+  /**
+   * 从持久化格式转换（ISO string → Date）
+   */
+  private fromPersistedFormat(persisted: PersistedAgentRegistration): AgentRegistration {
+    return {
+      agentId: persisted.agentId,
+      name: persisted.name,
+      capabilities: persisted.capabilities,
+      peerId: persisted.peerId,
+      signature: persisted.signature,
+      registeredAt: new Date(persisted.registeredAt),
+      lastActiveAt: new Date(persisted.lastActiveAt),
+      webhookUrl: persisted.webhookUrl,
+      metadata: persisted.metadata,
+      // 注意：onMessage 无法恢复
+    };
   }
 }

@@ -40,7 +40,8 @@ describe('AgentRegistry', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    registry = new AgentRegistry(mockPeerId, mockSignFunction);
+    // 禁用持久化以避免测试间数据污染
+    registry = new AgentRegistry(mockPeerId, mockSignFunction, { enablePersistence: false });
   });
 
   describe('register', () => {

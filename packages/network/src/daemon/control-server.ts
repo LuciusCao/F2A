@@ -13,7 +13,7 @@ import { Logger } from '../utils/logger.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { getErrorMessage } from '../utils/error-utils.js';
 import { AgentRegistry, AgentRegistration } from './agent-registry.js';
-import { MessageRouter, RoutableMessage } from './message-router.js';
+import { MessageRouter, RoutableMessage, RoutableMessageSignature } from './message-router.js';
 import type { AgentCapability } from '../types/index.js';
 
 export interface ControlServerOptions {
@@ -810,10 +810,10 @@ export class ControlServer {
   /**
    * 发送消息
    */
-  private handleSendMessage(req: IncomingMessage, res: ServerResponse): void {
+  private async handleSendMessage(req: IncomingMessage, res: ServerResponse): Promise<void> {
     let body = '';
     req.on('data', chunk => { body += chunk; });
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const data = JSON.parse(body);
         
@@ -839,6 +839,7 @@ export class ControlServer {
         }
 
         // 创建消息
+        const createdAt = new Date();
         const message: RoutableMessage = {
           messageId: randomUUID(),
           fromAgentId: data.fromAgentId,
@@ -846,8 +847,38 @@ export class ControlServer {
           content: data.content,
           metadata: data.metadata,
           type: data.type || 'message',
-          createdAt: new Date(),
-        };
+          createdAt,
+        };        
+        // 如果客户端提供了签名，验证签名载荷匹配
+        if (data.signature && data.signedPayload) {
+          // 使用客户端提供的签名和签名载荷
+          message.signature = data.signature;
+          message.signedPayload = data.signedPayload;
+          
+          // 验证签名载荷与消息内容匹配
+          const expectedPayload = RoutableMessageSignature.serializeForSignature(message);
+          if (expectedPayload !== data.signedPayload) {
+            this.logger.warn('SignedPayload mismatch with message content', {
+              messageId: message.messageId,
+              fromAgentId: data.fromAgentId,
+              expectedPayloadHash: RoutableMessageSignature.hashPayload(expectedPayload),
+              providedPayloadHash: RoutableMessageSignature.hashPayload(data.signedPayload),
+            });
+            // 拒绝载荷不匹配的消息
+            res.writeHead(400);
+            res.end(JSON.stringify({
+              success: false,
+              error: 'signedPayload does not match message content',
+              code: 'PAYLOAD_MISMATCH',
+            }));
+            return;
+          }
+        } else {
+          // 生成签名载荷（供发送方后续签名或用于验证）
+          message.signedPayload = RoutableMessageSignature.serializeForSignature(message);
+          // 注意：signature 字段由 Agent 客户端使用私钥生成
+          // 如果客户端没有提供签名，消息仍然可以传递（向后兼容）
+        }
 
         // 路由消息
         if (data.toAgentId) {
@@ -862,7 +893,7 @@ export class ControlServer {
             return;
           }
 
-          const routed = this.messageRouter.route(message);
+          const routed = await this.messageRouter.route(message);
           if (routed) {
             this.logger.debug('Message routed', {
               messageId: message.messageId,
@@ -885,6 +916,7 @@ export class ControlServer {
         } else {
           // 广播消息
           const broadcasted = this.messageRouter.broadcast(message);
+          // broadcast 是同步方法
           res.writeHead(200);
           res.end(JSON.stringify({
             success: true,

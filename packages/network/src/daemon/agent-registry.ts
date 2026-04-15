@@ -9,6 +9,23 @@ import type { AgentIdentity } from '../core/identity/types.js';
 import { AgentIdentityManager } from '../core/identity/agent-identity.js';
 
 /**
+ * 消息签名载荷
+ * 用于验证 Agent 发送的消息签名
+ */
+export interface MessageSignaturePayload {
+  /** 消息 ID */
+  messageId: string;
+  /** 发送方 Agent ID */
+  fromAgentId: string;
+  /** 消息内容 */
+  content: string;
+  /** 消息类型 */
+  type?: string;
+  /** 创建时间 */
+  createdAt?: string;
+}
+
+/**
  * Agent 注册信息
  */
 export interface AgentRegistration {
@@ -256,6 +273,121 @@ export class AgentRegistry {
   }
 
   /**
+   * 序列化消息签名载荷
+   * 用于生成签名验证的数据
+   * 
+   * 格式稳定性保证:
+   * - 字段按固定顺序序列化: messageId, fromAgentId, content
+   * - 可选字段 type 和 createdAt 在存在时追加
+   * - 字段之间使用冒号 ':' 分隔
+   * - 此格式在 v1.x 版本中保持稳定
+   * 
+   * @param payload 消息签名载荷
+   * @returns 序列化后的字符串
+   */
+  static serializeMessagePayloadForSignature(payload: MessageSignaturePayload): string {
+    const parts = [
+      payload.messageId,
+      payload.fromAgentId,
+      payload.content
+    ];
+    
+    // 可选字段按顺序追加
+    if (payload.type) {
+      parts.push(payload.type);
+    }
+    if (payload.createdAt) {
+      parts.push(payload.createdAt);
+    }
+    
+    return parts.join(':');
+  }
+
+  /**
+   * 验证消息签名
+   * 使用 Agent 公钥验证消息签名的真实性
+   * 
+   * P0 Bug1 修复: 实现真正的 Ed25519 签名验证
+   * - 签名应覆盖消息内容 (messageId + fromAgentId + content)
+   * - 使用 Agent 注册时存储的公钥进行验证
+   * 
+   * @param agentId - 发送方 Agent ID
+   * @param messagePayload - 消息签名载荷
+   * @param signature - 消息签名 (base64)
+   * @returns Promise<boolean> 签名是否有效
+   */
+  async verifyMessageSignature(
+    agentId: string,
+    messagePayload: MessageSignaturePayload,
+    signature: string
+  ): Promise<boolean> {
+    // 1. 检查 Agent 是否已注册
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      this.logger.warn('Agent not registered for message signature verification', { agentId });
+      return false;
+    }
+
+    // 2. 检查 Agent 是否有公钥
+    if (!agent.publicKey) {
+      this.logger.warn('Agent has no public key stored', { agentId });
+      return false;
+    }
+
+    // 3. 验证签名格式
+    try {
+      const sigBytes = Buffer.from(signature, 'base64');
+      if (sigBytes.length !== 64) {
+        this.logger.warn('Invalid message signature length', {
+          agentId,
+          expectedLength: 64,
+          actualLength: sigBytes.length
+        });
+        return false;
+      }
+    } catch (error) {
+      this.logger.warn('Invalid message signature format (not base64)', { agentId });
+      return false;
+    }
+
+    // 4. 序列化消息载荷
+    const payloadString = AgentRegistry.serializeMessagePayloadForSignature(messagePayload);
+    const payloadBytes = Buffer.from(payloadString, 'utf-8');
+
+    // 5. 使用 Ed25519 公钥验证签名
+    try {
+      const { ed25519 } = await import('@noble/curves/ed25519.js');
+      const publicKeyBytes = Buffer.from(agent.publicKey, 'base64');
+      const signatureBytes = Buffer.from(signature, 'base64');
+      
+      // 验证签名
+      const isValid = ed25519.verify(signatureBytes, payloadBytes, publicKeyBytes);
+      
+      if (!isValid) {
+        this.logger.warn('Message signature verification failed', {
+          agentId,
+          messageId: messagePayload.messageId,
+          reason: 'signature does not match payload'
+        });
+        return false;
+      }
+      
+      this.logger.debug('Message signature verified successfully', {
+        agentId,
+        messageId: messagePayload.messageId
+      });
+      return true;
+    } catch (error) {
+      this.logger.error('Message signature verification error', {
+        agentId,
+        messageId: messagePayload.messageId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return false;
+    }
+  }
+
+  /**
    * 注册 Agent 并验证签名
    * 如果签名验证失败，拒绝注册
    * 
@@ -369,5 +501,66 @@ export class AgentRegistry {
     }
 
     return cleaned;
+  }
+
+  /**
+   * 检查 AgentId 是否过期
+   * 基于 createdAt 字段判断 AgentId 是否超过指定时间
+   * 
+   * @param agentId - Agent ID
+   * @param maxAgeMs - 最大有效时间（毫秒）
+   * @returns 是否已过期
+   */
+  isAgentIdExpired(agentId: string, maxAgeMs: number): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      this.logger.warn('AgentId not found for expiry check', { agentId });
+      return true; // 未注册视为过期
+    }
+
+    if (!agent.createdAt) {
+      this.logger.warn('Agent has no createdAt field', { agentId });
+      return true; // 无 createdAt 视为过期
+    }
+
+    try {
+      const createdAtDate = new Date(agent.createdAt);
+      const ageMs = Date.now() - createdAtDate.getTime();
+      const isExpired = ageMs > maxAgeMs;
+
+      if (isExpired) {
+        this.logger.debug('AgentId is expired', {
+          agentId,
+          createdAt: agent.createdAt,
+          ageMs,
+          maxAgeMs
+        });
+      }
+
+      return isExpired;
+    } catch (error) {
+      this.logger.warn('Invalid createdAt format', { agentId, createdAt: agent.createdAt });
+      return true;
+    }
+  }
+
+  /**
+   * 验证签名并检查 AgentId 是否过期
+   * 组合签名验证和过期检查
+   * 
+   * @param agentId - Agent ID
+   * @param maxAgeMs - AgentId 最大有效时间（毫秒）
+   * @param signature - 可选签名（如未提供则使用注册时的签名）
+   * @returns 签名是否有效且未过期
+   */
+  verifySignatureWithExpiry(agentId: string, maxAgeMs: number, signature?: string): boolean {
+    // 1. 先检查是否过期
+    if (this.isAgentIdExpired(agentId, maxAgeMs)) {
+      this.logger.warn('AgentId expired, signature verification rejected', { agentId });
+      return false;
+    }
+
+    // 2. 再验证签名
+    return this.verifySignature(agentId, signature);
   }
 }

@@ -111,44 +111,44 @@ describe('MessageRouter', () => {
   });
 
   describe('route', () => {
-    it('应该路由消息到特定 Agent', () => {
+    it('应该路由消息到特定 Agent', async () => {
       agentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver');
 
       const message = createMessage('msg-1', 'sender', 'receiver');
-      const result = router.route(message);
+      const result = await router.route(message);
 
       expect(result).toBe(true);
       const queue = router.getQueue('receiver');
       expect(queue?.messages).toHaveLength(1);
     });
 
-    it('发送方未注册应返回 false', () => {
+    it('发送方未注册应返回 false', async () => {
       router.createQueue('receiver');
 
       const message = createMessage('msg-1', 'unknown-sender', 'receiver');
-      const result = router.route(message);
+      const result = await router.route(message);
 
       expect(result).toBe(false);
     });
 
-    it('目标队列不存在应返回 false', () => {
+    it('目标队列不存在应返回 false', async () => {
       agentRegistry.set('sender', createAgent('sender'));
 
       const message = createMessage('msg-1', 'sender', 'unknown-receiver');
-      const result = router.route(message);
+      const result = await router.route(message);
 
       expect(result).toBe(false);
     });
 
-    it('未指定目标应广播消息', () => {
+    it('未指定目标应广播消息', async () => {
       agentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver-1');
       router.createQueue('receiver-2');
       router.createQueue('receiver-3');
 
       const message = createMessage('msg-1', 'sender');
-      const result = router.route(message);
+      const result = await router.route(message);
 
       expect(result).toBe(true);
       expect(router.getQueue('receiver-1')?.messages).toHaveLength(1);
@@ -425,7 +425,7 @@ describe('MessageRouter', () => {
   });
 
   describe('updateRegistry', () => {
-    it('应该更新 Agent 注册表', () => {
+    it('应该更新 Agent 注册表', async () => {
       const newRegistry = new Map();
       newRegistry.set('new-agent', createAgent('new-agent'));
 
@@ -434,7 +434,7 @@ describe('MessageRouter', () => {
       // 验证更新后的注册表影响路由
       router.createQueue('receiver');
       const message = createMessage('msg-1', 'new-agent', 'receiver');
-      const result = router.route(message);
+      const result = await router.route(message);
 
       expect(result).toBe(true);
     });
@@ -482,14 +482,14 @@ describe('MessageRouter', () => {
       expect(queue?.messages).toHaveLength(types.length);
     });
 
-    it('应该处理空消息内容', () => {
+    it('应该处理空消息内容', async () => {
       agentRegistry.set('sender', createAgent('sender'));
       router.createQueue('receiver');
 
       const message = createMessage('msg-1', 'sender', 'receiver');
       message.content = '';
 
-      const result = router.route(message);
+      const result = await router.route(message);
 
       expect(result).toBe(true);
     });
@@ -534,5 +534,209 @@ describe('MessageRouter', () => {
 
       expect(router.getStats().queues).toBe(50);
     });
+
+  // ============================================================================
+  // P0: route 签名验证测试
+  // ============================================================================
+
+  describe('route 签名验证', () => {
+    let mockAgentRegistry: any;
+
+    const createAgentWithSignature = (agentId: string, nodeId: string, signature: string): AgentRegistration => ({
+      agentId,
+      name: 'Agent ' + agentId,
+      capabilities: [],
+      registeredAt: new Date(),
+      lastActiveAt: new Date(),
+      nodeId,
+      signature,
+      publicKey: 'validPublicKeyBase64',
+      createdAt: new Date().toISOString(),
+    });
+
+    const generateValidSignature = (): string => {
+      const signatureBytes = new Uint8Array(64);
+      for (let i = 0; i < 64; i++) {
+        signatureBytes[i] = Math.floor(Math.random() * 256);
+      }
+      return Buffer.from(signatureBytes).toString('base64');
+    };
+
+    const createSignedMessage = (
+      messageId: string,
+      fromAgentId: string,
+      toAgentId: string | undefined,
+      signature: string
+    ): RoutableMessage => ({
+      messageId,
+      fromAgentId,
+      toAgentId,
+      content: 'Message ' + messageId,
+      type: 'message',
+      createdAt: new Date(),
+      metadata: {},
+      signature,
+    });
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      agentRegistry = new Map();
+      router = new MessageRouter(agentRegistry, { maxQueueSize: 10 });
+      mockAgentRegistry = {
+        verifyMessageSignature: vi.fn().mockResolvedValue(true),
+      };
+      router.setAgentRegistry(mockAgentRegistry as any);
+    });
+
+    it('应该拒绝无签名的消息', async () => {
+      agentRegistry.set('sender', createAgent('sender'));
+      router.createQueue('receiver');
+      const message = createMessage('msg-1', 'sender', 'receiver');
+      message.signature = undefined;
+      const result = await router.route(message);
+      expect(result).toBe(false);
+    });
+
+    it('应该拒绝签名验证失败的消息', async () => {
+      agentRegistry.set('sender', createAgent('sender'));
+      router.createQueue('receiver');
+      mockAgentRegistry.verifyMessageSignature.mockResolvedValue(false);
+      const message = createSignedMessage('msg-1', 'sender', 'receiver', 'invalidSignature');
+      const result = await router.route(message);
+      expect(result).toBe(false);
+      expect(mockAgentRegistry.verifyMessageSignature).toHaveBeenCalled();
+    });
+
+    it('应该路由签名验证成功的消息', async () => {
+      const peerIdPrefix = 'ABCDEFGH12345678';
+      const agentId = 'agent:' + peerIdPrefix + ':ABCD1234';
+      const nodeId = peerIdPrefix + 'XYZ123456789';
+      const signature = generateValidSignature();
+      agentRegistry.set(agentId, createAgentWithSignature(agentId, nodeId, signature));
+      router.createQueue('receiver');
+      mockAgentRegistry.verifyMessageSignature.mockResolvedValue(true);
+      const message = createSignedMessage('msg-1', agentId, 'receiver', signature);
+      const result = await router.route(message);
+      expect(result).toBe(true);
+      expect(router.getQueue('receiver')?.messages).toHaveLength(1);
+    });
+
+    it('验证失败应记录 warn 日志', async () => {
+      agentRegistry.set('sender', createAgent('sender'));
+      router.createQueue('receiver');
+      mockAgentRegistry.verifyMessageSignature.mockResolvedValue(false);
+      const message = createSignedMessage('msg-1', 'sender', 'receiver', 'badSignature');
+      await router.route(message);
+      expect(mockAgentRegistry.verifyMessageSignature).toHaveBeenCalled();
+    });
+
+    it('应该验证 fromAgentId 与签名 NodeId 匹配', async () => {
+      const peerIdPrefix = 'NODEAPREFIX12345';
+      const agentId = 'agent:' + peerIdPrefix + ':ABCD1234';
+      const nodeId = peerIdPrefix + 'XYZ123456789';
+      const signature = generateValidSignature();
+      agentRegistry.set(agentId, createAgentWithSignature(agentId, nodeId, signature));
+      router.createQueue('receiver');
+      mockAgentRegistry.verifyMessageSignature.mockResolvedValue(true);
+      const message = createSignedMessage('msg-1', agentId, 'receiver', signature);
+      const result = await router.route(message);
+      expect(result).toBe(true);
+    });
+
+    it('应该拒绝 fromAgentId 与 NodeId 不匹配的消息', async () => {
+      const peerIdPrefixA = 'NODEAPREFIX12345';
+      const peerIdPrefixB = 'NODEBPREFIX12345';
+      const agentId = 'agent:' + peerIdPrefixA + ':ABCD1234';
+      const nodeId = peerIdPrefixB + 'XYZ123456789';
+      const signature = generateValidSignature();
+      agentRegistry.set(agentId, createAgentWithSignature(agentId, nodeId, signature));
+      router.createQueue('receiver');
+      mockAgentRegistry.verifyMessageSignature.mockResolvedValue(false);
+      const message = createSignedMessage('msg-1', agentId, 'receiver', signature);
+      const result = await router.route(message);
+      expect(result).toBe(false);
+    });
+
+    it('应该验证签名载荷完整性', async () => {
+      const peerIdPrefix = 'ABCDEFGH12345678';
+      const agentId = 'agent:' + peerIdPrefix + ':ABCD1234';
+      const nodeId = peerIdPrefix + 'XYZ123456789';
+      const validSignature = generateValidSignature();
+      agentRegistry.set(agentId, createAgentWithSignature(agentId, nodeId, validSignature));
+      router.createQueue('receiver');
+      mockAgentRegistry.verifyMessageSignature.mockResolvedValue(true);
+      const message = createSignedMessage('msg-1', agentId, 'receiver', validSignature);
+      const result = await router.route(message);
+      expect(result).toBe(true);
+      expect(mockAgentRegistry.verifyMessageSignature).toHaveBeenCalledWith(
+        agentId,
+        expect.objectContaining({
+          messageId: 'msg-1',
+          fromAgentId: agentId,
+          content: 'Message msg-1',
+        }),
+        validSignature
+      );
+    });
+
+    it('广播时应验证签名', async () => {
+      const peerIdPrefix = 'ABCDEFGH12345678';
+      const agentId = 'agent:' + peerIdPrefix + ':ABCD1234';
+      const nodeId = peerIdPrefix + 'XYZ123456789';
+      const signature = generateValidSignature();
+      agentRegistry.set(agentId, createAgentWithSignature(agentId, nodeId, signature));
+      router.createQueue('sender');
+      router.createQueue('receiver-1');
+      router.createQueue('receiver-2');
+      mockAgentRegistry.verifyMessageSignature.mockResolvedValue(true);
+      const message = createSignedMessage('msg-1', agentId, undefined, signature);
+      const result = await router.route(message);
+      expect(result).toBe(true);
+      expect(router.getQueue('receiver-1')?.messages).toHaveLength(1);
+      expect(router.getQueue('receiver-2')?.messages).toHaveLength(1);
+    });
+
+    it('广播签名验证失败应拒绝', async () => {
+      agentRegistry.set('sender', createAgent('sender'));
+      router.createQueue('sender');
+      router.createQueue('receiver');
+      mockAgentRegistry.verifyMessageSignature.mockResolvedValue(false);
+      const message = createSignedMessage('msg-1', 'sender', undefined, 'badSignature');
+      const result = await router.route(message);
+      expect(result).toBe(false);
+      expect(router.getQueue('receiver')?.messages).toHaveLength(0);
+    });
+
+    it('无 AgentRegistry 实例时应跳过签名验证', async () => {
+      agentRegistry = new Map();
+      router = new MessageRouter(agentRegistry, { maxQueueSize: 10 });
+      agentRegistry.set('sender', createAgent('sender'));
+      router.createQueue('receiver');
+      const message = createMessage('msg-1', 'sender', 'receiver');
+      message.signature = undefined;
+      const result = await router.route(message);
+      expect(result).toBe(true);
+      expect(router.getQueue('receiver')?.messages).toHaveLength(1);
+    });
+
+    it('签名验证与路由逻辑的集成测试', async () => {
+      const peerIdPrefix = 'ABCDEFGH12345678';
+      const agentId = 'agent:' + peerIdPrefix + ':ABCD1234';
+      const nodeId = peerIdPrefix + 'XYZ123456789';
+      const signature = generateValidSignature();
+      agentRegistry.set(agentId, createAgentWithSignature(agentId, nodeId, signature));
+      router.createQueue('receiver-1');
+      router.createQueue('receiver-2');
+      mockAgentRegistry.verifyMessageSignature.mockResolvedValue(true);
+      const message1 = createSignedMessage('msg-1', agentId, 'receiver-1', signature);
+      expect(await router.route(message1)).toBe(true);
+      const message2 = createSignedMessage('msg-2', agentId, undefined, signature);
+      expect(await router.route(message2)).toBe(true);
+      expect(router.getQueue('receiver-1')?.messages).toHaveLength(2);
+      expect(router.getQueue('receiver-2')?.messages).toHaveLength(1);
+      expect(router.getQueue('receiver-1')?.messages[0]?.fromAgentId).toBe(agentId);
+      expect(router.getQueue('receiver-1')?.messages[0]?.signature).toBe(signature);
+    });
+  });
   });
 });

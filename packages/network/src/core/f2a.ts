@@ -701,7 +701,28 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
         const payload = message.payload as StructuredMessagePayload;
         
         // 根据 topic 分发处理
-        if (payload.topic === MESSAGE_TOPICS.TASK_REQUEST) {
+        if (payload.topic === 'agent.message') {
+          // Agent 协议层消息 - 通过 MessageRouter 路由
+          if (payload.content && typeof payload.content === 'object') {
+            const agentMessage = payload.content as {
+              messageId: string;
+              fromAgentId: string;
+              toAgentId?: string;
+              content: string;
+              type?: string;
+            };
+            if (this.messageRouter) {
+              this.messageRouter.route({
+                messageId: agentMessage.messageId,
+                fromAgentId: agentMessage.fromAgentId,
+                toAgentId: agentMessage.toAgentId,
+                content: agentMessage.content,
+                type: (agentMessage.type as 'message' | 'task_request' | 'task_response' | 'announcement' | 'claim') || 'message',
+                createdAt: new Date(),
+              });
+            }
+          }
+        } else if (payload.topic === MESSAGE_TOPICS.TASK_REQUEST) {
           // 任务请求
           const content = payload.content as {
             taskId: string;
@@ -1048,5 +1069,104 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       throw new Error('MessageRouter not initialized');
     }
     return this.messageRouter;
+  }
+
+  // ========================================================================
+  // 统一消息发送入口
+  // ========================================================================
+
+  /**
+   * 统一消息发送入口
+   * 
+   * 支持 Agent 间通信，自动判断本地路由或远程 P2P 发送
+   * 
+   * @param fromAgentId 发送方 Agent ID
+   * @param toAgentId 目标 Agent ID
+   * @param content 消息内容
+   * @param options 可选配置
+   * @returns Result<void> 发送结果
+   */
+  async sendMessage(
+    fromAgentId: string,
+    toAgentId: string,
+    content: string | Record<string, unknown>,
+    options?: {
+      type?: 'message' | 'task_request' | 'task_response' | 'announcement' | 'claim';
+      metadata?: Record<string, unknown>; 
+    }
+  ): Promise<Result<void>> {
+    // 验证 MessageRouter 已初始化
+    if (!this.messageRouter) {
+      return failureFromError('INTERNAL_ERROR', 'MessageRouter not initialized');
+    }
+
+    // 构造路由消息
+    const messageId = `msg-${randomUUID()}`;
+    const message = {
+      messageId,
+      fromAgentId,
+      toAgentId,
+      content: typeof content === 'string' ? content : JSON.stringify(content),
+      metadata: options?.metadata,
+      type: options?.type || 'message',
+      createdAt: new Date(),
+    };
+
+    this.logger.info('Sending message', {
+      messageId,
+      fromAgentId,
+      toAgentId,
+      type: message.type,
+    });
+
+    // 判断目标 Agent 是否本地
+    const agentRegistry = this.agentRegistry;
+    if (!agentRegistry) {
+      return failureFromError('INTERNAL_ERROR', 'AgentRegistry not initialized');
+    }
+
+    const targetAgent = agentRegistry.get(toAgentId);
+    
+    if (targetAgent) {
+      // 目标 Agent 在本地，使用本地路由
+      const routed = this.messageRouter.route(message);
+      if (routed) {
+        this.logger.info('Message routed locally', { messageId, toAgentId });
+        return success(undefined);
+      } else {
+        return failureFromError('TASK_FAILED', 'Local message routing failed');
+      }
+    }
+
+    // 目标 Agent 不在本地，尝试远程路由
+    // 需要先确保 MessageRouter 有 P2PNetwork 引用
+    if (!this.messageRouter) {
+      return failureFromError('NETWORK_NOT_STARTED', 'MessageRouter not configured for remote routing');
+    }
+
+    const result = await this.messageRouter.routeRemote(message);
+    
+    if (result.success) {
+      this.logger.info('Message sent remotely', { messageId, toAgentId });
+    } else {
+      this.logger.error('Failed to send message remotely', {
+        messageId,
+        toAgentId,
+        error: result.error,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * 设置 MessageRouter 的 P2P 网络引用
+   * 用于支持远程消息路由
+   */
+  setMessageRouterP2PNetwork(): void {
+    if (this.messageRouter && this.p2pNetwork) {
+      this.messageRouter.setP2PNetwork(this.p2pNetwork);
+      this.logger.info('MessageRouter P2P network configured');
+    }
   }
 }

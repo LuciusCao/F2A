@@ -12,8 +12,8 @@ import { TokenManager } from '../core/token-manager.js';
 import { Logger } from '../utils/logger.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { getErrorMessage } from '../utils/error-utils.js';
-import { AgentRegistry, AgentRegistration } from './agent-registry.js';
-import { MessageRouter, RoutableMessage } from './message-router.js';
+import { AgentRegistry, AgentRegistration } from '../core/agent-registry.js';
+import { MessageRouter, RoutableMessage } from '../core/message-router.js';
 import type { AgentCapability } from '../types/index.js';
 
 export interface ControlServerOptions {
@@ -104,15 +104,10 @@ export class ControlServer {
     // P2 修复：生产环境强制验证 CORS 配置
     validateCorsConfig(this.allowedOrigins);
     
-    // Phase 1: 初始化 Agent 注册表和消息路由器
-    // RFC 003: AgentId 由节点签发
-    const peerId = this.f2a.peerId;
-    const signFunction = (data: string) => this.f2a.signData(data);
-    this.agentRegistry = new AgentRegistry(peerId, signFunction);
-    this.messageRouter = new MessageRouter(
-      // 使用 getter 来访问注册表，因为 Map 是引用类型
-      new Map<string, AgentRegistration>()
-    );
+    // Phase 1: 从 F2A 获取 AgentRegistry 和 MessageRouter
+    // ControlServer 不再直接管理这些组件
+    this.agentRegistry = f2a.getAgentRegistry();
+    this.messageRouter = f2a.getMessageRouter();
   }
   
   /**
@@ -812,7 +807,7 @@ export class ControlServer {
   private handleSendMessage(req: IncomingMessage, res: ServerResponse): void {
     let body = '';
     req.on('data', chunk => { body += chunk; });
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const data = JSON.parse(body);
         
@@ -861,8 +856,15 @@ export class ControlServer {
             return;
           }
 
-          const routed = this.messageRouter.route(message);
-          if (routed) {
+          // 使用 F2A 的 sendMessage 方法路由消息
+          const result = await this.f2a.sendMessage(
+            message.fromAgentId,
+            message.toAgentId!, // 类型断言：已验证存在
+            message.content,
+            { type: message.type, metadata: message.metadata }
+          );
+          
+          if (result.success) {
             this.logger.debug('Message routed', {
               messageId: message.messageId,
               fromAgentId: data.fromAgentId,
@@ -882,7 +884,7 @@ export class ControlServer {
             }));
           }
         } else {
-          // 广播消息
+          // 广播消息 - 使用 MessageRouter.broadcast()
           const broadcasted = this.messageRouter.broadcast(message);
           res.writeHead(200);
           res.end(JSON.stringify({

@@ -503,17 +503,26 @@ GET /status = {
 
 ## 后续规划
 
-### Phase 2: 多 Agent 支持
-- 一个 Node 服务多个 Agent
-- 消息路由按 AgentID 分发
+> **⚠️ 修订**: 以下规划已合并到 [RFC 005: F2A 架构统一](./rfcs/005-architecture-unification.md)
 
-### Phase 3: Agent 迁移
+### Phase 2: 架构统一 (RFC 005)
+- **MessageRouter/AgentRegistry 移入 F2A 核心类**
+- 本地和远程消息走统一流程
+- P2P 收到消息 → 路由到 MessageRouter
+
+### Phase 3: Agent 签名验证 (RFC 003)
+- 实现 `verifySignature()` 真实签名验证
+- 路由前验证 Agent 身份
+
+### Phase 4: Webhook 插件 (RFC 004)
+- 创建简化版 webhook 插件
+- 处理消息回调
+
+### Phase 5: Agent 迁移
 - Agent 身份跨 Node 迁移
 - 信誉随 Agent 迁移
 
-### Phase 4: 分布式信誉
-- 信誉存储到 DHT
-- 可验证的信誉证明
+**详细实施计划**: 见 [memory/2026-04-15.md](../../memory/2026-04-15.md) "RFC 任务规划" 章节
 
 ---
 

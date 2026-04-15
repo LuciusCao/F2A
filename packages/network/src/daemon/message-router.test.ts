@@ -1,11 +1,12 @@
 /**
  * Message Router 测试
  * 测试路由逻辑、广播、队列溢出、消息过期
+ * RFC 004: Agent 级 Webhook 转发测试
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { MessageRouter, RoutableMessage, MessageQueue } from '../core/message-router.js';
-import type { AgentRegistration } from '../core/agent-registry.js';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { MessageRouter, RoutableMessage, MessageQueue, AgentWebhookPayload } from '../core/message-router.js';
+import type { AgentRegistration, AgentWebhook } from '../core/agent-registry.js';
 
 // Mock Logger
 vi.mock('../utils/logger.js', () => ({
@@ -14,6 +15,17 @@ vi.mock('../utils/logger.js', () => ({
     warn: vi.fn(),
     debug: vi.fn(),
     error: vi.fn(),
+  })),
+}));
+
+// Mock WebhookService
+vi.mock('./webhook.js', () => ({
+  WebhookService: vi.fn().mockImplementation((config) => ({
+    send: vi.fn().mockImplementation(async (notification) => {
+      // 默认返回成功
+      return { success: true };
+    }),
+    config,
   })),
 }));
 
@@ -563,6 +575,220 @@ describe('MessageRouter', () => {
       await Promise.all(operations);
 
       expect(router.getStats().queues).toBe(50);
+    });
+  });
+
+  // ========== RFC 004: Agent 级 Webhook 测试 ==========
+  describe('RFC 004: Agent 级 Webhook', () => {
+    const createAgentWithWebhook = (agentId: string, webhookUrl: string): AgentRegistration => ({
+      ...createAgent(agentId),
+      webhook: {
+        url: webhookUrl,
+        token: 'test-token',
+      },
+    });
+
+    describe('routeAsync - Webhook 转发', () => {
+      it('应该转发消息到 Agent webhook URL', async () => {
+        const webhookUrl = 'https://example.com/webhook/test'; 
+        agentRegistry.set('sender', createAgent('sender')); 
+        agentRegistry.set('receiver', createAgentWithWebhook('receiver', webhookUrl)); 
+        router.createQueue('receiver'); 
+
+        const message = createMessage('msg-1', 'sender', 'receiver'); 
+        const result = await router.routeAsync(message); 
+
+        expect(result).toBe(true); 
+        // Webhook 成功，队列应无消息（不降级）
+        expect(router.getQueue('receiver')?.messages).toHaveLength(0); 
+      });
+
+      it('webhook 失败时应降级到队列', async () => {
+        // Mock webhook send 返回失败
+        const { WebhookService } = await import('./webhook.js');
+        vi.mocked(WebhookService).mockImplementationOnce(() => ({
+          send: vi.fn().mockResolvedValue({ success: false, error: 'Connection timeout' }),
+          config: {},
+        }));
+
+        const webhookUrl = 'https://example.com/webhook/test'; 
+        agentRegistry.set('sender', createAgent('sender')); 
+        agentRegistry.set('receiver', createAgentWithWebhook('receiver', webhookUrl)); 
+        router.createQueue('receiver'); 
+
+        const message = createMessage('msg-1', 'sender', 'receiver'); 
+        const result = await router.routeAsync(message); 
+
+        // Webhook 失败但降级到队列成功
+        expect(result).toBe(true); 
+        // 队列应有消息（降级）
+        expect(router.getQueue('receiver')?.messages).toHaveLength(1); 
+      });
+
+      it('Agent 无 webhook 时应直接放入队列', async () => {
+        agentRegistry.set('sender', createAgent('sender')); 
+        agentRegistry.set('receiver', createAgent('receiver')); // 无 webhook
+        router.createQueue('receiver'); 
+
+        const message = createMessage('msg-1', 'sender', 'receiver'); 
+        const result = await router.routeAsync(message); 
+
+        expect(result).toBe(true); 
+        expect(router.getQueue('receiver')?.messages).toHaveLength(1); 
+      });
+
+      it('本地回调优先级高于 webhook', async () => {
+        const webhookUrl = 'https://example.com/webhook/test'; 
+        const onMessage = vi.fn(); 
+        agentRegistry.set('sender', createAgent('sender')); 
+        agentRegistry.set('receiver', {
+          ...createAgentWithWebhook('receiver', webhookUrl),
+          onMessage,
+        }); 
+        router.createQueue('receiver'); 
+
+        const message = createMessage('msg-1', 'sender', 'receiver'); 
+        const result = await router.routeAsync(message); 
+
+        expect(result).toBe(true); 
+        expect(onMessage).toHaveBeenCalled(); 
+        // 本地回调成功，不应调用 webhook 或放入队列
+        expect(router.getQueue('receiver')?.messages).toHaveLength(0); 
+      });
+
+      it('本地回调失败时应尝试 webhook', async () => {
+        const webhookUrl = 'https://example.com/webhook/test'; 
+        const onMessage = vi.fn().mockImplementation(() => {
+          throw new Error('Callback error'); 
+        }); 
+        agentRegistry.set('sender', createAgent('sender')); 
+        agentRegistry.set('receiver', {
+          ...createAgentWithWebhook('receiver', webhookUrl),
+          onMessage,
+        }); 
+        router.createQueue('receiver'); 
+
+        const message = createMessage('msg-1', 'sender', 'receiver'); 
+        const result = await router.routeAsync(message); 
+
+        expect(result).toBe(true); 
+        expect(onMessage).toHaveBeenCalled(); 
+        // 本地回调失败，webhook 成功
+        expect(router.getQueue('receiver')?.messages).toHaveLength(0); 
+      });
+    });
+
+    describe('broadcastAsync - Webhook 广播', () => {
+      it('应该广播消息到多个 Agent 的 webhook', async () => {
+        const webhookUrl1 = 'https://example.com/webhook/agent1'; 
+        const webhookUrl2 = 'https://example.com/webhook/agent2'; 
+        agentRegistry.set('sender', createAgent('sender')); 
+        agentRegistry.set('receiver-1', createAgentWithWebhook('receiver-1', webhookUrl1)); 
+        agentRegistry.set('receiver-2', createAgentWithWebhook('receiver-2', webhookUrl2)); 
+        router.createQueue('receiver-1'); 
+        router.createQueue('receiver-2'); 
+
+        const message = createMessage('broadcast-msg', 'sender'); 
+        const result = await router.broadcastAsync(message); 
+
+        expect(result).toBe(true); 
+        // Webhook 成功，队列应无消息
+        expect(router.getQueue('receiver-1')?.messages).toHaveLength(0); 
+        expect(router.getQueue('receiver-2')?.messages).toHaveLength(0); 
+      });
+
+      it('部分 Agent webhook 失败时应降级到队列', async () => {
+        // Mock 第一个 webhook 失败
+        const { WebhookService } = await import('./webhook.js');
+        let callCount = 0; 
+        vi.mocked(WebhookService).mockImplementation(() => ({
+          send: vi.fn().mockImplementation(async () => {
+            callCount++; 
+            // 第一次调用失败，第二次成功
+            return callCount === 1 
+              ? { success: false, error: 'Timeout' } 
+              : { success: true }; 
+          }),
+          config: {},
+        }));
+
+        const webhookUrl1 = 'https://example.com/webhook/agent1'; 
+        const webhookUrl2 = 'https://example.com/webhook/agent2'; 
+        agentRegistry.set('sender', createAgent('sender')); 
+        agentRegistry.set('receiver-1', createAgentWithWebhook('receiver-1', webhookUrl1)); 
+        agentRegistry.set('receiver-2', createAgentWithWebhook('receiver-2', webhookUrl2)); 
+        router.createQueue('receiver-1'); 
+        router.createQueue('receiver-2'); 
+
+        const message = createMessage('broadcast-msg', 'sender'); 
+        const result = await router.broadcastAsync(message); 
+
+        expect(result).toBe(true); 
+        // receiver-1 webhook 失败，降级到队列
+        expect(router.getQueue('receiver-1')?.messages).toHaveLength(1); 
+        // receiver-2 webhook 成功
+        expect(router.getQueue('receiver-2')?.messages).toHaveLength(0); 
+      });
+    });
+
+    describe('clearWebhookCache', () => {
+      it('应该清理 webhook 服务缓存', async () => {
+        const webhookUrl = 'https://example.com/webhook/test'; 
+        agentRegistry.set('sender', createAgent('sender')); 
+        agentRegistry.set('receiver', createAgentWithWebhook('receiver', webhookUrl)); 
+        router.createQueue('receiver'); 
+
+        // 第一次路由，创建 webhook 服务
+        await router.routeAsync(createMessage('msg-1', 'sender', 'receiver')); 
+
+        // 清理缓存
+        router.clearWebhookCache('receiver'); 
+
+        // 第二次路由，应重新创建 webhook 服务
+        await router.routeAsync(createMessage('msg-2', 'sender', 'receiver')); 
+      });
+
+      it('清理不存在的缓存应静默跳过', () => {
+        router.clearWebhookCache('non-existent'); 
+        // 不应抛出错误
+      });
+    });
+
+    describe('路由优先级验证', () => {
+      it('优先级: 本地回调 > Webhook > 队列', async () => {
+        const webhookUrl = 'https://example.com/webhook/test'; 
+        const queueMessage = vi.fn(); 
+        const onMessage = vi.fn(); 
+        
+        // 场景 1: 有本地回调，webhook 不应被调用
+        agentRegistry.clear(); 
+        agentRegistry.set('sender', createAgent('sender')); 
+        agentRegistry.set('receiver', {
+          ...createAgentWithWebhook('receiver', webhookUrl),
+          onMessage,
+        }); 
+        router.createQueue('receiver'); 
+
+        await router.routeAsync(createMessage('msg-1', 'sender', 'receiver')); 
+        expect(onMessage).toHaveBeenCalled(); 
+        expect(router.getQueue('receiver')?.messages).toHaveLength(0); 
+
+        // 场景 2: 无本地回调，webhook 应被调用
+        vi.clearAllMocks(); 
+        agentRegistry.set('receiver', createAgentWithWebhook('receiver', webhookUrl)); 
+        router.createQueue('receiver'); 
+
+        await router.routeAsync(createMessage('msg-2', 'sender', 'receiver')); 
+        expect(router.getQueue('receiver')?.messages).toHaveLength(0); 
+
+        // 场景 3: 无本地回调，无 webhook，队列应被使用
+        vi.clearAllMocks(); 
+        agentRegistry.set('receiver', createAgent('receiver')); // 无 webhook
+        router.createQueue('receiver'); 
+
+        await router.routeAsync(createMessage('msg-3', 'sender', 'receiver')); 
+        expect(router.getQueue('receiver')?.messages).toHaveLength(1); 
+      });
     });
   });
 });

@@ -16,6 +16,9 @@ export { AgentRegistry, AgentRegistration, AgentRegistrationRequest } from './ag
 export { MessageRouter, RoutableMessage, MessageQueue } from './message-router.js';
 export { ControlServer, ControlServerOptions } from './control-server.js';
 
+// Phase 6: 导出 Agent Identity 管理组件
+export { AgentIdentityManager, AgentIdentity, AgentWebhook } from './agent-identity-manager.js';
+
 export interface DaemonOptions extends F2AOptions {
   webhook?: WebhookConfig;
   controlPort?: number;

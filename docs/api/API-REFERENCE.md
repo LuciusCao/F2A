@@ -5,6 +5,8 @@
 ## 目录
 
 - [核心类](#核心类)
+- [Daemon 模块](#daemon-模块)
+- [ControlServer HTTP API](#controlserver-http-api)
 - [配置类型](#配置类型)
 - [消息类型](#消息类型)
 - [事件类型](#事件类型)
@@ -196,6 +198,365 @@ reputation.updateScore(peerId, delta, reason);
 
 // 查询信誉
 const score = reputation.getScore(peerId);
+```
+
+---
+
+## Daemon 模块
+
+Daemon 包提供后台服务，管理 Agent 注册、消息路由和 HTTP API。
+
+```typescript
+import { F2ADaemon, AgentRegistry, MessageRouter, ControlServer } from '@f2a/daemon';
+```
+
+### F2ADaemon
+
+主 Daemon 类，整合 F2A 网络和 ControlServer。
+
+```typescript
+const daemon = new F2ADaemon({
+  controlPort: 9001,
+  dataDir: '~/.f2a',
+});
+
+await daemon.start();
+const f2a = daemon.getF2A();
+await daemon.stop();
+```
+
+#### 方法
+
+| 方法 | 参数 | 返回值 | 描述 |
+|------|------|--------|------|
+| `start()` | - | `Promise<void>` | 启动 Daemon（F2A 网络 + ControlServer） |
+| `stop()` | - | `Promise<void>` | 停止 Daemon |
+| `getF2A()` | - | `F2A | undefined` | 获取底层 F2A 实例 |
+| `isRunning()` | - | `boolean` | 检查是否运行中 |
+
+---
+
+### AgentRegistry
+
+管理注册到 Daemon 的 Agent 实例。
+
+**RFC 003**: AgentId 由节点签发，用户不能自定义。格式: `agent:<PeerId前16位>:<随机8位>`。
+
+```typescript
+const registry = controlServer.getAgentRegistry();
+
+// 注册 Agent
+const registration = registry.register({
+  name: 'MyAgent',
+  capabilities: [{ name: 'code-generation', description: '...' }],
+  webhook: { url: 'http://localhost:9002/webhooks/f2a-message' },
+});
+
+// AgentId 由节点生成
+console.log(registration.agentId); // agent:16Qk...:a1b2c3d4
+```
+
+#### 类型定义
+
+```typescript
+interface AgentRegistration {
+  agentId: string;              // 节点签发，格式: agent:<PeerId前16位>:<随机8位>
+  name: string;                 // 显示名称（可修改）
+  capabilities: AgentCapability[];
+  peerId: string;               // 签发节点 PeerId
+  signature: string;            // AgentId 签名（Base64）
+  registeredAt: Date;
+  lastActiveAt: Date;
+  webhook?: AgentWebhook;       // RFC 004: Agent 级 Webhook
+  onMessage?: MessageCallback;  // 本地回调
+  metadata?: Record<string, unknown>;
+}
+
+interface AgentRegistrationRequest {
+  name: string;                 // 必填
+  capabilities: AgentCapability[];
+  webhook?: AgentWebhook;
+  onMessage?: MessageCallback;
+  metadata?: Record<string, unknown>;
+}
+
+interface AgentWebhook {
+  url: string;
+  token?: string;
+}
+
+type MessageCallback = (message: {
+  messageId: string;
+  fromAgentId: string;
+  toAgentId: string;
+  content: string;
+  type: string;
+  createdAt: Date;
+}) => void;
+```
+
+#### 方法
+
+| 方法 | 参数 | 返回值 | 描述 |
+|------|------|--------|------|
+| `register(request)` | `AgentRegistrationRequest` | `AgentRegistration` | 注册 Agent（节点签发 AgentId） |
+| `unregister(agentId)` | `string` | `boolean` | 注销 Agent |
+| `get(agentId)` | `string` | `AgentRegistration \| undefined` | 获取 Agent 信息 |
+| `has(agentId)` | `string` | `boolean` | 检查 Agent 是否存在 |
+| `getAll()` | - | `AgentRegistration[]` | 获取所有 Agent |
+| `list()` | - | `AgentRegistration[]` | 列出所有 Agent |
+| `size()` | - | `number` | Agent 数量 |
+| `updateName(agentId, name)` | `string`, `string` | `boolean` | 更新 Agent 名称 |
+| `updateWebhook(agentId, webhook)` | `string`, `AgentWebhook \| undefined` | `boolean` | 更新 Webhook（RFC 004） |
+| `updateLastActive(agentId)` | `string` | `void` | 更新活跃时间 |
+| `getStats()` | - | `{ total, local, remote, active }` | 获取统计信息 |
+| `cleanupInactive(maxMs)` | `number` | `number` | 清理不活跃 Agent |
+
+---
+
+### MessageRouter
+
+处理 Daemon 内部 Agent 之间的消息路由。
+
+**投递优先级**：
+1. `onMessage` 本地回调（同进程 Agent，同步调用）
+2. Webhook 推送（远程 Agent，异步执行）
+3. 消息队列（HTTP 轮询，作为 fallback）
+
+```typescript
+const router = controlServer.getMessageRouter();
+
+// 路由消息到特定 Agent
+router.route({
+  messageId: 'msg-001',
+  fromAgentId: 'agent:sender:...',
+  toAgentId: 'agent:target:...',
+  content: 'Hello!',
+  type: 'message',
+  createdAt: new Date(),
+});
+
+// 广播消息（不指定目标）
+router.broadcast({
+  messageId: 'msg-002',
+  fromAgentId: 'agent:broadcaster:...',
+  content: 'Announcement',
+  type: 'announcement',
+  createdAt: new Date(),
+});
+
+// 获取队列中的消息
+const messages = router.getMessages('agent:target:...');
+```
+
+#### 类型定义
+
+```typescript
+interface RoutableMessage {
+  messageId: string;
+  fromAgentId: string;
+  toAgentId?: string;           // 可选，不指定则广播
+  content: string;
+  metadata?: Record<string, unknown>;
+  type: 'message' | 'task_request' | 'task_response' | 'announcement' | 'claim';
+  createdAt: Date;
+}
+
+interface F2AMessagePayload {
+  message: string;
+  from: { agentId: string; name: string; };
+  to: { agentId: string; name: string; };
+  sessionKey: string;
+  type: string;
+  timestamp: number;
+  messageId: string;
+}
+
+interface WebhookPushResult {
+  success: boolean;
+  error?: string;
+  latency?: number;
+}
+```
+
+#### 方法
+
+| 方法 | 参数 | 返回值 | 描述 |
+|------|------|--------|------|
+| `route(message)` | `RoutableMessage` | `boolean` | 路由消息到特定 Agent |
+| `broadcast(message)` | `RoutableMessage` | `boolean` | 广播给所有 Agent（除发送方） |
+| `createQueue(agentId, maxSize?)` | `string`, `number?` | `void` | 创建消息队列 |
+| `deleteQueue(agentId)` | `string` | `void` | 删除消息队列 |
+| `getQueue(agentId)` | `string` | `MessageQueue \| undefined` | 获取队列信息 |
+| `getMessages(agentId, limit?)` | `string`, `number?` | `RoutableMessage[]` | 获取队列消息 |
+| `clearMessages(agentId, ids?)` | `string`, `string[]?` | `number` | 清除消息，返回清除数量 |
+| `getStats()` | - | `{ queues, totalMessages, pendingPushes }` | 获取统计信息 |
+
+---
+
+### ControlServer
+
+HTTP API 服务端，提供 Agent 注册和消息发送接口。
+
+```typescript
+import { ControlServer } from '@f2a/daemon';
+
+const server = new ControlServer(f2a, 9001, tokenManager, { dataDir: '~/.f2a' });
+await server.start();
+
+// 访问内部组件
+const registry = server.getAgentRegistry();
+const router = server.getMessageRouter();
+
+await server.stop();
+```
+
+#### 方法
+
+| 方法 | 参数 | 返回值 | 描述 |
+|------|------|--------|------|
+| `start()` | - | `Promise<void>` | 启动 HTTP 服务 |
+| `stop()` | - | `Promise<void>` | 停止服务 |
+| `getAgentRegistry()` | - | `AgentRegistry` | 获取 Agent 注册表 |
+| `getMessageRouter()` | - | `MessageRouter` | 获取消息路由器 |
+| `getPort()` | - | `number` | 获取监听端口 |
+
+---
+
+## ControlServer HTTP API
+
+ControlServer 在端口 **9001** 提供 HTTP API（可通过 `controlPort` 配置）。
+
+### 基础端点（无需认证）
+
+#### GET /health
+
+健康检查。
+
+```bash
+curl http://localhost:9001/health
+# {"success": true, "status": "ok", "peerId": "16Qk..."}
+```
+
+#### GET /api/agents
+
+列出所有注册的 Agent。
+
+```bash
+curl http://localhost:9001/api/agents
+# [{"agentId": "agent:16Qk:a1b2c3d4", "name": "MyAgent", ...}]
+```
+
+#### POST /api/agents
+
+注册 Agent。
+
+```bash
+curl -X POST http://localhost:9001/api/agents \
+  -H "Content-Type: application/json" \
+  -d '{"name": "MyAgent", "capabilities": [...], "webhook": {"url": "http://localhost:9002/webhooks/f2a-message"}}'
+# {"success": true, "agentId": "agent:16Qk:a1b2c3d4", ...}
+```
+
+**请求体**:
+```typescript
+{
+  name: string;                 // 必填
+  capabilities: AgentCapability[];
+  webhook?: { url: string; token?: string; };
+  metadata?: Record<string, unknown>;
+}
+```
+
+#### GET /api/agents/:agentId
+
+获取指定 Agent 信息。
+
+```bash
+curl http://localhost:9001/api/agents/agent:16Qk:a1b2c3d4
+# {"success": true, "agent": {...}}
+```
+
+#### DELETE /api/agents/:agentId
+
+注销 Agent。
+
+```bash
+curl -X DELETE http://localhost:9001/api/agents/agent:16Qk:a1b2c3d4
+# {"success": true}
+```
+
+#### PATCH /api/agents/:agentId/webhook
+
+更新 Agent Webhook（RFC 004）。
+
+```bash
+curl -X PATCH http://localhost:9001/api/agents/agent:16Qk:a1b2c3d4/webhook \
+  -H "Content-Type: application/json" \
+  -d '{"url": "http://new-webhook:9002/webhooks/f2a-message", "token": "secret"}'
+# {"success": true}
+```
+
+#### POST /api/messages
+
+发送消息。
+
+```bash
+curl -X POST http://localhost:9001/api/messages \
+  -H "Content-Type: application/json" \
+  -d '{"fromAgentId": "agent:sender:...", "toAgentId": "agent:target:...", "content": "Hello!", "type": "message"}'
+# {"success": true, "messageId": "msg-001"}
+```
+
+**请求体**:
+```typescript
+{
+  fromAgentId: string;          // 必填，发送方 AgentId
+  toAgentId?: string;           // 可选，不指定则广播
+  content: string;              // 必填
+  type: 'message' | 'task_request' | 'task_response' | 'announcement' | 'claim';
+  metadata?: Record<string, unknown>;
+}
+```
+
+#### GET /api/messages/:agentId
+
+获取 Agent 的消息队列。
+
+```bash
+curl "http://localhost:9001/api/messages/agent:16Qk:a1b2c3d4?limit=10"
+# {"success": true, "messages": [...]}
+```
+
+#### DELETE /api/messages/:agentId
+
+清除消息队列。
+
+```bash
+curl -X DELETE "http://localhost:9001/api/messages/agent:16Qk:a1b2c3d4?messageIds=msg-001,msg-002"
+# {"success": true, "cleared": 2}
+```
+
+### 认证端点（需要 Token）
+
+以下端点需要通过 `X-F2A-Token` 或 `Authorization: Bearer <token>` 提供认证。
+
+#### GET /status
+
+获取节点状态。
+
+```bash
+curl -H "X-F2A-Token: your-token" http://localhost:9001/status
+# {"success": true, "peerId": "16Qk...", "multiaddrs": [...]}
+```
+
+#### GET /peers
+
+获取已知的 Peers。
+
+```bash
+curl -H "X-F2A-Token: your-token" http://localhost:9001/peers
+# {"success": true, "peers": [...]}
 ```
 
 ---
@@ -443,4 +804,5 @@ result.match({
 - [架构文档](../architecture-complete.md)
 - [中间件指南](../middleware-guide.md)
 - [信誉系统指南](../reputation-guide.md)
-- [安全设计](../security-design.md)
+- [消息协议](../message-protocol.md)
+- [RFC 文档](../rfc/)

@@ -127,16 +127,26 @@ export class MessageRouter {
 
   /**
    * 推送消息到 webhook URL
+   * RFC 004: 支持可选的认证 token
    */
-  private async pushToWebhook(webhookUrl: string, payload: F2AMessagePayload): Promise<WebhookPushResult> {
+  private async pushToWebhook(webhookUrl: string, payload: F2AMessagePayload, token?: string): Promise<WebhookPushResult> {
     const start = Date.now();
     
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      
+      // RFC 004: 如果有 token，添加认证头
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+        // 或使用 X-F2A-Token 格式
+        headers['X-F2A-Token'] = token;
+      }
+      
       const response = await fetch(webhookUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(this.webhookTimeout),
       });
@@ -274,19 +284,19 @@ export class MessageRouter {
         }
       }
 
-      // 优先级 2: 如果有 webhookUrl 且可用，异步推送（不阻塞）
-      if (targetAgent.webhookUrl && this.isWebhookAvailable(toAgentId)) {
+      // 优先级 2: 如果有 webhook 且可用，异步推送（不阻塞）
+      if (targetAgent.webhook?.url && this.isWebhookAvailable(toAgentId)) {
         const payload = this.buildPayload(message, targetAgent);
         
         // 异步推送，不阻塞消息投递
-        this.pushToWebhook(targetAgent.webhookUrl, payload)
+        this.pushToWebhook(targetAgent.webhook.url, payload, targetAgent.webhook.token)
           .then(result => {
             if (result.success) {
               this.resetWebhookFailures(toAgentId);
               this.logger.debug('Message pushed via webhook', {
                 messageId: message.messageId,
                 toAgentId,
-                webhookUrl: targetAgent.webhookUrl,
+                webhookUrl: targetAgent.webhook?.url,
                 latency: result.latency,
               });
             } else {
@@ -384,13 +394,13 @@ export class MessageRouter {
         continue;
       }
 
-      // 优先级 2: 如果有 webhookUrl 且可用，异步推送
-      if (agent.webhookUrl && this.isWebhookAvailable(agentId)) {
+      // 优先级 2: 如果有 webhook 且可用，异步推送
+      if (agent.webhook?.url && this.isWebhookAvailable(agentId)) {
         const broadcastMessage = { ...message, toAgentId: agentId };
         const payload = this.buildPayload(broadcastMessage, agent);
         
         // 异步推送，不阻塞广播
-        this.pushToWebhook(agent.webhookUrl, payload)
+        this.pushToWebhook(agent.webhook.url, payload, agent.webhook.token)
           .then(result => {
             if (result.success) {
               this.resetWebhookFailures(agentId);

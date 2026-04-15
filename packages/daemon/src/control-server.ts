@@ -6,14 +6,19 @@
  */
 
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
-import { randomUUID } from 'crypto';
+import { randomUUID, randomBytes } from 'crypto';
+import { homedir } from 'os';
+import { join } from 'path';
+import { existsSync, readFileSync } from 'fs';
 import { F2A } from '@f2a/network';
 import { TokenManager } from '@f2a/network';
 import { Logger } from '@f2a/network';
 import { RateLimiter } from '@f2a/network';
 import { getErrorMessage } from '@f2a/network';
+import { E2EECrypto } from '@f2a/network';
 import { AgentRegistry, AgentRegistration } from './agent-registry.js';
 import { MessageRouter, RoutableMessage } from './message-router.js';
+import { AgentIdentityManager, AgentIdentity } from './agent-identity-manager.js';
 import type { AgentCapability } from '@f2a/network';
 
 export interface ControlServerOptions {
@@ -87,12 +92,21 @@ export class ControlServer {
   // Phase 1: Agent 注册表和消息路由器
   private agentRegistry: AgentRegistry;
   private messageRouter: MessageRouter;
+  // Phase 6: Agent Identity Manager
+  private identityManager: AgentIdentityManager;
+  // Phase 7: Challenge-Response 验证
+  private pendingChallenges: Map<string, { nonce: string; webhook: any; timestamp: number }> = new Map();
+  // E2EECrypto 用于签名验证（在 verifyChallenge 中使用）
+  // 使用 ! 断言，因为它在构造函数中被初始化
+  private e2eeCrypto!: E2EECrypto;
+  private dataDir: string;
 
   constructor(f2a: F2A, port: number, tokenManager?: TokenManager, options?: ControlServerOptions) {
     this.f2a = f2a;
     this.port = port;
     // 使用传入的 dataDir 创建 TokenManager
-    this.tokenManager = tokenManager || new TokenManager(options?.dataDir);
+    this.dataDir = options?.dataDir || join(homedir(), '.f2a');
+    this.tokenManager = tokenManager || new TokenManager(this.dataDir);
     this.logger = new Logger({ component: 'ControlServer' });
     // 速率限制: 每分钟最多 60 个请求
     this.rateLimiter = new RateLimiter({ maxRequests: 60, windowMs: 60000 });
@@ -110,6 +124,33 @@ export class ControlServer {
     const signFunction = (data: string) => this.f2a.signData(data);
     this.agentRegistry = new AgentRegistry(peerId, signFunction);
     this.messageRouter = new MessageRouter(this.agentRegistry);
+    
+    // Phase 6: 初始化 Identity Manager
+    this.identityManager = new AgentIdentityManager(this.dataDir);
+    this.identityManager.loadAll();
+    
+    // Phase 7: 初始化 E2EECrypto（用于 Challenge-Response 签名验证）
+    this.e2eeCrypto = new E2EECrypto();
+    // 尝试从 node-identity.json 加载 E2EE 密钥
+    const nodeIdentityPath = join(this.dataDir, 'node-identity.json');
+    try {
+      if (existsSync(nodeIdentityPath)) {
+        const nodeIdentity = JSON.parse(readFileSync(nodeIdentityPath, 'utf-8'));
+        if (nodeIdentity.e2eeKeyPair?.publicKey && nodeIdentity.e2eeKeyPair?.privateKey) {
+          const publicKey = Buffer.from(nodeIdentity.e2eeKeyPair.publicKey, 'base64');
+          const privateKey = Buffer.from(nodeIdentity.e2eeKeyPair.privateKey, 'base64');
+          this.e2eeCrypto.initializeWithKeyPair(privateKey, publicKey);
+          this.logger.info('E2EECrypto initialized from node-identity.json');
+        }
+      } else {
+        // node-identity.json 不存在，异步初始化
+        this.e2eeCrypto.initialize().catch(err => {
+          this.logger.warn('E2EECrypto initialization failed', { error: getErrorMessage(err) });
+        });
+      }
+    } catch (err) {
+      this.logger.warn('Failed to load node-identity.json for E2EECrypto', { error: getErrorMessage(err) });
+    }
   }
   
   /**
@@ -224,7 +265,7 @@ export class ControlServer {
       return;
     }
     
-    // PATCH /api/agents/:agentId/webhook - 更新 Agent webhookUrl
+    // PATCH /api/agents/:agentId/webhook - 更新 Agent webhook（RFC 004）
     const webhookMatch = req.url?.match(/^\/api\/agents\/([^\/]+)\/webhook$/);
     if (req.method === 'PATCH' && webhookMatch) {
       this.handleUpdateWebhook(decodeURIComponent(webhookMatch[1]), req, res);
@@ -669,7 +710,7 @@ export class ControlServer {
         capabilities: a.capabilities,
         registeredAt: a.registeredAt,
         lastActiveAt: a.lastActiveAt,
-        webhookUrl: a.webhookUrl,
+        webhook: a.webhook,
       })),
       stats: this.agentRegistry.getStats(),
     }));
@@ -677,16 +718,73 @@ export class ControlServer {
 
   /**
    * 注册 Agent（RFC 003: AgentId 由节点签发）
+   * Phase 6: 支持恢复已有身份
    * 
-   * 用户只需提供 name 和 capabilities
-   * 节点生成并签名 AgentId
+   * - 如果提供了 agentId 且存在对应 identity 文件，恢复身份
+   * - 否则注册新 Agent（节点签发 AgentId）
    */
   private handleRegisterAgent(req: IncomingMessage, res: ServerResponse): void {
     let body = ''; req.on('data', chunk => { body += chunk; }); req.on('end', () => {
       try {
         const data = JSON.parse(body);
         
-        // RFC 003: 不再接受用户自定义 agentId
+        // 🔑 Phase 7: Challenge-Response - 如果请求挑战
+        if (data.requestChallenge) {
+          const nonce = this.generateNonce();  // 随机 nonce
+          
+          this.pendingChallenges.set(data.agentId, {
+            nonce,
+            webhook: data.webhook,
+            timestamp: Date.now()
+          });
+          
+          this.logger.info('Challenge requested for agent', {
+            agentId: data.agentId?.slice(0, 16),
+            noncePrefix: nonce.slice(0, 8)
+          });
+          
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            challenge: true,
+            nonce,
+            expiresIn: 60  // 60 秒有效期
+          }));
+          return;
+        }
+        
+        // 🔑 Phase 6: 如果提供了已有 agentId，尝试恢复身份
+        if (data.agentId) {
+          const existingIdentity = this.identityManager.get(data.agentId);
+          
+          if (existingIdentity) {
+            // 恢复身份：更新 webhook
+            if (data.webhook) {
+              this.identityManager.updateWebhook(data.agentId, data.webhook);
+            }
+            
+            // 同步到 AgentRegistry
+            const restored = this.agentRegistry.restore(existingIdentity);
+            
+            // 创建消息队列
+            this.messageRouter.createQueue(data.agentId);
+            
+            this.logger.info('Agent identity restored', {
+              agentId: existingIdentity.agentId,
+              name: existingIdentity.name,
+              peerId: existingIdentity.peerId,
+            });
+            
+            res.writeHead(200);
+            res.end(JSON.stringify({
+              success: true,
+              restored: true,
+              agent: restored,
+            }));
+            return;
+          }
+        }
+        
+        // RFC 003: 新注册必须提供 name
         if (!data.name) {
           res.writeHead(400);
           res.end(JSON.stringify({
@@ -709,15 +807,26 @@ export class ControlServer {
         const registration = this.agentRegistry.register({
           name: data.name,
           capabilities,
-          webhookUrl: data.webhookUrl,
+          webhook: data.webhook,
           metadata: data.metadata,
         });
 
+        // 🔑 Phase 6: 保存 identity 文件
+        const identity: AgentIdentity = {
+          agentId: registration.agentId,
+          name: registration.name,
+          peerId: registration.peerId,
+          signature: registration.signature,
+          // e2eePublicKey: TODO - 需要从 F2A 获取
+          webhook: registration.webhook,
+          capabilities: registration.capabilities,
+          metadata: registration.metadata,
+          createdAt: registration.registeredAt.toISOString(),
+          lastActiveAt: new Date().toISOString(),
+        };        this.identityManager.save(identity);
+
         // 创建消息队列
         this.messageRouter.createQueue(registration.agentId);
-
-        // 同步注册表到消息路由器
-        this.syncAgentRegistryToRouter();
 
         this.logger.info('Agent registered via API (node-issued)', {
           agentId: registration.agentId,
@@ -728,6 +837,7 @@ export class ControlServer {
         res.writeHead(201);
         res.end(JSON.stringify({
           success: true,
+          restored: false,
           agent: registration,
         }));
       } catch (error) {
@@ -798,7 +908,7 @@ export class ControlServer {
         capabilities: agent.capabilities,
         registeredAt: agent.registeredAt,
         lastActiveAt: agent.lastActiveAt,
-        webhookUrl: agent.webhookUrl,
+        webhook: agent.webhook,
         metadata: agent.metadata,
       },
       queue: queue ? {
@@ -809,7 +919,7 @@ export class ControlServer {
   }
 
   /**
-   * 更新 Agent webhookUrl
+   * 更新 Agent webhook（RFC 004: Agent 级 Webhook）
    */
   private handleUpdateWebhook(agentId: string, req: IncomingMessage, res: ServerResponse): void {
     let body = '';
@@ -829,20 +939,22 @@ export class ControlServer {
           return;
         }
 
-        const updated = this.agentRegistry.updateWebhookUrl(agentId, data.webhookUrl);
+        // RFC 004: 构建 webhook 对象
+        const webhook = data.webhook || (data.webhookUrl ? { url: data.webhookUrl, token: data.webhookToken } : undefined);
+        const updated = this.agentRegistry.updateWebhook(agentId, webhook);
         if (updated) {
-          this.logger.info('Agent webhookUrl updated via API', { agentId, webhookUrl: data.webhookUrl });
+          this.logger.info('Agent webhook updated via API', { agentId, webhookUrl: webhook?.url });
           res.writeHead(200);
           res.end(JSON.stringify({
             success: true,
             agentId,
-            webhookUrl: data.webhookUrl,
+            webhook,
           }));
         } else {
           res.writeHead(500);
           res.end(JSON.stringify({
             success: false,
-            error: 'Failed to update webhookUrl',
+            error: 'Failed to update webhook',
             code: 'UPDATE_FAILED',
           }));
         }
@@ -1037,5 +1149,141 @@ export class ControlServer {
    */
   private syncAgentRegistryToRouter(): void {
     // MessageRouter 直接引用 AgentRegistry，无需同步
+  }
+
+  // ========== Phase 7: Challenge-Response 辅助方法 ==========
+
+  /**
+   * 生成随机 nonce
+   * @returns 32 位随机十六进制字符串
+   */
+  private generateNonce(): string {
+    return randomBytes(16).toString('hex');  // 32 位随机字符串
+  }
+
+  /**
+   * 生成 session token
+   * @returns 随机 session token
+   */
+  private generateSessionToken(): string {
+    return randomBytes(32).toString('hex');  // 64 位随机字符串
+  }
+
+  /**
+   * Phase 7: 验证 Challenge-Response
+   * POST /api/agents/verify
+   */
+  private handleVerifyAgent(req: IncomingMessage, res: ServerResponse): void {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        
+        // 1️⃣ 检查 nonce 是否存在
+        const pending = this.pendingChallenges.get(data.agentId);
+        if (!pending || pending.nonce !== data.nonce) {
+          this.logger.warn('Invalid nonce for agent verification', {
+            agentId: data.agentId?.slice(0, 16),
+            hasPending: !!pending
+          });
+          res.writeHead(400);
+          res.end(JSON.stringify({ success: false, error: 'Invalid nonce' }));
+          return;
+        }
+        
+        // 2️⃣ 检查 nonce 是否过期（60秒有效期）
+        if (Date.now() - pending.timestamp > 60000) {
+          this.pendingChallenges.delete(data.agentId);
+          this.logger.warn('Nonce expired for agent verification', {
+            agentId: data.agentId?.slice(0, 16),
+            elapsedMs: Date.now() - pending.timestamp
+          });
+          res.writeHead(400);
+          res.end(JSON.stringify({ success: false, error: 'Nonce expired' }));
+          return;
+        }
+        
+        // 3️⃣ 加载 identity 文件
+        const identity = this.identityManager.get(data.agentId);
+        if (!identity) {
+          this.logger.warn('Identity not found for agent verification', {
+            agentId: data.agentId?.slice(0, 16)
+          });
+          res.writeHead(404);
+          res.end(JSON.stringify({ success: false, error: 'Identity not found' }));
+          return;
+        }
+        
+        // 🔑 4️⃣ 验证 nonce 签名
+        if (!identity.e2eePublicKey) {
+          this.logger.error('Identity missing e2eePublicKey, cannot verify signature', {
+            agentId: data.agentId?.slice(0, 16)
+          });
+          res.writeHead(400);
+          res.end(JSON.stringify({ success: false, error: 'Identity missing e2eePublicKey' }));
+          return;
+        }
+        
+        const isValid = this.e2eeCrypto.verifySignature(
+          data.nonce,
+          data.nonceSignature,
+          identity.e2eePublicKey
+        );
+        
+        if (!isValid) {
+          this.logger.error('Signature verification failed - agent identity mismatch', {
+            agentId: data.agentId?.slice(0, 16),
+            noncePrefix: data.nonce?.slice(0, 8)
+          });
+          res.writeHead(401);
+          res.end(JSON.stringify({ 
+            success: false, 
+            error: 'Signature verification failed - not the same agent' 
+          }));
+          return;
+        }
+        
+        // ✅ 5️⃣ 验证通过：生成新 session token
+        const sessionToken = this.generateSessionToken();
+        
+        // 6️⃣ 更新 identity
+        identity.webhook = pending.webhook;
+        identity.lastActiveAt = new Date().toISOString();
+        this.identityManager.save(identity);
+        
+        // 7️⃣ 清理 pending challenge
+        this.pendingChallenges.delete(data.agentId);
+        
+        // 8️⃣ 同步到 AgentRegistry
+        const restored = this.agentRegistry.restore(identity);
+        this.messageRouter.createQueue(data.agentId);
+        
+        this.logger.info('Agent identity verified successfully', {
+          agentId: identity.agentId?.slice(0, 16),
+          name: identity.name,
+          sessionTokenPrefix: sessionToken.slice(0, 8)
+        });
+        
+        // 9️⃣ 返回新 token
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          success: true,
+          verified: true,
+          sessionToken,
+          agent: restored
+        }));
+      } catch (error) {
+        this.logger.error('Error in agent verification', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+        res.writeHead(400);
+        res.end(JSON.stringify({
+          success: false,
+          error: 'Invalid JSON',
+          code: 'INVALID_JSON'
+        }));
+      }
+    });
   }
 }

@@ -660,7 +660,7 @@ export class ControlServer {
         capabilities: a.capabilities,
         registeredAt: a.registeredAt,
         lastActiveAt: a.lastActiveAt,
-        webhookUrl: a.webhookUrl,
+        webhook: a.webhook,
       })),
       stats: this.agentRegistry.getStats(),
     }));
@@ -700,7 +700,10 @@ export class ControlServer {
         const registration = this.agentRegistry.register({
           name: data.name,
           capabilities,
-          webhookUrl: data.webhookUrl,
+          webhook: data.webhook ? {
+            url: data.webhook.url,
+            token: data.webhook.token,
+          } : undefined,
           metadata: data.metadata,
         });
 
@@ -789,7 +792,7 @@ export class ControlServer {
         capabilities: agent.capabilities,
         registeredAt: agent.registeredAt,
         lastActiveAt: agent.lastActiveAt,
-        webhookUrl: agent.webhookUrl,
+        webhook: agent.webhook,
         metadata: agent.metadata,
       },
       queue: queue ? {

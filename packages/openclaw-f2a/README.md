@@ -61,10 +61,63 @@ Add to your `openclaw.json`:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `webhookPath` | string | `/f2a/webhook` | Webhook endpoint path |
+| `webhookPort` | number | 9002 | Webhook listener port |
 | `webhookToken` | string | - | Auth token for webhook requests |
 | `controlPort` | number | 9001 | F2A daemon control port |
-| `controlToken` | string | - | F2A daemon token (auto-loaded from ~/.f2a/control-token) |
 | `agentTimeout` | number | 60000 | Agent response timeout (ms) |
+| `agentName` | string | `OpenClaw Agent` | Agent display name |
+| `agentCapabilities` | string[] | `['chat', 'task']` | Agent capability list |
+| `autoRegister` | boolean | true | Auto-register to F2A daemon on startup |
+| `registerRetryInterval` | number | 5000 | Retry interval for daemon registration (ms) |
+| `registerMaxRetries` | number | 3 | Max retries for daemon registration |
+
+### Phase 5-7 Features
+
+#### Auto Registration (Phase 5)
+
+When `autoRegister` is enabled, the plugin will:
+1. Check F2A daemon health on startup
+2. Register itself as an Agent via `/api/agents`
+3. Retry registration if daemon is not running
+4. Unregister when plugin stops
+
+#### Agent Identity Persistence (Phase 6)
+
+Agent identity is persisted in `~/.f2a/agents/`:
+- AgentId is saved to `~/.f2a/agents/<agentId>.json`
+- On restart, plugin attempts to restore identity
+- Supports multiple agents per node
+
+#### Challenge-Response Verification (Phase 7)
+
+For identity restoration:
+1. Daemon sends a random nonce (challenge)
+2. Plugin signs nonce with node's private key
+3. Daemon verifies signature
+4. New session token is generated
+
+### Example Configuration
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-f2a": {
+        "source": "@f2a/openclaw-f2a",
+        "config": {
+          "webhookPort": 9002,
+          "webhookToken": "your-secret-token",
+          "controlPort": 9001,
+          "agentTimeout": 60000,
+          "agentName": "My OpenClaw Agent",
+          "agentCapabilities": ["chat", "task", "code"],
+          "autoRegister": true
+        }
+      }
+    }
+  }
+}
+```
 
 ## Webhook Format
 

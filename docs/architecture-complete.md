@@ -399,25 +399,34 @@ interface AgentReputation {
 
 ## 迁移路径
 
+> **⚠️ 修订**: 以下迁移路径已合并到 [RFC 005: F2A 架构统一](./rfcs/005-architecture-unification.md)
+
 ### Phase 1: 当前实现 (已完成)
 - 1 Node = 1 Agent
 - 信誉用 PeerID 作为键
 - 功能可用，但架构不完整
 
-### Phase 2: Agent 独立身份 (待实现)
-- 引入 AgentID
+### Phase 2: Agent 独立身份 (RFC 003)
+- 引入 AgentId
 - Agent 可以有自己的签名密钥
-- 信誉键值从 PeerID 改为 AgentID
+- 信誉键值从 PeerID 改为 AgentId
 
-### Phase 3: 多 Agent 支持 (待实现)
+### Phase 3: 架构统一 (RFC 005)
+- **MessageRouter/AgentRegistry 移入 F2A 核心类**
+- 本地和远程消息走统一流程
+- P2PNetwork 只负责传输
+
+### Phase 4: 多 Agent 支持
 - 一个 Node 可以注册多个 Agent
 - 消息路由根据 AgentID 分发
 - 每个 Agent 独立的信誉和能力
 
-### Phase 4: Agent 迁移 (待实现)
+### Phase 5: Agent 迁移
 - Agent 可以从 Node A 迁移到 Node B
 - 信誉随 Agent 迁移
 - 信誉证明 (签名验证)
+
+**详细实施计划**: 见 [memory/2026-04-15.md](../memory/2026-04-15.md) "RFC 任务规划" 章节
 
 ---
 

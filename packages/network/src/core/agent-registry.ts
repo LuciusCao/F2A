@@ -35,6 +35,16 @@ export type MessageCallback = (message: {
 }) => void;
 
 /**
+ * Webhook 配置（RFC 004: Agent 级 Webhook）
+ */
+export interface AgentWebhook {
+  /** Webhook URL */
+  url: string;
+  /** 认证 Token（可选） */
+  token?: string;
+}
+
+/**
  * Agent 注册信息
  */
 export interface AgentRegistration {
@@ -52,8 +62,8 @@ export interface AgentRegistration {
   registeredAt: Date;
   /** 最后活跃时间 */
   lastActiveAt: Date;
-  /** Webhook URL（用于推送消息给远程 Agent） */
-  webhookUrl?: string;
+  /** Webhook 配置（RFC 004: Agent 级 Webhook，用于推送消息给远程 Agent） */
+  webhook?: AgentWebhook;
   /** 本地消息回调（用于直接推送消息给本地 Agent，无需轮询） */
   onMessage?: MessageCallback;
   /** Agent 元数据 */
@@ -68,8 +78,8 @@ export interface AgentRegistrationRequest {
   name: string;
   /** Agent 支持的能力列表 */
   capabilities: AgentCapability[];
-  /** Webhook URL（可选，用于远程 Agent） */
-  webhookUrl?: string;
+  /** Webhook 配置（RFC 004: Agent 级 Webhook，可选，用于远程 Agent） */
+  webhook?: AgentWebhook;
   /** 本地消息回调（可选，用于本地 Agent 直接接收消息） */
   onMessage?: MessageCallback;
   /** Agent 元数据（可选） */
@@ -96,8 +106,8 @@ export interface PersistedAgentRegistration {
   registeredAt: string;
   /** 最后活跃时间（ISO 字符串） */
   lastActiveAt: string;
-  /** Webhook URL */
-  webhookUrl?: string;
+  /** Webhook 配置（RFC 004: Agent 级 Webhook） */
+  webhook?: AgentWebhook;
   /** Agent 元数据 */
   metadata?: Record<string, unknown>;
 }
@@ -233,7 +243,7 @@ export class AgentRegistry {
       signature,
       registeredAt: new Date(),
       lastActiveAt: new Date(),
-      webhookUrl: request.webhookUrl,
+      webhook: request.webhook,
       onMessage: request.onMessage,
       metadata: request.metadata,
     };
@@ -275,6 +285,45 @@ export class AgentRegistry {
   }
 
   /**
+   * 恢复已有 Agent（从 identity 文件）
+   * Phase 6: 支持身份恢复
+   */
+  restore(identity: {
+    agentId: string;
+    name: string;
+    peerId: string;
+    signature: string;
+    capabilities: AgentCapability[];
+    webhook?: AgentWebhook;
+    metadata?: Record<string, unknown>;
+    createdAt: string;
+    lastActiveAt: string;
+  }): AgentRegistration {
+    const registration: AgentRegistration = {
+      agentId: identity.agentId,
+      name: identity.name,
+      capabilities: identity.capabilities,
+      peerId: identity.peerId,
+      signature: identity.signature,
+      registeredAt: new Date(identity.createdAt),
+      lastActiveAt: new Date(identity.lastActiveAt),
+      webhook: identity.webhook,
+      metadata: identity.metadata,
+    };
+    
+    this.agents.set(identity.agentId, registration);
+    this.save();  // 同步保存
+    
+    this.logger.info('Agent restored from identity', {
+      agentId: identity.agentId,
+      name: identity.name,
+      peerId: identity.peerId,
+    });
+    
+    return registration;
+  }
+
+  /**
    * 更新 Agent 名称（AgentId 不可改）
    */
   updateName(agentId: string, newName: string): boolean {
@@ -292,6 +341,30 @@ export class AgentRegistry {
     this.save();
     
     this.logger.info('Agent name updated', { agentId, oldName, newName });
+    return true;
+  }
+
+  /**
+   * 更新 Agent Webhook 配置（RFC 004: Agent 级 Webhook）
+   */
+  updateWebhook(agentId: string, webhook: AgentWebhook | undefined): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent) {
+      this.logger.warn('Agent not found for webhook update', { agentId });
+      return false;
+    }
+
+    agent.webhook = webhook;
+    agent.lastActiveAt = new Date();
+    
+    // 自动保存（同步）
+    this.save();
+    
+    this.logger.info('Agent webhook updated', { 
+      agentId, 
+      webhookUrl: webhook?.url || 'removed',
+      hasToken: !!webhook?.token
+    });
     return true;
   }
 
@@ -363,6 +436,14 @@ export class AgentRegistry {
     if (agent) {
       agent.lastActiveAt = new Date();
     }
+  }
+
+  /**
+   * RFC 005: 获取内部 Agents Map
+   * 用于 MessageRouter 访问注册表
+   */
+  getAgentsMap(): Map<string, AgentRegistration> {
+    return this.agents;
   }
 
   /**
@@ -626,7 +707,7 @@ export class AgentRegistry {
       signature: agent.signature,
       registeredAt: agent.registeredAt.toISOString(),
       lastActiveAt: agent.lastActiveAt.toISOString(),
-      webhookUrl: agent.webhookUrl,
+      webhook: agent.webhook,
       metadata: agent.metadata,
     };
   }
@@ -643,7 +724,7 @@ export class AgentRegistry {
       signature: persisted.signature,
       registeredAt: new Date(persisted.registeredAt),
       lastActiveAt: new Date(persisted.lastActiveAt),
-      webhookUrl: persisted.webhookUrl,
+      webhook: persisted.webhook,
       metadata: persisted.metadata,
       // 注意：onMessage 无法恢复
     };

@@ -46,3 +46,14 @@ export type {
   DelegationResult,
   MigrationResult
 } from './types.js';
+
+// RFC 003: AgentIdentityVerifier 导出
+export { AgentIdentityVerifier } from './agent-identity-verifier.js';
+export type {
+  AgentIdVerificationResult,
+  VerificationOptions
+} from './agent-identity-verifier.js';
+
+// RFC 003: Ed25519Signer 导出
+export { Ed25519Signer } from './ed25519-signer.js';
+export type { Ed25519KeyPair } from './ed25519-signer.js';

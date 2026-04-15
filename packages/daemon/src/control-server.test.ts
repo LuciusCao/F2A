@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ControlServer } from './control-server.js';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 // Track mock server instances
 let lastMockServer: any = null;
@@ -90,7 +92,7 @@ describe('ControlServer', () => {
     lastMockServer = null;
     mockRateLimiterAllow = true;
     mockF2A = createMockF2A();
-    server = new ControlServer(mockF2A, 9001);
+    server = new ControlServer(mockF2A, 9001, undefined, { dataDir: join(tmpdir(), 'f2a-test') });
   });
 
   afterEach(() => {

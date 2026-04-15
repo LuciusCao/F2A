@@ -841,6 +841,105 @@ export class E2EECrypto implements Disposable {
   }
 
   /**
+   * Phase 7: 验证签名
+   * 使用 E2EE 公钥验证 nonce 签名
+   * 
+   * @param data 原始数据（如 nonce）
+   * @param signature 签名（base64）
+   * @param publicKey 公钥（base64）
+   * @returns 签名是否有效
+   */
+  verifySignature(data: string, signature: string, publicKey: string): boolean {
+    try {
+      if (!this.keyPair) {
+        this.logger.error('Cannot verify signature: not initialized');
+        return false;
+      }
+
+      // 解码公钥
+      const publicKeyBytes = Buffer.from(publicKey, 'base64');
+      if (publicKeyBytes.length !== 32) {
+        this.logger.error('Invalid public key length', {
+          expected: 32,
+          actual: publicKeyBytes.length
+        });
+        return false;
+      }
+
+      // 解码签名
+      const signatureBytes = Buffer.from(signature, 'base64');
+      if (signatureBytes.length === 0) {
+        this.logger.error('Invalid signature: empty or invalid base64');
+        return false;
+      }
+
+      // 原始数据
+      const dataBytes = Buffer.from(data, 'utf-8');
+
+      // 使用 X25519/HMAC 验证签名
+      // 由于 X25519 是密钥协商算法，不能直接签名
+      // 我们使用 HMAC-SHA256 来验证（基于共享密钥）
+      // 这里假设签名者有相同的私钥
+      
+      // 计算共享密钥（使用我们的私钥和对方的公钥）
+      const sharedSecret = x25519.getSharedSecret(this.keyPair.privateKey, publicKeyBytes);
+      
+      // 使用 HMAC 计算期望的签名
+      const expectedSignature = createHmac('sha256', sharedSecret)
+        .update(dataBytes)
+        .digest('base64');
+
+      // 使用 timingSafeEqual 防止时序攻击
+      try {
+        const expectedBuffer = Buffer.from(expectedSignature, 'base64');
+        if (signatureBytes.length !== expectedBuffer.length) {
+          this.logger.debug('Signature length mismatch');
+          return false;
+        }
+        return timingSafeEqual(signatureBytes, expectedBuffer);
+      } catch {
+        return false;
+      }
+    } catch (err) {
+      this.logger.error('Signature verification failed', {
+        error: getErrorMessage(err)
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Phase 7: 签名数据
+   * 使用 E2EE 私钥签名数据
+   * 
+   * @param data 要签名的数据
+   * @returns 签名（base64）
+   */
+  signData(data: string): string | null {
+    if (!this.keyPair) {
+      this.logger.error('Cannot sign data: not initialized');
+      return null;
+    }
+
+    try {
+      const dataBytes = Buffer.from(data, 'utf-8');
+      
+      // X25519 不能直接签名，使用 HMAC
+      // 使用私钥作为 HMAC 密钥
+      const signature = createHmac('sha256', this.keyPair.privateKey)
+        .update(dataBytes)
+        .digest('base64');
+
+      return signature;
+    } catch (err) {
+      this.logger.error('Failed to sign data', {
+        error: getErrorMessage(err)
+      });
+      return null;
+    }
+  }
+
+  /**
    * P1-2 修复：检查与对等方的密钥是否已确认
    */
   isKeyConfirmed(peerId: string): boolean {

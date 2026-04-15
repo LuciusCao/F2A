@@ -57,12 +57,13 @@ async function sendRequest(
 
 /**
  * 注册 Agent（RFC 003: AgentId 由节点签发）
- * f2a agent register --name <name> [--capability <cap>]... [--webhook <url>]
+ * f2a agent register --name <name> [--capability <cap>]... [--webhook-url <url>] [--webhook-token <token>]
  */
 export async function registerAgent(options: {
   name: string;
   capabilities?: string[];
-  webhook?: string;
+  webhookUrl?: string;
+  webhookToken?: string;
 }): Promise<void> {
   if (!options.name) {
     console.error('❌ 错误: 缺少 --name 参数');
@@ -77,11 +78,17 @@ export async function registerAgent(options: {
       description: ''
     }));
 
+    // RFC 004: Agent 级 Webhook - 构建 webhook 对象
+    const webhook = options.webhookUrl ? {
+      url: options.webhookUrl,
+      token: options.webhookToken
+    } : undefined;
+
     // RFC 003: 不再发送 agentId，由节点签发
     const result = await sendRequest('POST', '/api/agents', {
       name: options.name,
       capabilities,
-      webhookUrl: options.webhook
+      webhook
     });
 
     if (result.success) {
@@ -93,8 +100,11 @@ export async function registerAgent(options: {
       if (capabilities.length > 0) {
         console.log(`   Capabilities: ${capabilities.map((c: any) => c.name).join(', ')}`);
       }
-      if (options.webhook) {
-        console.log(`   Webhook: ${options.webhook}`);
+      if (agent.webhook) {
+        console.log(`   Webhook URL: ${agent.webhook.url}`);
+        if (agent.webhook.token) {
+          console.log(`   Webhook Token: ${agent.webhook.token.slice(0, 4)}...${agent.webhook.token.slice(-4)}`);
+        }
       }
       console.log(`   Signature: ${agent.signature?.slice(0, 16)}...`);
     } else {
@@ -138,8 +148,11 @@ export async function listAgents(): Promise<void> {
         if (agent.capabilities && agent.capabilities.length > 0) {
           console.log(`   Capabilities: ${agent.capabilities.map((c: any) => c.name).join(', ')}`);
         }
-        if (agent.webhookUrl) {
-          console.log(`   Webhook: ${agent.webhookUrl}`);
+        if (agent.webhook) {
+          console.log(`   Webhook URL: ${agent.webhook.url}`);
+          if (agent.webhook.token) {
+            console.log(`   Webhook Token: ${agent.webhook.token.slice(0, 4)}...${agent.webhook.token.slice(-4)}`);
+          }
         }
         console.log(`   Last Active: ${lastActive}`);
         console.log('');

@@ -57,17 +57,19 @@ async function sendRequest(
 
 /**
  * 注册 Agent
- * f2a agent register --id <id> --name <name> [--capability <cap>]... [--webhook <url>]
+ * f2a agent register [--id <id>] --name <name> [--capability <cap>]... [--webhook <url>]
+ * 注：--id 参数可选，若不提供则由 daemon 自动生成
  */
 export async function registerAgent(options: {
-  id: string;
+  id?: string;
   name: string;
   capabilities?: string[];
   webhook?: string;
 }): Promise<void> {
-  if (!options.id || !options.name) {
-    console.error('❌ 错误: 缺少 --id 或 --name 参数');
-    console.error('用法: f2a agent register --id <id> --name <name> [--capability <cap>]...');
+  // name 必填，id 可选（由 daemon 自动生成）
+  if (!options.name) {
+    console.error('❌ 错误: 缺少 --name 参数');
+    console.error('用法: f2a agent register [--id <id>] --name <name> [--capability <cap>]...');
     process.exit(1);
   }
 
@@ -78,16 +80,24 @@ export async function registerAgent(options: {
       description: ''
     }));
 
-    const result = await sendRequest('POST', '/api/agents', {
-      agentId: options.id,
+    // 构建请求 body，只有用户提供 id 时才发送 agentId
+    const requestBody: Record<string, unknown> = {
       name: options.name,
       capabilities,
       webhookUrl: options.webhook
-    });
+    };
+    if (options.id) {
+      requestBody.agentId = options.id;
+    }
+
+    const result = await sendRequest('POST', '/api/agents', requestBody);
 
     if (result.success) {
+      // 获取实际的 agentId（用户指定或 daemon 生成）
+      const actualAgentId = options.id || (result.agent as any)?.agentId;
+      
       console.log(`✅ Agent 已注册`);
-      console.log(`   ID: ${options.id}`);
+      console.log(`   ID: ${actualAgentId}`);
       console.log(`   Name: ${options.name}`);
       if (capabilities.length > 0) {
         console.log(`   Capabilities: ${capabilities.map((c: any) => c.name).join(', ')}`);

@@ -97,6 +97,22 @@ export interface WebhookConfig {
 
   /** Agent response timeout (milliseconds) */
   agentTimeout?: number;
+
+  /** F2A Daemon control port */
+  controlPort?: number;
+  /** Agent name for registration */
+  agentName?: string;
+  /** Agent capabilities */
+  agentCapabilities?: string[];
+  /** Auto-register to Daemon on start */
+  autoRegister?: boolean;
+  /** Retry interval for registration (milliseconds) */
+  registerRetryInterval?: number;
+  /** Max retries for registration */
+  registerMaxRetries?: number;
+
+  /** Internal: registered agent ID for cleanup (set after successful registration) */
+  _registeredAgentId?: string;
 }
 
 // ============================================================================

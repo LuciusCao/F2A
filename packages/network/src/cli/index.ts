@@ -57,6 +57,7 @@ interface Args {
   agentName?: string;
   agentCapabilities?: string[];
   webhookUrl?: string;
+  webhookToken?: string;  // RFC 004: Agent 级 Webhook token
   // 通用标志
   limit?: number;
   unread?: boolean;
@@ -177,14 +178,20 @@ function parseArgs(): Args {
   let agentName: string | undefined;
   let agentCap: string | undefined;
   let webhookUrl: string | undefined;
+  let webhookToken: string | undefined;  // RFC 004: Agent 级 Webhook token
   if (command === 'agent' && subcommand) {
     if (subcommand === 'register') {
       const nameIndex = args.indexOf('--name');
       if (nameIndex !== -1 && args[nameIndex + 1]) agentName = args[nameIndex + 1];
       const capIndex = args.indexOf('--capability');
       if (capIndex !== -1 && args[capIndex + 1]) agentCap = args[capIndex + 1];
-      const webIndex = args.indexOf('--webhook');
-      if (webIndex !== -1 && args[webIndex + 1]) webhookUrl = args[webIndex + 1];
+      // RFC 004: 支持 --webhook-url 和 --webhook-token
+      const webUrlIndex = args.indexOf('--webhook-url');
+      const webIndex = args.indexOf('--webhook');  // 向后兼容
+      const effectiveWebIndex = webUrlIndex !== -1 ? webUrlIndex : webIndex;
+      if (effectiveWebIndex !== -1 && args[effectiveWebIndex + 1]) webhookUrl = args[effectiveWebIndex + 1];
+      const webTokenIndex = args.indexOf('--webhook-token');
+      if (webTokenIndex !== -1 && args[webTokenIndex + 1]) webhookToken = args[webTokenIndex + 1];
     } else if (subcommand === 'unregister') {
       // unregister 命令的参数是 agent_id
       const idArg = args[2];
@@ -213,7 +220,7 @@ function parseArgs(): Args {
     command, subcommand, idOrIndex, capability, reason, detach, 
     configKey, configValue, filePath,
     peerId, topic, messageContent,
-    agentId, agentName, agentCapabilities: agentCap ? [agentCap] : undefined, webhookUrl,
+    agentId, agentName, agentCapabilities: agentCap ? [agentCap] : undefined, webhookUrl, webhookToken,
     limit, unread, from
   };
 }
@@ -446,13 +453,15 @@ Usage: f2a agent [subcommand]
 Agent 管理命令（RFC 003: AgentId 由节点签发）。
 
 Subcommands:
-  f2a agent register --name <name> [--capability <cap>]... [--webhook <url>]
+  f2a agent register --name <name> [--capability <cap>]... [--webhook-url <url>] [--webhook-token <token>]
                         注册 Agent（节点签发 AgentId）
   f2a agent list        列出已注册的 Agent
   f2a agent unregister <agent_id>   注销 Agent
 
 Examples:
   f2a agent register --name "猫咕噜" --capability code-generation
+  f2a agent register --name "Agent A" --webhook-url http://127.0.0.1:9002/f2a/webhook
+  f2a agent register --name "Agent B" --webhook-url http://127.0.0.1:9002/f2a/webhook --webhook-token secret123
   f2a agent list
   f2a agent unregister agent:12D3KooWHxWdn:abc12345
 `);
@@ -877,7 +886,8 @@ async function handleAgentCommand(args: Args): Promise<void> {
       await registerAgent({
         name: args.agentName || '',
         capabilities: args.agentCapabilities,
-        webhook: args.webhookUrl
+        webhookUrl: args.webhookUrl,
+        webhookToken: args.webhookToken
       });
       break;
 

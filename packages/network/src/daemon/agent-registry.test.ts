@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { AgentRegistry, AgentRegistration, AgentRegistrationRequest } from '../core/agent-registry.js';
+import { AgentRegistry, AgentRegistration, AgentRegistrationRequest, AgentWebhook } from '../core/agent-registry.js';
 import type { AgentCapability } from '../types/index.js';
 
 // Mock Logger
@@ -34,7 +34,7 @@ describe('AgentRegistry', () => {
   ) => ({
     name,
     capabilities,
-    webhookUrl: `http://localhost/${name}`,
+    webhook: { url: `http://localhost/${name}` },
     metadata: { version: '1.0' },
   });
 
@@ -80,14 +80,15 @@ describe('AgentRegistry', () => {
       expect(registry.list()).toHaveLength(2);
     });
 
-    it('应该保留 webhookUrl 和 metadata', () => {
+    it('应该保留 webhook 和 metadata', () => {
       const request = createAgentRegistrationRequest('Agent');
-      request.webhookUrl = 'http://example.com/webhook';
+      request.webhook = { url: 'http://example.com/webhook', token: 'secret123' };
       request.metadata = { custom: 'data' };
 
       const result = registry.register(request);
 
-      expect(result.webhookUrl).toBe('http://example.com/webhook');
+      expect(result.webhook?.url).toBe('http://example.com/webhook');
+      expect(result.webhook?.token).toBe('secret123');
       expect(result.metadata).toEqual({ custom: 'data' });
     });
 

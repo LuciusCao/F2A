@@ -89,6 +89,8 @@ export interface P2PNetworkEvents {
   'peer:disconnected': (event: PeerDisconnectedEvent) => void;
   'message:received': (message: F2AMessage, peerId: string) => void;
   'error': (error: Error) => void;
+  // RFC 003: 签名验证失败事件
+  'security:invalid-signature': (event: { agentId: string; peerId: string; error?: string }) => void;
 }
 
 /** 发现选项 */
@@ -205,6 +207,15 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private natTraversalManager?: NATTraversalManager;
   private logger: Logger;
   private middlewareManager: MiddlewareManager;
+  
+  // RFC 003: AgentIdentityVerifier - 跨节点签名验证
+  private agentIdentityVerifier?: import('./identity/agent-identity-verifier.js').AgentIdentityVerifier;
+  
+  // RFC 003: AgentRegistry 引用 - 用于获取签名
+  private agentRegistry?: import('./agent-registry.js').AgentRegistry;
+  
+  // RFC 003: 是否启用 AgentId 签名验证
+  private enableAgentIdVerification: boolean = true;
 
   constructor(agentInfo: AgentInfo, config: P2PNetworkConfig = {}) {
     super();
@@ -243,6 +254,46 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    */
   setIdentityManager(identityManager: IdentityManager): void {
     this.identityManager = identityManager;
+  }
+  
+  /**
+   * RFC 003: 设置 AgentRegistry（用于获取签名）
+   * 必须在 start() 之前或之后调用
+   */
+  setAgentRegistry(agentRegistry: import('./agent-registry.js').AgentRegistry): void {
+    this.agentRegistry = agentRegistry;
+    
+    // 初始化 AgentIdentityVerifier（同步创建）
+    // 使用 import() 类型语法避免异步导入
+    const { AgentIdentityVerifier } = require('./identity/agent-identity-verifier.js') || {};
+    if (AgentIdentityVerifier) {
+      this.agentIdentityVerifier = new AgentIdentityVerifier(
+        this.e2eeCrypto,
+        this.peerTable,
+        this.connectedPeers
+      );
+    }
+    
+    this.logger.info('AgentRegistry and AgentIdentityVerifier configured', {
+      peerId: this.agentInfo.peerId?.slice(0, 16) || 'not-set'
+    });
+  }
+  
+  /**
+   * RFC 003: 启用/禁用 AgentId 签名验证
+   */
+  setEnableAgentIdVerification(enable: boolean): void {
+    this.enableAgentIdVerification = enable;
+    this.logger.info('AgentId verification mode changed', { enabled: enable });
+  }
+  
+  /**
+   * RFC 003: 更新 AgentIdentityVerifier 的 Peer 表引用
+   */
+  updateVerifierPeerReferences(): void {
+    if (this.agentIdentityVerifier) {
+      this.agentIdentityVerifier.updatePeerReferences(this.peerTable, this.connectedPeers);
+    }
   }
 
   /**
@@ -673,16 +724,53 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       contentLength: typeof content === 'string' ? content.length : 'object'
     });
 
+    // RFC 003: 构造消息 payload
+    let payload: StructuredMessagePayload | import('../types/index.js').AgentMessagePayload;
+    
+    // 如果有 AgentRegistry，携带签名
+    if (this.agentRegistry) {
+      const myAgent = this.agentRegistry.get(this.agentInfo.agentId || '');
+      if (myAgent) {
+        // 构造 AgentMessagePayload（带签名）
+        payload = {
+          topic: topic || MESSAGE_TOPICS.FREE_CHAT,
+          content,
+          fromAgentId: myAgent.agentId,
+          fromSignature: myAgent.signature,
+          fromPeerId: this.agentInfo.peerId,
+          timestamp: Date.now(),
+          messageId: randomUUID()
+        };
+        
+        this.logger.debug('[P2P] Sending message with AgentId signature', {
+          agentId: myAgent.agentId,
+          peerId: peerId.slice(0, 16)
+        });
+      } else {
+        // Agent 不存在，使用普通 payload
+        payload = {
+          topic: topic || MESSAGE_TOPICS.FREE_CHAT,
+          content
+        };
+        this.logger.warn('[P2P] Agent not found in registry, sending without signature', {
+          agentId: this.agentInfo.agentId
+        });
+      }
+    } else {
+      // 无 AgentRegistry，使用普通 payload
+      payload = {
+        topic: topic || MESSAGE_TOPICS.FREE_CHAT,
+        content
+      }; 
+    }
+
     const message: F2AMessage = {
       id: randomUUID(),
       type: 'MESSAGE',
       from: this.agentInfo.peerId,
       to: peerId,
       timestamp: Date.now(),
-      payload: {
-        topic: topic || MESSAGE_TOPICS.FREE_CHAT,
-        content
-      } as StructuredMessagePayload
+      payload
     };
 
     // 发送消息（启用 E2EE 加密）
@@ -1419,6 +1507,42 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     }
     const payload = validation.data;
     const topic = payload.topic;
+
+    // RFC 003: AgentId 签名验证
+    // 如果 payload 中包含 AgentId 信息，验证签名
+    if (this.enableAgentIdVerification && this.agentIdentityVerifier) {
+      // 检查 payload 是否为 AgentMessagePayload 类型
+      const agentPayload = payload as any;
+      if (agentPayload.fromAgentId && agentPayload.fromSignature) {
+        const verifyResult = await this.agentIdentityVerifier.verifyRemoteAgentId(
+          agentPayload.fromAgentId,
+          agentPayload.fromSignature,
+          peerId
+        );
+        
+        if (!verifyResult.valid) {
+          this.logger.warn('[P2P] Invalid AgentId signature, message rejected', {
+            fromAgentId: agentPayload.fromAgentId,
+            peerId: peerId.slice(0, 16),
+            error: verifyResult.error
+          });
+          
+          // 发送安全事件
+          this.emit('security:invalid-signature', {
+            agentId: agentPayload.fromAgentId,
+            peerId,
+            error: verifyResult.error
+          });
+          
+          return; // 拒绝处理消息
+        }
+        
+        this.logger.info('[P2P] AgentId signature verified', {
+          fromAgentId: agentPayload.fromAgentId,
+          matchedPeerId: verifyResult.matchedPeerId?.slice(0, 16)
+        });
+      }
+    }
 
     this.logger.info('Received MESSAGE', {
       from: peerId.slice(0, 16),

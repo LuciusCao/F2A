@@ -147,4 +147,91 @@ describe('AgentRegistry (RFC 003)', () => {
       expect(registry.list()).toHaveLength(1);
     });
   });
+
+  describe('restore (Phase 6)', () => {
+    it('should restore agent from identity', () => {
+      // agentId 的 peerId 前缀需要匹配 mockPeerId 的前 16 位
+      const peerIdPrefix = mockPeerId.slice(0, 16); // '12D3KooWHxWdnxJ'
+      const identity = {
+        agentId: `agent:${peerIdPrefix}:12345678`,
+        name: 'Restored Agent',
+        peerId: mockPeerId,
+        signature: 'mock-signature',
+        webhook: { url: 'http://127.0.0.1:9002/f2a/webhook' },
+        capabilities: [{ name: 'chat', version: '1.0.0' }],
+        createdAt: '2026-01-01T00:00:00Z',
+        lastActiveAt: '2026-01-01T00:00:00Z',
+      };
+
+      const restored = registry.restore(identity);
+
+      expect(restored.agentId).toBe(identity.agentId);
+      expect(restored.name).toBe(identity.name);
+      expect(restored.peerId).toBe(mockPeerId);
+      expect(registry.get(identity.agentId)).toBeDefined();
+      expect(registry.get(identity.agentId)?.name).toBe(identity.name);
+    });
+
+    it('should throw when restoring agent from different node', () => {
+      const identity = {
+        agentId: 'agent:different-peer:12345678', // Different peerId prefix
+        name: 'Different Node Agent',
+        peerId: 'different-peer-id',
+        signature: 'mock-signature',
+        capabilities: [],
+        createdAt: '2026-01-01T00:00:00Z',
+        lastActiveAt: '2026-01-01T00:00:00Z',
+      };
+
+      expect(() => registry.restore(identity)).toThrow('Cannot restore agent from different node');
+    });
+
+    it('should restore agent with metadata', () => {
+      const peerIdPrefix = mockPeerId.slice(0, 16);
+      const identity = {
+        agentId: `agent:${peerIdPrefix}:abc12345`,
+        name: 'Agent with Metadata',
+        peerId: mockPeerId,
+        signature: 'mock-signature',
+        capabilities: [],
+        metadata: { platform: 'OpenClaw', version: '1.0' },
+        createdAt: '2026-01-01T00:00:00Z',
+        lastActiveAt: '2026-01-01T00:00:00Z',
+      };
+
+      const restored = registry.restore(identity);
+
+      expect(restored.metadata).toEqual(identity.metadata);
+    });
+
+    it('should restore multiple agents from identities', () => {
+      const peerIdPrefix = mockPeerId.slice(0, 16);
+      const identity1 = {
+        agentId: `agent:${peerIdPrefix}:11111111`,
+        name: 'Agent 1',
+        peerId: mockPeerId,
+        signature: 'sig1',
+        capabilities: [{ name: 'chat', version: '1.0.0' }],
+        createdAt: '2026-01-01T00:00:00Z',
+        lastActiveAt: '2026-01-01T00:00:00Z',
+      };
+
+      const identity2 = {
+        agentId: `agent:${peerIdPrefix}:22222222`,
+        name: 'Agent 2',
+        peerId: mockPeerId,
+        signature: 'sig2',
+        capabilities: [{ name: 'code-gen', version: '1.0.0' }],
+        createdAt: '2026-01-01T00:00:00Z',
+        lastActiveAt: '2026-01-01T00:00:00Z',
+      };
+
+      registry.restore(identity1);
+      registry.restore(identity2);
+
+      expect(registry.size()).toBe(2);
+      expect(registry.findByCapability('chat')).toHaveLength(1);
+      expect(registry.findByCapability('code-gen')).toHaveLength(1);
+    });
+  });
 });

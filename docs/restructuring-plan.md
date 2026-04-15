@@ -174,13 +174,19 @@ f2a send --to 12D3KooWxxx --topic chat "Hello!"
 | 编写 architecture.md | 1 天 | 待开始 |
 | 清理历史文档 | 1 天 | 待开始 |
 
-### Phase 4: 废弃插件（1 周）
+### Phase 4: Webhook 插件（RFC 004）- 保留简化版
+
+> **⚠️ 重要更新**: 插件不能完全废弃，需要保留简化版处理消息回调
 
 | 任务 | 工作量 | 状态 |
 |------|--------|------|
-| 标记 @f2a/openclaw-f2a 为废弃 | 0.5 天 | 待开始 |
-| 更新 NPM 描述 | 0.5 天 | 待开始 |
-| 发布迁移指南 | 1 天 | 待开始 |
+| 创建 openclaw-f2a-webhook 插件（极简版） | 2 天 | 待开始 |
+| 实现 webhook 接收 handler | 1 天 | 待开始 |
+| 集成 f2a CLI 发送回复 | 1 天 | 待开始 |
+| 测试端到端消息流程 | 1 天 | 待开始 |
+| 废弃旧的 openclaw-f2a 插件 | 0.5 天 | 待开始 |
+
+**详细设计**: 见 [RFC 004: Webhook 插件架构](./rfcs/004-webhook-plugin-architecture.md)
 
 ---
 
@@ -202,7 +208,12 @@ f2a send --to 12D3KooWxxx --topic chat "Hello!"
 - ✅ E2EE 密钥交换完成
 - ✅ Mac-mini ↔ CatPi 消息通信测试通过
 - ✅ NPM 发布（@f2a/network@0.4.18, @f2a/openclaw-f2a@0.3.14）
-- ⏳ Phase 2 包拆分进行中
+- ✅ Phase 2 包拆分完成（@f2a/cli, @f2a/daemon, f2a 统一包）
+- ⏳ RFC 005 架构统一进行中
+
+## ⚠️ 修订记录
+
+**2026-04-15**: Phase 4 从"废弃插件"改为"Webhook 插件"，详见 RFC 004
 
 ---
 

@@ -34,9 +34,9 @@
     "type": "git",
     "url": "https://github.com/LuciusCao/F2A.git"
   },
-  "dependencies": {},
   "devDependencies": {
     "@types/node": "^20.10.0",
+    "@vitest/coverage-v8": "^1.6.1",
     "typescript": "^5.9.3",
     "vitest": "^1.6.1"
   },

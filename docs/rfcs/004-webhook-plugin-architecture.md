@@ -1,6 +1,6 @@
 # RFC 004: OpenClaw F2A Webhook 插件架构
 
-> **Status**: Draft
+> **Status**: Design Complete (设计已完成，实现待 Phase 4 执行)
 > **Created**: 2026-04-14
 > **Author**: Discussion with user
 

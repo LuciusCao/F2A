@@ -109,6 +109,60 @@ describe('Ed25519Signer', () => {
     });
   });
 
+  describe('signSync', () => {
+    it('should return Base64 encoded signature', () => {
+      const signer = new Ed25519Signer();
+      const data = 'test-data-sync';
+      
+      const signature = signer.signSync(data);
+      
+      // Base64 编码的签名应该是 88 字符（64字节 * 8/6 ≈ 88）
+      expect(typeof signature).toBe('string');
+      expect(signature.length).toBe(88);
+      // 验证是否为有效的 Base64 字符串
+      expect(() => Buffer.from(signature, 'base64')).not.toThrow();
+    });
+
+    it('should produce signature that can be verified', async () => {
+      const signer = new Ed25519Signer();
+      const data = 'test-data-to-verify';
+      
+      const signature = signer.signSync(data);
+      
+      // 使用实例方法验证
+      const isValid = await signer.verify(data, signature);
+      expect(isValid).toBe(true);
+      
+      // 使用静态方法验证
+      const isValidStatic = await Ed25519Signer.verifyWithPublicKey(
+        data,
+        signature,
+        signer.getPublicKey()
+      );
+      expect(isValidStatic).toBe(true);
+    });
+
+    it('should return same signature as sign()', async () => {
+      const signer = new Ed25519Signer();
+      const data = 'test-data-comparison';
+      
+      // sign() 内部调用 signSync()，所以应该返回相同的签名
+      const syncSignature = signer.signSync(data);
+      const asyncSignature = await signer.sign(data);
+      
+      expect(syncSignature).toBe(asyncSignature);
+    });
+
+    it('should throw when no private key available', () => {
+      const signer = new Ed25519Signer();
+      const publicKey = signer.getPublicKey();
+      
+      const verifier = Ed25519Signer.fromPublicKey(publicKey);
+      
+      expect(() => verifier.signSync('test')).toThrow('No private key available for signing');
+    });
+  });
+
   describe('generateKeyPair', () => {
     it('should generate unique key pairs', () => {
       const keyPair1 = Ed25519Signer.generateKeyPair();

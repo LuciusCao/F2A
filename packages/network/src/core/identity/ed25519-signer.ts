@@ -71,12 +71,24 @@ export class Ed25519Signer {
   }
 
   /**
-   * 签名数据
+   * 签名数据（异步版本）
    *
    * @param data 要签名的数据字符串
    * @returns Base64编码的签名（64字节）
    */
   async sign(data: string): Promise<string> {
+    return this.signSync(data);
+  }
+
+  /**
+   * 签名数据（同步版本）
+   *
+   * 用于需要同步签名的场景（如 AgentId 签发）
+   *
+   * @param data 要签名的数据字符串
+   * @returns Base64编码的签名（64字节）
+   */
+  signSync(data: string): string {
     if (!this.privateKey) {
       throw new Error('No private key available for signing');
     }
@@ -84,7 +96,7 @@ export class Ed25519Signer {
     // 将字符串转换为字节
     const dataBytes = Buffer.from(data, 'utf-8');
 
-    // Ed25519 签名
+    // Ed25519 签名（@noble/curves 的 sign 是同步的）
     const signature = ed25519.sign(dataBytes, this.privateKey);
 
     // 返回 Base64 编码的签名

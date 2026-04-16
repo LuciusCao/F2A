@@ -22,6 +22,7 @@ import { CapabilityManager } from './capability-manager.js';
 import { SkillExchangeManager } from './skill-exchange-manager.js';
 import { AgentRegistry } from './agent-registry.js';
 import { MessageRouter } from './message-router.js';
+import { Ed25519Signer } from './identity/ed25519-signer.js';
 import { Logger } from '../utils/logger.js';
 import { Middleware } from '../utils/middleware.js';
 import { validateAgentCapability, validateTaskDelegateOptions } from '../utils/validation.js';
@@ -108,6 +109,8 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   private nodeIdentityManager?: NodeIdentityManager;
   private agentIdentityManager?: AgentIdentityManager;
   private identityDelegator?: IdentityDelegator;
+  /** RFC 003: Ed25519 签名器，用于签名 AgentId */
+  private ed25519Signer?: Ed25519Signer;
 
   private capabilityManager?: CapabilityManager;
   private skillExchangeManager?: SkillExchangeManager;
@@ -293,6 +296,19 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     f2a.nodeIdentityManager = nodeIdentityManager;
     f2a.agentIdentityManager = agentIdentityManager;
     f2a.identityDelegator = identityDelegator;
+
+    // RFC 003 P0 修复: 从 NodeIdentityManager 获取私钥，初始化 Ed25519Signer
+    const privateKey = nodeIdentityManager.getPrivateKey();
+    if (privateKey) {
+      // libp2p PrivateKey.raw 包含原始 Ed25519 私钥字节 (32 bytes)
+      const privateKeyBytes = Buffer.from(privateKey.raw).toString('base64');
+      f2a.ed25519Signer = new Ed25519Signer(privateKeyBytes);
+      f2a.logger.info('Ed25519Signer initialized from node identity');
+    } else {
+      // 如果无法获取私钥，生成新的密钥对（不推荐，但保证向后兼容）
+      f2a.ed25519Signer = new Ed25519Signer();
+      f2a.logger.warn('Ed25519Signer initialized with new key pair (node private key not available)');
+    }
 
     // Phase 1: 初始化 AgentRegistry 和 MessageRouter
     // 使用 nodePeerId 和 F2A 实例的 signData 方法
@@ -933,18 +949,54 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   }
 
   /**
-   * 简单签名方法(RFC 003: AgentId 签发)
+   * 签名方法(RFC 003: AgentId 签发)
    *
-   * 使用 E2EE 公钥的一部分作为签名标识
-   * 后续可升级为私钥签名
+   * 使用 Ed25519 私钥签名，支持跨节点验证
+   *
+   * @param data 要签名的数据
+   * @returns Base64 编码的 Ed25519 签名
    */
   signData(data: string): string {
-    // 简化实现:使用 E2EE 公钥前缀作为签名标识
-    // TODO: 升级为私钥签名
+    // RFC 003 P0 修复: 使用 Ed25519Signer 进行真正的签名
+    if (this.ed25519Signer && this.ed25519Signer.canSign()) {
+      try {
+        const signature = this.ed25519Signer.signSync(data);
+        this.logger.debug('Data signed with Ed25519', {
+          dataPrefix: data.slice(0, 16),
+          signaturePrefix: signature.slice(0, 16)
+        });
+        return signature;
+      } catch (err) {
+        this.logger.error('Ed25519 signing failed, fallback to hash', {
+          error: err instanceof Error ? err.message : String(err)
+        });
+        // 降级到旧的 hash 方式（向后兼容）
+      }
+    }
+
+    // 向后兼容：如果没有 Ed25519Signer，使用旧的 hash 方式
+    // 这种情况下签名无法被其他节点验证
+    this.logger.warn('signData using legacy hash method (Ed25519Signer not available)');
     const publicKey = this._agentInfo.encryptionPublicKey || '';
     const signaturePrefix = publicKey.slice(0, 32);
     const dataHash = Buffer.from(data).toString('base64').slice(0, 32);
     return `${signaturePrefix}:${dataHash}`;
+  }
+
+  /**
+   * 获取 Ed25519 公钥（用于消息中携带，供其他节点验证）
+   *
+   * @returns Base64 编码的 Ed25519 公钥，或 null 如果不可用
+   */
+  getEd25519PublicKey(): string | null {
+    if (this.ed25519Signer) {
+      try {
+        return this.ed25519Signer.getPublicKey();
+      } catch {
+        return null;
+      }
+    }
+    return null;
   }
 
   /**

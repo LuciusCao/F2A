@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { AgentRegistry, AgentRegistration } from './agent-registry.js';
+import { AgentRegistry, AgentRegistration, validateAgentWebhookUrl } from './agent-registry.js';
 import type { AgentCapability } from '../types/index.js';
 import type { AgentIdentity } from '../core/identity/types.js';
 
@@ -35,7 +35,7 @@ describe('AgentRegistry', () => {
     agentId,
     name,
     capabilities,
-    webhookUrl: `http://localhost/${agentId}`,
+    webhook: { url: `https://example.com/webhook/${agentId}` },
     metadata: { version: '1.0' },
   });
 
@@ -78,14 +78,14 @@ describe('AgentRegistry', () => {
       expect(registry.list()).toHaveLength(1);
     });
 
-    it('应该保留 webhookUrl 和 metadata', () => {
+    it('应该保留 webhook 和 metadata', () => {
       const agent = createAgentRegistration('agent-3', 'Agent');
-      agent.webhookUrl = 'http://example.com/webhook';
+      agent.webhook = { url: 'https://example.com/webhook' };
       agent.metadata = { custom: 'data' };
 
       const result = registry.register(agent);
 
-      expect(result.webhookUrl).toBe('http://example.com/webhook');
+      expect(result.webhook?.url).toBe('https://example.com/webhook');
       expect(result.metadata).toEqual({ custom: 'data' });
     });
 
@@ -419,7 +419,7 @@ describe('AgentRegistry', () => {
       agentId: `agent:${peerIdPrefix}:${randomSuffix}`,
       name,
       capabilities,
-      webhookUrl: `http://localhost/agent:${peerIdPrefix}:${randomSuffix}`,
+      webhook: { url: `https://example.com/webhook/agent:${peerIdPrefix}:${randomSuffix}` },
       metadata: { version: '1.0' },
       signature,
       nodeId,
@@ -800,7 +800,7 @@ describe('AgentRegistry', () => {
           publicKey: 'publicKeyBase64',
           signature: 'signatureBase64',
           createdAt: new Date().toISOString(),
-        };        
+        };
 
         const isValid = await registry.verifyAgentIdentity(agentIdentity);
         expect(isValid).toBe(true);
@@ -822,7 +822,7 @@ describe('AgentRegistry', () => {
         signatureBytes[i] = Math.floor(Math.random() * 256);
       }
       return Buffer.from(signatureBytes).toString('base64');
-    };    
+    };
 
     const createAgentWithCreatedAt = (
       peerIdPrefix: string,
@@ -833,7 +833,7 @@ describe('AgentRegistry', () => {
       agentId: `agent:${peerIdPrefix}:${randomSuffix}`,
       name: 'Test Agent',
       capabilities: [],
-      webhookUrl: `http://localhost/agent:${peerIdPrefix}:${randomSuffix}`,      
+      webhook: { url: `https://example.com/webhook/agent:${peerIdPrefix}:${randomSuffix}` },
       nodeId: `${peerIdPrefix}XYZ123456789`,
       signature,
       publicKey: 'validPublicKeyBase64',
@@ -848,14 +848,14 @@ describe('AgentRegistry', () => {
     it('应该拒绝已过期的 AgentId', () => {
       const peerIdPrefix = 'ABCDEFGH12345678';
       const randomSuffix = 'ABCD1234';
-      // createdAt 设置为 30 天前（已过期）
+      // createdAt 设置为 30 天前(已过期)
       const expiredDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const createdAt = expiredDate.toISOString();
-      
+
       const agent = createAgentWithCreatedAt(peerIdPrefix, randomSuffix, createdAt);
       registry.register(agent);
 
-      // 定义过期时间：24 小时（1 天）
+      // 定义过期时间:24 小时(1 天)
       const maxAgeMs = 24 * 60 * 60 * 1000;
       const isValid = registry.isAgentIdExpired(agent.agentId, maxAgeMs);
 
@@ -865,14 +865,14 @@ describe('AgentRegistry', () => {
     it('应该接受未过期的 AgentId', () => {
       const peerIdPrefix = 'ABCDEFGH12345678';
       const randomSuffix = 'ABCD1234';
-      // createdAt 设置为 1 小时前（未过期）
+      // createdAt 设置为 1 小时前(未过期)
       const recentDate = new Date(Date.now() - 1 * 60 * 60 * 1000);
       const createdAt = recentDate.toISOString();
-      
+
       const agent = createAgentWithCreatedAt(peerIdPrefix, randomSuffix, createdAt);
       registry.register(agent);
 
-      // 定义过期时间：24 小时（1 天）
+      // 定义过期时间:24 小时(1 天)
       const maxAgeMs = 24 * 60 * 60 * 1000;
       const isValid = registry.isAgentIdExpired(agent.agentId, maxAgeMs);
 
@@ -884,7 +884,7 @@ describe('AgentRegistry', () => {
       const randomSuffix = 'ABCD1234';
       // createdAt 设置为当前时间
       const createdAt = new Date().toISOString();
-      
+
       const agent = createAgentWithCreatedAt(peerIdPrefix, randomSuffix, createdAt);
       registry.register(agent);
 
@@ -896,7 +896,7 @@ describe('AgentRegistry', () => {
 
     it('未注册 AgentId 应返回过期', () => {
       const unregisteredAgentId = 'agent:UNKNOWN12345678:XYZ12345';
-      
+
       const maxAgeMs = 24 * 60 * 60 * 1000;
       const isValid = registry.isAgentIdExpired(unregisteredAgentId, maxAgeMs);
 
@@ -906,7 +906,7 @@ describe('AgentRegistry', () => {
     it('无 createdAt 字段应视为过期', () => {
       const peerIdPrefix = 'ABCDEFGH12345678';
       const randomSuffix = 'ABCD1234';
-      
+
       const agent = createAgentWithCreatedAt(peerIdPrefix, randomSuffix, new Date().toISOString());
       agent.createdAt = undefined; // 移除 createdAt
       registry.register(agent);
@@ -922,7 +922,7 @@ describe('AgentRegistry', () => {
       const randomSuffix = 'ABCD1234';
       // createdAt 设置为 2 小时前
       const createdAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-      
+
       const agent = createAgentWithCreatedAt(peerIdPrefix, randomSuffix, createdAt);
       registry.register(agent);
 
@@ -930,31 +930,31 @@ describe('AgentRegistry', () => {
       const maxAgeMs = 1 * 60 * 60 * 1000;
       const isValid = registry.isAgentIdExpired(agent.agentId, maxAgeMs);
 
-      expect(isValid).toBe(true); // 2 小时前创建，1 小时过期，已过期
+      expect(isValid).toBe(true); // 2 小时前创建,1 小时过期,已过期
     });
 
     it('过期 AgentId 在签名验证时应被拒绝', () => {
       const peerIdPrefix = 'ABCDEFGH12345678';
       const randomSuffix = 'ABCD1234';
-      // createdAt 设置为 30 天前（已过期）
+      // createdAt 设置为 30 天前(已过期)
       const expiredDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const createdAt = expiredDate.toISOString();
-      
+
       const agent = createAgentWithCreatedAt(peerIdPrefix, randomSuffix, createdAt);
       registry.register(agent);
 
       // 签名验证时检查过期
       const isValid = registry.verifySignatureWithExpiry(agent.agentId, 24 * 60 * 60 * 1000);
 
-      expect(isValid).toBe(false); // 签名验证失败（AgentId 已过期）
+      expect(isValid).toBe(false); // 签名验证失败(AgentId 已过期)
     });
 
     it('未过期 AgentId 签名验证应成功', () => {
       const peerIdPrefix = 'ABCDEFGH12345678';
-      const randomSuffix = 'ABCD1234';      
+      const randomSuffix = 'ABCD1234';
       const createdAt = new Date().toISOString();
       const signature = generateValidSignature();
-      
+
       const agent = createAgentWithCreatedAt(peerIdPrefix, randomSuffix, createdAt, signature);
       registry.register(agent);
 
@@ -965,7 +965,7 @@ describe('AgentRegistry', () => {
   });
 
   // ============================================================================
-  // P0 Bug1: 消息签名验证测试（真实的 Ed25519 签名验证）
+  // P0 Bug1: 消息签名验证测试(真实的 Ed25519 签名验证)
   // ============================================================================
 
   describe('P0 Bug1: 消息签名验证', () => {
@@ -979,19 +979,19 @@ describe('AgentRegistry', () => {
       privateKey?: Uint8Array
     ): Omit<AgentRegistration, 'registeredAt' | 'lastActiveAt'> => {
       return {
-        agentId: `agent:${peerIdPrefix}:${randomSuffix}`,
+        agentId: `agent:${peerIdPrefix}:${randomSuffix}`, 
         name: 'Test Agent for Message Signature',
         capabilities: [],
-        webhookUrl: `http://localhost/agent:${peerIdPrefix}:${randomSuffix}`,
+        webhook: { url: `https://example.com/webhook/agent:${peerIdPrefix}:${randomSuffix}` }, 
         nodeId: `${peerIdPrefix}XYZ123456789`,
         publicKey,
         createdAt: new Date().toISOString(),
         signature: generateValidSignature(),
-      };
+      }; 
     };
 
     /**
-     * 生成有效的 base64 签名（64 字节的随机签名，用于不需要真实验证的测试）
+     * 生成有效的 base64 签名(64 字节的随机签名,用于不需要真实验证的测试)
      */
     const generateValidSignature = (): string => {
       const signatureBytes = new Uint8Array(64);
@@ -1008,11 +1008,11 @@ describe('AgentRegistry', () => {
     const generateEd25519KeyPair = async (): Promise<{ publicKey: string; privateKey: Uint8Array }> => {
       // 使用 noble/curves 生成真实的 Ed25519 密钥对
       const { ed25519 } = await import('@noble/curves/ed25519.js');
-      
+
       // noble/curves ed25519 私钥长度为 32 字节
       // 使用 Node.js crypto 模块生成随机私钥
       const crypto = await import('crypto');
-      const privateKey = new Uint8Array(crypto.getRandomValues(new Uint8Array(32)));      
+      const privateKey = new Uint8Array(crypto.getRandomValues(new Uint8Array(32)));
       const publicKey = ed25519.getPublicKey(privateKey);
       return {
         publicKey: Buffer.from(publicKey).toString('base64'),
@@ -1032,14 +1032,14 @@ describe('AgentRegistry', () => {
       createdAt?: string
     ): Promise<string> => {
       const { ed25519 } = await import('@noble/curves/ed25519.js');
-      
-      // 序列化载荷（与 AgentRegistry.serializeMessagePayloadForSignature 一致）
+
+      // 序列化载荷(与 AgentRegistry.serializeMessagePayloadForSignature 一致)
       const parts = [messageId, fromAgentId, content];
       if (type) parts.push(type);
       if (createdAt) parts.push(createdAt);
       const payloadString = parts.join(':');
       const payloadBytes = Buffer.from(payloadString, 'utf-8');
-      
+
       // 签名
       const signature = ed25519.sign(payloadBytes, privateKey);
       return Buffer.from(signature).toString('base64');
@@ -1056,19 +1056,19 @@ describe('AgentRegistry', () => {
       const peerIdPrefix = 'ABCDEFGH12345678';
       const randomSuffix = 'ABCD1234';
       const agentId = `agent:${peerIdPrefix}:${randomSuffix}`;
-      
+
       // 注册 Agent
       const agent = createAgentWithPublicKey(peerIdPrefix, randomSuffix, publicKey);
       registry.register(agent);
-      
+
       // 构造消息载荷
       const messageId = 'msg-test-001';
       const content = 'Hello, this is a test message';
       const createdAt = new Date().toISOString();
-      
+
       // 使用私钥签名
       const signature = await signMessagePayload(privateKey, messageId, agentId, content, 'message', createdAt);
-      
+
       // 验证签名
       const isValid = await registry.verifyMessageSignature(agentId, {
         messageId,
@@ -1077,7 +1077,7 @@ describe('AgentRegistry', () => {
         type: 'message',
         createdAt,
       }, signature);
-      
+
       expect(isValid).toBe(true);
     });
 
@@ -1086,64 +1086,64 @@ describe('AgentRegistry', () => {
       const peerIdPrefix = 'ABCDEFGH12345678';
       const randomSuffix = 'ABCD1234';
       const agentId = `agent:${peerIdPrefix}:${randomSuffix}`;
-      
+
       const agent = createAgentWithPublicKey(peerIdPrefix, randomSuffix, publicKey);
       registry.register(agent);
-      
+
       // 签名原始内容
       const originalContent = 'Original content';
       const signature = await signMessagePayload(privateKey, 'msg-001', agentId, originalContent);
-      
+
       // 使用不同的内容验证
       const isValid = await registry.verifyMessageSignature(agentId, {
         messageId: 'msg-001',
         fromAgentId: agentId,
         content: 'Modified content', // 内容被修改
       }, signature);
-      
+
       expect(isValid).toBe(false); // 签名不匹配
     });
 
     it('应该拒绝使用其他 Agent 公钥的签名', async () => {
       // Agent A 的密钥对
       const { publicKey: publicKeyA } = await generateEd25519KeyPair();
-      // Agent B 的密钥对（不同）
+      // Agent B 的密钥对(不同)
       const { privateKey: privateKeyB } = await generateEd25519KeyPair();
-      
+
       const peerIdPrefix = 'ABCDEFGH12345678';
       const randomSuffix = 'ABCD1234';
       const agentId = `agent:${peerIdPrefix}:${randomSuffix}`;
-      
-      // Agent A 注册（使用 A 的公钥）
+
+      // Agent A 注册(使用 A 的公钥)
       const agent = createAgentWithPublicKey(peerIdPrefix, randomSuffix, publicKeyA);
       registry.register(agent);
-      
+
       // 使用 B 的私钥签名消息
       const signature = await signMessagePayload(privateKeyB, 'msg-001', agentId, 'Test message');
-      
-      // 验证（应该失败，因为签名用的是 B 的私钥，但公钥是 A 的）
+
+      // 验证(应该失败,因为签名用的是 B 的私钥,但公钥是 A 的)
       const isValid = await registry.verifyMessageSignature(agentId, {
         messageId: 'msg-001',
         fromAgentId: agentId,
         content: 'Test message',
       }, signature);
-      
+
       expect(isValid).toBe(false);
     });
 
     it('应该拒绝未注册 Agent 的消息签名', async () => {
       const { publicKey, privateKey } = await generateEd25519KeyPair();
       const unregisteredAgentId = 'agent:UNKNOWN12345678:XYZ12345';
-      
+
       // 不注册 Agent
       const signature = await signMessagePayload(privateKey, 'msg-001', unregisteredAgentId, 'Test');
-      
+
       const isValid = await registry.verifyMessageSignature(unregisteredAgentId, {
         messageId: 'msg-001',
         fromAgentId: unregisteredAgentId,
         content: 'Test',
       }, signature);
-      
+
       expect(isValid).toBe(false);
     });
 
@@ -1151,7 +1151,7 @@ describe('AgentRegistry', () => {
       const peerIdPrefix = 'ABCDEFGH12345678';
       const randomSuffix = 'ABCD1234';
       const agentId = `agent:${peerIdPrefix}:${randomSuffix}`;
-      
+
       // 注册无公钥的 Agent
       registry.register({
         agentId,
@@ -1159,14 +1159,14 @@ describe('AgentRegistry', () => {
         capabilities: [],
         nodeId: `${peerIdPrefix}XYZ123456789`,
       });
-      
+
       const signature = generateValidSignature();
       const isValid = await registry.verifyMessageSignature(agentId, {
         messageId: 'msg-001',
         fromAgentId: agentId,
         content: 'Test',
       }, signature);
-      
+
       expect(isValid).toBe(false);
     });
 
@@ -1175,17 +1175,17 @@ describe('AgentRegistry', () => {
       const peerIdPrefix = 'ABCDEFGH12345678';
       const randomSuffix = 'ABCD1234';
       const agentId = `agent:${peerIdPrefix}:${randomSuffix}`;
-      
+
       const agent = createAgentWithPublicKey(peerIdPrefix, randomSuffix, publicKey);
       registry.register(agent);
-      
+
       // 使用无效签名
       const isValid = await registry.verifyMessageSignature(agentId, {
         messageId: 'msg-001',
         fromAgentId: agentId,
         content: 'Test',
       }, 'invalid_signature');
-      
+
       expect(isValid).toBe(false);
     });
 
@@ -1197,9 +1197,9 @@ describe('AgentRegistry', () => {
         type: 'message',
         createdAt: '2024-01-01T00:00:00Z',
       };
-      
+
       const serialized = AgentRegistry.serializeMessagePayloadForSignature(payload);
-      
+
       // 验证序列化顺序
       expect(serialized).toBe('msg-001:agent:test:test:content:message:2024-01-01T00:00:00Z');
     });
@@ -1210,8 +1210,8 @@ describe('AgentRegistry', () => {
         fromAgentId: 'agent:test:test',
         content: 'content',
       };const serialized = AgentRegistry.serializeMessagePayloadForSignature(payloadWithoutOptional);
-      
-      // 可选字段不存在时，不包含在序列化中
+
+      // 可选字段不存在时,不包含在序列化中
       expect(serialized).toBe('msg-002:agent:test:test:content');
     });
 
@@ -1220,13 +1220,13 @@ describe('AgentRegistry', () => {
       const peerIdPrefix = 'ABCDEFGH12345678';
       const randomSuffix = 'ABCD1234';
       const agentId = `agent:${peerIdPrefix}:${randomSuffix}`;
-      
+
       const agent = createAgentWithPublicKey(peerIdPrefix, randomSuffix, publicKey);
       registry.register(agent);
-      
+
       // 正常签名
       const signature = await signMessagePayload(privateKey, 'msg-001', agentId, 'Safe message');
-      
+
       // 尝试修改 messageId
       const isValid1 = await registry.verifyMessageSignature(agentId, {
         messageId: 'msg-002', // 修改的 messageId
@@ -1234,7 +1234,7 @@ describe('AgentRegistry', () => {
         content: 'Safe message',
       }, signature);
       expect(isValid1).toBe(false);
-      
+
       // 尝试修改 fromAgentId
       const isValid2 = await registry.verifyMessageSignature(agentId, {
         messageId: 'msg-001',
@@ -1242,6 +1242,257 @@ describe('AgentRegistry', () => {
         content: 'Safe message',
       }, signature);
       expect(isValid2).toBe(false);
+    });
+  });
+
+  // ============================================================================
+  // P0: Webhook 注册安全测试 (RFC 004)
+  // ============================================================================
+
+  describe('P0: Webhook 注册安全测试', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      registry = new AgentRegistry();
+    });
+
+    describe('validateAgentWebhookUrl - 私有 IP 地址拒绝', () => {
+      it('应该拒绝 127.0.0.1 (loopback)', () => {
+        const result = validateAgentWebhookUrl('http://127.0.0.1:3000/webhook');
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('Private IP');
+        expect(result.error).toContain('127.0.0.1');
+      });
+
+      it('应该拒绝 127.x.x.x (所有 loopback)', () => {
+        const result = validateAgentWebhookUrl('http://127.123.45.67:3000/webhook');
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('Private IP');
+      });
+
+      it('应该拒绝 10.x.x.x (Class A private)', () => {
+        const result = validateAgentWebhookUrl('http://10.0.0.1:3000/webhook');
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('Private IP');
+        expect(result.error).toContain('10.0.0.1');
+      });
+
+      it('应该拒绝 192.168.x.x (Class C private)', () => {
+        const result = validateAgentWebhookUrl('http://192.168.1.100:3000/webhook');
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('Private IP');
+        expect(result.error).toContain('192.168.1.100');
+      });
+
+      it('应该拒绝 172.16.x.x - 172.31.x.x (Class B private)', () => {
+        const result1 = validateAgentWebhookUrl('http://172.16.0.1:3000/webhook');
+        expect(result1.valid).toBe(false);
+        expect(result1.error).toContain('Private IP');
+
+        const result2 = validateAgentWebhookUrl('http://172.31.255.255:3000/webhook');
+        expect(result2.valid).toBe(false);
+        expect(result2.error).toContain('Private IP');
+      });
+
+      it('应该拒绝 169.254.x.x (link-local)', () => {
+        const result = validateAgentWebhookUrl('http://169.254.1.1:3000/webhook');
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('Private IP');
+      });
+
+      it('应该拒绝 0.0.0.0 (all interfaces)', () => {
+        const result = validateAgentWebhookUrl('http://0.0.0.0:3000/webhook');
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('Private IP');
+      });
+    });
+
+    describe('validateAgentWebhookUrl - localhost 域名拒绝', () => {
+      it('应该拒绝 localhost', () => {
+        const result = validateAgentWebhookUrl('http://localhost:3000/webhook');
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('localhost');
+      });
+
+      it('应该拒绝 .localhost 子域名', () => {
+        const result = validateAgentWebhookUrl('http://test.localhost:3000/webhook');
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('localhost');
+      });
+
+      it('应该拒绝 .local 域名', () => {
+        const result = validateAgentWebhookUrl('http://test.local:3000/webhook');
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('.local');
+      });
+
+      it('应该拒绝 local (不带子域名)', () => {
+        const result = validateAgentWebhookUrl('http://local:3000/webhook');
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('local');
+      });
+    });
+
+    describe('validateAgentWebhookUrl - IPv6 私有地址拒绝', () => {
+      it('应该拒绝 IPv6 loopback (::1)', () => {
+        const result = validateAgentWebhookUrl('http://[::1]:3000/webhook');
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('Private IPv6');
+      });
+
+      it('应该拒绝 IPv6 unspecified address (::)', () => {
+        const result = validateAgentWebhookUrl('http://[::]:3000/webhook');
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('Private IPv6');
+      });
+
+      it('应该拒绝 IPv6 ULA (fc00::/7)', () => {
+        const result1 = validateAgentWebhookUrl('http://[fc00::1]:3000/webhook');
+        expect(result1.valid).toBe(false);
+        expect(result1.error).toContain('Private IPv6');
+
+        const result2 = validateAgentWebhookUrl('http://[fd00::1]:3000/webhook');
+        expect(result2.valid).toBe(false);
+        expect(result2.error).toContain('Private IPv6');
+      });
+
+      it('应该拒绝 IPv6 link-local (fe80::/10)', () => {
+        const result = validateAgentWebhookUrl('http://[fe80::1]:3000/webhook');
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('Private IPv6');
+      });
+
+      it('应该拒绝 IPv4-mapped IPv6 (::ffff:127.0.0.1)', () => {
+        const result = validateAgentWebhookUrl('http://[::ffff:127.0.0.1]:3000/webhook');
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('Private IPv6');
+      });
+    });
+
+    describe('validateAgentWebhookUrl - 无效 URL 格式拒绝', () => {
+      it('应该拒绝无效 URL 格式', () => {
+        const result = validateAgentWebhookUrl('not-a-valid-url');
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('Invalid URL');
+      });
+
+      it('应该拒绝空 URL', () => {
+        const result = validateAgentWebhookUrl('');
+        expect(result.valid).toBe(true); // 空 URL 允许（表示不使用 webhook）
+      });
+
+      it('应该拒绝无协议的 URL', () => {
+        const result = validateAgentWebhookUrl('example.com/webhook');
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('Invalid URL');
+      });
+
+      it('应该拒绝非 http/https 协议', () => {
+        const result1 = validateAgentWebhookUrl('ftp://example.com/webhook');
+        expect(result1.valid).toBe(false);
+        expect(result1.error).toContain('Invalid protocol');
+
+        const result2 = validateAgentWebhookUrl('file:///etc/passwd');
+        expect(result2.valid).toBe(false);
+        expect(result2.error).toContain('Invalid protocol');
+
+        const result3 = validateAgentWebhookUrl('javascript:alert(1)');
+        expect(result3.valid).toBe(false);
+        expect(result3.error).toContain('Invalid protocol');
+      });
+    });
+
+    describe('validateAgentWebhookUrl - 有效 webhook URL', () => {
+      it('应该接受有效的公网 URL', () => {
+        const result = validateAgentWebhookUrl('https://api.example.com/webhook');
+        expect(result.valid).toBe(true);
+        expect(result.error).toBeUndefined();
+      });
+
+      it('应该接受带有端口的有效 URL', () => {
+        const result = validateAgentWebhookUrl('https://api.example.com:443/webhook');
+        expect(result.valid).toBe(true);
+      });
+
+      it('应该接受带有路径的有效 URL', () => {
+        const result = validateAgentWebhookUrl('https://api.example.com/api/v1/webhook/agent');
+        expect(result.valid).toBe(true);
+      });
+
+      it('应该接受公网 IPv4 地址', () => {
+        const result = validateAgentWebhookUrl('https://8.8.8.8/webhook');
+        expect(result.valid).toBe(true);
+      });
+
+      it('应该接受公网 IPv6 地址', () => {
+        const result = validateAgentWebhookUrl('https://[2001:4860:4860::8888]/webhook');
+        expect(result.valid).toBe(true);
+      });
+    });
+
+    describe('Agent 注册时 webhook 安全验证', () => {
+      it('注册私有 IP webhook 应被拒绝', () => {
+        const agent = createAgentRegistration('agent-1', 'Agent', []);
+        agent.webhook = { url: 'http://127.0.0.1:3000/webhook' }; 
+
+        // 注册前验证 webhook
+        const webhookValidation = validateAgentWebhookUrl(agent.webhook.url);
+        expect(webhookValidation.valid).toBe(false);
+        expect(webhookValidation.error).toContain('Private IP');
+      });
+
+      it('注册 localhost webhook 应被拒绝', () => {
+        const agent = createAgentRegistration('agent-2', 'Agent', []);
+        agent.webhook = { url: 'http://localhost:3000/webhook' }; 
+
+        const webhookValidation = validateAgentWebhookUrl(agent.webhook.url);
+        expect(webhookValidation.valid).toBe(false);
+        expect(webhookValidation.error).toContain('localhost');
+      });
+
+      it('注册无效 URL 格式 webhook 应被拒绝', () => {
+        const agent = createAgentRegistration('agent-3', 'Agent', []);
+        agent.webhook = { url: 'not-a-url' }; 
+
+        const webhookValidation = validateAgentWebhookUrl(agent.webhook.url);
+        expect(webhookValidation.valid).toBe(false);
+        expect(webhookValidation.error).toContain('Invalid URL');
+      });
+
+      it('注册有效 webhook URL 应成功', () => {
+        const agent = createAgentRegistration('agent-4', 'Agent', []);
+        agent.webhook = { url: 'https://api.example.com/webhook' }; 
+
+        const webhookValidation = validateAgentWebhookUrl(agent.webhook.url);
+        expect(webhookValidation.valid).toBe(true);
+
+        // 注册 Agent
+        registry.register(agent);
+        const registered = registry.get('agent-4');
+        expect(registered?.webhook?.url).toBe('https://api.example.com/webhook');
+      });
+
+      it('webhook 更新时的安全验证', () => {
+        // 先注册有效 webhook
+        const agent = createAgentRegistration('agent-5', 'Agent', []);
+        agent.webhook = { url: 'https://api.example.com/webhook' }; 
+        registry.register(agent);
+
+        // 更新为无效 webhook（私有 IP）
+        const newWebhookUrl = 'http://192.168.1.1:3000/webhook';
+        const webhookValidation = validateAgentWebhookUrl(newWebhookUrl);
+        expect(webhookValidation.valid).toBe(false);
+        expect(webhookValidation.error).toContain('Private IP');
+      });
+
+      it('空 webhook URL 应被允许', () => {
+        const agent = createAgentRegistration('agent-6', 'Agent', []);
+        agent.webhook = undefined;
+
+        // 空 webhook 允许注册
+        registry.register(agent);
+        const registered = registry.get('agent-6');
+        expect(registered?.webhook).toBeUndefined();
+      });
     });
   });
 });

@@ -18,6 +18,7 @@ import {
 import { configureCommand, listConfig, getConfigValue, setConfigValue } from './configure.js';
 import { getConfigPath } from './config.js';
 import { showIdentityStatus, exportIdentity, importIdentity, showIdentityHelp } from './identity.js';
+import { listAgents, exportAgent, importAgent, deleteAgent, showAgentsHelp } from './agents.js';
 import { getControlToken, getControlTokenLazy, resetControlTokenCache } from './control-token.js';
 
 const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
@@ -45,7 +46,10 @@ interface Args {
   helpTarget?: string;
   configKey?: string;
   configValue?: string;
-  filePath?: string;  // identity export/import 路径
+  filePath?: string;  // identity/agents export/import 路径
+  agentId?: string;   // agents export/delete 的 agentId
+  force?: boolean;    // --force 标志
+  confirm?: boolean;  // --confirm 标志
 }
 
 /**
@@ -75,9 +79,9 @@ function parseArgs(): Args {
     return { command: 'help', helpTarget: args[1] };
   }
 
-  // 解析子命令（daemon, config, identity）
+  // 解析子命令（daemon, config, identity, agents）
   let subcommand: string | undefined;
-  if ((command === 'daemon' || command === 'config' || command === 'identity') && args[1]) {
+  if ((command === 'daemon' || command === 'config' || command === 'identity' || command === 'agents') && args[1]) {
     // 检查是否是 help 请求
     if (args[1] === '-h' || args[1] === '--help') {
       return { command: 'help', helpTarget: command };
@@ -111,6 +115,12 @@ function parseArgs(): Args {
   // 解析 detach 标志
   const detach = args.includes('-d') || args.includes('--detach');
 
+  // 解析 force 标志
+  const force = args.includes('-f') || args.includes('--force');
+
+  // 解析 confirm 标志
+  const confirm = args.includes('--confirm');
+
   // 解析 config 子命令的参数
   let configKey: string | undefined;
   let configValue: string | undefined;
@@ -129,15 +139,33 @@ function parseArgs(): Args {
   // 解析 identity 子命令的文件路径
   let filePath: string | undefined;
   if (command === 'identity' && subcommand) {
-    if (subcommand === 'export' && args[2]) {
+    if (subcommand === 'export' && args[2] && !args[2].startsWith('-')) {
       filePath = args[2];
     }
-    if (subcommand === 'import' && args[2]) {
+    if (subcommand === 'import' && args[2] && !args[2].startsWith('-')) {
       filePath = args[2];
     }
   }
 
-  return { command, subcommand, idOrIndex, capability, reason, detach, configKey, configValue, filePath };
+  // 解析 agents 子命令的参数
+  let agentId: string | undefined;
+  if (command === 'agents' && subcommand) {
+    if (subcommand === 'export' && args[2] && !args[2].startsWith('-')) {
+      agentId = args[2];
+      // 检查是否有输出路径
+      if (args[3] && !args[3].startsWith('-')) {
+        filePath = args[3];
+      }
+    }
+    if (subcommand === 'import' && args[2] && !args[2].startsWith('-')) {
+      filePath = args[2];
+    }
+    if (subcommand === 'delete' && args[2] && !args[2].startsWith('-')) {
+      agentId = args[2];
+    }
+  }
+
+  return { command, subcommand, idOrIndex, capability, reason, detach, configKey, configValue, filePath, agentId, force, confirm };
 }
 
 /**
@@ -153,6 +181,7 @@ Commands:
   configure            交互式配置向导
   config               配置管理 (get/set/list)
   identity             身份管理 (status/export/import)
+  agents               Agent Identity 管理 (list/export/import/delete)
   status               查看节点状态
   peers                查看已连接的 Peers
   discover [options]   发现网络中的 Agents
@@ -319,6 +348,10 @@ ${getCommandDescription(command)}
 
     case 'identity':
       showIdentityHelp();
+      break;
+
+    case 'agents':
+      showAgentsHelp();
       break;
 
     default:
@@ -533,6 +566,10 @@ async function main(): Promise<void> {
       await handleIdentityCommand(args);
       break;
 
+    case 'agents':
+      await handleAgentsCommand(args);
+      break;
+
     case 'status':
       await sendCommand('status');
       break;
@@ -705,6 +742,59 @@ async function handleIdentityCommand(args: Args): Promise<void> {
     default:
       console.error(`[F2A] Unknown identity subcommand: ${subcommand}`);
       console.error('Usage: f2a identity [status|export|import]');
+      process.exit(1);
+  }
+}
+
+/**
+ * 处理 agents 命令
+ * @param args - 解析后的参数
+ */
+async function handleAgentsCommand(args: Args): Promise<void> {
+  const subcommand = args.subcommand;
+
+  switch (subcommand) {
+    case 'list':
+    case undefined:
+      // f2a agents 或 f2a agents list
+      await listAgents();
+      break;
+
+    case 'export':
+      if (!args.agentId) {
+        console.error('[F2A] Error: Agent ID is required for export');
+        console.error('Usage: f2a agents export <agentId> [outputPath]');
+        process.exit(1);
+      }
+      await exportAgent(args.agentId, args.filePath);
+      break;
+
+    case 'import':
+      if (!args.filePath) {
+        console.error('[F2A] Error: File path is required for import');
+        console.error('Usage: f2a agents import <path>');
+        process.exit(1);
+      }
+      await importAgent(args.filePath, undefined, args.force);
+      break;
+
+    case 'delete':
+      if (!args.agentId) {
+        console.error('[F2A] Error: Agent ID is required for delete');
+        console.error('Usage: f2a agents delete <agentId> [--confirm|--force]');
+        process.exit(1);
+      }
+      await deleteAgent(args.agentId, args.confirm, args.force);
+      break;
+
+    case '-h':
+    case '--help':
+      showAgentsHelp();
+      break;
+
+    default:
+      console.error(`[F2A] Unknown agents subcommand: ${subcommand}`);
+      console.error('Usage: f2a agents [list|export|import|delete]');
       process.exit(1);
   }
 }

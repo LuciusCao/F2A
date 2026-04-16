@@ -300,10 +300,16 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     // RFC 003 P0 修复: 从 NodeIdentityManager 获取私钥，初始化 Ed25519Signer
     const privateKey = nodeIdentityManager.getPrivateKey();
     if (privateKey) {
-      // libp2p PrivateKey.raw 包含原始 Ed25519 私钥字节 (32 bytes)
-      const privateKeyBytes = Buffer.from(privateKey.raw).toString('base64');
-      f2a.ed25519Signer = new Ed25519Signer(privateKeyBytes);
-      f2a.logger.info('Ed25519Signer initialized from node identity');
+      // libp2p Ed25519 PrivateKey.raw 是 64 字节扩展私钥 (scalar + prefix)
+      // @noble/curves/ed25519 需要的是 32 字节 seed (前 32 字节)
+      const rawBytes = Buffer.from(privateKey.raw);
+      const seedBytes = rawBytes.slice(0, 32);  // 取前 32 字节作为 seed
+      const seedBase64 = seedBytes.toString('base64');
+      f2a.ed25519Signer = new Ed25519Signer(seedBase64);
+      f2a.logger.info('Ed25519Signer initialized from node identity', { 
+        rawLength: rawBytes.length,
+        seedLength: seedBytes.length 
+      });
     } else {
       // 如果无法获取私钥，生成新的密钥对（不推荐，但保证向后兼容）
       f2a.ed25519Signer = new Ed25519Signer();

@@ -48,6 +48,7 @@ import {
 } from '../types/index.js';
 import { E2EECrypto, EncryptedMessage } from './e2ee-crypto.js';
 import { IdentityManager } from './identity/index.js';
+import { AgentIdentityVerifier } from './identity/agent-identity-verifier.js';
 import { NATTraversalManager, NATTraversalStatus } from './nat-traversal.js';
 import { Logger } from '../utils/logger.js';
 import { validateF2AMessage, validateStructuredMessagePayload } from '../utils/validation.js';
@@ -264,15 +265,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     this.agentRegistry = agentRegistry;
     
     // 初始化 AgentIdentityVerifier（同步创建）
-    // 使用 import() 类型语法避免异步导入
-    const { AgentIdentityVerifier } = require('./identity/agent-identity-verifier.js') || {};
-    if (AgentIdentityVerifier) {
-      this.agentIdentityVerifier = new AgentIdentityVerifier(
-        this.e2eeCrypto,
-        this.peerTable,
-        this.connectedPeers
-      );
-    }
+    this.agentIdentityVerifier = new AgentIdentityVerifier(
+      this.e2eeCrypto,
+      this.peerTable,
+      this.connectedPeers
+    );
     
     this.logger.info('AgentRegistry and AgentIdentityVerifier configured', {
       peerId: this.agentInfo.peerId?.slice(0, 16) || 'not-set'

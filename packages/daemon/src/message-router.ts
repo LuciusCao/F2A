@@ -13,6 +13,12 @@ import { AgentRegistry } from './agent-registry.js';
 import type { AgentRegistration } from './agent-registry.js';
 
 /**
+ * Registry 接口类型
+ * 支持 AgentRegistry 或 Map<string, AgentRegistration>
+ */
+type RegistryLike = AgentRegistry | Map<string, AgentRegistration>;
+
+/**
  * Webhook 推送结果
  */
 export interface WebhookPushResult {
@@ -86,14 +92,14 @@ export interface MessageQueue {
  */
 export class MessageRouter {
   private queues: Map<string, MessageQueue> = new Map();
-  private agentRegistry: AgentRegistry;
+  private agentRegistry: RegistryLike;
   private logger: Logger;
   private defaultMaxQueueSize: number = 100;
   private webhookTimeout: number = 5000;
   private webhookFailures: Map<string, number> = new Map();
   private readonly WEBHOOK_FAILURE_THRESHOLD = 3;
 
-  constructor(agentRegistry: AgentRegistry, options?: {
+  constructor(agentRegistry: RegistryLike, options?: {
     maxQueueSize?: number;
     webhookTimeout?: number;
   }) {
@@ -547,8 +553,10 @@ export class MessageRouter {
    * 更新 Agent 注册表
    * 公开方法，允许外部更新注册表引用
    */
-  updateRegistry(registry: AgentRegistry): void {
+  updateRegistry(registry: RegistryLike): void {
     this.agentRegistry = registry;
-    this.logger.info('Agent registry updated', { count: registry.size() });
+    // 支持 Map 和 AgentRegistry 两种类型的 size 获取
+    const count = registry instanceof Map ? registry.size : registry.size();
+    this.logger.info('Agent registry updated', { count });
   }
 }

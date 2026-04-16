@@ -110,8 +110,7 @@ describe('ControlServer', () => {
       method: options.method || 'GET',
       url: options.url || '/',
       headers: {
-        'x-f2a-token': TEST_TOKEN,
-        ...options.headers
+        ...options.headers  // 不默认添加 token，由测试控制
       },
       socket: { remoteAddress: '127.0.0.1' },
       on: vi.fn((event: string, callback: Function) => {
@@ -192,7 +191,7 @@ describe('ControlServer', () => {
       await server.start();
       
       const handler = lastMockServer._handler;
-      const req = createMockReq({ url: '/status' });
+      const req = createMockReq({ url: '/status', headers: { 'x-f2a-token': TEST_TOKEN } });
       const res = createMockRes();
       
       handler(req, res);
@@ -209,7 +208,7 @@ describe('ControlServer', () => {
       await server.start();
       
       const handler = lastMockServer._handler;
-      const req = createMockReq({ url: '/api/agents' });
+      const req = createMockReq({ url: '/api/agents', headers: { 'x-f2a-token': TEST_TOKEN } });
       const res = createMockRes();
       
       handler(req, res);
@@ -229,7 +228,8 @@ describe('ControlServer', () => {
       const req = createMockReq({
         method: 'POST',
         url: '/api/agents',
-        body: { name: '猫咕噜', capabilities: ['chat'] }
+        body: { name: '猫咕噜', capabilities: ['chat'] },
+        headers: { 'x-f2a-token': TEST_TOKEN }
       });
       const res = createMockRes();
       
@@ -253,7 +253,8 @@ describe('ControlServer', () => {
       const req = createMockReq({
         method: 'POST',
         url: '/api/agents',
-        body: { capabilities: ['chat'] }
+        body: { capabilities: ['chat'] },
+        headers: { 'x-f2a-token': TEST_TOKEN }
       });
       const res = createMockRes();
       

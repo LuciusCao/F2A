@@ -119,6 +119,7 @@ describe('MessageRouter', () => {
   describe('route', () => {
     it('应该路由消息到特定 Agent', () => {
       mockAgentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('receiver', createAgent('receiver'));
       router.createQueue('receiver');
 
       const message = createMessage('msg-1', 'sender', 'receiver');
@@ -130,6 +131,7 @@ describe('MessageRouter', () => {
     });
 
     it('发送方未注册应返回 false', () => {
+      mockAgentRegistry.set('receiver', createAgent('receiver'));
       router.createQueue('receiver');
 
       const message = createMessage('msg-1', 'unknown-sender', 'receiver');
@@ -140,6 +142,7 @@ describe('MessageRouter', () => {
 
     it('目标队列不存在应返回 false', () => {
       mockAgentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('unknown-receiver', createAgent('unknown-receiver'));
 
       const message = createMessage('msg-1', 'sender', 'unknown-receiver');
       const result = router.route(message);
@@ -149,6 +152,9 @@ describe('MessageRouter', () => {
 
     it('未指定目标应广播消息', () => {
       mockAgentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('receiver-1', createAgent('receiver-1'));
+      mockAgentRegistry.set('receiver-2', createAgent('receiver-2'));
+      mockAgentRegistry.set('receiver-3', createAgent('receiver-3'));
       router.createQueue('receiver-1');
       router.createQueue('receiver-2');
       router.createQueue('receiver-3');
@@ -164,6 +170,7 @@ describe('MessageRouter', () => {
 
     it('应该保留消息元数据', () => {
       mockAgentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('receiver', createAgent('receiver'));
       router.createQueue('receiver');
 
       const message = createMessage('msg-1', 'sender', 'receiver');

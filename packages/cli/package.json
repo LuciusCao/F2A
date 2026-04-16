@@ -1,0 +1,36 @@
+{
+  "name": "@f2a/cli",
+  "version": "0.5.0",
+  "description": "F2A CLI - Command line tools for Friend-to-Agent P2P networking",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "f2a": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src/",
+    "clean": "rm -rf dist .tsbuildinfo"
+  },
+  "dependencies": {
+    "@f2a/network": "^0.4.18"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^2.0.0",
+    "@types/node": "^22.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["f2a", "p2p", "agent", "cli"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LuciusCao/F2A.git",
+    "directory": "packages/cli"
+  },
+  "license": "MIT"
+}

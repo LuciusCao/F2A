@@ -10,6 +10,8 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "build:core": "npm run build -w @f2a/network",
+    "build:cli": "npm run build -w @f2a/cli",
+    "build:daemon": "npm run build -w @f2a/daemon",
     "build:openclaw-f2a": "npm run build -w @f2a/openclaw-f2a",
     "build:dashboard": "npm run build -w @f2a/dashboard",
     "lint": "npm run lint --workspaces",

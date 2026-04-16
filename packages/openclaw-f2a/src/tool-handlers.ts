@@ -205,11 +205,11 @@ ${agents.map((a: AgentInfo, i: number) => {
     // 新协议：使用 MESSAGE 类型 + StructuredMessagePayload
     const plugin = this.plugin as unknown as PluginInternalAccess;
     
-    // 获取 F2A 实例（embedded 模式通过 core 访问）
-    const f2a = (plugin as any).core?.getF2A?.();
+    // 获取 F2A 实例
+    const f2a = plugin.getF2A?.();
     const status = plugin.getF2AStatus?.();
     
-    if (f2a && f2a.sendMessage && status?.running) {
+    if (f2a && status?.running) {
       try {
         // PR #111 新协议：MESSAGE 类型 + StructuredMessagePayload
         // topic 默认为 'chat'，可显式指定
@@ -224,7 +224,8 @@ ${agents.map((a: AgentInfo, i: number) => {
           }
         };
         
-        await f2a.sendMessage(targetAgent.peerId, JSON.stringify(messagePayload));
+        // 使用 sendMessageToPeer 方法
+        await (f2a as any).sendMessageToPeer?.(targetAgent.peerId, JSON.stringify(messagePayload));
         
         logger.info(`消息已发送给 ${targetAgent.displayName}`);
         
@@ -677,8 +678,27 @@ ${tasks.map(t => {
 
   /**
    * 解析 Agent 引用
+   * 
+   * 支持格式:
+   * - #索引: 从 discover 结果中选择
+   * - 完整 Peer ID (以 12D3Koo 开头): 直接使用，不需要 discover
+   * - 显示名称: 需要先 discover 匹配
    */
   private async resolveAgent(agentRef: string): Promise<AgentInfo | null> {
+    // 如果是完整的 Peer ID，直接返回基本对象（不需要 discover）
+    if (agentRef.startsWith('12D3Koo') && agentRef.length > 20) {
+      return {
+        peerId: agentRef,
+        displayName: agentRef.slice(0, 16) + '...',
+        capabilities: [],
+        agentType: 'custom' as const,
+        version: '0.0.0',
+        protocolVersion: '1.0.0',
+        lastSeen: Date.now(),
+        multiaddrs: [],
+      };
+    }
+    
     const plugin = this.plugin as unknown as PluginInternalAccess;
     
     // 新架构：优先使用 f2aClient

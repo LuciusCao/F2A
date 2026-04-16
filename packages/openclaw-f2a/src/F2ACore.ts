@@ -117,6 +117,10 @@ export class F2ACore {
 
   private onMessageCallback?: MessageCallback;
 
+  // ========== 启动锁 ==========
+
+  private enablePromise?: Promise<void>;
+
   // ========== 组件注册器引用 ==========
 
   private componentRegistry?: F2AComponentRegistry;
@@ -327,9 +331,23 @@ export class F2ACore {
     webhookHandler: WebhookHandler,
     onMessage: MessageCallback
   ): Promise<void> {
+    // 如果已经有启动过程在进行，等待它完成
+    if (this.enablePromise) {
+      this.logger?.debug?.('[F2A] 等待正在进行的启动过程...');
+      await this.enablePromise;
+    }
+    
+    // 即使 state.initialized 为 true，也要检查 F2A 是否真的在运行
+    // 因为 Gateway 重启后全局单例可能存在但无效
     if (this.state.initialized) {
-      this.logger?.info('[F2A] 适配器已启用,跳过');
-      return;
+      const reallyRunning = await this.checkF2AReallyRunning();
+      if (reallyRunning) {
+        this.logger?.info('[F2A] F2A 真正在运行，跳过启动');
+        return;
+      }
+      this.logger?.warn('[F2A] state.initialized=true 但 F2A 未运行，重新启动');
+      this.state.initialized = false;
+      this.state.f2a = undefined;
     }
 
     // 检测端口是否已被占用(热重启后旧实例残留或后台服务已启动)
@@ -680,6 +698,11 @@ export class F2ACore {
       // 监听其他事件
       this.state.f2a.on('peer:connected', (event: { peerId: string }) => {
         this.logger?.info('[F2A] Peer 连接', { peerId: event.peerId.slice(0, 16) });
+        
+        // Phase 1 修复：连接建立后自动发送公钥
+        // 注意：不使用 HandshakeProtocol.sendFriendRequest()，因为插件的 F2A 实例不支持 sendMessage
+        // 公钥交换已经由 @f2a/network 的 peer:connect 事件处理（p2p-network.ts 中的 sendPublicKey）
+        this.logger?.info('[F2A] 公钥交换将由底层 P2P 网络自动处理', { peerId: event.peerId.slice(0, 16) });
       });
 
       this.state.f2a.on('peer:disconnected', (event: { peerId: string }) => {
@@ -933,6 +956,73 @@ export class F2ACore {
     }
 
     return inUse;
+  }
+
+  /**
+   * 检查单个端口是否被占用
+   */
+  private async checkPortInUse(port: number): Promise<boolean> {
+    try {
+      const net = require('net');
+      await new Promise<void>((resolve, reject) => {
+        const server = net.createServer();
+        server.once('error', (err: NodeJS.ErrnoException) => {
+          if (err.code === 'EADDRINUSE') {
+            resolve(); // 端口被占用
+          } else {
+            reject(err);
+          }
+        });
+        server.once('listening', () => {
+          server.close();
+          reject(new Error('Port available')); // 端口可用
+        });
+        server.listen(port);
+      });
+      return true; // 端口被占用
+    } catch {
+      return false; // 端口可用
+    }
+  }
+
+  /**
+   * 检查 ControlServer 是否在运行
+   */
+  private async checkControlServer(port: number): Promise<boolean> {
+    try {
+      const response = await fetch(`http://localhost:${port}/health`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(2000),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 检查 F2A 是否真的在运行
+   * 
+   * 通过检查端口和控制服务器来判断
+   */
+  private async checkF2AReallyRunning(): Promise<boolean> {
+    const p2pPort = this.config.p2pPort || 9000;
+    const controlPort = this.config.controlPort || 9001;
+    
+    // 检查 P2P 端口是否被占用
+    const p2pPortInUse = await this.checkPortInUse(p2pPort);
+    
+    // 如果 P2P 端口被占用，检查 ControlServer 是否响应
+    if (p2pPortInUse) {
+      const controlServerOk = await this.checkControlServer(controlPort);
+      if (controlServerOk) {
+        this.logger?.info('[F2A] F2A 正在运行', { p2pPort, controlPort });
+        return true;
+      }
+      this.logger?.warn('[F2A] P2P 端口被占用但 ControlServer 无响应，可能是僵尸进程');
+    }
+    
+    return false;
   }
 
   /**

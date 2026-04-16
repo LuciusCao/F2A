@@ -18,8 +18,9 @@ import {
 import { configureCommand, listConfig, getConfigValue, setConfigValue } from './configure.js';
 import { getConfigPath } from './config.js';
 import { showIdentityStatus, exportIdentity, importIdentity, showIdentityHelp } from './identity.js';
-import { listAgents, exportAgent, importAgent, deleteAgent, showAgentsHelp } from './agents.js';
 import { getControlToken, getControlTokenLazy, resetControlTokenCache } from './control-token.js';
+import { sendMessage, getMessages } from './messages.js';
+import { registerAgent, listAgents, unregisterAgent } from './agents.js';
 
 const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
 
@@ -46,10 +47,20 @@ interface Args {
   helpTarget?: string;
   configKey?: string;
   configValue?: string;
-  filePath?: string;  // identity/agents export/import 路径
-  agentId?: string;   // agents export/delete 的 agentId
-  force?: boolean;    // --force 标志
-  confirm?: boolean;  // --confirm 标志
+  filePath?: string;  // identity export/import 路径
+  // 消息命令参数
+  peerId?: string;
+  topic?: string;
+  messageContent?: string;
+  // Agent 命令参数
+  agentId?: string;
+  agentName?: string;
+  agentCapabilities?: string[];
+  webhookUrl?: string;
+  // 通用标志
+  limit?: number;
+  unread?: boolean;
+  from?: string;
 }
 
 /**
@@ -79,9 +90,9 @@ function parseArgs(): Args {
     return { command: 'help', helpTarget: args[1] };
   }
 
-  // 解析子命令（daemon, config, identity, agents）
+  // 解析子命令（daemon, config, identity, agent）
   let subcommand: string | undefined;
-  if ((command === 'daemon' || command === 'config' || command === 'identity' || command === 'agents') && args[1]) {
+  if ((command === 'daemon' || command === 'config' || command === 'identity' || command === 'agent') && args[1]) {
     // 检查是否是 help 请求
     if (args[1] === '-h' || args[1] === '--help') {
       return { command: 'help', helpTarget: command };
@@ -115,12 +126,6 @@ function parseArgs(): Args {
   // 解析 detach 标志
   const detach = args.includes('-d') || args.includes('--detach');
 
-  // 解析 force 标志
-  const force = args.includes('-f') || args.includes('--force');
-
-  // 解析 confirm 标志
-  const confirm = args.includes('--confirm');
-
   // 解析 config 子命令的参数
   let configKey: string | undefined;
   let configValue: string | undefined;
@@ -139,33 +144,74 @@ function parseArgs(): Args {
   // 解析 identity 子命令的文件路径
   let filePath: string | undefined;
   if (command === 'identity' && subcommand) {
-    if (subcommand === 'export' && args[2] && !args[2].startsWith('-')) {
+    if (subcommand === 'export' && args[2]) {
       filePath = args[2];
     }
-    if (subcommand === 'import' && args[2] && !args[2].startsWith('-')) {
+    if (subcommand === 'import' && args[2]) {
       filePath = args[2];
     }
   }
 
-  // 解析 agents 子命令的参数
+  // 解析 send 命令参数
+  let peerId: string | undefined;
+  let topic: string | undefined;
+  let messageContent: string | undefined;
+  if (command === 'send') {
+    const toIndex = args.indexOf('--to');
+    if (toIndex !== -1 && args[toIndex + 1]) {
+      peerId = args[toIndex + 1];
+    }
+    const topicIndex = args.indexOf('--topic');
+    if (topicIndex !== -1 && args[topicIndex + 1]) {
+      topic = args[topicIndex + 1];
+    }
+    // 最后一个非参数是消息内容
+    const lastArg = args[args.length - 1];
+    if (lastArg && !lastArg.startsWith('-')) {
+      messageContent = lastArg;
+    }
+  }
+
+  // 解析 agent 子命令的参数
   let agentId: string | undefined;
-  if (command === 'agents' && subcommand) {
-    if (subcommand === 'export' && args[2] && !args[2].startsWith('-')) {
-      agentId = args[2];
-      // 检查是否有输出路径
-      if (args[3] && !args[3].startsWith('-')) {
-        filePath = args[3];
-      }
-    }
-    if (subcommand === 'import' && args[2] && !args[2].startsWith('-')) {
-      filePath = args[2];
-    }
-    if (subcommand === 'delete' && args[2] && !args[2].startsWith('-')) {
-      agentId = args[2];
+  let agentName: string | undefined;
+  let agentCap: string | undefined;
+  let webhookUrl: string | undefined;
+  if (command === 'agent' && subcommand) {
+    if (subcommand === 'register') {
+      const idIndex = args.indexOf('--id');
+      if (idIndex !== -1 && args[idIndex + 1]) agentId = args[idIndex + 1];
+      const nameIndex = args.indexOf('--name');
+      if (nameIndex !== -1 && args[nameIndex + 1]) agentName = args[nameIndex + 1];
+      const capIndex = args.indexOf('--capability');
+      if (capIndex !== -1 && args[capIndex + 1]) agentCap = args[capIndex + 1];
+      const webIndex = args.indexOf('--webhook');
+      if (webIndex !== -1 && args[webIndex + 1]) webhookUrl = args[webIndex + 1];
     }
   }
 
-  return { command, subcommand, idOrIndex, capability, reason, detach, configKey, configValue, filePath, agentId, force, confirm };
+  // 解析 messages 命令参数
+  let limit: number | undefined;
+  let unread = args.includes('--unread');
+  let from: string | undefined;
+  if (command === 'messages') {
+    const limitIndex = args.indexOf('--limit');
+    if (limitIndex !== -1 && args[limitIndex + 1]) {
+      limit = parseInt(args[limitIndex + 1]);
+    }
+    const fromIndex = args.indexOf('--from');
+    if (fromIndex !== -1 && args[fromIndex + 1]) {
+      from = args[fromIndex + 1];
+    }
+  }
+
+  return { 
+    command, subcommand, idOrIndex, capability, reason, detach, 
+    configKey, configValue, filePath,
+    peerId, topic, messageContent,
+    agentId, agentName, agentCapabilities: agentCap ? [agentCap] : undefined, webhookUrl,
+    limit, unread, from
+  };
 }
 
 /**
@@ -181,7 +227,6 @@ Commands:
   configure            交互式配置向导
   config               配置管理 (get/set/list)
   identity             身份管理 (status/export/import)
-  agents               Agent Identity 管理 (list/export/import/delete)
   status               查看节点状态
   peers                查看已连接的 Peers
   discover [options]   发现网络中的 Agents
@@ -189,6 +234,11 @@ Commands:
   confirm [id|index]   确认连接请求
   reject [id|index]    拒绝连接请求
   daemon [subcommand]  启动和管理 daemon 服务
+  
+  send                 发送消息 (Phase 1 新增)
+  messages             查看消息 (Phase 1 新增)
+  agent                Agent 管理 (Phase 1 新增)
+  
   version              显示版本信息
   help [command]       显示帮助信息
 
@@ -350,8 +400,57 @@ ${getCommandDescription(command)}
       showIdentityHelp();
       break;
 
-    case 'agents':
-      showAgentsHelp();
+    case 'send':
+      console.log(`
+Usage: f2a send --to <peer_id> [--topic <topic>] <message>
+
+发送消息给指定 Peer。
+
+Parameters:
+  --to <peer_id>        目标 Peer ID
+  --topic <topic>       消息主题 (默认: chat)
+  <message>             消息内容
+
+Examples:
+  f2a send --to 12D3KooWHxWdnxJa "你好!"
+  f2a send --to 12D3KooWHxWdnxJa --topic task.request "帮我写代码"
+`);
+      break;
+
+    case 'messages':
+      console.log(`
+Usage: f2a messages [--unread] [--from <peer_id>] [--limit <n>]
+
+查看收到的消息。
+
+Options:
+  --unread               只显示未读消息
+  --from <peer_id>       只显示来自指定 Peer 的消息
+  --limit <n>            显示消息数量 (默认: 50)
+
+Examples:
+  f2a messages
+  f2a messages --unread
+  f2a messages --from 12D3KooWHxWdnxJa
+`);
+      break;
+
+    case 'agent':
+      console.log(`
+Usage: f2a agent [subcommand]
+
+Agent 管理命令。
+
+Subcommands:
+  f2a agent register --id <id> --name <name> [--capability <cap>]... [--webhook <url>]
+  f2a agent list                    列出已注册的 Agent
+  f2a agent unregister <agent_id>   注销 Agent
+
+Examples:
+  f2a agent register --id openclaw --name "猫咕噜" --capability code-generation
+  f2a agent list
+  f2a agent unregister openclaw
+`);
       break;
 
     default:
@@ -566,10 +665,6 @@ async function main(): Promise<void> {
       await handleIdentityCommand(args);
       break;
 
-    case 'agents':
-      await handleAgentsCommand(args);
-      break;
-
     case 'status':
       await sendCommand('status');
       break;
@@ -606,6 +701,24 @@ async function main(): Promise<void> {
 
     case 'daemon':
       await handleDaemonCommand(args);
+      break;
+
+    // Phase 1: 新增消息命令
+    case 'send':
+      await sendMessage(args.peerId || '', args.messageContent || '', args.topic);
+      break;
+
+    case 'messages':
+      await getMessages({
+        unread: args.unread,
+        from: args.from,
+        limit: args.limit
+      });
+      break;
+
+    // Phase 1: 新增 Agent 管理命令
+    case 'agent':
+      await handleAgentCommand(args);
       break;
 
     default:
@@ -747,54 +860,45 @@ async function handleIdentityCommand(args: Args): Promise<void> {
 }
 
 /**
- * 处理 agents 命令
+ * 处理 agent 命令
  * @param args - 解析后的参数
  */
-async function handleAgentsCommand(args: Args): Promise<void> {
+async function handleAgentCommand(args: Args): Promise<void> {
+  const { registerAgent, listAgents, unregisterAgent } = await import('./agents.js');
   const subcommand = args.subcommand;
 
   switch (subcommand) {
+    case 'register':
+      await registerAgent({
+        id: args.agentId || '',
+        name: args.agentName || '',
+        capabilities: args.agentCapabilities,
+        webhook: args.webhookUrl
+      });
+      break;
+
     case 'list':
     case undefined:
-      // f2a agents 或 f2a agents list
       await listAgents();
       break;
 
-    case 'export':
-      if (!args.agentId) {
-        console.error('[F2A] Error: Agent ID is required for export');
-        console.error('Usage: f2a agents export <agentId> [outputPath]');
+    case 'unregister':
+      if (!args.idOrIndex) {
+        console.error('[F2A] Error: Agent ID is required');
+        console.error('Usage: f2a agent unregister <agent_id>');
         process.exit(1);
       }
-      await exportAgent(args.agentId, args.filePath);
-      break;
-
-    case 'import':
-      if (!args.filePath) {
-        console.error('[F2A] Error: File path is required for import');
-        console.error('Usage: f2a agents import <path>');
-        process.exit(1);
-      }
-      await importAgent(args.filePath, undefined, args.force);
-      break;
-
-    case 'delete':
-      if (!args.agentId) {
-        console.error('[F2A] Error: Agent ID is required for delete');
-        console.error('Usage: f2a agents delete <agentId> [--confirm|--force]');
-        process.exit(1);
-      }
-      await deleteAgent(args.agentId, args.confirm, args.force);
+      await unregisterAgent(String(args.idOrIndex));
       break;
 
     case '-h':
     case '--help':
-      showAgentsHelp();
+      showCommandHelp('agent');
       break;
 
     default:
-      console.error(`[F2A] Unknown agents subcommand: ${subcommand}`);
-      console.error('Usage: f2a agents [list|export|import|delete]');
+      console.error(`[F2A] Unknown agent subcommand: ${subcommand}`);
+      console.error('Usage: f2a agent [register|list|unregister]');
       process.exit(1);
   }
 }

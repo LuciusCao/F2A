@@ -128,7 +128,23 @@ export class ControlServer {
     // Phase 6: 初始化 Identity Manager
     this.identityManager = new AgentIdentityManager(this.dataDir);
     this.identityManager.loadAll();
-    
+
+    // RFC 004 Phase 6: 启动时恢复所有持久化的 Agent 身份到运行时注册表
+    for (const identity of this.identityManager.list()) {
+      try {
+        this.agentRegistry.restore(identity);
+        this.logger.info('Agent restored on startup', {
+          agentId: identity.agentId,
+          name: identity.name,
+        });
+      } catch (err) {
+        this.logger.warn('Failed to restore agent on startup', {
+          agentId: identity.agentId,
+          error: getErrorMessage(err),
+        });
+      }
+    }
+
     // Phase 7: 初始化 E2EECrypto（用于 Challenge-Response 签名验证）
     this.e2eeCrypto = new E2EECrypto();
     // 尝试从 node-identity.json 加载 E2EE 密钥
@@ -860,7 +876,10 @@ export class ControlServer {
     if (removed) {
       // 删除消息队列
       this.messageRouter.deleteQueue(agentId);
-      
+
+      // RFC 004 Phase 6: 删除持久化身份文件
+      this.identityManager.delete(agentId);
+
       // 同步注册表到消息路由器
       this.syncAgentRegistryToRouter();
       

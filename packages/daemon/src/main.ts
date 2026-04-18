@@ -3,6 +3,7 @@
  * F2A Daemon 入口
  */
 
+import { createRequire } from 'module';
 import { F2ADaemon } from './index.js';
 import { Logger } from '@f2a/network';
 
@@ -11,13 +12,15 @@ const logger = new Logger({ component: 'daemon' });
 // RFC 008: 在开发模式下允许私有 IP 地址的 webhook（禁用 undici SSRF 保护）
 // 生产环境应保持 SSRF 保护启用
 // 注意：必须在同步代码中设置，因为 setGlobalDispatcher 需要在任何 fetch 调用之前生效
+// 在 ESM 中使用 createRequire 来同步导入 undici
+const require = createRequire(import.meta.url);
+
 const allowLocal = process.env.F2A_ALLOW_LOCAL_WEBHOOK === 'true' || 
                    process.env.NODE_ENV === 'development' ||
                    process.env.NODE_ENV === 'test';
 
 if (allowLocal) {
-  // 使用 require 同步导入 undici（Node.js 18+ 内置）
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // 使用 createRequire 创建的 require 同步导入 undici
   const undici = require('undici');
   if (undici.setGlobalDispatcher && undici.Agent) {
     undici.setGlobalDispatcher(new undici.Agent({

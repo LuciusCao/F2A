@@ -101,8 +101,7 @@ export class ControlServer {
   // 使用 ! 断言，因为它在构造函数中被初始化
   private e2eeCrypto!: E2EECrypto;
   private dataDir: string;
-  // RFC 007: Agent Token Manager（全局管理所有 agent token）
-  private globalTokenManager!: AgentTokenManager;
+
 
   constructor(f2a: F2A, port: number, tokenManager?: TokenManager, options?: ControlServerOptions) {
     this.f2a = f2a;
@@ -130,15 +129,7 @@ export class ControlServer {
     this.identityManager = new AgentIdentityManager(this.dataDir);
     this.identityManager.loadAll();
 
-    // RFC 007: 初始化全局 Token Manager（用于管理所有 agent 的 token）
-    this.globalTokenManager = new AgentTokenManager(
-      this.dataDir,
-      'control-server',  // ControlServer 自己的标识
-      { useEncryption: true }
-    );
-    this.logger.info('Global AgentTokenManager initialized', {
-      agentId: 'control-server'
-    });
+
 
     // RFC 004 Phase 6: 启动时恢复所有持久化的 Agent 身份到运行时注册表
     // 注意：这是 daemon 特有的功能，从 agents/*.json 恢复到 AgentRegistry
@@ -989,11 +980,21 @@ export class ControlServer {
         // RFC 004: 构建 webhook 对象
         const webhook = data.webhook || (data.webhookUrl ? { url: data.webhookUrl, token: data.webhookToken } : undefined);
         
-        // 同步更新 AgentRegistry 和 AgentIdentityManager（持久化）
-        const registryUpdated = this.agentRegistry.updateWebhook(agentId, webhook);
+        // 先持久化文件，再更新内存（避免持久化失败导致数据丢失）
         const identityUpdated = this.identityManager.updateWebhook(agentId, webhook);
-        
-        if (registryUpdated && identityUpdated) {
+        if (!identityUpdated) {
+          res.writeHead(500);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Failed to persist webhook',
+            code: 'PERSIST_FAILED',
+          }));
+          return;
+        }
+
+        // 文件持久化成功后，更新内存
+        const registryUpdated = this.agentRegistry.updateWebhook(agentId, webhook);
+        if (registryUpdated) {
           this.logger.info('Agent webhook updated via API', { agentId, webhookUrl: webhook?.url });
           res.writeHead(200);
           res.end(JSON.stringify({
@@ -1002,11 +1003,13 @@ export class ControlServer {
             webhook,
           }));
         } else {
+          // 内存更新失败（罕见），但文件已持久化，可恢复
+          this.logger.warn('Registry update failed after persistence succeeded', { agentId });
           res.writeHead(500);
           res.end(JSON.stringify({
             success: false,
-            error: 'Failed to update webhook',
-            code: 'UPDATE_FAILED',
+            error: 'Failed to update registry',
+            code: 'REGISTRY_FAILED',
           }));
         }
       } catch (error) {

@@ -18,7 +18,7 @@ import { Logger } from '@f2a/network';
 /**
  * Session Token 数据结构
  */
-export interface SessionTokenData {
+export interface AgentTokenData {
   /** Session Token（唯一标识） */
   token: string;
   /** 所属 Agent ID */
@@ -36,7 +36,7 @@ export interface SessionTokenData {
 /**
  * Session Token 配置选项
  */
-export interface SessionTokenManagerOptions {
+export interface AgentTokenManagerOptions {
   /** Token 过期时间（毫秒），默认 7 天 */
   expireAfterMs?: number;
   /** 是否自动清理过期 token */
@@ -50,15 +50,15 @@ const DEFAULT_EXPIRE_AFTER_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
  * Session Token 管理器
  * 负责 Agent Session Token 的生成、验证和管理
  */
-export class SessionTokenManager {
+export class AgentTokenManager {
   private tokensDir: string;
-  private tokens: Map<string, SessionTokenData> = new Map();
+  private tokens: Map<string, AgentTokenData> = new Map();
   private logger: Logger;
   private expireAfterMs: number;
 
-  constructor(dataDir: string, options?: SessionTokenManagerOptions) {
+  constructor(dataDir: string, options?: AgentTokenManagerOptions) {
     this.tokensDir = join(dataDir, 'session-tokens');
-    this.logger = new Logger({ component: 'SessionTokenManager' });
+    this.logger = new Logger({ component: 'AgentTokenManager' });
     this.expireAfterMs = options?.expireAfterMs ?? DEFAULT_EXPIRE_AFTER_MS;
   }
 
@@ -84,7 +84,7 @@ export class SessionTokenManager {
             return undefined;
           }
           return value;
-        }) as SessionTokenData;
+        }) as AgentTokenData;
         
         // 验证基本结构
         if (!this.validateTokenStructure(tokenData)) {
@@ -155,7 +155,7 @@ export class SessionTokenManager {
     const token = this.generateToken();
     
     const now = Date.now();
-    const tokenData: SessionTokenData = {
+    const tokenData: AgentTokenData = {
       token,
       agentId,
       createdAt: now,
@@ -189,7 +189,7 @@ export class SessionTokenManager {
   /**
    * 保存 token 到文件
    */
-  private saveToFile(tokenData: SessionTokenData): void {
+  private saveToFile(tokenData: AgentTokenData): void {
     const filePath = join(this.tokensDir, `sess-${tokenData.token.slice(5)}.json`);
     writeFileSync(filePath, JSON.stringify(tokenData, null, 2), { mode: 0o600 });
   }
@@ -340,7 +340,7 @@ export class SessionTokenManager {
    * @param token Session token
    * @returns Token 数据或 undefined
    */
-  get(token: string): SessionTokenData | undefined {
+  get(token: string): AgentTokenData | undefined {
     return this.tokens.get(token);
   }
 
@@ -348,7 +348,7 @@ export class SessionTokenManager {
    * 列出所有 token
    * @returns Token 数据列表
    */
-  list(): SessionTokenData[] {
+  list(): AgentTokenData[] {
     return Array.from(this.tokens.values());
   }
 
@@ -357,7 +357,7 @@ export class SessionTokenManager {
    * @param agentId Agent ID
    * @returns Token 数据列表
    */
-  listByAgent(agentId: string): SessionTokenData[] {
+  listByAgent(agentId: string): AgentTokenData[] {
     return this.list().filter(t => t.agentId === agentId);
   }
 

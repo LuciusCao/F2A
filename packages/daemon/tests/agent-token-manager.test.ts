@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { SessionTokenManager, SessionTokenData } from '../src/session-token-manager.js';
+import { AgentTokenManager, AgentTokenData } from '../src/agent-token-manager.js';
 
 // Mock Logger
 vi.mock('@f2a/network', async (importOriginal) => {
@@ -38,8 +38,8 @@ function createMockAgentId(suffix?: string): string {
   return `agent:12D3KooWtest:${suffix || '12345678'}`;
 }
 
-describe('SessionTokenManager', () => {
-  let manager: SessionTokenManager;
+describe('AgentTokenManager', () => {
+  let manager: AgentTokenManager;
   let testDir: string;
   let tokensDir: string;
 
@@ -50,7 +50,7 @@ describe('SessionTokenManager', () => {
     tokensDir = join(testDir, 'session-tokens');
     
     // 创建 Manager
-    manager = new SessionTokenManager(testDir);
+    manager = new AgentTokenManager(testDir);
   });
 
   afterEach(() => {
@@ -143,7 +143,7 @@ describe('SessionTokenManager', () => {
 
     it('should support custom expiration time', () => {
       const customExpireMs = 1 * 60 * 60 * 1000; // 1 hour
-      const customManager = new SessionTokenManager(testDir, { expireAfterMs: customExpireMs });
+      const customManager = new AgentTokenManager(testDir, { expireAfterMs: customExpireMs });
       
       const agentId = createMockAgentId('agent1');
       const before = Date.now();
@@ -206,7 +206,7 @@ describe('SessionTokenManager', () => {
       manager.verify(token);
 
       // 重新加载 manager
-      const newManager = new SessionTokenManager(testDir);
+      const newManager = new AgentTokenManager(testDir);
       newManager.loadAll();
 
       const tokenData = newManager.get(token);
@@ -311,7 +311,7 @@ describe('SessionTokenManager', () => {
       
       // 创建已过期的 token（手动设置 expiresAt）
       const token = 'sess-expiredtest1234567890abcdef1234567890abcdef';
-      const expiredTokenData: SessionTokenData = {
+      const expiredTokenData: AgentTokenData = {
         token,
         agentId,
         createdAt: Date.now() - 8 * 24 * 60 * 60 * 1000, // 8 天前创建
@@ -339,7 +339,7 @@ describe('SessionTokenManager', () => {
       
       // 创建即将过期的 token（expiresAt 为未来时间）
       const token = 'sess-almostexpired1234567890abcdef1234567890abcdef';
-      const tokenData: SessionTokenData = {
+      const tokenData: AgentTokenData = {
         token,
         agentId,
         createdAt: Date.now() - 6 * 24 * 60 * 60 * 1000, // 6 天前创建
@@ -404,7 +404,7 @@ describe('SessionTokenManager', () => {
       manager.revoke(token);
 
       // 重新加载
-      const newManager = new SessionTokenManager(testDir);
+      const newManager = new AgentTokenManager(testDir);
       newManager.loadAll();
 
       const tokenData = newManager.get(token);
@@ -451,7 +451,7 @@ describe('SessionTokenManager', () => {
       
       // 创建已过期的 token
       const expiredToken = 'sess-expiredclean1234567890abcdef1234567890abcdef';
-      const expiredData: SessionTokenData = {
+      const expiredData: AgentTokenData = {
         token: expiredToken,
         agentId,
         createdAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
@@ -502,7 +502,7 @@ describe('SessionTokenManager', () => {
       const agentId = createMockAgentId('agent1');
       
       const expiredToken = 'sess-fileclean1234567890abcdef1234567890abcdef';
-      const expiredData: SessionTokenData = {
+      const expiredData: AgentTokenData = {
         token: expiredToken,
         agentId,
         createdAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
@@ -540,7 +540,7 @@ describe('SessionTokenManager', () => {
       
       // 创建过期 token
       const expiredToken = 'sess-expired1' + Date.now().toString(16).padStart(54, '0');
-      const expiredData: SessionTokenData = {
+      const expiredData: AgentTokenData = {
         token: expiredToken,
         agentId,
         createdAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
@@ -550,7 +550,7 @@ describe('SessionTokenManager', () => {
 
       // 创建被撤销的 token
       const revokedToken = 'sess-revoked1' + Date.now().toString(16).padStart(54, '0');
-      const revokedData: SessionTokenData = {
+      const revokedData: AgentTokenData = {
         token: revokedToken,
         agentId,
         createdAt: Date.now(),
@@ -590,7 +590,7 @@ describe('SessionTokenManager', () => {
       const token1 = 'sess-loaded1' + Date.now().toString(16).padStart(54, '0');
       const token2 = 'sess-loaded2' + Date.now().toString(16).padStart(54, '0');
 
-      const data1: SessionTokenData = {
+      const data1: AgentTokenData = {
         token: token1,
         agentId: agentId1,
         createdAt: Date.now(),
@@ -598,7 +598,7 @@ describe('SessionTokenManager', () => {
         revoked: false,
       };
 
-      const data2: SessionTokenData = {
+      const data2: AgentTokenData = {
         token: token2,
         agentId: agentId2,
         createdAt: Date.now(),

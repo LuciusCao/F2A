@@ -1197,7 +1197,7 @@ export class ControlServer {
    * 生成 session token
    * @returns 随机 session token
    */
-  private generateSessionToken(): string {
+  private generateAgentToken(): string {
     return randomBytes(32).toString('hex');  // 64 位随机字符串
   }
 
@@ -1277,7 +1277,7 @@ export class ControlServer {
         }
         
         // ✅ 5️⃣ 验证通过：生成新 session token
-        const sessionToken = this.generateSessionToken();
+        const agentToken = this.generateAgentToken();
         
         // 6️⃣ 更新 identity
         identity.webhook = pending.webhook;
@@ -1294,7 +1294,7 @@ export class ControlServer {
         this.logger.info('Agent identity verified successfully', {
           agentId: identity.agentId?.slice(0, 16),
           name: identity.name,
-          sessionTokenPrefix: sessionToken.slice(0, 8)
+          agentTokenPrefix: agentToken.slice(0, 8)
         });
         
         // 9️⃣ 返回新 token
@@ -1302,7 +1302,7 @@ export class ControlServer {
         res.end(JSON.stringify({
           success: true,
           verified: true,
-          sessionToken,
+          agentToken,
           agent: restored
         }));
       } catch (error) {

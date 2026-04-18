@@ -46,6 +46,43 @@ export interface AgentTokenManagerOptions {
 /** 默认过期时间：7 天 */
 const DEFAULT_EXPIRE_AFTER_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+/** Token 前缀 */
+export const TOKEN_PREFIX = 'sess-';
+
+/** Token 中十六进制部分的长度（32 bytes = 64 hex chars） */
+export const TOKEN_HEX_LENGTH = 64;
+
+/** Token 总长度：前缀 + 十六进制部分 */
+export const TOKEN_LENGTH = TOKEN_PREFIX.length + TOKEN_HEX_LENGTH; // 69 chars
+
+/**
+ * 生成测试用的 Session Token（用于测试）
+ * @param suffix 可选后缀，用于区分不同测试场景
+ * @returns 格式正确的测试 token（sess- + 64 hex chars）
+ */
+export function generateTestToken(suffix?: string): string {
+  // 使用时间戳的十六进制形式 + 填充来生成固定长度的 token
+  const base = (suffix || Date.now().toString(16)).padStart(TOKEN_HEX_LENGTH, '0');
+  // 截取或填充到正确的长度
+  const hexPart = base.length > TOKEN_HEX_LENGTH 
+    ? base.slice(0, TOKEN_HEX_LENGTH) 
+    : base.padEnd(TOKEN_HEX_LENGTH, '0');
+  return TOKEN_PREFIX + hexPart;
+}
+
+/**
+ * 获取 token 对应的文件名
+ * @param token Session token
+ * @returns 文件名（如: sess-abc123...def.json）
+ */
+export function getTokenFileName(token: string): string {
+  // 去掉前缀，保留十六进制部分作为文件名
+  const hexPart = token.startsWith(TOKEN_PREFIX) 
+    ? token.slice(TOKEN_PREFIX.length) 
+    : token;
+  return `${TOKEN_PREFIX}${hexPart}.json`;
+}
+
 /**
  * Session Token 管理器
  * 负责 Agent Session Token 的生成、验证和管理
@@ -69,7 +106,7 @@ export class AgentTokenManager {
     this.ensureDir();
     
     const files = readdirSync(this.tokensDir)
-      .filter(f => f.endsWith('.json') && f.startsWith('sess-'));
+      .filter(f => f.endsWith('.json') && f.startsWith(TOKEN_PREFIX));
     
     this.tokens.clear();
     
@@ -131,7 +168,7 @@ export class AgentTokenManager {
     }
     
     // token 格式验证
-    if (typeof obj.token !== 'string' || !obj.token.startsWith('sess-')) {
+    if (typeof obj.token !== 'string' || !obj.token.startsWith(TOKEN_PREFIX)) {
       return false;
     }
     
@@ -180,17 +217,18 @@ export class AgentTokenManager {
 
   /**
    * 生成随机 session token
-   * @returns 64 位十六进制字符串（sess- + 64 hex chars）
+   * @returns 格式正确的 token（sess- + 64 hex chars）
    */
   private generateToken(): string {
-    return 'sess-' + randomBytes(32).toString('hex');
+    return TOKEN_PREFIX + randomBytes(32).toString('hex');
   }
 
   /**
    * 保存 token 到文件
    */
   private saveToFile(tokenData: AgentTokenData): void {
-    const filePath = join(this.tokensDir, `sess-${tokenData.token.slice(5)}.json`);
+    const fileName = getTokenFileName(tokenData.token);
+    const filePath = join(this.tokensDir, fileName);
     writeFileSync(filePath, JSON.stringify(tokenData, null, 2), { mode: 0o600 });
   }
 
@@ -233,9 +271,10 @@ export class AgentTokenManager {
       return { valid: false, error: 'Token expired' };
     }
     
-    // 更新最后使用时间
+    // 更新最后使用时间（仅在内存中更新，避免频繁磁盘 IO）
     tokenData.lastUsedAt = Date.now();
-    this.saveToFile(tokenData);
+    // 不在 verify() 中写入文件，lastUsedAt 仅用于内存追踪
+    // 关键操作（revoke、cleanExpired）会在需要时持久化
     
     this.logger.debug('Token verified successfully', {
       tokenPrefix: token.slice(0, 8),
@@ -314,7 +353,8 @@ export class AgentTokenManager {
         this.tokens.delete(token);
         
         // 删除文件
-        const filePath = join(this.tokensDir, `sess-${token.slice(5)}.json`);
+        const fileName = getTokenFileName(token);
+        const filePath = join(this.tokensDir, fileName);
         if (existsSync(filePath)) {
           rmSync(filePath);
         }
@@ -386,7 +426,7 @@ export class AgentTokenManager {
     
     if (existsSync(this.tokensDir)) {
       const files = readdirSync(this.tokensDir)
-        .filter(f => f.endsWith('.json') && f.startsWith('sess-'));
+        .filter(f => f.endsWith('.json') && f.startsWith(TOKEN_PREFIX));
       for (const file of files) {
         rmSync(join(this.tokensDir, file));
       }

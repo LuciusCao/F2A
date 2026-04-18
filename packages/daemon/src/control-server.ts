@@ -1009,93 +1009,109 @@ export class ControlServer {
   private handleSendMessage(req: IncomingMessage, res: ServerResponse): void {
     let body = '';
     req.on('data', chunk => { body += chunk; });
-    req.on('end', async () => {
-      try {
-        const data = JSON.parse(body);
-        
-        if (!data.fromAgentId || !data.content) {
-          res.writeHead(400);
-          res.end(JSON.stringify({
-            success: false,
-            error: 'Missing required fields: fromAgentId, content',
-            code: 'INVALID_REQUEST',
-          }));
-          return;
-        }
-
-        // 验证发送方已注册
-        if (!this.agentRegistry.get(data.fromAgentId)) {
-          res.writeHead(400);
-          res.end(JSON.stringify({
-            success: false,
-            error: 'Sender agent not registered',
-            code: 'AGENT_NOT_REGISTERED',
-          }));
-          return;
-        }
-
-        // 创建消息
-        const message: RoutableMessage = {
-          messageId: randomUUID(),
-          fromAgentId: data.fromAgentId,
-          toAgentId: data.toAgentId,
-          content: data.content,
-          metadata: data.metadata,
-          type: data.type || 'message',
-          createdAt: new Date(),
-        };
-
-        // 路由消息
-        if (data.toAgentId) {
-          // 验证接收方已注册
-          if (!this.agentRegistry.get(data.toAgentId)) {
+    req.on('end', () => {
+      (async () => {
+        try {
+          const data = JSON.parse(body);
+          
+          if (!data.fromAgentId || !data.content) {
             res.writeHead(400);
             res.end(JSON.stringify({
               success: false,
-              error: 'Target agent not registered',
+              error: 'Missing required fields: fromAgentId, content',
+              code: 'INVALID_REQUEST',
+            }));
+            return;
+          }
+
+          // 验证发送方已注册
+          if (!this.agentRegistry.get(data.fromAgentId)) {
+            res.writeHead(400);
+            res.end(JSON.stringify({
+              success: false,
+              error: 'Sender agent not registered',
               code: 'AGENT_NOT_REGISTERED',
             }));
             return;
           }
 
-          const routed = await this.messageRouter.routeAsync(message);
-          if (routed) {
-            this.logger.debug('Message routed', {
-              messageId: message.messageId,
-              fromAgentId: data.fromAgentId,
-              toAgentId: data.toAgentId,
-            });
+          // 创建消息
+          const message: RoutableMessage = {
+            messageId: randomUUID(),
+            fromAgentId: data.fromAgentId,
+            toAgentId: data.toAgentId,
+            content: data.content,
+            metadata: data.metadata,
+            type: data.type || 'message',
+            createdAt: new Date(),
+          };
+
+          // 路由消息
+          if (data.toAgentId) {
+            // 验证接收方已注册
+            if (!this.agentRegistry.get(data.toAgentId)) {
+              res.writeHead(400);
+              res.end(JSON.stringify({
+                success: false,
+                error: 'Target agent not registered',
+                code: 'AGENT_NOT_REGISTERED',
+              }));
+              return;
+            }
+
+            const routed = await this.messageRouter.routeAsync(message);
+            if (routed) {
+              this.logger.debug('Message routed', {
+                messageId: message.messageId,
+                fromAgentId: data.fromAgentId,
+                toAgentId: data.toAgentId,
+              });
+              res.writeHead(200);
+              res.end(JSON.stringify({
+                success: true,
+                messageId: message.messageId,
+              }));
+            } else {
+              res.writeHead(500);
+              res.end(JSON.stringify({
+                success: false,
+                error: 'Failed to route message',
+                code: 'ROUTE_FAILED',
+              }));
+            }
+          } else {
+            // 广播消息
+            const broadcasted = await this.messageRouter.broadcastAsync(message);
             res.writeHead(200);
             res.end(JSON.stringify({
               success: true,
               messageId: message.messageId,
-            }));
-          } else {
-            res.writeHead(500);
-            res.end(JSON.stringify({
-              success: false,
-              error: 'Failed to route message',
-              code: 'ROUTE_FAILED',
+              broadcasted,
             }));
           }
-        } else {
-          // 广播消息
-          const broadcasted = await this.messageRouter.broadcastAsync(message);
-          res.writeHead(200);
+        } catch (error) {
+          // 处理 JSON 解析错误和其他同步错误
+          if (!res.headersSent) {
+            res.writeHead(400);
+            res.end(JSON.stringify({
+              success: false,
+              error: error instanceof Error ? error.message : 'Invalid request',
+              code: 'INVALID_REQUEST',
+            }));
+          }
+        }
+      })().catch(error => {
+        // 捕获 async 操作中的未处理异常（如 routeAsync/broadcastAsync 失败）
+        this.logger.error('Failed to process message request', { error: getErrorMessage(error) });
+        if (!res.headersSent) {
+          res.writeHead(500);
           res.end(JSON.stringify({
-            success: true,
-            messageId: message.messageId,
-            broadcasted,
+            success: false,
+            error: 'Internal server error',
+            code: 'INTERNAL_ERROR',
           }));
         }
-      } catch (error) {
-        res.writeHead(400);
-        res.end(JSON.stringify({
-          success: false,
-          error: 'Invalid JSON',
-          code: 'INVALID_JSON',
-        }));
-      }
+      });
     });
   }
 

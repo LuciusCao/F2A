@@ -15,7 +15,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { AgentTokenManager, AgentTokenData } from '../src/agent-token-manager.js';
+import { 
+  AgentTokenManager, 
+  AgentTokenData,
+  generateTestToken,
+  getTokenFileName,
+  TOKEN_PREFIX,
+  TOKEN_HEX_LENGTH,
+  TOKEN_LENGTH
+} from '../src/agent-token-manager.js';
 
 // Mock Logger
 vi.mock('@f2a/network', async (importOriginal) => {
@@ -68,8 +76,8 @@ describe('AgentTokenManager', () => {
       const token = manager.generateAndSave(agentId);
 
       expect(token).toBeDefined();
-      expect(token.startsWith('sess-')).toBe(true);
-      expect(token.length).toBeGreaterThan(40); // sess- + 64 hex chars
+      expect(token.startsWith(TOKEN_PREFIX)).toBe(true);
+      expect(token.length).toBe(TOKEN_LENGTH); // sess- + 64 hex chars = 69 chars
 
       // 验证 token 数据
       const tokenData = manager.get(token);
@@ -85,7 +93,7 @@ describe('AgentTokenManager', () => {
       const token = manager.generateAndSave(agentId);
 
       // 检查文件是否存在
-      const fileName = `sess-${token.slice(5)}.json`;
+      const fileName = getTokenFileName(token);
       const filePath = join(tokensDir, fileName);
       expect(existsSync(filePath)).toBe(true);
 
@@ -199,11 +207,28 @@ describe('AgentTokenManager', () => {
       expect(afterVerify?.lastUsedAt).toBeGreaterThanOrEqual(beforeVerify!.createdAt);
     });
 
-    it('should persist lastUsedAt update to file', () => {
+    it('should NOT persist lastUsedAt update to file after verify (performance optimization)', () => {
+      // verify() 仅更新内存中的 lastUsedAt，不写入文件，避免高频磁盘 IO
       const agentId = createMockAgentId('agent1');
       const token = manager.generateAndSave(agentId);
 
       manager.verify(token);
+
+      // 重新加载 manager
+      const newManager = new AgentTokenManager(testDir);
+      newManager.loadAll();
+
+      const tokenData = newManager.get(token);
+      // lastUsedAt 不应该被持久化到文件（因为 verify() 不写文件）
+      expect(tokenData?.lastUsedAt).toBeUndefined();
+    });
+
+    it('should persist lastUsedAt when token is revoked', () => {
+      // revoke() 是关键操作，会持久化 lastUsedAt
+      const agentId = createMockAgentId('agent2');
+      const token = manager.generateAndSave(agentId);
+
+      manager.revoke(token);
 
       // 重新加载 manager
       const newManager = new AgentTokenManager(testDir);
@@ -218,7 +243,7 @@ describe('AgentTokenManager', () => {
 
   describe('verify() - token not found', () => {
     it('should return invalid for non-existent token', () => {
-      const fakeToken = 'sess-nonexistent1234567890abcdef1234567890abcdef';
+      const fakeToken = generateTestToken('nonexistent');
 
       const result = manager.verify(fakeToken);
 

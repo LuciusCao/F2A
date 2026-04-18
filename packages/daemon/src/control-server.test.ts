@@ -5,8 +5,38 @@ import { join } from 'path';
 
 // Track mock server instances
 let lastMockServer: any = null;
-const TEST_TOKEN = 'test-token-12345';
+const TEST_TOKEN='***';
 let mockRateLimiterAllow = true;
+
+// Mock identityManager instances for testing
+let mockIdentityManagerInstance: any = null;
+
+// P0: Use vi.hoisted to ensure agentTokenManagerMocks is available before mock hoisting
+const agentTokenManagerMocks = vi.hoisted(() => new Map<string, {
+  generateAndSave: ReturnType<typeof vi.fn>;
+  loadForAgent: ReturnType<typeof vi.fn>;
+  verifyForAgent: ReturnType<typeof vi.fn>;
+}>());
+
+// Mock AgentTokenManager - P0: Must be after vi.hoisted
+vi.mock('./agent-token-manager.js', () => ({
+  AgentTokenManager: vi.fn().mockImplementation((dataDir: string, agentId: string) => {
+    // Create or reuse mock methods for this agentId
+    if (!agentTokenManagerMocks.has(agentId)) {
+      agentTokenManagerMocks.set(agentId, {
+        generateAndSave: vi.fn().mockReturnValue(`agent-test-token-for-${agentId.slice(0, 16)}`),
+        loadForAgent: vi.fn(),
+        verifyForAgent: vi.fn().mockReturnValue({ valid: true }),
+      });
+    }
+    const mocks = agentTokenManagerMocks.get(agentId)!;
+    return {
+      generateAndSave: mocks.generateAndSave,
+      loadForAgent: mocks.loadForAgent,
+      verifyForAgent: mocks.verifyForAgent,
+    };
+  }),
+}));
 
 // Mock http
 vi.mock('http', () => ({
@@ -24,6 +54,28 @@ vi.mock('http', () => ({
     };
     return lastMockServer;
   })
+}));
+
+// Mock AgentIdentityManager - P0 修复：添加此 mock 以支持 PATCH /webhook 测试
+vi.mock('./agent-identity-manager.js', () => ({
+  AgentIdentityManager: vi.fn().mockImplementation(() => {
+    mockIdentityManagerInstance = {
+      get: vi.fn(),
+      save: vi.fn(),
+      delete: vi.fn().mockReturnValue(true),
+      loadAll: vi.fn(),
+      list: vi.fn().mockReturnValue([]),
+      updateWebhook: vi.fn().mockReturnValue({ agentId: 'agent:test-peer:abc123', name: 'TestAgent' }),
+      updateLastActive: vi.fn().mockReturnValue({ agentId: 'agent:test-peer:abc123' }),
+      has: vi.fn().mockReturnValue(false),
+      size: vi.fn().mockReturnValue(0),
+      findBy: vi.fn().mockReturnValue([]),
+      findByPeerId: vi.fn().mockReturnValue([]),
+      findByCapability: vi.fn().mockReturnValue([]),
+      clear: vi.fn(),
+    };
+    return mockIdentityManagerInstance;
+  }),
 }));
 
 // Mock @f2a/network - 统一 mock
@@ -97,6 +149,33 @@ vi.mock('@f2a/network', async (importOriginal) => {
   };
 });
 
+// Track AgentTokenManager mock calls per agentId
+const agentTokenManagerMocks: Map<string, {
+  generateAndSave: ReturnType<typeof vi.fn>;
+  loadForAgent: ReturnType<typeof vi.fn>;
+  verifyForAgent: ReturnType<typeof vi.fn>;
+}> = new Map();
+
+// Mock AgentTokenManager
+vi.mock('./agent-token-manager.js', () => ({
+  AgentTokenManager: vi.fn().mockImplementation((dataDir: string, agentId: string) => {
+    // Create or reuse mock methods for this agentId
+    if (!agentTokenManagerMocks.has(agentId)) {
+      agentTokenManagerMocks.set(agentId, {
+        generateAndSave: vi.fn().mockReturnValue(`agent-test-token-for-${agentId.slice(0, 16)}`),
+        loadForAgent: vi.fn(),
+        verifyForAgent: vi.fn().mockReturnValue({ valid: true }),
+      });
+    }
+    const mocks = agentTokenManagerMocks.get(agentId)!;
+    return {
+      generateAndSave: mocks.generateAndSave,
+      loadForAgent: mocks.loadForAgent,
+      verifyForAgent: mocks.verifyForAgent,
+    };
+  }),
+}));
+
 // Create mock F2A instance
 const createMockF2A = () => {
   const mockAgentRegistry = {
@@ -108,6 +187,7 @@ const createMockF2A = () => {
       signature: 'mock-sig',
       registeredAt: new Date(),
       lastActiveAt: new Date(),
+      webhook: request.webhook,
     })),
     restore: vi.fn().mockReturnValue({
       agentId: 'agent:test-peer:abc123',
@@ -137,6 +217,23 @@ const createMockF2A = () => {
     getQueue: vi.fn(),
     clearQueue: vi.fn(),
     sendMessage: vi.fn().mockResolvedValue({ success: true }),
+  };
+  
+  // P0 修复：添加 identityManager mock
+  const mockIdentityManager = {
+    get: vi.fn(),
+    save: vi.fn(),
+    delete: vi.fn().mockReturnValue(true),
+    loadAll: vi.fn(),
+    list: vi.fn().mockReturnValue([]),
+    updateWebhook: vi.fn().mockReturnValue({ agentId: 'agent:test-peer:abc123', name: 'TestAgent' }),
+    updateLastActive: vi.fn().mockReturnValue({ agentId: 'agent:test-peer:abc123' }),
+    has: vi.fn().mockReturnValue(false),
+    size: vi.fn().mockReturnValue(0),
+    findBy: vi.fn().mockReturnValue([]),
+    findByPeerId: vi.fn().mockReturnValue([]),
+    findByCapability: vi.fn().mockReturnValue([]),
+    clear: vi.fn(),
   };
   
   return {
@@ -170,6 +267,12 @@ const createMockF2A = () => {
     // P0 修复：添加 getAgentRegistry 和 getMessageRouter
     getAgentRegistry: vi.fn().mockReturnValue(mockAgentRegistry),
     getMessageRouter: vi.fn().mockReturnValue(mockMessageRouter),
+    // P0 修复：添加 getIdentityManager（测试 PATCH /webhook 需要）
+    getIdentityManager: vi.fn().mockReturnValue(mockIdentityManager),
+    // 导出 mock 对象供测试直接访问
+    _mockAgentRegistry: mockAgentRegistry,
+    _mockMessageRouter: mockMessageRouter,
+    _mockIdentityManager: mockIdentityManager,
   };
 };
 
@@ -181,6 +284,7 @@ describe('ControlServer', () => {
     vi.clearAllMocks();
     lastMockServer = null;
     mockRateLimiterAllow = true;
+    agentTokenManagerMocks.clear(); // Clear AgentTokenManager mocks
     mockF2A = createMockF2A();
     server = new ControlServer(mockF2A, 9001, undefined, { dataDir: join(tmpdir(), 'f2a-test') });
   });
@@ -398,6 +502,613 @@ describe('ControlServer', () => {
       handler(req, res);
       
       expect(res.writeHead).toHaveBeenCalledWith(429);
+      
+      server.stop();
+    });
+  });
+
+  describe('POST /api/agents/verify - Token Generation', () => {
+    it('should generate agent token on successful verification', async () => {
+      mockRateLimiterAllow = true;
+      await server.start();
+      
+      const handler = lastMockServer._handler;
+      const testAgentId = 'agent:test-peer:abc123';
+      
+      // First, setup a pending challenge (simulating /api/agents/challenge was called)
+      const challengeReq = createMockReq({
+        method: 'POST',
+        url: '/api/agents/challenge',
+        body: {
+          agentId: testAgentId,
+          webhook: { url: 'http://127.0.0.1:9002/f2a/webhook' }
+        },
+        headers: { 'x-f2a-token': TEST_TOKEN }
+      });
+      const challengeRes = createMockRes();
+      handler(challengeReq, challengeRes);
+      
+      // Now verify with correct nonce and signature
+      const verifyReq = createMockReq({
+        method: 'POST',
+        url: '/api/agents/verify',
+        body: {
+          agentId: testAgentId,
+          nonce: 'test-nonce-12345',
+          nonceSignature: 'valid-signature'
+        },
+        headers: { 'x-f2a-token': TEST_TOKEN }
+      });
+      const verifyRes = createMockRes();
+      
+      handler(verifyReq, verifyRes);
+      
+      // Verify that AgentTokenManager.generateAndSave was called with correct agentId
+      const mocks = agentTokenManagerMocks.get(testAgentId);
+      expect(mocks).toBeDefined();
+      expect(mocks!.generateAndSave).toHaveBeenCalledWith(testAgentId);
+      
+      server.stop();
+    });
+
+    it('should return generated token in response on successful verification', async () => {
+      mockRateLimiterAllow = true;
+      await server.start();
+      
+      const handler = lastMockServer._handler;
+      const testAgentId = 'agent:test-peer:xyz789';
+      
+      // Setup pending challenge
+      const challengeReq = createMockReq({
+        method: 'POST',
+        url: '/api/agents/challenge',
+        body: {
+          agentId: testAgentId,
+          webhook: { url: 'http://127.0.0.1:9002/f2a/webhook' }
+        },
+        headers: { 'x-f2a-token': TEST_TOKEN }
+      });
+      const challengeRes = createMockRes();
+      handler(challengeReq, challengeRes);
+      
+      // Verify
+      const verifyReq = createMockReq({
+        method: 'POST',
+        url: '/api/agents/verify',
+        body: {
+          agentId: testAgentId,
+          nonce: 'test-nonce-67890',
+          nonceSignature: 'valid-signature'
+        },
+        headers: { 'x-f2a-token': TEST_TOKEN }
+      });
+      const verifyRes = createMockRes();
+      
+      handler(verifyReq, verifyRes);
+      
+      // Check response contains agentToken
+      const mocks = agentTokenManagerMocks.get(testAgentId);
+      expect(mocks).toBeDefined();
+      const expectedToken = `agent-test-token-for-${testAgentId.slice(0, 16)}`;
+      expect(mocks!.generateAndSave).toHaveReturnedWith(expectedToken);
+      
+      server.stop();
+    });
+  });
+
+  describe('POST /api/messages - Authorization Validation', () => {
+    it('should accept request with valid agent token', async () => {
+      mockRateLimiterAllow = true;
+      await server.start();
+      
+      const handler = lastMockServer._handler;
+      const testAgentId = 'agent:test-peer:sender01';
+      const validToken = 'agent-valid-token-1234567890abcdef';
+      
+      // Setup: register the agent in registry
+      mockF2A.getAgentRegistry().get.mockReturnValue({
+        agentId: testAgentId,
+        name: 'SenderAgent',
+        peerId: 'test-peer-id',
+        signature: 'mock-sig',
+        registeredAt: new Date(),
+        lastActiveAt: new Date(),
+      });
+      
+      // Setup: mock verifyForAgent to return valid
+      const mocks = agentTokenManagerMocks.get(testAgentId);
+      if (mocks) {
+        mocks.verifyForAgent.mockReturnValue({ valid: true });
+      }
+      
+      const req = createMockReq({
+        method: 'POST',
+        url: '/api/messages',
+        body: {
+          fromAgentId: testAgentId,
+          toAgentId: 'agent:test-peer:receiver01',
+          content: 'Hello!'
+        },
+        headers: { 
+          'x-f2a-token': TEST_TOKEN,
+          'authorization': `agent-${validToken}`
+        }
+      });
+      const res = createMockRes();
+      
+      // Setup receiver agent
+      mockF2A.getAgentRegistry().get.mockImplementation((id: string) => {
+        if (id === testAgentId || id === 'agent:test-peer:receiver01') {
+          return {
+            agentId: id,
+            name: id === testAgentId ? 'SenderAgent' : 'ReceiverAgent',
+            peerId: 'test-peer-id',
+            signature: 'mock-sig',
+          };
+        }
+        return undefined;
+      });
+      
+      handler(req, res);
+      
+      // Wait for async handler
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      // Verify AgentTokenManager was created with correct agentId
+      const senderMocks = agentTokenManagerMocks.get(testAgentId);
+      expect(senderMocks).toBeDefined();
+      expect(senderMocks!.loadForAgent).toHaveBeenCalled();
+      expect(senderMocks!.verifyForAgent).toHaveBeenCalledWith(validToken, testAgentId);
+      
+      server.stop();
+    });
+
+    it('should reject request without Authorization header (401 MISSING_TOKEN)', async () => {
+      mockRateLimiterAllow = true;
+      await server.start();
+      
+      const handler = lastMockServer._handler;
+      const testAgentId = 'agent:test-peer:noauth001';
+      
+      // Setup: register the agent in registry
+      mockF2A.getAgentRegistry().get.mockReturnValue({
+        agentId: testAgentId,
+        name: 'NoAuthAgent',
+        peerId: 'test-peer-id',
+        signature: 'mock-sig',
+      });
+      
+      const req = createMockReq({
+        method: 'POST',
+        url: '/api/messages',
+        body: {
+          fromAgentId: testAgentId,
+          content: 'Hello!'
+        },
+        headers: { 
+          'x-f2a-token': TEST_TOKEN
+          // No Authorization header
+        }
+      });
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      // Wait for async handler
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      expect(res.writeHead).toHaveBeenCalledWith(401);
+      const responseData = JSON.parse(res.end.mock.calls[0][0]);
+      expect(responseData.success).toBe(false);
+      expect(responseData.code).toBe('MISSING_TOKEN');
+      expect(responseData.error).toContain('Missing Authorization header');
+      
+      server.stop();
+    });
+
+    it('should reject request with invalid token (401 INVALID_TOKEN)', async () => {
+      mockRateLimiterAllow = true;
+      await server.start();
+      
+      const handler = lastMockServer._handler;
+      const testAgentId = 'agent:test-peer:invalidtok';
+      const invalidToken = 'invalid-token-string';
+      
+      // Setup: register the agent in registry
+      mockF2A.getAgentRegistry().get.mockReturnValue({
+        agentId: testAgentId,
+        name: 'InvalidTokenAgent',
+        peerId: 'test-peer-id',
+        signature: 'mock-sig',
+      });
+      
+      // Setup: mock verifyForAgent to return invalid
+      const mocks = agentTokenManagerMocks.get(testAgentId);
+      if (mocks) {
+        mocks.verifyForAgent.mockReturnValue({ valid: false, error: 'Token not found' });
+      }
+      
+      const req = createMockReq({
+        method: 'POST',
+        url: '/api/messages',
+        body: {
+          fromAgentId: testAgentId,
+          content: 'Hello!'
+        },
+        headers: { 
+          'x-f2a-token': TEST_TOKEN,
+          'authorization': `agent-${invalidToken}`
+        }
+      });
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      // Wait for async handler
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      expect(res.writeHead).toHaveBeenCalledWith(401);
+      const responseData = JSON.parse(res.end.mock.calls[0][0]);
+      expect(responseData.success).toBe(false);
+      expect(responseData.code).toBe('INVALID_TOKEN');
+      expect(responseData.error).toContain('Token not found');
+      
+      // Verify verifyForAgent was called with correct agentId
+      const senderMocks = agentTokenManagerMocks.get(testAgentId);
+      expect(senderMocks!.verifyForAgent).toHaveBeenCalledWith(invalidToken, testAgentId);
+      
+      server.stop();
+    });
+
+    it('should reject request with wrong-agent token (401)', async () => {
+      mockRateLimiterAllow = true;
+      await server.start();
+      
+      const handler = lastMockServer._handler;
+      const senderAgentId = 'agent:test-peer:sender002';
+      const wrongAgentToken = 'token-belonging-to-other-agent';
+      
+      // Setup: register the sender agent in registry
+      mockF2A.getAgentRegistry().get.mockImplementation((id: string) => {
+        if (id === senderAgentId) {
+          return {
+            agentId: senderAgentId,
+            name: 'SenderAgent',
+            peerId: 'test-peer-id',
+            signature: 'mock-sig',
+          };
+        }
+        return undefined;
+      });
+      
+      // Setup: mock verifyForAgent to return invalid (token belongs to different agent)
+      const mocks = agentTokenManagerMocks.get(senderAgentId);
+      if (mocks) {
+        mocks.verifyForAgent.mockReturnValue({ valid: false, error: 'Token not found' });
+      }
+      
+      const req = createMockReq({
+        method: 'POST',
+        url: '/api/messages',
+        body: {
+          fromAgentId: senderAgentId,
+          content: 'Hello!'
+        },
+        headers: { 
+          'x-f2a-token': TEST_TOKEN,
+          'authorization': `agent-${wrongAgentToken}`
+        }
+      });
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      // Wait for async handler
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      expect(res.writeHead).toHaveBeenCalledWith(401);
+      const responseData = JSON.parse(res.end.mock.calls[0][0]);
+      expect(responseData.success).toBe(false);
+      expect(responseData.code).toBe('INVALID_TOKEN');
+      
+      // Verify verifyForAgent was called with the sender's agentId (not the token owner's)
+      const senderMocks = agentTokenManagerMocks.get(senderAgentId);
+      expect(senderMocks!.verifyForAgent).toHaveBeenCalledWith(wrongAgentToken, senderAgentId);
+      
+      server.stop();
+    });
+  });
+
+  // P0 修复：PATCH /api/agents/:agentId/webhook 测试
+  describe('PATCH /api/agents/:agentId/webhook', () => {
+    const testAgentId = 'agent:test-peer:test123';
+    const mockAgent = {
+      agentId: testAgentId,
+      name: 'TestAgent',
+      capabilities: [],
+      peerId: 'test-peer-id-12345678',
+      signature: 'mock-sig',
+      registeredAt: new Date(),
+      lastActiveAt: new Date(),
+      webhook: { url: 'http://old-webhook.example.com' },
+    };
+
+    it('should return 200 on successful webhook update', async () => {
+      mockRateLimiterAllow = true;
+      await server.start();
+      
+      const handler = lastMockServer._handler;
+      
+      // Setup: agent exists in registry
+      mockF2A._mockAgentRegistry.get.mockReturnValue(mockAgent);
+      mockF2A._mockAgentRegistry.updateWebhook.mockReturnValue(true);
+      
+      // Setup: identityManager succeeds
+      mockIdentityManagerInstance.updateWebhook.mockReturnValue({
+        agentId: testAgentId,
+        name: 'TestAgent',
+        webhook: { url: 'http://new-webhook.example.com' },
+      });
+      
+      const req = createMockReq({
+        method: 'PATCH',
+        url: `/api/agents/${encodeURIComponent(testAgentId)}/webhook`,
+        body: {
+          webhook: { url: 'http://new-webhook.example.com', token: 'new-token' }
+        },
+        headers: { 'x-f2a-token': TEST_TOKEN }
+      });
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      // Wait for async handler to complete
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      // Verify: 200 response
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      const responseData = JSON.parse(res.end.mock.calls[0][0]);
+      expect(responseData.success).toBe(true);
+      expect(responseData.agentId).toBe(testAgentId);
+      expect(responseData.webhook.url).toBe('http://new-webhook.example.com');
+      
+      // Verify both identityManager and agentRegistry were called
+      expect(mockIdentityManagerInstance.updateWebhook).toHaveBeenCalledWith(
+        testAgentId,
+        { url: 'http://new-webhook.example.com', token: 'new-token' }
+      );
+      expect(mockF2A._mockAgentRegistry.updateWebhook).toHaveBeenCalledWith(
+        testAgentId,
+        { url: 'http://new-webhook.example.com', token: 'new-token' }
+      );
+      
+      server.stop();
+    });
+
+    it('should return 404 when agent not found in registry', async () => {
+      mockRateLimiterAllow = true;
+      await server.start();
+      
+      const handler = lastMockServer._handler;
+      
+      // Setup: agent NOT in registry
+      mockF2A._mockAgentRegistry.get.mockReturnValue(undefined);
+      
+      const req = createMockReq({
+        method: 'PATCH',
+        url: `/api/agents/${encodeURIComponent(testAgentId)}/webhook`,
+        body: {
+          webhook: { url: 'http://new-webhook.example.com' }
+        },
+        headers: { 'x-f2a-token': TEST_TOKEN }
+      });
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      // Wait for async handler to complete
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      // Verify: 404 response
+      expect(res.writeHead).toHaveBeenCalledWith(404);
+      const responseData = JSON.parse(res.end.mock.calls[0][0]);
+      expect(responseData.success).toBe(false);
+      expect(responseData.error).toBe('Agent not found');
+      expect(responseData.code).toBe('AGENT_NOT_FOUND');
+      
+      // Verify identityManager.updateWebhook was NOT called (agent not found first)
+      expect(mockIdentityManagerInstance.updateWebhook).not.toHaveBeenCalled();
+      expect(mockF2A._mockAgentRegistry.updateWebhook).not.toHaveBeenCalled();
+      
+      server.stop();
+    });
+
+    it('should return 500 when identityManager persistence fails', async () => {
+      mockRateLimiterAllow = true;
+      await server.start();
+      
+      const handler = lastMockServer._handler;
+      
+      // Setup: agent exists in registry
+      mockF2A._mockAgentRegistry.get.mockReturnValue(mockAgent);
+      
+      // Setup: identityManager fails (returns false to simulate persistence failure)
+      mockIdentityManagerInstance.updateWebhook.mockReturnValue(false);
+      
+      const req = createMockReq({
+        method: 'PATCH',
+        url: `/api/agents/${encodeURIComponent(testAgentId)}/webhook`,
+        body: {
+          webhook: { url: 'http://new-webhook.example.com' }
+        },
+        headers: { 'x-f2a-token': TEST_TOKEN }
+      });
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      // Wait for async handler to complete
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      // Verify: 500 response
+      expect(res.writeHead).toHaveBeenCalledWith(500);
+      const responseData = JSON.parse(res.end.mock.calls[0][0]);
+      expect(responseData.success).toBe(false);
+      expect(responseData.error).toBe('Failed to persist webhook');
+      expect(responseData.code).toBe('PERSIST_FAILED');
+      
+      // Verify identityManager.updateWebhook was called
+      expect(mockIdentityManagerInstance.updateWebhook).toHaveBeenCalledWith(
+        testAgentId,
+        { url: 'http://new-webhook.example.com' }
+      );
+      // Verify agentRegistry.updateWebhook was NOT called (persistence failed first)
+      expect(mockF2A._mockAgentRegistry.updateWebhook).not.toHaveBeenCalled();
+      
+      server.stop();
+    });
+
+    it('should return 500 when agentRegistry update fails', async () => {
+      mockRateLimiterAllow = true;
+      await server.start();
+      
+      const handler = lastMockServer._handler;
+      
+      // Setup: agent exists in registry
+      mockF2A._mockAgentRegistry.get.mockReturnValue(mockAgent);
+      
+      // Setup: identityManager succeeds
+      mockIdentityManagerInstance.updateWebhook.mockReturnValue({
+        agentId: testAgentId,
+        name: 'TestAgent',
+        webhook: { url: 'http://new-webhook.example.com' },
+      });
+      
+      // Setup: agentRegistry.updateWebhook fails (returns false)
+      mockF2A._mockAgentRegistry.updateWebhook.mockReturnValue(false);
+      
+      const req = createMockReq({
+        method: 'PATCH',
+        url: `/api/agents/${encodeURIComponent(testAgentId)}/webhook`,
+        body: {
+          webhook: { url: 'http://new-webhook.example.com' }
+        },
+        headers: { 'x-f2a-token': TEST_TOKEN }
+      });
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      // Wait for async handler to complete
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      // Verify: 500 response
+      expect(res.writeHead).toHaveBeenCalledWith(500);
+      const responseData = JSON.parse(res.end.mock.calls[0][0]);
+      expect(responseData.success).toBe(false);
+      expect(responseData.error).toBe('Failed to update registry');
+      expect(responseData.code).toBe('REGISTRY_FAILED');
+      
+      // Verify both identityManager and agentRegistry were called
+      expect(mockIdentityManagerInstance.updateWebhook).toHaveBeenCalledWith(
+        testAgentId,
+        { url: 'http://new-webhook.example.com' }
+      );
+      expect(mockF2A._mockAgentRegistry.updateWebhook).toHaveBeenCalledWith(
+        testAgentId,
+        { url: 'http://new-webhook.example.com' }
+      );
+      
+      server.stop();
+    });
+
+    it('should return 400 for invalid JSON body', async () => {
+      mockRateLimiterAllow = true;
+      await server.start();
+      
+      const handler = lastMockServer._handler;
+      
+      // Setup: agent exists in registry (but we'll send invalid JSON)
+      mockF2A._mockAgentRegistry.get.mockReturnValue(mockAgent);
+      
+      // Create a request that sends invalid JSON
+      const req = {
+        method: 'PATCH',
+        url: `/api/agents/${encodeURIComponent(testAgentId)}/webhook`,
+        headers: { 'x-f2a-token': TEST_TOKEN },
+        socket: { remoteAddress: '127.0.0.1' },
+        on: vi.fn((event: string, callback: Function) => {
+          if (event === 'data') {
+            callback(Buffer.from('not valid json'));  // Invalid JSON
+          }
+          if (event === 'end') {
+            callback();
+          }
+        }),
+      };
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      // Wait for async handler to complete
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      // Verify: 400 response
+      expect(res.writeHead).toHaveBeenCalledWith(400);
+      const responseData = JSON.parse(res.end.mock.calls[0][0]);
+      expect(responseData.success).toBe(false);
+      expect(responseData.error).toBe('Invalid JSON');
+      expect(responseData.code).toBe('INVALID_JSON');
+      
+      // Verify neither identityManager nor agentRegistry were called
+      expect(mockIdentityManagerInstance.updateWebhook).not.toHaveBeenCalled();
+      expect(mockF2A._mockAgentRegistry.updateWebhook).not.toHaveBeenCalled();
+      
+      server.stop();
+    });
+
+    it('should support webhookUrl shorthand format', async () => {
+      mockRateLimiterAllow = true;
+      await server.start();
+      
+      const handler = lastMockServer._handler;
+      
+      // Setup: agent exists in registry
+      mockF2A._mockAgentRegistry.get.mockReturnValue(mockAgent);
+      mockF2A._mockAgentRegistry.updateWebhook.mockReturnValue(true);
+      
+      // Setup: identityManager succeeds
+      mockIdentityManagerInstance.updateWebhook.mockReturnValue({
+        agentId: testAgentId,
+        name: 'TestAgent',
+        webhook: { url: 'http://shorthand.example.com' },
+      });
+      
+      // Send webhookUrl instead of webhook object (legacy format)
+      const req = createMockReq({
+        method: 'PATCH',
+        url: `/api/agents/${encodeURIComponent(testAgentId)}/webhook`,
+        body: {
+          webhookUrl: 'http://shorthand.example.com',
+          webhookToken: 'shorthand-token'
+        },
+        headers: { 'x-f2a-token': TEST_TOKEN }
+      });
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      // Wait for async handler to complete
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      // Verify: 200 response
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      
+      // Verify the webhook was built correctly from shorthand
+      expect(mockIdentityManagerInstance.updateWebhook).toHaveBeenCalledWith(
+        testAgentId,
+        { url: 'http://shorthand.example.com', token: 'shorthand-token' }
+      );
       
       server.stop();
     });

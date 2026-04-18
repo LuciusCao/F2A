@@ -780,7 +780,17 @@ export class ControlServer {
           if (existingIdentity) {
             // 恢复身份：更新 webhook
             if (data.webhook) {
-              this.identityManager.updateWebhook(data.agentId, data.webhook);
+              const updated = this.identityManager.updateWebhook(data.agentId, data.webhook);
+              if (!updated) {
+                this.logger.warn('Failed to update webhook in identity file', { agentId: data.agentId });
+                // 可以继续，因为 webhook 不是必需的
+              }
+              
+              // 重新加载 identity（包含新 webhook）
+              const newIdentity = this.identityManager.get(data.agentId);
+              if (newIdentity) {
+                existingIdentity = newIdentity;  // 使用新数据
+              }
             }
             
             // 同步到 AgentRegistry

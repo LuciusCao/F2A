@@ -6,7 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "f2ad": "./dist/daemon/main.js"
+    "f2ad": "./dist/main.js"
   },
   "scripts": {
     "build": "tsc",

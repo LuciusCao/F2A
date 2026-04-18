@@ -114,7 +114,7 @@
 │   │                         IdentityManager                              │   │
 │   │                                                                     │   │
 │   │   NodeIdentityManager ──► PeerID                                   │   │
-│   │   AgentIdentityManager ──► AgentID                                 │   │
+│   │   AgentIdentityStore ──► AgentID                                 │   │
 │   │   IdentityDelegator     ──► Agent 签发                             │   │
 │   └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
@@ -291,7 +291,7 @@ F2ADaemon.start()
     ├── 1. F2A.create(options)
     │       │
     │       ├── NodeIdentityManager.loadOrCreate() → 加载/创建 Node 身份
-    │       ├── AgentIdentityManager.loadAgentIdentity() → 加载 Agent 身份
+    │       ├── AgentIdentityStore.loadAgentIdentity() → 加载 Agent 身份
     │       ├── P2PNetwork 创建
     │       └── CapabilityManager 创建
     │

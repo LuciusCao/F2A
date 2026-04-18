@@ -9,7 +9,7 @@ const TEST_TOKEN='***';
 let mockRateLimiterAllow = true;
 
 // Mock identityManager instances for testing
-let mockIdentityManagerInstance: any = null;
+let mockIdentityStoreInstance: any = null;
 
 // Mock AgentTokenManager instance for per-test customization
 let mockAgentTokenManagerInstance: any = null;
@@ -61,10 +61,10 @@ vi.mock('http', () => ({
   })
 }));
 
-// Mock AgentIdentityManager - P0 修复：添加此 mock 以支持 PATCH /webhook 测试
-vi.mock('./agent-identity-manager.js', () => ({
-  AgentIdentityManager: vi.fn().mockImplementation(() => {
-    mockIdentityManagerInstance = {
+// Mock AgentIdentityStore - P0 修复：添加此 mock 以支持 PATCH /webhook 测试
+vi.mock('./agent-identity-store.js', () => ({
+  AgentIdentityStore: vi.fn().mockImplementation(() => {
+    mockIdentityStoreInstance = {
       get: vi.fn(),
       save: vi.fn(),
       delete: vi.fn().mockReturnValue(true),
@@ -79,7 +79,7 @@ vi.mock('./agent-identity-manager.js', () => ({
       findByCapability: vi.fn().mockReturnValue([]),
       clear: vi.fn(),
     };
-    return mockIdentityManagerInstance;
+    return mockIdentityStoreInstance;
   }),
 }));
 
@@ -503,7 +503,7 @@ describe('ControlServer', () => {
       // Note: AgentTokenManager mock is global and handles all agentIds
       
       // Setup identityManager mock to return an identity with e2eePublicKey
-      mockIdentityManagerInstance!.get.mockReturnValue({
+      mockIdentityStoreInstance!.get.mockReturnValue({
         agentId: testAgentId,
         name: 'TestAgent',
         peerId: 'test-peer-id',
@@ -566,7 +566,7 @@ describe('ControlServer', () => {
       const expectedToken = `agent-test-token-for-${testAgentId.slice(0, 16)}`;
       
       // Setup identityManager mock to return an identity with e2eePublicKey
-      mockIdentityManagerInstance!.get.mockReturnValue({
+      mockIdentityStoreInstance!.get.mockReturnValue({
         agentId: testAgentId,
         name: 'TestAgent',
         peerId: 'test-peer-id',
@@ -850,7 +850,7 @@ describe('ControlServer', () => {
       mockF2A._mockAgentRegistry.updateWebhook.mockReturnValue(true);
       
       // Setup: identityManager succeeds
-      mockIdentityManagerInstance.updateWebhook.mockReturnValue({
+      mockIdentityStoreInstance.updateWebhook.mockReturnValue({
         agentId: testAgentId,
         name: 'TestAgent',
         webhook: { url: 'http://new-webhook.example.com' },
@@ -882,7 +882,7 @@ describe('ControlServer', () => {
       expect(responseData.webhook.url).toBe('http://new-webhook.example.com');
       
       // Verify both identityManager and agentRegistry were called
-      expect(mockIdentityManagerInstance.updateWebhook).toHaveBeenCalledWith(
+      expect(mockIdentityStoreInstance.updateWebhook).toHaveBeenCalledWith(
         testAgentId,
         { url: 'http://new-webhook.example.com', token: 'new-token' }
       );
@@ -929,7 +929,7 @@ describe('ControlServer', () => {
       expect(responseData.code).toBe('AGENT_NOT_FOUND');
       
       // Verify identityManager.updateWebhook was NOT called (agent not found first)
-      expect(mockIdentityManagerInstance.updateWebhook).not.toHaveBeenCalled();
+      expect(mockIdentityStoreInstance.updateWebhook).not.toHaveBeenCalled();
       expect(mockF2A._mockAgentRegistry.updateWebhook).not.toHaveBeenCalled();
       
       server.stop();
@@ -945,7 +945,7 @@ describe('ControlServer', () => {
       mockF2A._mockAgentRegistry.get.mockReturnValue(mockAgent);
       
       // Setup: identityManager fails (returns false to simulate persistence failure)
-      mockIdentityManagerInstance.updateWebhook.mockReturnValue(false);
+      mockIdentityStoreInstance.updateWebhook.mockReturnValue(false);
       
       const req = createMockReq({
         method: 'PATCH',
@@ -973,7 +973,7 @@ describe('ControlServer', () => {
       expect(responseData.code).toBe('PERSIST_FAILED');
       
       // Verify identityManager.updateWebhook was called
-      expect(mockIdentityManagerInstance.updateWebhook).toHaveBeenCalledWith(
+      expect(mockIdentityStoreInstance.updateWebhook).toHaveBeenCalledWith(
         testAgentId,
         { url: 'http://new-webhook.example.com' }
       );
@@ -993,7 +993,7 @@ describe('ControlServer', () => {
       mockF2A._mockAgentRegistry.get.mockReturnValue(mockAgent);
       
       // Setup: identityManager succeeds
-      mockIdentityManagerInstance.updateWebhook.mockReturnValue({
+      mockIdentityStoreInstance.updateWebhook.mockReturnValue({
         agentId: testAgentId,
         name: 'TestAgent',
         webhook: { url: 'http://new-webhook.example.com' },
@@ -1028,7 +1028,7 @@ describe('ControlServer', () => {
       expect(responseData.code).toBe('REGISTRY_FAILED');
       
       // Verify both identityManager and agentRegistry were called
-      expect(mockIdentityManagerInstance.updateWebhook).toHaveBeenCalledWith(
+      expect(mockIdentityStoreInstance.updateWebhook).toHaveBeenCalledWith(
         testAgentId,
         { url: 'http://new-webhook.example.com' }
       );
@@ -1079,7 +1079,7 @@ describe('ControlServer', () => {
       expect(responseData.code).toBe('INVALID_JSON');
       
       // Verify neither identityManager nor agentRegistry were called
-      expect(mockIdentityManagerInstance.updateWebhook).not.toHaveBeenCalled();
+      expect(mockIdentityStoreInstance.updateWebhook).not.toHaveBeenCalled();
       expect(mockF2A._mockAgentRegistry.updateWebhook).not.toHaveBeenCalled();
       
       server.stop();
@@ -1096,7 +1096,7 @@ describe('ControlServer', () => {
       mockF2A._mockAgentRegistry.updateWebhook.mockReturnValue(true);
       
       // Setup: identityManager succeeds
-      mockIdentityManagerInstance.updateWebhook.mockReturnValue({
+      mockIdentityStoreInstance.updateWebhook.mockReturnValue({
         agentId: testAgentId,
         name: 'TestAgent',
         webhook: { url: 'http://shorthand.example.com' },
@@ -1126,7 +1126,7 @@ describe('ControlServer', () => {
       expect(res.writeHead).toHaveBeenCalledWith(200);
       
       // Verify the webhook was built correctly from shorthand
-      expect(mockIdentityManagerInstance.updateWebhook).toHaveBeenCalledWith(
+      expect(mockIdentityStoreInstance.updateWebhook).toHaveBeenCalledWith(
         testAgentId,
         { url: 'http://shorthand.example.com', token: 'shorthand-token' }
       );

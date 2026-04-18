@@ -16,7 +16,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { randomBytes } from 'crypto';
 import { Logger, getErrorMessage, E2EECrypto } from '@f2a/network';
 import type { AgentRegistry, AgentRegistration, MessageRouter, AgentCapability } from '@f2a/network';
-import type { AgentIdentityManager, AgentIdentity } from '../agent-identity-manager.js';
+import type { AgentIdentityStore, AgentIdentity } from '../agent-identity-store.js';
 import type { AgentTokenManager } from '../agent-token-manager.js';
 import type { AgentHandlerDeps, Challenge } from '../types/handlers.js';
 
@@ -69,7 +69,7 @@ const CHALLENGE_EXPIRY_MS = 60000; // 60 秒
 
 export class AgentHandler {
   private agentRegistry: AgentRegistry;
-  private identityManager: AgentIdentityManager;
+  private identityStore: AgentIdentityStore;
   private agentTokenManager: AgentTokenManager;
   private e2eeCrypto: E2EECrypto;
   private messageRouter: MessageRouter;
@@ -80,7 +80,7 @@ export class AgentHandler {
 
   constructor(deps: AgentHandlerDeps) {
     this.agentRegistry = deps.agentRegistry;
-    this.identityManager = deps.identityManager;
+    this.identityStore = deps.identityStore;
     this.agentTokenManager = deps.agentTokenManager;
     this.e2eeCrypto = deps.e2eeCrypto;
     this.messageRouter = deps.messageRouter;
@@ -150,19 +150,19 @@ export class AgentHandler {
         
         // 🔑 Phase 6: 如果提供了已有 agentId，尝试恢复身份
         if (data.agentId) {
-          let existingIdentity = this.identityManager.get(data.agentId);
+          let existingIdentity = this.identityStore.get(data.agentId);
           
           if (existingIdentity) {
             // 恢复身份：更新 webhook
             if (data.webhook) {
-              const updated = this.identityManager.updateWebhook(data.agentId, data.webhook);
+              const updated = this.identityStore.updateWebhook(data.agentId, data.webhook);
               if (!updated) {
                 this.logger.warn('Failed to update webhook in identity file', { agentId: data.agentId });
                 // 可以继续，因为 webhook 不是必需的
               }
               
               // 重新加载 identity（包含新 webhook）
-              const newIdentity = this.identityManager.get(data.agentId);
+              const newIdentity = this.identityStore.get(data.agentId);
               if (newIdentity) {
                 existingIdentity = newIdentity;  // 使用新数据
               }
@@ -260,7 +260,7 @@ export class AgentHandler {
           createdAt: registration.registeredAt.toISOString(),
           lastActiveAt: new Date().toISOString(),
         };
-        this.identityManager.save(identity);
+        this.identityStore.save(identity);
 
         // 创建消息队列
         this.messageRouter.createQueue(registration.agentId);
@@ -305,7 +305,7 @@ export class AgentHandler {
       this.messageRouter.deleteQueue(agentId);
 
       // RFC 004 Phase 6: 删除持久化身份文件
-      this.identityManager.delete(agentId);
+      this.identityStore.delete(agentId);
 
       // 同步注册表到消息路由器（P1-1: MessageRouter 直接引用 AgentRegistry，无需同步）
       
@@ -426,7 +426,7 @@ export class AgentHandler {
         const webhook = data.webhook || (data.webhookUrl ? { url: data.webhookUrl, token: data.webhookToken } : undefined);
         
         // 先持久化文件，再更新内存（避免持久化失败导致数据丢失）
-        const identityUpdated = this.identityManager.updateWebhook(agentId, webhook);
+        const identityUpdated = this.identityStore.updateWebhook(agentId, webhook);
         if (!identityUpdated) {
           res.writeHead(500);
           res.end(JSON.stringify({
@@ -505,7 +505,7 @@ export class AgentHandler {
         }
         
         // 3️⃣ 加载 identity 文件
-        const identity = this.identityManager.get(data.agentId);
+        const identity = this.identityStore.get(data.agentId);
         if (!identity) {
           this.logger.warn('Identity not found for agent verification', {
             agentId: data.agentId?.slice(0, 16)
@@ -557,7 +557,7 @@ export class AgentHandler {
           // 6️⃣ 更新 identity
           identity.webhook = pending.webhook;
           identity.lastActiveAt = new Date().toISOString();
-          this.identityManager.save(identity);
+          this.identityStore.save(identity);
           
           // 7️⃣ 清理 pending challenge
           this.pendingChallenges.delete(data.agentId);

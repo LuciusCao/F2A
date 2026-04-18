@@ -20,7 +20,7 @@ import { RateLimiter } from '@f2a/network';
 import { getErrorMessage } from '@f2a/network';
 import { E2EECrypto } from '@f2a/network';
 import { AgentRegistry, MessageRouter } from '@f2a/network';
-import { AgentIdentityManager } from './agent-identity-manager.js';
+import { AgentIdentityStore } from './agent-identity-store.js';
 import { AgentTokenManager } from './agent-token-manager.js';
 import { AgentHandler } from './handlers/agent-handler.js';
 import { MessageHandler } from './handlers/message-handler.js';
@@ -99,7 +99,7 @@ export class ControlServer {
   private agentRegistry: AgentRegistry;
   private messageRouter: MessageRouter;
   // Phase 6: Agent Identity Manager
-  private identityManager: AgentIdentityManager;
+  private identityStore: AgentIdentityStore;
   // Phase 7: E2EECrypto 用于签名验证
   private e2eeCrypto!: E2EECrypto;
   private dataDir: string;
@@ -135,8 +135,8 @@ export class ControlServer {
     this.messageRouter = f2a.getMessageRouter();
     
     // Phase 6: 初始化 Identity Manager（daemon 特有的 Agent 身份持久化）
-    this.identityManager = new AgentIdentityManager(this.dataDir);
-    this.identityManager.loadAll();
+    this.identityStore = new AgentIdentityStore(this.dataDir);
+    this.identityStore.loadAll();
 
     // Phase 1: 初始化全局 AgentTokenManager（纯内存版本）
     this.agentTokenManager = new AgentTokenManager();
@@ -167,7 +167,7 @@ export class ControlServer {
     // 初始化 Handlers（依赖注入）
     this.agentHandler = new AgentHandler({
       agentRegistry: this.agentRegistry,
-      identityManager: this.identityManager,
+      identityStore: this.identityStore,
       agentTokenManager: this.agentTokenManager,
       e2eeCrypto: this.e2eeCrypto,
       messageRouter: this.messageRouter,
@@ -196,7 +196,7 @@ export class ControlServer {
 
     // RFC 004 Phase 6: 启动时恢复所有持久化的 Agent 身份到运行时注册表
     // 注意：这是 daemon 特有的功能，从 agents/*.json 恢复到 AgentRegistry
-    for (const identity of this.identityManager.list()) {
+    for (const identity of this.identityStore.list()) {
       try {
         this.agentRegistry.restore(identity);
         // 同时为恢复的 Agent 创建消息队列（与 POST /api/agents 保持一致）

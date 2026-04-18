@@ -15,7 +15,7 @@ import type {
   F2A,
   E2EECrypto 
 } from '@f2a/network';
-import type { AgentIdentityManager } from '../agent-identity-manager.js';
+import type { AgentIdentityStore } from '../agent-identity-store.js';
 import type { AgentTokenManager } from '../agent-token-manager.js';
 
 // ============================================================================
@@ -92,7 +92,7 @@ export interface MessageHandlerDeps extends HandlerDeps {
  */
 export interface AgentHandlerDeps extends HandlerDeps {
   agentRegistry: AgentRegistry;
-  identityManager: AgentIdentityManager;
+  identityStore: AgentIdentityStore;
   agentTokenManager: AgentTokenManager;
   e2eeCrypto: E2EECrypto;
   messageRouter: MessageRouter;

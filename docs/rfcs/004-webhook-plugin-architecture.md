@@ -537,9 +537,9 @@ daemon 生成新的 AgentId: agent:12D3KooWabc:87654321  ❌ 新 ID！
 #### 1. daemon 启动时加载 Agent Identity 文件
 
 ```typescript
-// packages/daemon/src/agent-identity-manager.ts
+// packages/daemon/src/agent-identity-store.ts
 
-class AgentIdentityManager {
+class AgentIdentityStore {
   private agentsDir: string;
   private agents: Map<string, AgentIdentity> = new Map();
   
@@ -1055,7 +1055,7 @@ handleVerifyAgent(req, res) {
 
 | 优先级 | 任务 | 预估时间 |
 |--------|------|----------|
-| P0 | AgentIdentityManager 实现 | 2h |
+| P0 | AgentIdentityStore 实现 | 2h |
 | P0 | daemon API 支持恢复身份 | 1h |
 | P0 | 插件保存/恢复 Agent Identity | 1h |
 | P1 | Agent Identity CLI 命令 | 1h |
@@ -1667,7 +1667,7 @@ npm publish @f2a/openclaw-f2a@0.4.1
 | **Phase 5 总计** | **4h** |
 | |
 | **Phase 6: Agent Identity 持久化** |
-| 6.1 AgentIdentityManager 实现 | 2h |
+| 6.1 AgentIdentityStore 实现 | 2h |
 | 6.2 daemon API 支持恢复身份 | 1h |
 | 6.3 插件保存/恢复 Agent Identity | 1h |
 | 6.4 Agent Identity CLI 命令 | 1h |
@@ -1703,7 +1703,7 @@ npm publish @f2a/openclaw-f2a@0.4.1
 4. ⚠️ **验证完整流程** - 插件重启后身份恢复
 
 ### Phase 6 (Agent Identity 持久化)
-1. ⚠️ **实现 AgentIdentityManager** - daemon 加载/保存 identity 文件
+1. ⚠️ **实现 AgentIdentityStore** - daemon 加载/保存 identity 文件
 2. ⚠️ **更新 daemon API** - 支持恢复已有 agentId
 3. ⚠️ **更新插件** - 保存/读取 Agent Identity
 4. ⚠️ **实现 CLI 命令** - export/import/list/delete

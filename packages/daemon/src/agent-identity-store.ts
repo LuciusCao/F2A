@@ -1,5 +1,5 @@
 /**
- * Agent Identity Manager
+ * Agent Identity Store
  * 管理 Agent Identity 文件的持久化（RFC 004 Phase 6）
  * 
  * 功能：
@@ -52,10 +52,10 @@ export interface AgentIdentity {
 }
 
 /**
- * Agent Identity 管理器
+ * Agent Identity 存储
  * 负责 Agent Identity 文件的读写和验证
  */
-export class AgentIdentityManager {
+export class AgentIdentityStore {
   private agentsDir: string;
   private identities: Map<string, AgentIdentity> = new Map();
   private logger: Logger;
@@ -67,7 +67,7 @@ export class AgentIdentityManager {
     verifySignatureFn?: (data: string, signature: string, peerId: string) => boolean
   ) {
     this.agentsDir = join(dataDir, 'agents');
-    this.logger = new Logger({ component: 'AgentIdentityManager' });
+    this.logger = new Logger({ component: 'AgentIdentityStore' });
     this.verifySignatureFn = verifySignatureFn;
   }
 

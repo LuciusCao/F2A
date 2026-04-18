@@ -27,7 +27,7 @@ packages/daemon/src/
 ControlServer
     ├── AgentHandler
     │       ├── AgentRegistry (from F2A)
-    │       ├── AgentIdentityManager
+    │       ├── AgentIdentityStore
     │       ├── AgentTokenManager
     │       ├── E2EECrypto
     │       └── MessageRouter (for creating queue)
@@ -66,7 +66,7 @@ export interface HandlerDeps {
 
 export interface AgentHandlerDeps extends HandlerDeps {
   agentRegistry: AgentRegistry;
-  identityManager: AgentIdentityManager;
+  identityStore: AgentIdentityStore;
   agentTokenManager: AgentTokenManager;
   e2eeCrypto: E2EECrypto;
   messageRouter: MessageRouter;
@@ -176,7 +176,7 @@ export interface Challenge {
 
 **状态**: `pendingChallenges` Map 移入此类
 
-**依赖**: AgentRegistry, AgentIdentityManager, AgentTokenManager, E2EECrypto, MessageRouter, Logger
+**依赖**: AgentRegistry, AgentIdentityStore, AgentTokenManager, E2EECrypto, MessageRouter, Logger
 
 **验证**: 单元测试通过
 

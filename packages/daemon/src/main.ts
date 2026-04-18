@@ -8,6 +8,25 @@ import { Logger } from '@f2a/network';
 
 const logger = new Logger({ component: 'daemon' });
 
+// RFC 008: 在开发模式下允许私有 IP 地址的 webhook（禁用 undici SSRF 保护）
+// 生产环境应保持 SSRF 保护启用
+// 注意：必须在同步代码中设置，因为 setGlobalDispatcher 需要在任何 fetch 调用之前生效
+const allowLocal = process.env.F2A_ALLOW_LOCAL_WEBHOOK === 'true' || 
+                   process.env.NODE_ENV === 'development' ||
+                   process.env.NODE_ENV === 'test';
+
+if (allowLocal) {
+  // 使用 require 同步导入 undici（Node.js 18+ 内置）
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const undici = require('undici');
+  if (undici.setGlobalDispatcher && undici.Agent) {
+    undici.setGlobalDispatcher(new undici.Agent({
+      allowPrivateIPAddresses: true,
+    }));
+    logger.info('Webhook SSRF protection disabled for development mode');
+  }
+}
+
 // 解析引导节点地址
 const bootstrapPeers = process.env.BOOTSTRAP_PEERS 
   ? process.env.BOOTSTRAP_PEERS.split(',')

@@ -275,7 +275,16 @@ async function startWebhookListener(
     let body = '';
     for await (const chunk of req) body += chunk;
     
-    let payload: { from?: string; fromAgentId?: string; content?: string; topic?: string };
+    let payload: { 
+      from?: string | { agentId?: string; name?: string }; 
+      fromAgentId?: string; 
+      content?: string; 
+      message?: string;
+      topic?: string;
+      type?: string;
+      to?: { agentId?: string; name?: string };
+      messageId?: string;
+    };
     try {
       payload = JSON.parse(body);
     } catch {
@@ -284,31 +293,36 @@ async function startWebhookListener(
       return;
     }
 
-    const from = payload.from || payload.fromAgentId || '';
-    const message = payload.content || '';
+    // 兼容 MessageRouter 的 payload 格式：
+    // - from 可以是字符串或 { agentId, name } 对象
+    // - content 或 message 字段
+    const fromAgentId = typeof payload.from === 'string' 
+      ? payload.from 
+      : payload.from?.agentId || payload.fromAgentId || '';
+    const message = payload.content || payload.message || '';
     
-    if (!from || !message) {
+    if (!fromAgentId || !message) {
       res.writeHead(400);
       res.end('Missing from or content');
       return;
     }
 
-    // Log with webhook type info
+// Log with webhook type info
     const webhookType = isAgentWebhook ? `agent:${agentIdPrefix}` : 'global';
-    api.logger?.info(`[F2A Webhook] Received message (${webhookType}) from ${from.slice(0, 16)}, length=${message.length}`);
+    api.logger?.info(`[F2A Webhook] Received message (${webhookType}) from ${fromAgentId.slice(0, 16)}, length=${message.length}`);
 
     // Invoke Agent to generate reply
-    // Use agentIdPrefix as session key if available, otherwise use from prefix
-    const sessionKeyPrefix = agentIdPrefix || from.slice(0, 16);
+    // Use agentIdPrefix as session key if available, otherwise use fromAgentId prefix
+    const sessionKeyPrefix = agentIdPrefix || fromAgentId.slice(0, 16);
     const reply = await invokeAgent(api, sessionKeyPrefix, message, config.agentTimeout);
 
     // Send reply via f2a CLI
     if (reply) {
       try {
-        exec(`f2a send --to "${from}" --message "${reply.replace(/"/g, '\\"')}"`, {
+        exec(`f2a send --to "${fromAgentId}" --message "${reply.replace(/"/g, '\\\\"')}"`, {
           timeout: 10000
         });
-        api.logger?.info(`[F2A Webhook] Reply sent to ${from.slice(0, 16)}`);
+        api.logger?.info(`[F2A Webhook] Reply sent to ${fromAgentId.slice(0, 16)}`);
       } catch (err) {
         api.logger?.error(`[F2A Webhook] Failed to send reply: ${String(err)}`);
       }

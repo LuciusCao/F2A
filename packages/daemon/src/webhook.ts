@@ -252,8 +252,17 @@ function isPrivateIP(hostname: string): boolean {
 
 /**
  * P2-2 修复：验证 webhook URL 安全性
+ * 
+ * RFC 008: 添加 F2A_ALLOW_LOCAL_WEBHOOK 环境变量
+ * 在开发/测试环境中，允许 localhost 和私有 IP 地址
+ * 生产环境应保持 SSRF 保护启用
  */
 function validateWebhookUrl(urlString: string): { valid: boolean; error?: string } {
+  // RFC 008: 检查是否允许本地 webhook（开发模式）
+  const allowLocal = process.env.F2A_ALLOW_LOCAL_WEBHOOK === 'true' || 
+                     process.env.NODE_ENV === 'development' ||
+                     process.env.NODE_ENV === 'test';
+  
   try {
     const url = new URL(urlString);
     
@@ -262,7 +271,11 @@ function validateWebhookUrl(urlString: string): { valid: boolean; error?: string
       return { valid: false, error: `Invalid protocol: ${url.protocol}. Only http and https are allowed.` };
     }
     
-    // 检查是否为内网地址
+    // 开发模式：跳过 SSRF 检查
+    if (allowLocal) {
+      return { valid: true };
+    }
+    
     const hostname = url.hostname;
     
     // 检查 localhost 别名
@@ -347,12 +360,19 @@ export class WebhookService {
   private async sendRequest(payload: string): Promise<void> {
     const url = new URL(this.config.url);
     
+    // RFC 008: 检查是否允许本地 webhook（开发模式）
+    const allowLocal = process.env.F2A_ALLOW_LOCAL_WEBHOOK === 'true' || 
+                       process.env.NODE_ENV === 'development' ||
+                       process.env.NODE_ENV === 'test';
+    
     // P2-1 修复：DNS 重绑定防护 - 解析并验证 IP 地址
+    // 开发模式下跳过私有 IP 检查
     let resolvedAddress: string;
     try {
       const { address } = await dnsLookup(url.hostname);
       
-      if (isPrivateIP(address)) {
+      // 开发模式：跳过 DNS 重绑定检查
+      if (!allowLocal && isPrivateIP(address)) {
         throw new Error(`DNS resolved to private IP address ${address}, possible DNS rebinding attack`);
       }
       

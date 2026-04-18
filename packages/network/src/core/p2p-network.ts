@@ -1511,10 +1511,12 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       // 检查 payload 是否为 AgentMessagePayload 类型
       const agentPayload = payload as any;
       if (agentPayload.fromAgentId && agentPayload.fromSignature) {
+        // RFC 003 P0-1 修复: 传递 Ed25519 公钥作为第3个参数，peerId 作为第4个参数
         const verifyResult = await this.agentIdentityVerifier.verifyRemoteAgentId(
           agentPayload.fromAgentId,
           agentPayload.fromSignature,
-          peerId
+          agentPayload.fromEd25519PublicKey, // Ed25519 公钥 (Base64)
+          peerId // 发送方 PeerId (用于交叉验证)
         );
         
         if (!verifyResult.valid) {
@@ -2205,6 +2207,18 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    */
   getPeerId(): string | null {
     return this.agentInfo.peerId;
+  }
+
+  /**
+   * RFC 003: 获取 Ed25519 公钥（用于签名验证）
+   * 返回 Base64 编码的 Ed25519 公钥
+   */
+  getEd25519PublicKey(): string | null {
+    const peerId = this.identityManager?.getPeerId();
+    if (peerId?.publicKey) {
+      return Buffer.from(peerId.publicKey.raw).toString('base64');
+    }
+    return null;
   }
 
   /**

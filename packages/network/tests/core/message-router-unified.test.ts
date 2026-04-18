@@ -57,6 +57,11 @@ class MockP2PNetwork extends EventEmitter {
     return false;
   }
 
+  // RFC 003: Mock Ed25519 公钥（用于签名验证测试）
+  getEd25519PublicKey() {
+    return 'mockEd25519PublicKeyBase64';
+  }
+
   // 模拟添加远程 peer
   addRemotePeer(peerId: string) {
     this.connectedPeers.set(peerId, { peerId });

@@ -366,8 +366,14 @@ export class MessageRouter extends EventEmitter<MessageRouterEvents> {
       return failureFromError('PEER_NOT_FOUND', `Peer not found for AgentId: ${toAgentId}`);
     }
 
+    // RFC 003: 获取发送方 Agent 的签名和 Ed25519 公钥
+    const senderAgent = this.agentRegistry.get(fromAgentId);
+    const fromSignature = senderAgent?.signature;
+    const fromEd25519PublicKey = this.p2pNetwork?.getEd25519PublicKey();
+
     // 构造 P2P 消息载荷
     // topic: 'agent.message' 用于 Agent 间通信
+    // RFC 003: 携带签名和公钥，供远程验证
     const payload: StructuredMessagePayload = {
       topic: 'agent.message',
       content: {
@@ -378,6 +384,9 @@ export class MessageRouter extends EventEmitter<MessageRouterEvents> {
         type: message.type,
         metadata: message.metadata,
         createdAt: message.createdAt.toISOString(),
+        // RFC 003: 添加签名和公钥字段
+        fromSignature: fromSignature || '',
+        fromEd25519PublicKey: fromEd25519PublicKey || '',
       },
     };
 

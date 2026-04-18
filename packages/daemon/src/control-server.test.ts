@@ -338,7 +338,7 @@ describe('ControlServer', () => {
       
       handler(req, res);
       
-      expect(res.writeHead).toHaveBeenCalledWith(401);
+      expect(res.writeHead).toHaveBeenCalledWith(401, { "Content-Type": "application/json" });
       
       server.stop();
     });
@@ -482,7 +482,7 @@ describe('ControlServer', () => {
       
       handler(req, res);
       
-      expect(res.writeHead).toHaveBeenCalledWith(429);
+      expect(res.writeHead).toHaveBeenCalledWith(429, { "Content-Type": "application/json" });
       
       server.stop();
     });

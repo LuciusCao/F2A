@@ -114,3 +114,6 @@ export const DAEMON_VERSION = '0.5.0';
 export default F2ADaemon;
 // Phase 7: 导出 Session Token Manager (RFC 007)
 export { AgentTokenManager, AgentTokenData, AgentTokenManagerOptions } from './agent-token-manager.js';
+
+// Phase 1 (P0-3): 导出认证中间件
+export { AuthMiddleware, AuthResult, AuthMiddlewareDeps } from './middleware/auth.js';

@@ -973,8 +973,12 @@ export class ControlServer {
 
         // RFC 004: 构建 webhook 对象
         const webhook = data.webhook || (data.webhookUrl ? { url: data.webhookUrl, token: data.webhookToken } : undefined);
-        const updated = this.agentRegistry.updateWebhook(agentId, webhook);
-        if (updated) {
+        
+        // 同步更新 AgentRegistry 和 AgentIdentityManager（持久化）
+        const registryUpdated = this.agentRegistry.updateWebhook(agentId, webhook);
+        const identityUpdated = this.identityManager.updateWebhook(agentId, webhook);
+        
+        if (registryUpdated && identityUpdated) {
           this.logger.info('Agent webhook updated via API', { agentId, webhookUrl: webhook?.url });
           res.writeHead(200);
           res.end(JSON.stringify({

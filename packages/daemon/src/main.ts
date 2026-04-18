@@ -38,6 +38,27 @@ process.on('SIGTERM', async () => {
   process.exit(0);
 });
 
+// 捕获未处理的 Promise rejection
+process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
+  logger.error('Unhandled Promise rejection', {
+    reason: reason instanceof Error ? reason.message : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+    promise: String(promise)
+  });
+  // 不立即退出，记录日志后继续运行（可根据需要调整策略）
+});
+
+// 捕获未处理的异常
+process.on('uncaughtException', (error: Error) => {
+  logger.error('Uncaught exception', {
+    message: error.message,
+    stack: error.stack,
+    name: error.name
+  });
+  // 对于未捕获异常，安全退出
+  daemon.stop().then(() => process.exit(1)).catch(() => process.exit(1));
+});
+
 // 启动
 daemon.start().catch((error: unknown) => {
   logger.error('Failed to start daemon', {

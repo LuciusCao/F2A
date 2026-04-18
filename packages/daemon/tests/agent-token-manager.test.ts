@@ -15,15 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { 
-  AgentTokenManager, 
-  AgentTokenData,
-  generateTestToken,
-  getTokenFileName,
-  TOKEN_PREFIX,
-  TOKEN_HEX_LENGTH,
-  TOKEN_LENGTH
-} from '../src/agent-token-manager.js';
+import { AgentTokenManager, AgentTokenData, TOKEN_PREFIX, TOKEN_LENGTH } from '../src/agent-token-manager.js';
 
 // Mock Logger
 vi.mock('@f2a/network', async (importOriginal) => {
@@ -55,7 +47,7 @@ describe('AgentTokenManager', () => {
     // 创建测试目录
     testDir = join(tmpdir(), `session-token-test-${Date.now()}`);
     mkdirSync(testDir, { recursive: true });
-    tokensDir = join(testDir, 'session-tokens');
+    tokensDir = join(testDir, 'agent-tokens');
     
     // 创建 Manager
     manager = new AgentTokenManager(testDir);
@@ -76,8 +68,8 @@ describe('AgentTokenManager', () => {
       const token = manager.generateAndSave(agentId);
 
       expect(token).toBeDefined();
-      expect(token.startsWith(TOKEN_PREFIX)).toBe(true);
-      expect(token.length).toBe(TOKEN_LENGTH); // sess- + 64 hex chars = 69 chars
+      expect(token.startsWith('agent-')).toBe(true);
+      expect(token.length).toBeGreaterThan(40); // agent- + 64 hex chars
 
       // 验证 token 数据
       const tokenData = manager.get(token);
@@ -93,7 +85,7 @@ describe('AgentTokenManager', () => {
       const token = manager.generateAndSave(agentId);
 
       // 检查文件是否存在
-      const fileName = getTokenFileName(token);
+      const fileName = `agent-${token.slice(TOKEN_PREFIX.length)}.json`;
       const filePath = join(tokensDir, fileName);
       expect(existsSync(filePath)).toBe(true);
 
@@ -207,8 +199,7 @@ describe('AgentTokenManager', () => {
       expect(afterVerify?.lastUsedAt).toBeGreaterThanOrEqual(beforeVerify!.createdAt);
     });
 
-    it('should NOT persist lastUsedAt update to file after verify (performance optimization)', () => {
-      // verify() 仅更新内存中的 lastUsedAt，不写入文件，避免高频磁盘 IO
+    it('should NOT persist lastUsedAt on verify (performance optimization)', () => {
       const agentId = createMockAgentId('agent1');
       const token = manager.generateAndSave(agentId);
 
@@ -219,13 +210,12 @@ describe('AgentTokenManager', () => {
       newManager.loadAll();
 
       const tokenData = newManager.get(token);
-      // lastUsedAt 不应该被持久化到文件（因为 verify() 不写文件）
+      // verify() 不再写入文件，所以 lastUsedAt 应该是 undefined
       expect(tokenData?.lastUsedAt).toBeUndefined();
     });
 
     it('should persist lastUsedAt when token is revoked', () => {
-      // revoke() 是关键操作，会持久化 lastUsedAt
-      const agentId = createMockAgentId('agent2');
+      const agentId = createMockAgentId('agent1');
       const token = manager.generateAndSave(agentId);
 
       manager.revoke(token);
@@ -235,6 +225,7 @@ describe('AgentTokenManager', () => {
       newManager.loadAll();
 
       const tokenData = newManager.get(token);
+      // revoke() 会写入文件，所以 lastUsedAt 应该有值
       expect(tokenData?.lastUsedAt).toBeDefined();
     });
   });
@@ -243,7 +234,7 @@ describe('AgentTokenManager', () => {
 
   describe('verify() - token not found', () => {
     it('should return invalid for non-existent token', () => {
-      const fakeToken = generateTestToken('nonexistent');
+      const fakeToken = 'agent-nonexistent1234567890abcdef1234567890abcdef';
 
       const result = manager.verify(fakeToken);
 
@@ -267,7 +258,7 @@ describe('AgentTokenManager', () => {
     });
 
     it('should return invalid for wrong format token', () => {
-      // token 不以 sess- 开头
+      // token 不以 agent- 开头
       const wrongFormatToken = 'wrong-format-token-1234567890abcdef';
 
       const result = manager.verify(wrongFormatToken);
@@ -304,7 +295,7 @@ describe('AgentTokenManager', () => {
     });
 
     it('should check token existence first', () => {
-      const fakeToken = 'sess-nonexistent1234567890abcdef1234567890abcdef';
+      const fakeToken = 'agent-nonexistent1234567890abcdef1234567890abcdef';
       const agentId = createMockAgentId('agent1');
 
       const result = manager.verifyForAgent(fakeToken, agentId);
@@ -335,7 +326,7 @@ describe('AgentTokenManager', () => {
       const agentId = createMockAgentId('agent1');
       
       // 创建已过期的 token（手动设置 expiresAt）
-      const token = 'sess-expiredtest1234567890abcdef1234567890abcdef';
+      const token = 'agent-expiredtest1234567890abcdef1234567890abcdef';
       const expiredTokenData: AgentTokenData = {
         token,
         agentId,
@@ -347,7 +338,7 @@ describe('AgentTokenManager', () => {
       // 手动添加到内存和文件
       manager.loadAll(); // 先确保目录存在
       // 直接写入测试数据
-      const fileName = `sess-${token.slice(5)}.json`;
+      const fileName = `agent-${token.slice(TOKEN_PREFIX.length)}.json`;
       writeFileSync(join(tokensDir, fileName), JSON.stringify(expiredTokenData, null, 2));
       
       // 重新加载
@@ -363,7 +354,7 @@ describe('AgentTokenManager', () => {
       const agentId = createMockAgentId('agent1');
       
       // 创建即将过期的 token（expiresAt 为未来时间）
-      const token = 'sess-almostexpired1234567890abcdef1234567890abcdef';
+      const token = 'agent-almostexpired1234567890abcdef1234567890abcdef';
       const tokenData: AgentTokenData = {
         token,
         agentId,
@@ -374,7 +365,7 @@ describe('AgentTokenManager', () => {
 
       // 写入测试数据
       mkdirSync(tokensDir, { recursive: true });
-      const fileName = `sess-${token.slice(5)}.json`;
+      const fileName = `agent-${token.slice(TOKEN_PREFIX.length)}.json`;
       writeFileSync(join(tokensDir, fileName), JSON.stringify(tokenData, null, 2));
       
       manager.loadAll();
@@ -437,7 +428,7 @@ describe('AgentTokenManager', () => {
     });
 
     it('should return false for non-existent token', () => {
-      const fakeToken = 'sess-nonexistent1234567890abcdef1234567890abcdef';
+      const fakeToken = 'agent-nonexistent1234567890abcdef1234567890abcdef';
 
       const result = manager.revoke(fakeToken);
 
@@ -475,7 +466,7 @@ describe('AgentTokenManager', () => {
       const agentId = createMockAgentId('agent1');
       
       // 创建已过期的 token
-      const expiredToken = 'sess-expiredclean1234567890abcdef1234567890abcdef';
+      const expiredToken = 'agent-expiredclean1234567890abcdef1234567890abcdef';
       const expiredData: AgentTokenData = {
         token: expiredToken,
         agentId,
@@ -490,7 +481,7 @@ describe('AgentTokenManager', () => {
       // 写入过期 token
       mkdirSync(tokensDir, { recursive: true });
       writeFileSync(
-        join(tokensDir, `sess-${expiredToken.slice(5)}.json`),
+        join(tokensDir, `agent-${expiredToken.slice(5)}.json`),
         JSON.stringify(expiredData, null, 2)
       );
 
@@ -526,7 +517,8 @@ describe('AgentTokenManager', () => {
     it('should delete token files when cleaning', () => {
       const agentId = createMockAgentId('agent1');
       
-      const expiredToken = 'sess-fileclean1234567890abcdef1234567890abcdef';
+      // 使用正确格式的 token (agent- + 64 hex chars = 70 chars)
+      const expiredToken = 'agent-' + 'fileclean1234567890abcdef1234567890abcdef1234567890abcdef12'.padEnd(64, '0');
       const expiredData: AgentTokenData = {
         token: expiredToken,
         agentId,
@@ -536,7 +528,7 @@ describe('AgentTokenManager', () => {
       };
 
       mkdirSync(tokensDir, { recursive: true });
-      const fileName = `sess-${expiredToken.slice(5)}.json`;
+      const fileName = TOKEN_PREFIX + expiredToken.slice(TOKEN_PREFIX.length) + '.json';
       const filePath = join(tokensDir, fileName);
       writeFileSync(filePath, JSON.stringify(expiredData, null, 2));
 
@@ -564,7 +556,7 @@ describe('AgentTokenManager', () => {
       const agentId = createMockAgentId('agent1');
       
       // 创建过期 token
-      const expiredToken = 'sess-expired1' + Date.now().toString(16).padStart(54, '0');
+      const expiredToken = 'agent-expired1' + Date.now().toString(16).padStart(54, '0');
       const expiredData: AgentTokenData = {
         token: expiredToken,
         agentId,
@@ -574,7 +566,7 @@ describe('AgentTokenManager', () => {
       };
 
       // 创建被撤销的 token
-      const revokedToken = 'sess-revoked1' + Date.now().toString(16).padStart(54, '0');
+      const revokedToken = 'agent-revoked1' + Date.now().toString(16).padStart(54, '0');
       const revokedData: AgentTokenData = {
         token: revokedToken,
         agentId,
@@ -585,11 +577,11 @@ describe('AgentTokenManager', () => {
 
       mkdirSync(tokensDir, { recursive: true });
       writeFileSync(
-        join(tokensDir, `sess-${expiredToken.slice(5)}.json`),
+        join(tokensDir, `agent-${expiredToken.slice(5)}.json`),
         JSON.stringify(expiredData, null, 2)
       );
       writeFileSync(
-        join(tokensDir, `sess-${revokedToken.slice(5)}.json`),
+        join(tokensDir, `agent-${revokedToken.slice(5)}.json`),
         JSON.stringify(revokedData, null, 2)
       );
 
@@ -612,8 +604,8 @@ describe('AgentTokenManager', () => {
       const agentId1 = createMockAgentId('agent1');
       const agentId2 = createMockAgentId('agent2');
 
-      const token1 = 'sess-loaded1' + Date.now().toString(16).padStart(54, '0');
-      const token2 = 'sess-loaded2' + Date.now().toString(16).padStart(54, '0');
+      const token1 = 'agent-loaded1' + Date.now().toString(16).padStart(54, '0');
+      const token2 = 'agent-loaded2' + Date.now().toString(16).padStart(54, '0');
 
       const data1: AgentTokenData = {
         token: token1,
@@ -631,8 +623,8 @@ describe('AgentTokenManager', () => {
         revoked: false,
       };
 
-      writeFileSync(join(tokensDir, `sess-${token1.slice(5)}.json`), JSON.stringify(data1));
-      writeFileSync(join(tokensDir, `sess-${token2.slice(5)}.json`), JSON.stringify(data2));
+      writeFileSync(join(tokensDir, `agent-${token1.slice(5)}.json`), JSON.stringify(data1));
+      writeFileSync(join(tokensDir, `agent-${token2.slice(5)}.json`), JSON.stringify(data2));
 
       manager.loadAll();
 
@@ -649,10 +641,10 @@ describe('AgentTokenManager', () => {
 
       // 创建结构无效的文件
       const invalidData = { token: 'invalid' };
-      writeFileSync(join(tokensDir, 'sess-invalid1.json'), JSON.stringify(invalidData));
+      writeFileSync(join(tokensDir, 'agent-invalid1.json'), JSON.stringify(invalidData));
 
-      // 创建不以 sess- 开头的文件
-      writeFileSync(join(tokensDir, 'other-file.json'), JSON.stringify({ token: 'sess-test' }));
+      // 创建不以 agent- 开头的文件
+      writeFileSync(join(tokensDir, 'other-file.json'), JSON.stringify({ token: 'agent-test' }));
 
       manager.loadAll();
 
@@ -732,7 +724,7 @@ describe('AgentTokenManager', () => {
       expect(manager.size()).toBe(0);
 
       // 文件也应该被删除
-      const files = readdirSync(tokensDir).filter(f => f.startsWith('sess-'));
+      const files = readdirSync(tokensDir).filter(f => f.startsWith('agent-'));
       expect(files.length).toBe(0);
     });
   });
@@ -761,7 +753,7 @@ describe('AgentTokenManager', () => {
     });
 
     it('should return false for non-existent token', () => {
-      expect(manager.has('sess-nonexistent')).toBe(false);
+      expect(manager.has('agent-nonexistent')).toBe(false);
     });
   });
 
@@ -771,7 +763,7 @@ describe('AgentTokenManager', () => {
     it('should filter dangerous keys in JSON.parse', () => {
       mkdirSync(tokensDir, { recursive: true });
 
-      const token = 'sess-safetest' + Date.now().toString(16).padStart(54, '0');
+      const token = 'agent-safetest' + Date.now().toString(16).padStart(54, '0');
       
       // 创建包含危险 key 的文件
       const maliciousContent = JSON.stringify({
@@ -784,7 +776,7 @@ describe('AgentTokenManager', () => {
         constructor: { prototype: { malicious: true } },
       });
 
-      writeFileSync(join(tokensDir, `sess-${token.slice(5)}.json`), maliciousContent);
+      writeFileSync(join(tokensDir, `agent-${token.slice(TOKEN_PREFIX.length)}.json`), maliciousContent);
 
       manager.loadAll();
 
@@ -800,18 +792,18 @@ describe('AgentTokenManager', () => {
       mkdirSync(tokensDir, { recursive: true });
 
       // 创建缺少必须字段的文件
-      const invalidData = { token: 'sess-invalid', agentId: 'agent:test' };
-      writeFileSync(join(tokensDir, 'sess-invalid.json'), JSON.stringify(invalidData));
+      const invalidData = { token: 'agent-invalid', agentId: 'agent:test' };
+      writeFileSync(join(tokensDir, 'agent-invalid.json'), JSON.stringify(invalidData));
 
       // 创建 agentId 格式错误的文件
       const wrongAgentData = {
-        token: 'sess-wrong',
+        token: 'agent-wrong',
         agentId: 'wrong-format',
         createdAt: Date.now(),
         expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
         revoked: false,
       };
-      writeFileSync(join(tokensDir, 'sess-wrong.json'), JSON.stringify(wrongAgentData));
+      writeFileSync(join(tokensDir, 'agent-wrong.json'), JSON.stringify(wrongAgentData));
 
       manager.loadAll();
 
@@ -822,7 +814,7 @@ describe('AgentTokenManager', () => {
       const agentId = createMockAgentId('agent1');
       const token = manager.generateAndSave(agentId);
 
-      const filePath = join(tokensDir, `sess-${token.slice(5)}.json`);
+      const filePath = join(tokensDir, `agent-${token.slice(TOKEN_PREFIX.length)}.json`);
       
       // 检查文件是否存在
       expect(existsSync(filePath)).toBe(true);

@@ -19,6 +19,7 @@ import { E2EECrypto } from '@f2a/network';
 import { AgentRegistry, AgentRegistration } from '@f2a/network';
 import { MessageRouter, RoutableMessage } from '@f2a/network';
 import { AgentIdentityManager, AgentIdentity } from './agent-identity-manager.js';
+import { AgentTokenManager } from './agent-token-manager.js';
 import type { AgentCapability } from '@f2a/network';
 
 export interface ControlServerOptions {
@@ -100,6 +101,8 @@ export class ControlServer {
   // 使用 ! 断言，因为它在构造函数中被初始化
   private e2eeCrypto!: E2EECrypto;
   private dataDir: string;
+  // RFC 007: Agent Token Manager（全局管理所有 agent token）
+  private globalTokenManager!: AgentTokenManager;
 
   constructor(f2a: F2A, port: number, tokenManager?: TokenManager, options?: ControlServerOptions) {
     this.f2a = f2a;
@@ -127,11 +130,23 @@ export class ControlServer {
     this.identityManager = new AgentIdentityManager(this.dataDir);
     this.identityManager.loadAll();
 
+    // RFC 007: 初始化全局 Token Manager（用于管理所有 agent 的 token）
+    this.globalTokenManager = new AgentTokenManager(
+      this.dataDir,
+      'control-server',  // ControlServer 自己的标识
+      { useEncryption: true }
+    );
+    this.logger.info('Global AgentTokenManager initialized', {
+      agentId: 'control-server'
+    });
+
     // RFC 004 Phase 6: 启动时恢复所有持久化的 Agent 身份到运行时注册表
     // 注意：这是 daemon 特有的功能，从 agents/*.json 恢复到 AgentRegistry
     for (const identity of this.identityManager.list()) {
       try {
         this.agentRegistry.restore(identity);
+        // 同时为恢复的 Agent 创建消息队列（与 POST /api/agents 保持一致）
+        this.messageRouter.createQueue(identity.agentId);
         this.logger.info('Agent restored on startup', {
           agentId: identity.agentId,
           name: identity.name,
@@ -1028,6 +1043,26 @@ export class ControlServer {
             return;
           }
 
+          // === RFC 007: Token 验证 ===
+          // 从 Authorization header 获取 agent token
+          const authHeader = req.headers['authorization'] as string;
+          const agentToken = authHeader?.startsWith('agent-') 
+            ? authHeader.slice(6)  // 去掉 'agent-' 前缀
+            : undefined;
+
+          if (!agentToken) {
+            this.logger.warn('SendMessage request missing Authorization header', {
+              fromAgentIdPrefix: data.fromAgentId?.slice(0, 16),
+            });
+            res.writeHead(401);
+            res.end(JSON.stringify({
+              success: false,
+              error: 'Missing Authorization header. Expected format: Authorization: agent-{token}',
+              code: 'MISSING_TOKEN',
+            }));
+            return;
+          }
+
           // 验证发送方已注册
           if (!this.agentRegistry.get(data.fromAgentId)) {
             res.writeHead(400);
@@ -1038,6 +1073,50 @@ export class ControlServer {
             }));
             return;
           }
+
+          // 创建 AgentTokenManager 并验证 token 属于 fromAgentId
+          try {
+            const agentTokenManager = new AgentTokenManager(
+              this.dataDir,
+              data.fromAgentId,
+              { useEncryption: true }
+            );
+            agentTokenManager.loadForAgent();
+
+            const verifyResult = agentTokenManager.verifyForAgent(agentToken, data.fromAgentId);
+
+            if (!verifyResult.valid) {
+              this.logger.warn('Token verification failed', {
+                agentId: data.fromAgentId?.slice(0, 16),
+                error: verifyResult.error,
+              });
+              res.writeHead(401);
+              res.end(JSON.stringify({
+                success: false,
+                error: verifyResult.error || 'Token verification failed',
+                code: 'INVALID_TOKEN',
+              }));
+              return;
+            }
+
+            this.logger.debug('Token verified for sendMessage', {
+              agentIdPrefix: data.fromAgentId.slice(0, 16),
+            });
+          } catch (tokenError) {
+            this.logger.error('Token manager initialization failed', {
+              agentId: data.fromAgentId?.slice(0, 16),
+              error: getErrorMessage(tokenError),
+            });
+            res.writeHead(500);
+            res.end(JSON.stringify({
+              success: false,
+              error: 'Token verification system error',
+              code: 'TOKEN_SYSTEM_ERROR',
+            }));
+            return;
+          }
+
+          // === Token 验证完成 ===
 
           // 创建消息
           const message: RoutableMessage = {
@@ -1214,14 +1293,6 @@ export class ControlServer {
   }
 
   /**
-   * 生成 session token
-   * @returns 随机 session token
-   */
-  private generateAgentToken(): string {
-    return randomBytes(32).toString('hex');  // 64 位随机字符串
-  }
-
-  /**
    * Phase 7: 验证 Challenge-Response
    * POST /api/agents/verify
    */
@@ -1297,34 +1368,60 @@ export class ControlServer {
         }
         
         // ✅ 5️⃣ 验证通过：生成新 session token
-        const agentToken = this.generateAgentToken();
-        
-        // 6️⃣ 更新 identity
-        identity.webhook = pending.webhook;
-        identity.lastActiveAt = new Date().toISOString();
-        this.identityManager.save(identity);
-        
-        // 7️⃣ 清理 pending challenge
-        this.pendingChallenges.delete(data.agentId);
-        
-        // 8️⃣ 同步到 AgentRegistry
-        const restored = this.agentRegistry.restore(identity);
-        this.messageRouter.createQueue(data.agentId);
-        
-        this.logger.info('Agent identity verified successfully', {
-          agentId: identity.agentId?.slice(0, 16),
-          name: identity.name,
-          agentTokenPrefix: agentToken.slice(0, 8)
-        });
-        
-        // 9️⃣ 返回新 token
-        res.writeHead(200);
-        res.end(JSON.stringify({
-          success: true,
-          verified: true,
-          agentToken,
-          agent: restored
-        }));
+        // RFC 007: 为每个 agent 创建独立的 token manager 并保存 token
+        try {
+          const agentTokenManager = new AgentTokenManager(
+            this.dataDir,
+            data.agentId,
+            { useEncryption: true }
+          );
+          const agentToken = agentTokenManager.generateAndSave(data.agentId);
+          
+          this.logger.info('Agent token generated and saved', {
+            agentId: data.agentId?.slice(0, 16),
+            tokenPrefix: agentToken.slice(0, 8),
+            encrypted: true
+          });
+          
+          // 6️⃣ 更新 identity
+          identity.webhook = pending.webhook;
+          identity.lastActiveAt = new Date().toISOString();
+          this.identityManager.save(identity);
+          
+          // 7️⃣ 清理 pending challenge
+          this.pendingChallenges.delete(data.agentId);
+          
+          // 8️⃣ 同步到 AgentRegistry
+          const restored = this.agentRegistry.restore(identity);
+          this.messageRouter.createQueue(data.agentId);
+          
+          this.logger.info('Agent identity verified successfully', {
+            agentId: identity.agentId?.slice(0, 16),
+            name: identity.name,
+            agentTokenPrefix: agentToken.slice(0, 8)
+          });
+          
+          // 9️⃣ 返回新 token
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            success: true,
+            verified: true,
+            agentToken,
+            agent: restored
+          }));
+        } catch (tokenError) {
+          this.logger.error('Failed to generate or save agent token', {
+            agentId: data.agentId?.slice(0, 16),
+            error: tokenError instanceof Error ? tokenError.message : String(tokenError)
+          });
+          res.writeHead(500);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Failed to generate agent token',
+            code: 'TOKEN_GENERATION_FAILED'
+          }));
+          return;
+        }
       } catch (error) {
         this.logger.error('Error in agent verification', {
           error: error instanceof Error ? error.message : String(error)

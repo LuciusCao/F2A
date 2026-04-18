@@ -16,8 +16,8 @@ import { Logger } from '@f2a/network';
 import { RateLimiter } from '@f2a/network';
 import { getErrorMessage } from '@f2a/network';
 import { E2EECrypto } from '@f2a/network';
-import { AgentRegistry, AgentRegistration } from './agent-registry.js';
-import { MessageRouter, RoutableMessage } from './message-router.js';
+import { AgentRegistry, AgentRegistration } from '@f2a/network';
+import { MessageRouter, RoutableMessage } from '@f2a/network';
 import { AgentIdentityManager, AgentIdentity } from './agent-identity-manager.js';
 import type { AgentCapability } from '@f2a/network';
 
@@ -118,18 +118,17 @@ export class ControlServer {
     // P2 修复：生产环境强制验证 CORS 配置
     validateCorsConfig(this.allowedOrigins);
     
-    // Phase 1: 初始化 Agent 注册表和消息路由器
-    // RFC 003: AgentId 由节点签发
-    const peerId = this.f2a.peerId;
-    const signFunction = (data: string) => this.f2a.signData(data);
-    this.agentRegistry = new AgentRegistry(peerId, signFunction);
-    this.messageRouter = new MessageRouter(this.agentRegistry);
+    // P0 修复：使用 F2A 已初始化的 AgentRegistry 和 MessageRouter
+    // 避免创建独立实例导致数据不一致
+    this.agentRegistry = f2a.getAgentRegistry();
+    this.messageRouter = f2a.getMessageRouter();
     
-    // Phase 6: 初始化 Identity Manager
+    // Phase 6: 初始化 Identity Manager（daemon 特有的 Agent 身份持久化）
     this.identityManager = new AgentIdentityManager(this.dataDir);
     this.identityManager.loadAll();
 
     // RFC 004 Phase 6: 启动时恢复所有持久化的 Agent 身份到运行时注册表
+    // 注意：这是 daemon 特有的功能，从 agents/*.json 恢复到 AgentRegistry
     for (const identity of this.identityManager.list()) {
       try {
         this.agentRegistry.restore(identity);

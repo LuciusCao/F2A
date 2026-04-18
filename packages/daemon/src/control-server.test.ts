@@ -29,6 +29,49 @@ vi.mock('http', () => ({
 // Mock @f2a/network - 统一 mock
 vi.mock('@f2a/network', async (importOriginal) => {
   const actual = await importOriginal() as any;
+  
+  // Mock AgentRegistry
+  const MockAgentRegistry = vi.fn().mockImplementation(() => ({
+    register: vi.fn().mockReturnValue({
+      agentId: 'agent:test-peer:abc123',
+      name: 'TestAgent',
+      capabilities: [],
+      peerId: 'test-peer-id-12345678',
+      signature: 'mock-sig',
+      registeredAt: new Date(),
+      lastActiveAt: new Date(),
+    }),
+    restore: vi.fn().mockReturnValue({
+      agentId: 'agent:test-peer:abc123',
+      name: 'TestAgent',
+      capabilities: [],
+      peerId: 'test-peer-id-12345678',
+      signature: 'mock-sig',
+      registeredAt: new Date(),
+      lastActiveAt: new Date(),
+    }),
+    unregister: vi.fn().mockReturnValue(true),
+    get: vi.fn(),
+    list: vi.fn().mockReturnValue([]),
+    getStats: vi.fn().mockReturnValue({ total: 0 }),
+    updateWebhook: vi.fn().mockReturnValue(true),
+    updateLastActive: vi.fn().mockReturnValue(true),
+    getAgentsMap: vi.fn().mockReturnValue(new Map()),
+    save: vi.fn(),
+    load: vi.fn(),
+  }));
+  
+  // Mock MessageRouter
+  const MockMessageRouter = vi.fn().mockImplementation(() => ({
+    route: vi.fn().mockResolvedValue({ success: true }),
+    routeLocal: vi.fn().mockResolvedValue({ success: true }),
+    routeRemote: vi.fn().mockResolvedValue({ success: true }),
+    createQueue: vi.fn(),
+    getQueue: vi.fn(),
+    clearQueue: vi.fn(),
+    sendMessage: vi.fn().mockResolvedValue({ success: true }),
+  }));
+  
   return {
     ...actual,
     Logger: vi.fn().mockImplementation(() => ({
@@ -48,40 +91,87 @@ vi.mock('@f2a/network', async (importOriginal) => {
       stop: vi.fn(),
     })),
     F2A: vi.fn(),
+    AgentRegistry: MockAgentRegistry,
+    MessageRouter: MockMessageRouter,
     getErrorMessage: vi.fn((e) => e?.message || 'Unknown error'),
   };
 });
 
 // Create mock F2A instance
-const createMockF2A = () => ({
-  peerId: 'test-peer-id-12345678',
-  agentInfo: {
+const createMockF2A = () => {
+  const mockAgentRegistry = {
+    register: vi.fn().mockImplementation((request) => ({
+      agentId: 'agent:test-peer:abc123',
+      name: request.name, // 返回请求中的 name
+      capabilities: request.capabilities || [],
+      peerId: 'test-peer-id-12345678',
+      signature: 'mock-sig',
+      registeredAt: new Date(),
+      lastActiveAt: new Date(),
+    })),
+    restore: vi.fn().mockReturnValue({
+      agentId: 'agent:test-peer:abc123',
+      name: 'TestAgent',
+      capabilities: [],
+      peerId: 'test-peer-id-12345678',
+      signature: 'mock-sig',
+      registeredAt: new Date(),
+      lastActiveAt: new Date(),
+    }),
+    unregister: vi.fn().mockReturnValue(true),
+    get: vi.fn(),
+    list: vi.fn().mockReturnValue([]),
+    getStats: vi.fn().mockReturnValue({ total: 0 }),
+    updateWebhook: vi.fn().mockReturnValue(true),
+    updateLastActive: vi.fn().mockReturnValue(true),
+    getAgentsMap: vi.fn().mockReturnValue(new Map()),
+    save: vi.fn(),
+    load: vi.fn(),
+  };
+  
+  const mockMessageRouter = {
+    route: vi.fn().mockResolvedValue({ success: true }),
+    routeLocal: vi.fn().mockResolvedValue({ success: true }),
+    routeRemote: vi.fn().mockResolvedValue({ success: true }),
+    createQueue: vi.fn(),
+    getQueue: vi.fn(),
+    clearQueue: vi.fn(),
+    sendMessage: vi.fn().mockResolvedValue({ success: true }),
+  };
+  
+  return {
     peerId: 'test-peer-id-12345678',
-    displayName: 'Test Agent',
-    capabilities: []
-  },
-  signData: vi.fn((data: string) => `sig-${data.slice(0, 16)}`),
-  getPeers: vi.fn().mockReturnValue([]),
-  getConnectedPeers: vi.fn().mockReturnValue([]),
-  getAllPeers: vi.fn().mockReturnValue([]),
-  discoverAgents: vi.fn().mockResolvedValue([]),
-  sendTaskTo: vi.fn().mockResolvedValue({ success: true }),
-  sendMessage: vi.fn().mockResolvedValue({ success: true }),
-  sendMessageToPeer: vi.fn().mockResolvedValue({ success: true }),
-  registerCapability: vi.fn().mockResolvedValue({ success: true }),
-  updateAgentInfo: vi.fn().mockResolvedValue({ success: true }),
-  getAgentInfo: vi.fn().mockReturnValue({
-    peerId: 'test-peer-id',
-    displayName: 'Test Agent',
-    capabilities: []
-  }),
-  getOnlinePeerCount: vi.fn().mockReturnValue(0),
-  getStatus: vi.fn().mockReturnValue({
-    peerId: 'test-peer-id',
-    onlinePeers: 0,
-    isRunning: true
-  })
-});
+    agentInfo: {
+      peerId: 'test-peer-id-12345678',
+      displayName: 'Test Agent',
+      capabilities: []
+    },
+    signData: vi.fn((data: string) => `sig-${data.slice(0, 16)}`),
+    getPeers: vi.fn().mockReturnValue([]),
+    getConnectedPeers: vi.fn().mockReturnValue([]),
+    getAllPeers: vi.fn().mockReturnValue([]),
+    discoverAgents: vi.fn().mockResolvedValue([]),
+    sendTaskTo: vi.fn().mockResolvedValue({ success: true }),
+    sendMessage: vi.fn().mockResolvedValue({ success: true }),
+    sendMessageToPeer: vi.fn().mockResolvedValue({ success: true }),
+    registerCapability: vi.fn().mockResolvedValue({ success: true }),
+    updateAgentInfo: vi.fn().mockResolvedValue({ success: true }),
+    getAgentInfo: vi.fn().mockReturnValue({
+      peerId: 'test-peer-id',
+      displayName: 'Test Agent',
+      capabilities: []
+    }),
+    getOnlinePeerCount: vi.fn().mockReturnValue(0),
+    getStatus: vi.fn().mockReturnValue({
+      peerId: 'test-peer-id',
+      onlinePeers: 0,
+      isRunning: true
+    }),
+    // P0 修复：添加 getAgentRegistry 和 getMessageRouter
+    getAgentRegistry: vi.fn().mockReturnValue(mockAgentRegistry),
+    getMessageRouter: vi.fn().mockReturnValue(mockMessageRouter),
+  };
+};
 
 describe('ControlServer', () => {
   let mockF2A: any;

@@ -1009,7 +1009,7 @@ export class ControlServer {
   private handleSendMessage(req: IncomingMessage, res: ServerResponse): void {
     let body = '';
     req.on('data', chunk => { body += chunk; });
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const data = JSON.parse(body);
         
@@ -1058,7 +1058,7 @@ export class ControlServer {
             return;
           }
 
-          const routed = this.messageRouter.route(message);
+          const routed = await this.messageRouter.routeAsync(message);
           if (routed) {
             this.logger.debug('Message routed', {
               messageId: message.messageId,
@@ -1080,7 +1080,7 @@ export class ControlServer {
           }
         } else {
           // 广播消息
-          const broadcasted = this.messageRouter.broadcast(message);
+          const broadcasted = await this.messageRouter.broadcastAsync(message);
           res.writeHead(200);
           res.end(JSON.stringify({
             success: true,

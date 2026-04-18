@@ -112,3 +112,5 @@ export const DAEMON_VERSION = '0.5.0';
 
 // 默认导出
 export default F2ADaemon;
+// Phase 7: 导出 Session Token Manager (RFC 007)
+export { SessionTokenManager, SessionTokenData, SessionTokenManagerOptions } from './session-token-manager.js';

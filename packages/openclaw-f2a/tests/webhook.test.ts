@@ -396,6 +396,132 @@ describe('F2A Webhook Plugin', () => {
 
       expect(mockRes.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'application/json' });
     });
+
+    it('should accept from as object with agentId and name (MessageRouter format)', async () => {
+      const mockApi = createMockApi({ webhookToken: '' });
+      const { default: register } = await import('../src/plugin');
+
+      register(mockApi);
+      const service = mockApi.registerService?.mock.calls[0][0];
+      service.start();
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      const http = await import('http');
+      const mockRequestHandler = http.createServer.mock.calls[0][0];
+
+      // Payload with from as object {agentId, name}
+      const mockReq = Object.assign(
+        createMockRequest(JSON.stringify({
+          from: { agentId: 'agent:12d3k00wtest', name: 'TestAgent' },
+          content: 'hello from object'
+        })),
+        { method: 'POST', url: '/f2a/webhook', headers: {} }
+      );
+
+      const mockRes = {
+        writeHead: vi.fn(),
+        end: vi.fn()
+      } as any;
+
+      await mockRequestHandler(mockReq, mockRes);
+
+      // Should return 200 success
+      expect(mockRes.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'application/json' });
+
+      // Should extract agentId from the from object for session key
+      // sessionKey = 'f2a-webhook-' + fromAgentId.slice(0, 16)
+      // fromAgentId = 'agent:12d3k00wtest', slice(0,16) = 'agent:12d3k00wte'
+      expect(mockApi.runtime.subagent?.run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'hello from object',
+          sessionKey: 'f2a-webhook-agent:12d3k00wte'
+        })
+      );
+    });
+
+    it('should accept message field as alternative to content (MessageRouter format)', async () => {
+      const mockApi = createMockApi({ webhookToken: '' });
+      const { default: register } = await import('../src/plugin');
+
+      register(mockApi);
+      const service = mockApi.registerService?.mock.calls[0][0];
+      service.start();
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      const http = await import('http');
+      const mockRequestHandler = http.createServer.mock.calls[0][0];
+
+      // Payload with message field instead of content
+      const mockReq = Object.assign(
+        createMockRequest(JSON.stringify({
+          from: 'test-peer-id',
+          message: 'hello via message field'
+        })),
+        { method: 'POST', url: '/f2a/webhook', headers: {} }
+      );
+
+      const mockRes = {
+        writeHead: vi.fn(),
+        end: vi.fn()
+      } as any;
+
+      await mockRequestHandler(mockReq, mockRes);
+
+      // Should return 200 success
+      expect(mockRes.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'application/json' });
+
+      // Should use message field as the content
+      expect(mockApi.runtime.subagent?.run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'hello via message field'
+        })
+      );
+    });
+
+    it('should accept combined format with from object and message field', async () => {
+      const mockApi = createMockApi({ webhookToken: '' });
+      const { default: register } = await import('../src/plugin');
+
+      register(mockApi);
+      const service = mockApi.registerService?.mock.calls[0][0];
+      service.start();
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      const http = await import('http');
+      const mockRequestHandler = http.createServer.mock.calls[0][0];
+
+      // Payload with both from object and message field
+      const mockReq = Object.assign(
+        createMockRequest(JSON.stringify({
+          from: { agentId: 'agent:abc123xyz789', name: 'RemoteAgent' },
+          message: 'combined format message'
+        })),
+        { method: 'POST', url: '/f2a/webhook', headers: {} }
+      );
+
+      const mockRes = {
+        writeHead: vi.fn(),
+        end: vi.fn()
+      } as any;
+
+      await mockRequestHandler(mockReq, mockRes);
+
+      // Should return 200 success
+      expect(mockRes.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'application/json' });
+
+      // Should correctly extract both from object's agentId and message field
+      // sessionKey = 'f2a-webhook-' + fromAgentId.slice(0, 16)
+      // fromAgentId = 'agent:abc123xyz789', slice(0,16) = 'agent:abc123xyz7'
+      expect(mockApi.runtime.subagent?.run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'combined format message',
+          sessionKey: 'f2a-webhook-agent:abc123xyz7'
+        })
+      );
+    });
   });
 
   describe('Agent-Specific Webhook Path', () => {

@@ -1,5 +1,5 @@
 /**
- * Agent Token Manager
+ * Agent Token Manager (In-Memory Version)
  * 管理 Agent 的 Token（RFC 007）
  * 
  * 功能：
@@ -9,18 +9,14 @@
  * - Revoke token（撤销）
  * - cleanExpired 清理过期 token
  * 
- * 🔒 加密保护（v2）:
- * - 每个 Agent 有独立的存储目录
- * - Token 文件用 AES-256-GCM 加密
- * - 只有拥有加密密钥的 Agent 才能解密
- * - 按 agentId 分组的内存 Map（隔离性）
+ * 🔒 纯内存存储（v3）:
+ * - Token 只存在 daemon 内存中
+ * - 重启后 token 丢失，agent 需重新注册获取新 token
+ * - 全局单例管理器，支持多 agent
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync } from 'fs';
-import { join } from 'path';
 import { randomBytes } from 'crypto';
 import { Logger } from '@f2a/network';
-import { TokenEncryption, EncryptedData } from './token-encryption.js';
 
 /**
  * Agent Token 数据结构
@@ -46,10 +42,6 @@ export interface AgentTokenData {
 export interface AgentTokenManagerOptions {
   /** Token 过期时间（毫秒），默认 7 天 */
   expireAfterMs?: number;
-  /** 是否自动清理过期 token */
-  autoCleanExpired?: boolean;
-  /** 是否使用加密（默认 true，向后兼容设为 false 可禁用） */
-  useEncryption?: boolean;
 }
 
 /** 默认过期时间：7 天 */
@@ -65,190 +57,33 @@ export const TOKEN_HEX_LENGTH = 64;
 export const TOKEN_LENGTH = TOKEN_PREFIX.length + TOKEN_HEX_LENGTH; // 70 chars
 
 /**
- * Agent Token 管理器
+ * Agent Token 管理器（纯内存版本）
  * 负责 Agent Token 的生成、验证和管理
  * 
- * 🔒 v2: 每个 Agent 有独立的存储目录 + 加密保护
+ * 全局单例，支持多 agent
  */
 export class AgentTokenManager {
-  private agentsDir: string;
-  private agentId: string;
-  private tokensDir: string;
+  /** token → data 映射 */
   private tokens: Map<string, AgentTokenData> = new Map();
-  /** 按 agentId 分组的内存 Map（v2 新增） */
-  private tokensByAgent: Map<string, Map<string, AgentTokenData>> = new Map();
-  private logger: Logger;
+  /** agentId → tokens 映射 */
+  private agentTokens: Map<string, Set<string>> = new Map();
+  /** 过期时间（毫秒） */
   private expireAfterMs: number;
-  private encryption: TokenEncryption | null = null;
-  private useEncryption: boolean;
+  /** 日志器 */
+  private logger: Logger;
 
-  constructor(dataDir: string, agentId: string, options?: AgentTokenManagerOptions) {
-    // v2: 每个 Agent 有独立目录
-    this.agentsDir = join(dataDir, 'agents');
-    this.agentId = agentId;
-    this.tokensDir = join(this.agentsDir, agentId, 'tokens');
-    
-    this.logger = new Logger({ component: 'AgentTokenManager' });
+  constructor(options?: AgentTokenManagerOptions) {
     this.expireAfterMs = options?.expireAfterMs ?? DEFAULT_EXPIRE_AFTER_MS;
-    this.useEncryption = options?.useEncryption ?? true;
-    
-    // 初始化加密（v2 新增）
-    if (this.useEncryption) {
-      this.encryption = new TokenEncryption(dataDir, agentId);
-      this.encryption.initialize();
-      this.logger.info('Token encryption initialized', {
-        agentIdPrefix: agentId.slice(0, 16),
-        keyFilePath: this.encryption.getKeyFilePath()
-      });
-    }
-    
-    // 初始化内存分组
-    this.tokensByAgent.set(agentId, this.tokens);
+    this.logger = new Logger({ component: 'AgentTokenManager' });
   }
 
   /**
-   * 初始化：确保目录存在并加载当前 agent 的 token
-   * v2: loadAll → loadForAgent（只加载当前 agent）
-   */
-  loadForAgent(): void {
-    this.ensureDir();
-    
-    const files = readdirSync(this.tokensDir)
-      .filter(f => f.endsWith('.json') && f.startsWith(TOKEN_PREFIX));
-    
-    this.tokens.clear();
-    
-    for (const file of files) {
-      try {
-        const filePath = join(this.tokensDir, file);
-        const content = readFileSync(filePath, 'utf-8');
-        
-        let tokenData: AgentTokenData;
-        
-        // v2: 加密模式下需要解密
-        if (this.useEncryption && this.encryption) {
-          try {
-            const encrypted = JSON.parse(content) as EncryptedData;
-            const decrypted = this.encryption.decrypt(encrypted);
-            tokenData = JSON.parse(decrypted, (key, value) => {
-              // 安全 JSON.parse：过滤危险 key
-              if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
-                return undefined;
-              }
-              return value;
-            }) as AgentTokenData;
-          } catch (decryptErr) {
-            const msg = decryptErr instanceof Error ? decryptErr.message : String(decryptErr);
-            this.logger.error('Failed to decrypt token file, skipping', { 
-              file, 
-              error: msg,
-              hint: 'Key may be missing or data corrupted'
-            });
-            continue;
-          }
-        } else {
-          // 非加密模式（向后兼容）
-          tokenData = JSON.parse(content, (key, value) => {
-            if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
-              return undefined;
-            }
-            return value;
-          }) as AgentTokenData;
-        }
-        
-        // 验证基本结构
-        if (!this.validateTokenStructure(tokenData)) {
-          this.logger.warn('Agent token invalid structure, skipping', { file });
-          continue;
-        }
-        
-        this.tokens.set(tokenData.token, tokenData);
-        this.logger.debug('Agent token loaded', { 
-          tokenPrefix: tokenData.token.slice(0, 8), 
-          agentIdPrefix: tokenData.agentId.slice(0, 16),
-          encrypted: this.useEncryption
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.logger.error('Failed to load agent token', { file, error: msg });
-      }
-    }
-    
-    this.logger.info('Agent tokens loaded', { 
-      count: this.tokens.size,
-      agentIdPrefix: this.agentId.slice(0, 16),
-      encrypted: this.useEncryption
-    });
-  }
-
-  /**
-   * 向后兼容：loadAll 别名
-   * @deprecated 使用 loadForAgent() 替代
-   */
-  loadAll(): void {
-    this.loadForAgent();
-  }
-
-  /**
-   * 确保目录存在
-   */
-  private ensureDir(): void {
-    if (!existsSync(this.tokensDir)) {
-      mkdirSync(this.tokensDir, { recursive: true, mode: 0o700 });
-      this.logger.info('Created agent tokens directory', { 
-        path: this.tokensDir,
-        agentIdPrefix: this.agentId.slice(0, 16)
-      });
-    }
-  }
-
-  /**
-   * 验证 Token 数据结构完整性
-   */
-  private validateTokenStructure(data: unknown): boolean {
-    if (!data || typeof data !== 'object') return false;
-    
-    const obj = data as Record<string, unknown>;
-    
-    // 必须字段
-    const requiredFields = ['token', 'agentId', 'createdAt', 'expiresAt', 'revoked'];
-    for (const field of requiredFields) {
-      if (obj[field] === undefined || obj[field] === null) return false;
-    }
-    
-    // token 格式验证
-    if (typeof obj.token !== 'string' || !obj.token.startsWith(TOKEN_PREFIX)) {
-      return false;
-    }
-    
-    // agentId 格式验证
-    if (typeof obj.agentId !== 'string' || !obj.agentId.startsWith('agent:')) {
-      return false;
-    }
-    
-    return true;
-  }
-
-  /**
-   * 生成并保存 agent token
-   * @param agentId Agent ID（必须与当前 agentId 一致）
+   * 生成 agent token
+   * @param agentId Agent ID
    * @returns 生成的 agent token
    */
-  generateAndSave(agentId: string): string {
-    // v2: 验证 agentId 必须与当前 agent 一致
-    if (agentId !== this.agentId) {
-      this.logger.error('Cannot generate token for different agent', {
-        currentAgentIdPrefix: this.agentId.slice(0, 16),
-        requestedAgentIdPrefix: agentId.slice(0, 16)
-      });
-      throw new Error(`Cannot generate token for agent ${agentId}: only current agent ${this.agentId} is allowed`);
-    }
-    
-    this.ensureDir();
-    
-    // 生成随机 token
-    const token = this.generateToken();
-    
+  generate(agentId: string): string {
+    const token = TOKEN_PREFIX + randomBytes(32).toString('hex');
     const now = Date.now();
     const tokenData: AgentTokenData = {
       token,
@@ -257,64 +92,23 @@ export class AgentTokenManager {
       expiresAt: now + this.expireAfterMs,
       revoked: false,
     };
-    
-    // 保存到内存
+
+    // 存储到 token → data 映射
     this.tokens.set(token, tokenData);
-    
-    // 保存到文件（v2: 加密保存）
-    this.saveToFile(tokenData);
-    
+
+    // 存储到 agentId → tokens 映射
+    if (!this.agentTokens.has(agentId)) {
+      this.agentTokens.set(agentId, new Set());
+    }
+    this.agentTokens.get(agentId)!.add(token);
+
     this.logger.info('Agent token generated', {
       tokenPrefix: token.slice(0, 8),
       agentIdPrefix: agentId.slice(0, 16),
       expiresAt: new Date(tokenData.expiresAt).toISOString(),
-      encrypted: this.useEncryption
     });
-    
+
     return token;
-  }
-
-  /**
-   * 生成随机 agent token
-   * @returns 64 位十六进制字符串（agent- + 64 hex chars）
-   */
-  private generateToken(): string {
-    return TOKEN_PREFIX + randomBytes(32).toString('hex');
-  }
-
-  /**
-   * 保存 token 到文件
-   * v2: 加密保存
-   */
-  private saveToFile(tokenData: AgentTokenData): void {
-    const hexPart = tokenData.token.slice(TOKEN_PREFIX.length);
-    const filePath = join(this.tokensDir, TOKEN_PREFIX + hexPart + '.json');
-    
-    let content: string;
-    
-    if (this.useEncryption && this.encryption) {
-      // v2: 加密保存
-      const plaintext = JSON.stringify(tokenData);
-      const encrypted = this.encryption.encrypt(plaintext);
-      content = JSON.stringify(encrypted);
-      
-      this.logger.debug('Token encrypted before save', {
-        tokenPrefix: tokenData.token.slice(0, 8),
-        algorithm: encrypted.algorithm
-      });
-    } else {
-      // 非加密模式（向后兼容）
-      content = JSON.stringify(tokenData, null, 2);
-    }
-    
-    // 文件权限保持 0o600
-    writeFileSync(filePath, content, { mode: 0o600 });
-    
-    this.logger.debug('Token saved to file', {
-      tokenPrefix: tokenData.token.slice(0, 8),
-      path: filePath,
-      encrypted: this.useEncryption
-    });
   }
 
   /**
@@ -326,18 +120,17 @@ export class AgentTokenManager {
     if (!token) {
       return { valid: false, error: 'Token is empty' };
     }
-    
+
     const tokenData = this.tokens.get(token);
-    
+
     // 检查 token 是否存在
     if (!tokenData) {
       this.logger.warn('Token verification failed: token not found', {
-        tokenPrefix: token?.slice(0, 8),
-        agentIdPrefix: this.agentId.slice(0, 16)
+        tokenPrefix: token.slice(0, 8),
       });
       return { valid: false, error: 'Token not found' };
     }
-    
+
     // 检查 token 是否已被撤销
     if (tokenData.revoked) {
       this.logger.warn('Token verification failed: token revoked', {
@@ -346,7 +139,7 @@ export class AgentTokenManager {
       });
       return { valid: false, error: 'Token revoked' };
     }
-    
+
     // 检查 token 是否过期
     if (Date.now() > tokenData.expiresAt) {
       this.logger.warn('Token verification failed: token expired', {
@@ -356,53 +149,50 @@ export class AgentTokenManager {
       });
       return { valid: false, error: 'Token expired' };
     }
-    
-    // 更新最后使用时间（仅在内存中，避免频繁磁盘 IO）
+
+    // 更新最后使用时间
     tokenData.lastUsedAt = Date.now();
-    
+
     this.logger.debug('Token verified successfully', {
       tokenPrefix: token.slice(0, 8),
       agentIdPrefix: tokenData.agentId.slice(0, 16),
     });
-    
+
     return { valid: true, agentId: tokenData.agentId };
   }
 
   /**
    * 验证 token 是否属于指定 agent
-   * v2: 使用 tokensByAgent Map 查找（其他 agent 的 token 不可见）
    * @param token Agent token
    * @param agentId Agent ID
    * @returns 验证结果
    */
   verifyForAgent(token: string | undefined, agentId: string): { valid: boolean; error?: string } {
-    // v2: 使用 tokensByAgent 查找，确保隔离性
-    const agentTokens = this.tokensByAgent.get(agentId);
-    
-    if (!agentTokens) {
-      this.logger.warn('Token verification failed: agent not in memory map', {
+    const agentTokenSet = this.agentTokens.get(agentId);
+
+    if (!agentTokenSet) {
+      this.logger.warn('Token verification failed: agent has no tokens', {
         tokenPrefix: token?.slice(0, 8),
-        agentIdPrefix: agentId.slice(0, 16)
+        agentIdPrefix: agentId.slice(0, 16),
       });
-      return { valid: false, error: 'Agent tokens not available' };
+      return { valid: false, error: 'Agent has no tokens' };
     }
-    
+
     if (!token) {
       return { valid: false, error: 'Token is empty' };
     }
-    
-    const tokenData = agentTokens.get(token);
-    
+
+    const tokenData = this.tokens.get(token);
+
     // 检查 token 是否存在于该 agent 的 tokens 中
-    if (!tokenData) {
+    if (!tokenData || !agentTokenSet.has(token)) {
       this.logger.warn('Token verification failed: token not found for this agent', {
         tokenPrefix: token.slice(0, 8),
-        agentIdPrefix: agentId.slice(0, 16)
+        agentIdPrefix: agentId.slice(0, 16),
       });
-      // ← 其他 agent 的 token 不会出现在这里
       return { valid: false, error: 'Token not found' };
     }
-    
+
     // 检查 token 是否已被撤销
     if (tokenData.revoked) {
       this.logger.warn('Token verification failed: token revoked', {
@@ -411,7 +201,7 @@ export class AgentTokenManager {
       });
       return { valid: false, error: 'Token revoked' };
     }
-    
+
     // 检查 token 是否过期
     if (Date.now() > tokenData.expiresAt) {
       this.logger.warn('Token verification failed: token expired', {
@@ -421,15 +211,15 @@ export class AgentTokenManager {
       });
       return { valid: false, error: 'Token expired' };
     }
-    
+
     // 更新最后使用时间
     tokenData.lastUsedAt = Date.now();
-    
+
     this.logger.debug('Token verified for agent successfully', {
       tokenPrefix: token.slice(0, 8),
       agentIdPrefix: agentId.slice(0, 16),
     });
-    
+
     return { valid: true };
   }
 
@@ -440,28 +230,58 @@ export class AgentTokenManager {
    */
   revoke(token: string): boolean {
     const tokenData = this.tokens.get(token);
-    
+
     if (!tokenData) {
       this.logger.warn('Cannot revoke token: token not found', {
         tokenPrefix: token.slice(0, 8),
-        agentIdPrefix: this.agentId.slice(0, 16)
       });
       return false;
     }
-    
+
     tokenData.revoked = true;
     tokenData.lastUsedAt = Date.now();
-    
-    // 更新文件（v2: 加密保存）
-    this.saveToFile(tokenData);
-    
+
     this.logger.info('Agent token revoked', {
       tokenPrefix: token.slice(0, 8),
       agentIdPrefix: tokenData.agentId.slice(0, 16),
-      encrypted: this.useEncryption
     });
-    
+
     return true;
+  }
+
+  /**
+   * 撤销指定 agent 的所有 token
+   * @param agentId Agent ID
+   * @returns 撤销的 token 数量
+   */
+  revokeAllForAgent(agentId: string): number {
+    const agentTokenSet = this.agentTokens.get(agentId);
+
+    if (!agentTokenSet || agentTokenSet.size === 0) {
+      this.logger.debug('No tokens to revoke for agent', {
+        agentIdPrefix: agentId.slice(0, 16),
+      });
+      return 0;
+    }
+
+    let revokedCount = 0;
+    const now = Date.now();
+
+    for (const token of Array.from(agentTokenSet)) {
+      const tokenData = this.tokens.get(token);
+      if (tokenData && !tokenData.revoked) {
+        tokenData.revoked = true;
+        tokenData.lastUsedAt = now;
+        revokedCount++;
+      }
+    }
+
+    this.logger.info('All agent tokens revoked', {
+      agentIdPrefix: agentId.slice(0, 16),
+      count: revokedCount,
+    });
+
+    return revokedCount;
   }
 
   /**
@@ -471,26 +291,23 @@ export class AgentTokenManager {
   cleanExpired(): number {
     const now = Date.now();
     let cleanedCount = 0;
-    
-    for (const [token, tokenData] of this.tokens.entries()) {
+
+    for (const [token, tokenData] of Array.from(this.tokens.entries())) {
       // 清理过期的或已撤销的 token
       if (tokenData.expiresAt < now || tokenData.revoked) {
+        // 从 tokens map 中删除
         this.tokens.delete(token);
-        
-        // 从 tokensByAgent 中同步删除
-        const agentTokens = this.tokensByAgent.get(this.agentId);
-        if (agentTokens) {
-          agentTokens.delete(token);
+
+        // 从 agentTokens map 中删除
+        const agentTokenSet = this.agentTokens.get(tokenData.agentId);
+        if (agentTokenSet) {
+          agentTokenSet.delete(token);
+          // 如果 agent 没有任何 token 了，清理 agentId 入口
+          if (agentTokenSet.size === 0) {
+            this.agentTokens.delete(tokenData.agentId);
+          }
         }
-        
-        // 删除文件
-        const hexPart = token.slice(TOKEN_PREFIX.length);
-        const filePath = join(this.tokensDir, TOKEN_PREFIX + hexPart + '.json');
-        if (existsSync(filePath)) {
-          rmSync(filePath);
-          this.logger.debug('Token file deleted', { path: filePath });
-        }
-        
+
         cleanedCount++;
         this.logger.debug('Expired token cleaned', {
           tokenPrefix: token.slice(0, 8),
@@ -499,14 +316,11 @@ export class AgentTokenManager {
         });
       }
     }
-    
+
     if (cleanedCount > 0) {
-      this.logger.info('Expired tokens cleaned', { 
-        count: cleanedCount,
-        agentIdPrefix: this.agentId.slice(0, 16)
-      });
+      this.logger.info('Expired tokens cleaned', { count: cleanedCount });
     }
-    
+
     return cleanedCount;
   }
 
@@ -520,7 +334,7 @@ export class AgentTokenManager {
   }
 
   /**
-   * 列出所有 token（当前 agent）
+   * 列出所有 token
    * @returns Token 数据列表
    */
   list(): AgentTokenData[] {
@@ -529,20 +343,23 @@ export class AgentTokenManager {
 
   /**
    * 获取指定 agent 的所有 token
-   * v2: 使用 tokensByAgent 查找
    * @param agentId Agent ID
    * @returns Token 数据列表
    */
   listByAgent(agentId: string): AgentTokenData[] {
-    const agentTokens = this.tokensByAgent.get(agentId);
-    if (!agentTokens) {
-      // 其他 agent 的 token 对当前 agent 不可见
-      this.logger.warn('Agent tokens not available', {
-        agentIdPrefix: agentId.slice(0, 16)
-      });
+    const agentTokenSet = this.agentTokens.get(agentId);
+    if (!agentTokenSet) {
       return [];
     }
-    return Array.from(agentTokens.values());
+
+    const result: AgentTokenData[] = [];
+    for (const token of Array.from(agentTokenSet)) {
+      const tokenData = this.tokens.get(token);
+      if (tokenData) {
+        result.push(tokenData);
+      }
+    }
+    return result;
   }
 
   /**
@@ -567,41 +384,8 @@ export class AgentTokenManager {
    */
   clear(): void {
     this.tokens.clear();
-    
-    // 清理 tokensByAgent
-    this.tokensByAgent.delete(this.agentId);
-    
-    if (existsSync(this.tokensDir)) {
-      const files = readdirSync(this.tokensDir)
-        .filter(f => f.endsWith('.json') && f.startsWith(TOKEN_PREFIX));
-      for (const file of files) {
-        rmSync(join(this.tokensDir, file));
-      }
-    }
-    
-    this.logger.debug('All tokens cleared', {
-      agentIdPrefix: this.agentId.slice(0, 16)
-    });
-  }
+    this.agentTokens.clear();
 
-  /**
-   * 获取当前 Agent ID
-   */
-  getAgentId(): string {
-    return this.agentId;
-  }
-
-  /**
-   * 获取 tokens 目录
-   */
-  getTokensDir(): string {
-    return this.tokensDir;
-  }
-
-  /**
-   * 检查是否使用加密
-   */
-  isEncrypted(): boolean {
-    return this.useEncryption;
+    this.logger.debug('All tokens cleared');
   }
 }

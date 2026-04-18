@@ -1,12 +1,56 @@
 /**
  * F2A CLI - Agent 管理命令
  * f2a agent register / list / unregister
+ * Phase 4: 保存 token 到 identity 文件
  */
 
 import { request, RequestOptions } from 'http';
 import { getControlTokenLazy } from './control-token.js';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 
 const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
+
+/**
+ * Phase 4: 保存 identity 文件（含 token）
+ */
+function saveIdentityWithToken(agentId: string, token: string): boolean {
+  try {
+    const dataDir = join(homedir(), '.f2a');
+    const agentsDir = join(dataDir, 'agents');
+    
+    // 确保目录存在
+    if (!existsSync(agentsDir)) {
+      mkdirSync(agentsDir, { recursive: true });
+    }
+    
+    const identityFile = join(agentsDir, `${agentId}.json`);
+    
+    // 读取现有 identity（如果存在）
+    let identity: Record<string, unknown>;
+    if (existsSync(identityFile)) {
+      identity = JSON.parse(readFileSync(identityFile, 'utf-8'));
+    } else {
+      // 如果不存在，创建基本的 identity 结构
+      identity = {
+        agentId,
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+      };
+    }
+    
+    // 更新 token 和 lastActiveAt
+    identity.token = token;
+    identity.lastActiveAt = new Date().toISOString();
+    
+    // 写入文件
+    writeFileSync(identityFile, JSON.stringify(identity, null, 2), { mode: 0o600 });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * 发送 HTTP 请求到 ControlServer
@@ -59,6 +103,7 @@ async function sendRequest(
  * 注册 Agent
  * f2a agent register [--id <id>] --name <name> [--capability <cap>]... [--webhook <url>]
  * 注：--id 参数可选，若不提供则由 daemon 自动生成
+ * Phase 4: 保存 token 到 identity 文件
  */
 export async function registerAgent(options: {
   id?: string;

@@ -11,7 +11,7 @@
 import type { OpenClawPluginApi, WebhookConfig, ApiLogger } from './types.js';
 import { join } from 'path';
 import { homedir } from 'os';
-import { existsSync, readdirSync, readFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { createHmac } from 'crypto';
 
 /**
@@ -122,11 +122,12 @@ export default function register(api: OpenClawPluginApi) {
  * 自动注册到 F2A Daemon
  * Phase 6: 支持恢复已有身份
  * Phase 7: 使用 Challenge-Response 验证身份
+ * Phase 4: 保存 token 到 identity 文件
  */
 export async function registerToDaemon(
   api: OpenClawPluginApi,
   config: Required<WebhookConfig>
-): Promise<{ success: boolean; restored?: boolean; verified?: boolean; agent?: { agentId: string } }> {
+): Promise<{ success: boolean; restored?: boolean; verified?: boolean; agent?: { agentId: string }; token?: string }> {
   const controlPort = config.controlPort || 9001;
   
   // 检测 Daemon 是否运行
@@ -155,7 +156,9 @@ export async function registerToDaemon(
       const result = await verifyIdentity(api, config, identity);
       if (result.success && result.agent?.agentId) {
         api.logger?.info('[F2A] Identity verified via Challenge-Response:', result.agent.agentId.slice(0, 16));
-        return { success: true, restored: true, verified: true, agent: result.agent };      } else {
+        // Phase 4: token 已在 verifyIdentity 中保存
+        return { success: true, restored: true, verified: true, agent: result.agent, token: result.sessionToken };
+      } else {
         api.logger?.warn('[F2A] Challenge-Response failed, falling back to new registration');
       }
     }
@@ -189,7 +192,17 @@ export async function registerToDaemon(
       return { success: false };
     }
     
-    const result = await response.json() as { success?: boolean; restored?: boolean; agent?: { agentId: string } };
+    // Phase 4: 解析包含 token 的响应
+    const result = await response.json() as { success?: boolean; restored?: boolean; agent?: { agentId: string }; token?: string };
+    
+    // Phase 4: 保存 token 到 identity 文件
+    if (result.token && result.agent?.agentId) {
+      if (saveIdentityWithToken(result.agent.agentId, result.token)) {
+        api.logger?.info('[F2A] Token saved to identity file:', result.agent.agentId.slice(0, 16));
+      } else {
+        api.logger?.warn('[F2A] Failed to save token to identity file');
+      }
+    }
     
     if (result.restored) {
       api.logger?.info('[F2A] Agent identity restored:', result.agent?.agentId);
@@ -197,7 +210,7 @@ export async function registerToDaemon(
       api.logger?.info('[F2A] New agent registered:', result.agent?.agentId);
     }
     
-    return { success: result.success ?? false, restored: result.restored, agent: result.agent };
+    return { success: result.success ?? false, restored: result.restored, agent: result.agent, token: result.token };
   } catch (err) {
     api.logger?.error('[F2A] Registration request failed:', String(err));
     return { success: false };
@@ -432,6 +445,7 @@ const { runId } = await api.runtime.subagent.run({
 
 /**
  * Agent Identity 结构（简化版）
+ * Phase 4: 添加 token 字段
  */
 interface AgentIdentityFile {
   agentId: string;
@@ -443,6 +457,8 @@ interface AgentIdentityFile {
   capabilities?: { name: string; version?: string }[];
   createdAt: string;
   lastActiveAt: string;
+  /** Phase 4: Agent Token（用于 API 认证） */
+  token?: string;
 }
 
 /**
@@ -459,6 +475,51 @@ function readIdentityFile(agentId: string): AgentIdentityFile | null {
     // 忽略错误
   }
   return null;
+}
+
+/**
+ * Phase 4: 保存 Identity 文件（含 token）
+ * 更新 identity 文件中的 token 字段
+ */
+function saveIdentityWithToken(agentId: string, token: string): boolean {
+  try {
+    const dataDir = join(homedir(), '.f2a');
+    const agentsDir = join(dataDir, 'agents');
+    
+    // 确保目录存在
+    if (!existsSync(agentsDir)) {
+      mkdirSync(agentsDir, { recursive: true });
+    }
+    
+    const identityFile = join(agentsDir, `${agentId}.json`);
+    
+    // 读取现有 identity（如果存在）
+    let identity: AgentIdentityFile;
+    if (existsSync(identityFile)) {
+      identity = JSON.parse(readFileSync(identityFile, 'utf-8')) as AgentIdentityFile;
+    } else {
+      // 如果不存在，创建基本的 identity 结构
+      identity = {
+        agentId,
+        name: 'OpenClaw Agent',
+        peerId: '',
+        signature: '',
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+      };
+    }
+    
+    // 更新 token 和 lastActiveAt
+    identity.token = token;
+    identity.lastActiveAt = new Date().toISOString();
+    
+    // 写入文件
+    writeFileSync(identityFile, JSON.stringify(identity, null, 2), { mode: 0o600 });
+    return true;
+  } catch (err) {
+    // 忽略错误
+    return false;
+  }
 }
 
 /**
@@ -555,11 +616,21 @@ async function verifyIdentity(
       return { success: false };
     }
     
-    const result = await verifyReq.json() as { success?: boolean; verified?: boolean; sessionToken?: string; agent?: { agentId: string } };
+    const result = await verifyReq.json() as { success?: boolean; verified?: boolean; agentToken?: string; sessionToken?: string; agent?: { agentId: string } };
     
-    if (result.success && result.verified && result.sessionToken) {
+    // Phase 4: 服务器返回 agentToken，兼容旧的 sessionToken 字段名
+    const token = result.agentToken || result.sessionToken;
+    
+    if (result.success && result.verified && token) {
+      // Phase 4: 保存 token 到 identity 文件
+      if (saveIdentityWithToken(identity.agentId, token)) {
+        api.logger?.info('[F2A] Token saved to identity file:', identity.agentId.slice(0, 16));
+      } else {
+        api.logger?.warn('[F2A] Failed to save token to identity file');
+      }
+      
       api.logger?.info('[F2A] Identity verified via Challenge-Response:', identity.agentId.slice(0, 16));
-      return { success: true, sessionToken: result.sessionToken, agent: result.agent };
+      return { success: true, sessionToken: token, agent: result.agent };
     }
     
     api.logger?.warn('[F2A] Identity verification failed:', JSON.stringify(result));

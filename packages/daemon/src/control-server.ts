@@ -101,6 +101,8 @@ export class ControlServer {
   // 使用 ! 断言，因为它在构造函数中被初始化
   private e2eeCrypto!: E2EECrypto;
   private dataDir: string;
+  // Phase 1: 全局 AgentTokenManager（纯内存版本）
+  private agentTokenManager: AgentTokenManager;
 
 
   constructor(f2a: F2A, port: number, tokenManager?: TokenManager, options?: ControlServerOptions) {
@@ -128,6 +130,9 @@ export class ControlServer {
     // Phase 6: 初始化 Identity Manager（daemon 特有的 Agent 身份持久化）
     this.identityManager = new AgentIdentityManager(this.dataDir);
     this.identityManager.loadAll();
+
+    // Phase 1: 初始化全局 AgentTokenManager（纯内存版本）
+    this.agentTokenManager = new AgentTokenManager();
 
 
 
@@ -290,6 +295,12 @@ export class ControlServer {
     const webhookMatch = req.url?.match(/^\/api\/agents\/([^\/]+)\/webhook$/);
     if (req.method === 'PATCH' && webhookMatch) {
       this.handleUpdateWebhook(decodeURIComponent(webhookMatch[1]), req, res);
+      return;
+    }
+    
+    // POST /api/agents/verify - 验证 Challenge-Response（Phase 7）
+    if (req.method === 'POST' && req.url === '/api/agents/verify') {
+      this.handleVerifyAgent(req, res);
       return;
     }
     
@@ -775,7 +786,7 @@ export class ControlServer {
         
         // 🔑 Phase 6: 如果提供了已有 agentId，尝试恢复身份
         if (data.agentId) {
-          const existingIdentity = this.identityManager.get(data.agentId);
+          let existingIdentity = this.identityManager.get(data.agentId);
           
           if (existingIdentity) {
             // 恢复身份：更新 webhook
@@ -799,10 +810,14 @@ export class ControlServer {
             // 创建消息队列
             this.messageRouter.createQueue(data.agentId);
             
+            // Phase 4: 生成 agent token
+            const agentToken = this.agentTokenManager.generate(existingIdentity.agentId);
+            
             this.logger.info('Agent identity restored', {
               agentId: existingIdentity.agentId,
               name: existingIdentity.name,
               peerId: existingIdentity.peerId,
+              tokenPrefix: agentToken.slice(0, 8),
             });
             
             res.writeHead(200);
@@ -810,6 +825,7 @@ export class ControlServer {
               success: true,
               restored: true,
               agent: restored,
+              token: agentToken,
             }));
             return;
           }
@@ -873,10 +889,14 @@ export class ControlServer {
         // 创建消息队列
         this.messageRouter.createQueue(registration.agentId);
 
+        // Phase 4: 生成 agent token
+        const agentToken = this.agentTokenManager.generate(registration.agentId);
+        
         this.logger.info('Agent registered via API (node-issued)', {
           agentId: registration.agentId,
           name: registration.name,
           peerId: registration.peerId,
+          tokenPrefix: agentToken.slice(0, 8),
         });
 
         res.writeHead(201);
@@ -884,6 +904,7 @@ export class ControlServer {
           success: true,
           restored: false,
           agent: registration,
+          token: agentToken,
         }));
       } catch (error) {
         res.writeHead(400);
@@ -976,6 +997,42 @@ export class ControlServer {
       try {
         const data = JSON.parse(body);
         
+        // === RFC 007: Token 验证 ===
+        // 从 Authorization header 获取 agent token
+        const authHeader = req.headers['authorization'] as string;
+        const agentToken = authHeader?.startsWith('agent-') 
+          ? authHeader.slice(6)  // 去掉 'agent-' 前缀
+          : undefined;
+
+        if (!agentToken) {
+          this.logger.warn('UpdateWebhook request missing Authorization header', {
+            agentIdPrefix: agentId?.slice(0, 16),
+          });
+          res.writeHead(401);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Missing Authorization header. Expected format: Authorization: agent-{token}',
+            code: 'MISSING_TOKEN',
+          }));
+          return;
+        }
+
+        // 使用全局 AgentTokenManager 验证 token 属于该 agentId
+        const verifyResult = this.agentTokenManager.verifyForAgent(agentToken, agentId);
+        if (!verifyResult.valid) {
+          this.logger.warn('UpdateWebhook token verification failed', {
+            agentIdPrefix: agentId?.slice(0, 16),
+            error: verifyResult.error,
+          });
+          res.writeHead(401);
+          res.end(JSON.stringify({
+            success: false,
+            error: verifyResult.error || 'Invalid token',
+            code: 'TOKEN_INVALID',
+          }));
+          return;
+        }
+
         const agent = this.agentRegistry.get(agentId);
         if (!agent) {
           res.writeHead(404);
@@ -1087,16 +1144,9 @@ export class ControlServer {
             return;
           }
 
-          // 创建 AgentTokenManager 并验证 token 属于 fromAgentId
+          // 使用全局 AgentTokenManager 验证 token 属于 fromAgentId
           try {
-            const agentTokenManager = new AgentTokenManager(
-              this.dataDir,
-              data.fromAgentId,
-              { useEncryption: true }
-            );
-            agentTokenManager.loadForAgent();
-
-            const verifyResult = agentTokenManager.verifyForAgent(agentToken, data.fromAgentId);
+            const verifyResult = this.agentTokenManager.verifyForAgent(agentToken, data.fromAgentId);
 
             if (!verifyResult.valid) {
               this.logger.warn('Token verification failed', {
@@ -1381,19 +1431,13 @@ export class ControlServer {
         }
         
         // ✅ 5️⃣ 验证通过：生成新 session token
-        // RFC 007: 为每个 agent 创建独立的 token manager 并保存 token
+        // Phase 1: 使用全局 AgentTokenManager 生成 token（纯内存版本）
         try {
-          const agentTokenManager = new AgentTokenManager(
-            this.dataDir,
-            data.agentId,
-            { useEncryption: true }
-          );
-          const agentToken = agentTokenManager.generateAndSave(data.agentId);
+          const agentToken = this.agentTokenManager.generate(data.agentId);
           
-          this.logger.info('Agent token generated and saved', {
+          this.logger.info('Agent token generated', {
             agentId: data.agentId?.slice(0, 16),
             tokenPrefix: agentToken.slice(0, 8),
-            encrypted: true
           });
           
           // 6️⃣ 更新 identity

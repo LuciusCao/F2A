@@ -343,6 +343,11 @@ export class WebhookService {
         const message = err instanceof Error ? err.message : String(err);
         this.logger.warn('Attempt failed', { attempt, error: message });
 
+        // 安全错误（如 DNS rebinding）不应 retry，立即返回
+        if (message.includes('DNS rebinding') || message.includes('private IP')) {
+          return { success: false, error: message };
+        }
+
         if (attempt < this.config.retries!) {
           await this.delay(this.config.retryDelay!);
         }

@@ -318,7 +318,11 @@ describe('ControlServer', () => {
       const req = createMockReq({
         method: 'POST',
         url: '/api/agents',
-        body: { name: '猫咕噜', capabilities: ['chat'] },
+        body: { 
+          name: '猫咕噜', 
+          capabilities: ['chat'],
+          webhook: { url: 'http://127.0.0.1:9002/f2a/webhook' }
+        },
         headers: { 'x-f2a-token': TEST_TOKEN }
       });
       const res = createMockRes();
@@ -343,7 +347,7 @@ describe('ControlServer', () => {
       const req = createMockReq({
         method: 'POST',
         url: '/api/agents',
-        body: { capabilities: ['chat'] },
+        body: { capabilities: ['chat'], webhook: { url: 'http://test' } },
         headers: { 'x-f2a-token': TEST_TOKEN }
       });
       const res = createMockRes();
@@ -354,6 +358,29 @@ describe('ControlServer', () => {
       const responseData = JSON.parse(res.end.mock.calls[0][0]);
       expect(responseData.success).toBe(false);
       expect(responseData.error).toContain('Missing required field: name');
+      
+      server.stop();
+    });
+
+    it('should reject request without webhook.url', async () => {
+      mockRateLimiterAllow = true;
+      await server.start();
+      
+      const handler = lastMockServer._handler;
+      const req = createMockReq({
+        method: 'POST',
+        url: '/api/agents',
+        body: { name: 'NoWebhook', capabilities: ['chat'] },
+        headers: { 'x-f2a-token': TEST_TOKEN }
+      });
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      expect(res.writeHead).toHaveBeenCalledWith(400);
+      const responseData = JSON.parse(res.end.mock.calls[0][0]);
+      expect(responseData.success).toBe(false);
+      expect(responseData.error).toContain('webhook.url');
       
       server.stop();
     });

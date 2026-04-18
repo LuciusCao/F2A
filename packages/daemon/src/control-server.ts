@@ -810,6 +810,20 @@ export class ControlServer {
           return;
         }
 
+        // RFC 004: 通过 HTTP API 注册的 Agent 必须提供 webhook
+        // 原因：HTTP API 是跨进程调用，无法传递 onMessage 函数回调
+        // 只有 webhook 才能让 daemon 推送消息给 agent
+        if (!data.webhook?.url) {
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Missing required field: webhook.url - Agents registered via HTTP API must provide a webhook endpoint for message delivery',
+            code: 'INVALID_REQUEST',
+            hint: 'Example: {"webhook": {"url": "http://127.0.0.1:9002/f2a/webhook"}}',
+          }));
+          return;
+        }
+
         // 转换 capabilities 格式
         const capabilities = (data.capabilities || []).map((cap: string | { name: string; version?: string }) => {
           if (typeof cap === 'string') {

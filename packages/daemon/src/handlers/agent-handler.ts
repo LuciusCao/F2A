@@ -77,6 +77,8 @@ export class AgentHandler {
   
   // 状态：pendingChallenges 移入此类
   private pendingChallenges: Map<string, Challenge> = new Map();
+  // P2-2: 清理任务的定时器
+  private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(deps: AgentHandlerDeps) {
     this.agentRegistry = deps.agentRegistry;
@@ -616,5 +618,52 @@ export class AgentHandler {
    */
   private generateNonce(): string {
     return randomBytes(16).toString('hex');  // 32 位随机字符串
+  }
+
+  // ========== P2-2: 清理机制 ==========
+
+  /**
+   * 启动过期 challenge 清理任务
+   * 每隔 30 秒扫描一次，删除超过 60 秒的 challenge
+   */
+  startCleanupTask(): void {
+    if (this.cleanupInterval) return; // 防止重复启动
+    
+    this.cleanupInterval = setInterval(() => {
+      this.cleanupExpiredChallenges();
+    }, 30000); // 每 30 秒
+    
+    this.logger.info('Challenge cleanup task started', { intervalMs: 30000 });
+  }
+
+  /**
+   * 停止清理任务
+   */
+  stopCleanupTask(): void {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+      this.logger.info('Challenge cleanup task stopped');
+    }
+  }
+
+  /**
+   * 清理过期的 challenge
+   * @private
+   */
+  private cleanupExpiredChallenges(): void {
+    const now = Date.now();
+    let cleaned = 0;
+    
+    for (const [agentId, challenge] of this.pendingChallenges.entries()) {
+      if (now - challenge.timestamp > CHALLENGE_EXPIRY_MS) {
+        this.pendingChallenges.delete(agentId);
+        cleaned++;
+      }
+    }
+    
+    if (cleaned > 0) {
+      this.logger.info('Cleaned up expired challenges', { count: cleaned });
+    }
   }
 }

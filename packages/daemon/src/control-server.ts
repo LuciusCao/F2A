@@ -244,6 +244,8 @@ export class ControlServer {
 
       this.server.listen(this.port, () => {
         this.logger.info('Listening', { port: this.port });
+        // P2-2: 启动 challenge 清理任务
+        this.agentHandler.startCleanupTask();
         resolve();
       });
     });
@@ -253,6 +255,9 @@ export class ControlServer {
    * 停止控制服务器
    */
   stop(): void {
+    // P2-2: 停止 challenge 清理任务
+    this.agentHandler.stopCleanupTask();
+    
     if (this.server) {
       this.server.close();
       this.server = undefined;

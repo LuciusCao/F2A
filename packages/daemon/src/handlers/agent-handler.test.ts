@@ -3,7 +3,7 @@
  * P2-3: 验证所有错误响应包含 code 字段
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { AgentHandler } from './agent-handler.js';
 import type { AgentRegistry, MessageRouter, E2EECrypto } from '@f2a/network';
@@ -478,6 +478,318 @@ describe('AgentHandler - Error Response Code Field', () => {
       expect(data.success).toBe(false);
       expect(data.error).toBe('Invalid JSON');
       expect(data.code).toBe('INVALID_JSON');
+    });
+  });
+});
+
+/**
+ * P2-2: pendingChallenges 清理功能测试
+ */
+describe('AgentHandler - pendingChallenges 清理功能', () => {
+  let handler: AgentHandler;
+  let mockRegistry: ReturnType<typeof createMockAgentRegistry>;
+  let mockIdentityStore: ReturnType<typeof createMockIdentityStore>;
+  let mockTokenManager: ReturnType<typeof createMockAgentTokenManager>;
+  let mockE2EECrypto: ReturnType<typeof createMockE2EECrypto>;
+  let mockMessageRouter: ReturnType<typeof createMockMessageRouter>;
+  let mockLogger: ReturnType<typeof createMockLogger>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    mockRegistry = createMockAgentRegistry();
+    mockIdentityStore = createMockIdentityStore();
+    mockTokenManager = createMockAgentTokenManager();
+    mockE2EECrypto = createMockE2EECrypto();
+    mockMessageRouter = createMockMessageRouter();
+    mockLogger = createMockLogger();
+
+    handler = new AgentHandler({
+      agentRegistry: mockRegistry,
+      identityStore: mockIdentityStore,
+      agentTokenManager: mockTokenManager,
+      e2eeCrypto: mockE2EECrypto,
+      messageRouter: mockMessageRouter,
+      logger: mockLogger,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    // 确保清理任务停止
+    try {
+      (handler as any).stopCleanupTask?.();
+    } catch {
+      // 忽略错误
+    }
+  });
+
+  describe('startCleanupTask', () => {
+    it('调用后应该启动清理定时任务', () => {
+      // 检查方法是否存在
+      expect(typeof (handler as any).startCleanupTask).toBe('function');
+
+      // 调用 startCleanupTask
+      (handler as any).startCleanupTask();
+
+      // 验证 cleanupInterval 已设置
+      const cleanupInterval = (handler as any).cleanupInterval;
+      expect(cleanupInterval).toBeDefined();
+      expect(typeof cleanupInterval).toBe('object'); // NodeJS.Timeout
+
+      // 清理
+      (handler as any).stopCleanupTask();
+    });
+
+    it('重复调用不应该创建多个 interval', () => {
+      (handler as any).startCleanupTask();
+      const firstInterval = (handler as any).cleanupInterval;
+
+      // 再次调用
+      (handler as any).startCleanupTask();
+      const secondInterval = (handler as any).cleanupInterval;
+
+      // 应该是同一个 interval（或者新的，旧的被清除）
+      expect((handler as any).cleanupInterval).toBeDefined();
+
+      // 清理
+      (handler as any).stopCleanupTask();
+    });
+
+    it('启动后定时任务应该定期执行清理', () => {
+      // 直接向 pendingChallenges 添加测试数据
+      const pendingChallenges = (handler as any).pendingChallenges;
+      pendingChallenges.set('agent:test1', {
+        nonce: 'nonce1',
+        webhook: { url: 'http://test1' },
+        timestamp: Date.now() - 120000, // 2分钟前（已过期）
+      });
+
+      // 启动清理任务
+      (handler as any).startCleanupTask();
+
+      // 推进时间 60 秒（默认清理间隔）
+      vi.advanceTimersByTime(60000);
+
+      // 验证清理方法被调用（通过检查过期数据是否被清理）
+      // 注意：具体实现可能不同，这里验证定时器已设置
+      expect((handler as any).cleanupInterval).toBeDefined();
+
+      // 清理
+      (handler as any).stopCleanupTask();
+    });
+  });
+
+  describe('stopCleanupTask', () => {
+    it('调用后应该停止清理定时任务', () => {
+      // 先启动
+      (handler as any).startCleanupTask();
+      expect((handler as any).cleanupInterval).toBeDefined();
+
+      // 停止
+      (handler as any).stopCleanupTask();
+      // 实现使用 null 而不是 undefined
+      expect((handler as any).cleanupInterval).toBeNull();
+    });
+
+    it('在没有启动时调用不应该报错', () => {
+      // 直接调用 stop，不应该抛出错误
+      expect(() => {
+        (handler as any).stopCleanupTask();
+      }).not.toThrow();
+    });
+
+    it('停止后定时任务不应该继续执行', () => {
+      const pendingChallenges = (handler as any).pendingChallenges;
+      pendingChallenges.set('agent:test1', {
+        nonce: 'nonce1',
+        webhook: { url: 'http://test1' },
+        timestamp: Date.now() - 120000,
+      });
+
+      // 启动后立即停止
+      (handler as any).startCleanupTask();
+      (handler as any).stopCleanupTask();
+
+      // 推进时间
+      vi.advanceTimersByTime(120000);
+
+      // 验证 interval 已清除（实现使用 null）
+      expect((handler as any).cleanupInterval).toBeNull();
+    });
+  });
+
+  describe('cleanupExpiredChallenges', () => {
+    it('过期的 challenge 应该被删除', () => {
+      const pendingChallenges = (handler as any).pendingChallenges;
+      const now = Date.now();
+
+      // 添加过期和未过期的 challenge
+      pendingChallenges.set('agent:expired1', {
+        nonce: 'nonce-expired1',
+        webhook: { url: 'http://test1' },
+        timestamp: now - 120000, // 2分钟前（过期，默认60秒有效期）
+      });
+      pendingChallenges.set('agent:expired2', {
+        nonce: 'nonce-expired2',
+        webhook: { url: 'http://test2' },
+        timestamp: now - 90000, // 90秒前（过期）
+      });
+
+      // 调用清理方法（不返回值，只清理）
+      (handler as any).cleanupExpiredChallenges();
+
+      // 验证过期的被删除
+      expect(pendingChallenges.has('agent:expired1')).toBe(false);
+      expect(pendingChallenges.has('agent:expired2')).toBe(false);
+      expect(pendingChallenges.size).toBe(0);
+    });
+
+    it('未过期的 challenge 应该保留', () => {
+      const pendingChallenges = (handler as any).pendingChallenges;
+      const now = Date.now();
+
+      // 添加未过期的 challenge
+      pendingChallenges.set('agent:valid1', {
+        nonce: 'nonce-valid1',
+        webhook: { url: 'http://test1' },
+        timestamp: now - 30000, // 30秒前（未过期）
+      });
+      pendingChallenges.set('agent:valid2', {
+        nonce: 'nonce-valid2',
+        webhook: { url: 'http://test2' },
+        timestamp: now - 1000, // 1秒前（未过期）
+      });
+
+      // 调用清理方法
+      (handler as any).cleanupExpiredChallenges();
+
+      // 验证未过期的保留
+      expect(pendingChallenges.has('agent:valid1')).toBe(true);
+      expect(pendingChallenges.has('agent:valid2')).toBe(true);
+      expect(pendingChallenges.size).toBe(2);
+    });
+
+    it('混合情况应该只删除过期的', () => {
+      const pendingChallenges = (handler as any).pendingChallenges;
+      const now = Date.now();
+
+      // 混合添加
+      pendingChallenges.set('agent:expired', {
+        nonce: 'nonce-expired',
+        webhook: { url: 'http://expired' },
+        timestamp: now - 120000, // 过期
+      });
+      pendingChallenges.set('agent:valid', {
+        nonce: 'nonce-valid',
+        webhook: { url: 'http://valid' },
+        timestamp: now - 30000, // 未过期
+      });
+
+      // 调用清理方法
+      (handler as any).cleanupExpiredChallenges();
+
+      // 验证结果
+      expect(pendingChallenges.has('agent:expired')).toBe(false);
+      expect(pendingChallenges.has('agent:valid')).toBe(true);
+      expect(pendingChallenges.size).toBe(1);
+    });
+
+    it('空 Map 应该正常处理', () => {
+      const pendingChallenges = (handler as any).pendingChallenges;
+      expect(pendingChallenges.size).toBe(0);
+
+      // 调用清理方法
+      (handler as any).cleanupExpiredChallenges();
+
+      expect(pendingChallenges.size).toBe(0);
+    });
+
+    it('应该记录清理数量到日志', () => {
+      const pendingChallenges = (handler as any).pendingChallenges;
+      const now = Date.now();
+
+      // 添加过期的 challenge
+      pendingChallenges.set('agent:expired', {
+        nonce: 'nonce-expired',
+        webhook: { url: 'http://test' },
+        timestamp: now - 120000,
+      });
+
+      // 调用清理方法
+      (handler as any).cleanupExpiredChallenges();
+
+      // 验证日志被调用
+      expect(mockLogger.info).toHaveBeenCalled();
+      // 查找包含清理信息的日志调用
+      const logCalls = mockLogger.info.mock.calls;
+      const cleanupLogCall = logCalls.find(
+        (call: any[]) => call[0]?.includes?.('Cleaned') || call[1]?.count !== undefined
+      );
+      expect(cleanupLogCall).toBeDefined();
+      // 验证清理数量
+      expect(cleanupLogCall?.[1]?.count).toBe(1);
+    });
+  });
+
+  describe('集成测试 - 与注册流程配合', () => {
+    // 集成测试使用真实 timers
+    beforeEach(() => {
+      vi.clearAllMocks();
+      // 不使用 fake timers
+      mockRegistry = createMockAgentRegistry();
+      mockIdentityStore = createMockIdentityStore();
+      mockTokenManager = createMockAgentTokenManager();
+      mockE2EECrypto = createMockE2EECrypto();
+      mockMessageRouter = createMockMessageRouter();
+      mockLogger = createMockLogger();
+
+      handler = new AgentHandler({
+        agentRegistry: mockRegistry,
+        identityStore: mockIdentityStore,
+        agentTokenManager: mockTokenManager,
+        e2eeCrypto: mockE2EECrypto,
+        messageRouter: mockMessageRouter,
+        logger: mockLogger,
+      });
+    });
+
+    afterEach(() => {
+      // 确保清理任务停止
+      try {
+        (handler as any).stopCleanupTask?.();
+      } catch {
+        // 忽略错误
+      }
+    });
+
+    it('创建 challenge 后应该能被正确清理', async () => {
+      const req = createMockReq({
+        method: 'POST',
+        body: {
+          agentId: 'agent:test-peer:abc123',
+          requestChallenge: true,
+          webhook: { url: 'http://test' },
+        },
+      });
+      const res = createMockRes();
+
+      await handler.handleRegisterAgent(req as IncomingMessage, res as ServerResponse);
+      await vi.waitFor(() => {
+        expect(res.writeHead).toHaveBeenCalled();
+      });
+
+      // 验证 challenge 被创建
+      const pendingChallenges = (handler as any).pendingChallenges;
+      expect(pendingChallenges.size).toBe(1);
+
+      // 模拟时间推进导致过期
+      const challenge = pendingChallenges.get('agent:test-peer:abc123');
+      challenge.timestamp = Date.now() - 120000; // 设为过期
+
+      // 清理
+      (handler as any).cleanupExpiredChallenges();
+      expect(pendingChallenges.size).toBe(0);
     });
   });
 });

@@ -302,64 +302,79 @@ export class ControlServer {
       return;
     }
 
+    // ========== API 版本控制检查 ==========
+    // 旧路径提示 - 向后兼容
+    if (req.url?.startsWith('/api/agents') || req.url?.startsWith('/api/messages')) {
+      if (!req.url?.startsWith('/api/v1/')) {
+        res.writeHead(400);
+        res.end(JSON.stringify({
+          success: false,
+          error: 'API version required. Please use /api/v1/ prefix',
+          code: 'API_VERSION_REQUIRED',
+          hint: `Try: ${req.url.replace('/api/', '/api/v1/')}`
+        }));
+        return;
+      }
+    }
+
     // ========== Agent 注册接口 ==========
     
-    // GET /api/agents - 列出所有注册的 Agent（无需认证）
-    if (req.method === 'GET' && req.url === '/api/agents') {
+    // GET /api/v1/agents - 列出所有注册的 Agent（无需认证）
+    if (req.method === 'GET' && req.url === '/api/v1/agents') {
       this.agentHandler.handleListAgents(res);
       return;
     }
     
-    // POST /api/agents - 注册 Agent（无需认证，但有 webhook 验证）
-    if (req.method === 'POST' && req.url === '/api/agents') {
+    // POST /api/v1/agents - 注册 Agent（无需认证，但有 webhook 验证）
+    if (req.method === 'POST' && req.url === '/api/v1/agents') {
       this.agentHandler.handleRegisterAgent(req, res);
       return;
     }
     
-    // DELETE /api/agents/:agentId - 注销 Agent（需认证）
-    const deleteAgentMatch = req.url?.match(/^\/api\/agents\/([^\/]+)$/);
+    // DELETE /api/v1/agents/:agentId - 注销 Agent（需认证）
+    const deleteAgentMatch = req.url?.match(/^\/api\/v1\/agents\/([^\/]+)$/);
     if (req.method === 'DELETE' && deleteAgentMatch) {
       this.agentHandler.handleUnregisterAgent(decodeURIComponent(deleteAgentMatch[1]), res);
       return;
     }
     
-    // GET /api/agents/:agentId - 获取 Agent 信息（无需认证）
-    const getAgentMatch = req.url?.match(/^\/api\/agents\/([^\/]+)$/);
+    // GET /api/v1/agents/:agentId - 获取 Agent 信息（无需认证）
+    const getAgentMatch = req.url?.match(/^\/api\/v1\/agents\/([^\/]+)$/);
     if (req.method === 'GET' && getAgentMatch) {
       this.agentHandler.handleGetAgent(decodeURIComponent(getAgentMatch[1]), res);
       return;
     }
     
-    // PATCH /api/agents/:agentId/webhook - 更新 Agent webhook（需认证）
-    const webhookMatch = req.url?.match(/^\/api\/agents\/([^\/]+)\/webhook$/);
+    // PATCH /api/v1/agents/:agentId/webhook - 更新 Agent webhook（需认证）
+    const webhookMatch = req.url?.match(/^\/api\/v1\/agents\/([^\/]+)\/webhook$/);
     if (req.method === 'PATCH' && webhookMatch) {
       this.agentHandler.handleUpdateWebhook(decodeURIComponent(webhookMatch[1]), req, res);
       return;
     }
     
-    // POST /api/agents/verify - Challenge-Response 验证（无需认证）
-    if (req.method === 'POST' && req.url === '/api/agents/verify') {
+    // POST /api/v1/agents/verify - Challenge-Response 验证（无需认证）
+    if (req.method === 'POST' && req.url === '/api/v1/agents/verify') {
       this.agentHandler.handleVerifyAgent(req, res);
       return;
     }
     
     // ========== 消息接口 ==========
     
-    // POST /api/messages - 发送消息（需 agent token 认证）
-    if (req.method === 'POST' && req.url === '/api/messages') {
+    // POST /api/v1/messages - 发送消息（需 agent token 认证）
+    if (req.method === 'POST' && req.url === '/api/v1/messages') {
       this.messageHandler.handleSendMessage(req, res);
       return;
     }
     
-    // GET /api/messages/:agentId - 获取 Agent 的消息队列
-    const getMessagesMatch = req.url?.match(/^\/api\/messages\/([^\/]+)$/);
+    // GET /api/v1/messages/:agentId - 获取 Agent 的消息队列
+    const getMessagesMatch = req.url?.match(/^\/api\/v1\/messages\/([^\/]+)$/);
     if (req.method === 'GET' && getMessagesMatch) {
       this.messageHandler.handleGetMessages(decodeURIComponent(getMessagesMatch[1]), req, res);
       return;
     }
     
-    // DELETE /api/messages/:agentId - 清除消息
-    const clearMessagesMatch = req.url?.match(/^\/api\/messages\/([^\/]+)$/);
+    // DELETE /api/v1/messages/:agentId - 清除消息
+    const clearMessagesMatch = req.url?.match(/^\/api\/v1\/messages\/([^\/]+)$/);
     if (req.method === 'DELETE' && clearMessagesMatch) {
       this.messageHandler.handleClearMessages(decodeURIComponent(clearMessagesMatch[1]), req, res);
       return;

@@ -383,13 +383,13 @@ describe('ControlServer', () => {
     });
   });
 
-  describe('GET /api/agents', () => {
+  describe('GET /api/v1/agents', () => {
     it('should return agents list', async () => {
       mockRateLimiterAllow = true;
       await server.start();
       
       const handler = lastMockServer._handler;
-      const req = createMockReq({ url: '/api/agents', headers: { 'x-f2a-token': TEST_TOKEN } });
+      const req = createMockReq({ url: '/api/v1/agents', headers: { 'x-f2a-token': TEST_TOKEN } });
       const res = createMockRes();
       
       handler(req, res);
@@ -400,7 +400,7 @@ describe('ControlServer', () => {
     });
   });
 
-  describe('POST /api/agents (RFC 003)', () => {
+  describe('POST /api/v1/agents (RFC 003)', () => {
     it('should register agent with node-issued AgentId', async () => {
       mockRateLimiterAllow = true;
       await server.start();
@@ -408,7 +408,7 @@ describe('ControlServer', () => {
       const handler = lastMockServer._handler;
       const req = createMockReq({
         method: 'POST',
-        url: '/api/agents',
+        url: '/api/v1/agents',
         body: { 
           name: '猫咕噜', 
           capabilities: ['chat'],
@@ -438,7 +438,7 @@ describe('ControlServer', () => {
       const handler = lastMockServer._handler;
       const req = createMockReq({
         method: 'POST',
-        url: '/api/agents',
+        url: '/api/v1/agents',
         body: { capabilities: ['chat'], webhook: { url: 'http://test' } },
         headers: { 'x-f2a-token': TEST_TOKEN }
       });
@@ -461,7 +461,7 @@ describe('ControlServer', () => {
       const handler = lastMockServer._handler;
       const req = createMockReq({
         method: 'POST',
-        url: '/api/agents',
+        url: '/api/v1/agents',
         body: { name: 'NoWebhook', capabilities: ['chat'] },
         headers: { 'x-f2a-token': TEST_TOKEN }
       });
@@ -473,6 +473,46 @@ describe('ControlServer', () => {
       const responseData = JSON.parse(res.end.mock.calls[0][0]);
       expect(responseData.success).toBe(false);
       expect(responseData.error).toContain('webhook.url');
+      
+      server.stop();
+    });
+  });
+
+  describe('API Version Check', () => {
+    it('should reject old /api/agents path with API_VERSION_REQUIRED error', async () => {
+      mockRateLimiterAllow = true;
+      await server.start();
+      
+      const handler = lastMockServer._handler;
+      const req = createMockReq({ url: '/api/agents' });
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      expect(res.writeHead).toHaveBeenCalledWith(400);
+      const responseData = JSON.parse(res.end.mock.calls[0][0]);
+      expect(responseData.success).toBe(false);
+      expect(responseData.code).toBe('API_VERSION_REQUIRED');
+      expect(responseData.hint).toContain('/api/v1/agents');
+      
+      server.stop();
+    });
+
+    it('should reject old /api/messages path with API_VERSION_REQUIRED error', async () => {
+      mockRateLimiterAllow = true;
+      await server.start();
+      
+      const handler = lastMockServer._handler;
+      const req = createMockReq({ url: '/api/messages/test-agent' });
+      const res = createMockRes();
+      
+      handler(req, res);
+      
+      expect(res.writeHead).toHaveBeenCalledWith(400);
+      const responseData = JSON.parse(res.end.mock.calls[0][0]);
+      expect(responseData.success).toBe(false);
+      expect(responseData.code).toBe('API_VERSION_REQUIRED');
+      expect(responseData.hint).toContain('/api/v1/messages');
       
       server.stop();
     });
@@ -495,7 +535,7 @@ describe('ControlServer', () => {
     });
   });
 
-  describe('POST /api/agents/verify - Token Generation', () => {
+  describe('POST /api/v1/agents/verify - Token Generation', () => {
     it('should generate agent token on successful verification', async () => {
       mockRateLimiterAllow = true;
       await server.start();
@@ -527,7 +567,7 @@ describe('ControlServer', () => {
       // First, setup a pending challenge via POST /api/agents with requestChallenge: true
       const challengeReq = createMockReq({
         method: 'POST',
-        url: '/api/agents',
+        url: '/api/v1/agents',
         body: {
           agentId: testAgentId,
           requestChallenge: true,
@@ -541,7 +581,7 @@ describe('ControlServer', () => {
       // Now verify with correct nonce and signature
       const verifyReq = createMockReq({
         method: 'POST',
-        url: '/api/agents/verify',
+        url: '/api/v1/agents/verify',
         body: {
           agentId: testAgentId,
           nonce: testNonce,
@@ -590,7 +630,7 @@ describe('ControlServer', () => {
       // Setup pending challenge via POST /api/agents with requestChallenge: true
       const challengeReq = createMockReq({
         method: 'POST',
-        url: '/api/agents',
+        url: '/api/v1/agents',
         body: {
           agentId: testAgentId,
           requestChallenge: true,
@@ -604,7 +644,7 @@ describe('ControlServer', () => {
       // Verify
       const verifyReq = createMockReq({
         method: 'POST',
-        url: '/api/agents/verify',
+        url: '/api/v1/agents/verify',
         body: {
           agentId: testAgentId,
           nonce: testNonce,
@@ -623,7 +663,7 @@ describe('ControlServer', () => {
     });
   });
 
-  describe('POST /api/messages - Authorization Validation', () => {
+  describe('POST /api/v1/messages - Authorization Validation', () => {
     it('should accept request with valid agent token', async () => {
       mockRateLimiterAllow = true;
       await server.start();
@@ -647,7 +687,7 @@ describe('ControlServer', () => {
       
       const req = createMockReq({
         method: 'POST',
-        url: '/api/messages',
+        url: '/api/v1/messages',
         body: {
           fromAgentId: testAgentId,
           toAgentId: 'agent:test-peer:receiver01',
@@ -701,7 +741,7 @@ describe('ControlServer', () => {
       
       const req = createMockReq({
         method: 'POST',
-        url: '/api/messages',
+        url: '/api/v1/messages',
         body: {
           fromAgentId: testAgentId,
           content: 'Hello!'
@@ -751,7 +791,7 @@ describe('ControlServer', () => {
       
       const req = createMockReq({
         method: 'POST',
-        url: '/api/messages',
+        url: '/api/v1/messages',
         body: {
           fromAgentId: testAgentId,
           content: 'Hello!'
@@ -806,7 +846,7 @@ describe('ControlServer', () => {
       
       const req = createMockReq({
         method: 'POST',
-        url: '/api/messages',
+        url: '/api/v1/messages',
         body: {
           fromAgentId: senderAgentId,
           content: 'Hello!'
@@ -832,8 +872,8 @@ describe('ControlServer', () => {
     });
   });
 
-  // P0 修复：PATCH /api/agents/:agentId/webhook 测试
-  describe('PATCH /api/agents/:agentId/webhook', () => {
+  // P0 修复：PATCH /api/v1/agents/:agentId/webhook 测试
+  describe('PATCH /api/v1/agents/:agentId/webhook', () => {
     const testAgentId = 'agent:test-peer:test123';
     const mockAgent = {
       agentId: testAgentId,
@@ -865,7 +905,7 @@ describe('ControlServer', () => {
       
       const req = createMockReq({
         method: 'PATCH',
-        url: `/api/agents/${encodeURIComponent(testAgentId)}/webhook`,
+        url: `/api/v1/agents/${encodeURIComponent(testAgentId)}/webhook`,
         body: {
           webhook: { url: 'http://new-webhook.example.com', token: 'new-token' }
         },
@@ -912,7 +952,7 @@ describe('ControlServer', () => {
       
       const req = createMockReq({
         method: 'PATCH',
-        url: `/api/agents/${encodeURIComponent(testAgentId)}/webhook`,
+        url: `/api/v1/agents/${encodeURIComponent(testAgentId)}/webhook`,
         body: {
           webhook: { url: 'http://new-webhook.example.com' }
         },
@@ -956,7 +996,7 @@ describe('ControlServer', () => {
       
       const req = createMockReq({
         method: 'PATCH',
-        url: `/api/agents/${encodeURIComponent(testAgentId)}/webhook`,
+        url: `/api/v1/agents/${encodeURIComponent(testAgentId)}/webhook`,
         body: {
           webhook: { url: 'http://new-webhook.example.com' }
         },
@@ -1011,7 +1051,7 @@ describe('ControlServer', () => {
       
       const req = createMockReq({
         method: 'PATCH',
-        url: `/api/agents/${encodeURIComponent(testAgentId)}/webhook`,
+        url: `/api/v1/agents/${encodeURIComponent(testAgentId)}/webhook`,
         body: {
           webhook: { url: 'http://new-webhook.example.com' }
         },
@@ -1059,7 +1099,7 @@ describe('ControlServer', () => {
       // Create a request that sends invalid JSON
       const req = {
         method: 'PATCH',
-        url: `/api/agents/${encodeURIComponent(testAgentId)}/webhook`,
+        url: `/api/v1/agents/${encodeURIComponent(testAgentId)}/webhook`,
         headers: { 'x-f2a-token': TEST_TOKEN },
         socket: { remoteAddress: '127.0.0.1' },
         on: vi.fn((event: string, callback: Function) => {
@@ -1112,7 +1152,7 @@ describe('ControlServer', () => {
       // Send webhookUrl instead of webhook object (legacy format)
       const req = createMockReq({
         method: 'PATCH',
-        url: `/api/agents/${encodeURIComponent(testAgentId)}/webhook`,
+        url: `/api/v1/agents/${encodeURIComponent(testAgentId)}/webhook`,
         body: {
           webhookUrl: 'http://shorthand.example.com',
           webhookToken: 'shorthand-token'

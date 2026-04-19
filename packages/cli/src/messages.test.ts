@@ -70,7 +70,7 @@ describe('CLI Messages Commands', () => {
 
   describe('sendMessage', () => {
     describe('正常路径', () => {
-      it('should send POST /api/messages with correct body', async () => {
+      it('should send POST /api/v1/messages with correct body', async () => {
         const responseData = { success: true, messageId: 'msg-123', broadcasted: 5 };
 
         mockResponse.on.mockImplementation((event: string, callback: Function) => {
@@ -81,7 +81,7 @@ describe('CLI Messages Commands', () => {
         (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
           // 验证请求参数
           expect(options.method).toBe('POST');
-          expect(options.path).toBe('/api/messages');
+          expect(options.path).toBe('/api/v1/messages');
           expect(options.hostname).toBe('127.0.0.1');
           expect(options.port).toBe(9001);
           
@@ -373,7 +373,7 @@ describe('CLI Messages Commands', () => {
 
   describe('getMessages', () => {
     describe('正常路径', () => {
-      it('should fetch messages with GET /api/messages/:agentId', async () => {
+      it('should fetch messages with GET /api/v1/messages/:agentId', async () => {
         const responseData = {
           success: true,
           messages: [
@@ -395,7 +395,7 @@ describe('CLI Messages Commands', () => {
         (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
           // 验证请求参数
           expect(options.method).toBe('GET');
-          expect(options.path).toContain('/api/messages/');
+          expect(options.path).toContain('/api/v1/messages/');
           expect(options.hostname).toBe('127.0.0.1');
           
           callback(mockResponse);
@@ -408,7 +408,7 @@ describe('CLI Messages Commands', () => {
 
         // 正常路径验证 1: 正确的 API 路径
         const requestCall = (request as any).mock.calls[0][0];
-        expect(requestCall.path).toContain('/api/messages/agent-test');
+        expect(requestCall.path).toContain('/api/v1/messages/agent-test');
 
         // 正常路径验证 2: 显示消息数量
         expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('消息'));
@@ -528,7 +528,7 @@ describe('CLI Messages Commands', () => {
 
         // 默认使用 'default' agentId
         const requestCall = (request as any).mock.calls[0][0];
-        expect(requestCall.path).toContain('/api/messages/default');
+        expect(requestCall.path).toContain('/api/v1/messages/default');
 
         consoleSpy.mockRestore();
       });
@@ -746,7 +746,7 @@ describe('CLI Messages Commands', () => {
 
         (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
           expect(options.method).toBe('DELETE');
-          expect(options.path).toContain('/api/messages/agent-test');
+          expect(options.path).toContain('/api/v1/messages/agent-test');
           
           callback(mockResponse);
           return mockRequest;
@@ -854,7 +854,7 @@ describe('CLI Messages Commands', () => {
 
         // 默认使用 'default' agentId
         const requestCall = (request as any).mock.calls[0][0];
-        expect(requestCall.path).toContain('/api/messages/default');
+        expect(requestCall.path).toContain('/api/v1/messages/default');
 
         consoleSpy.mockRestore();
       });

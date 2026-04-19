@@ -13,7 +13,7 @@ export const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
  * 发送 HTTP 请求到 ControlServer
  * 
  * @param method HTTP 方法 (GET, POST, DELETE, PATCH)
- * @param path API 路径 (如 /api/agents, /control)
+ * @param path API 路径 (如 /api/v1/agents, /control)
  * @param body 请求体（可选）
  * @param customHeaders 自定义 headers（可选，如 Authorization）
  * @returns 响应 JSON 对象

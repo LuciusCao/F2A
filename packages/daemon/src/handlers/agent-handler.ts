@@ -3,13 +3,13 @@
  * 
  * 从 control-server.ts 提取的 Agent 相关端点处理逻辑
  * 
- * 端点:
- * - GET /api/agents - 列出 Agents（无需认证）
- * - POST /api/agents - 注册 Agent（无需认证，但有 webhook 验证）
- * - DELETE /api/agents/:agentId - 注销 Agent（需认证）
- * - GET /api/agents/:agentId - 获取 Agent 详情（无需认证）
- * - PATCH /api/agents/:agentId/webhook - 更新 webhook（需认证）
- * - POST /api/agents/verify - Challenge-Response 验证（无需认证）
+ * P2-4: API 版本化端点:
+ * - GET /api/v1/agents - 列出 Agents（无需认证）
+ * - POST /api/v1/agents - 注册 Agent（无需认证，但有 webhook 验证）
+ * - DELETE /api/v1/agents/:agentId - 注销 Agent（需认证）
+ * - GET /api/v1/agents/:agentId - 获取 Agent 详情（无需认证）
+ * - PATCH /api/v1/agents/:agentId/webhook - 更新 webhook（需认证）
+ * - POST /api/v1/agents/verify - Challenge-Response 验证（无需认证）
  */
 
 import type { IncomingMessage, ServerResponse } from 'http';
@@ -91,7 +91,7 @@ export class AgentHandler {
 
   /**
    * 列出所有注册的 Agent
-   * GET /api/agents（无需认证）
+   * GET /api/v1/agents（无需认证）
    */
   handleListAgents(res: ServerResponse): void {
     const agents = this.agentRegistry.list();
@@ -113,7 +113,7 @@ export class AgentHandler {
   /**
    * 注册 Agent（RFC 003: AgentId 由节点签发）
    * Phase 6: 支持恢复已有身份
-   * POST /api/agents（无需认证，但有 webhook 验证）
+   * POST /api/v1/agents（无需认证，但有 webhook 验证）
    * 
    * - 如果提供了 agentId 且存在对应 identity 文件，恢复身份
    * - 否则注册新 Agent（节点签发 AgentId）
@@ -297,7 +297,7 @@ export class AgentHandler {
 
   /**
    * 注销 Agent（需要删除持久化文件）
-   * DELETE /api/agents/:agentId（需认证）
+   * DELETE /api/v1/agents/:agentId（需认证）
    */
   async handleUnregisterAgent(agentId: string, res: ServerResponse): Promise<void> {
     const removed = this.agentRegistry.unregister(agentId);
@@ -329,7 +329,7 @@ export class AgentHandler {
 
   /**
    * 获取 Agent 详情
-   * GET /api/agents/:agentId（无需认证）
+   * GET /api/v1/agents/:agentId（无需认证）
    */
   handleGetAgent(agentId: string, res: ServerResponse): void {
     const agent = this.agentRegistry.get(agentId);
@@ -368,7 +368,7 @@ export class AgentHandler {
 
   /**
    * 更新 Agent webhook（RFC 004: Agent 级 Webhook）
-   * PATCH /api/agents/:agentId/webhook（需认证）
+   * PATCH /api/v1/agents/:agentId/webhook（需认证）
    */
   async handleUpdateWebhook(agentId: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
     let body = '';
@@ -472,7 +472,7 @@ export class AgentHandler {
 
   /**
    * Challenge-Response 验证（签名验证）
-   * POST /api/agents/verify（无需认证）
+   * POST /api/v1/agents/verify（无需认证）
    * Phase 7: 验证 Challenge-Response
    */
   async handleVerifyAgent(req: IncomingMessage, res: ServerResponse): Promise<void> {

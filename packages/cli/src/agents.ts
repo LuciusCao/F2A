@@ -88,7 +88,7 @@ export async function registerAgent(options: {
       requestBody.agentId = options.id;
     }
 
-    const result = await sendRequest('POST', '/api/agents', requestBody);
+    const result = await sendRequest('POST', '/api/v1/agents', requestBody);
 
     if (result.success) {
       // 获取实际的 agentId（用户指定或 daemon 生成）
@@ -121,7 +121,7 @@ export async function registerAgent(options: {
  */
 export async function listAgents(): Promise<void> {
   try {
-    const result = await sendRequest('GET', '/api/agents');
+    const result = await sendRequest('GET', '/api/v1/agents');
 
     if (result.success && result.agents) {
       const agents = result.agents as any[];
@@ -173,7 +173,7 @@ export async function unregisterAgent(agentId: string): Promise<void> {
   }
 
   try {
-    const result = await sendRequest('DELETE', `/api/agents/${agentId}`);
+    const result = await sendRequest('DELETE', `/api/v1/agents/${agentId}`);
 
     if (result.success) {
       console.log(`✅ Agent 已注销: ${agentId}`);

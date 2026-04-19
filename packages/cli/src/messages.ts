@@ -2,7 +2,7 @@
  * F2A CLI - 消息命令
  * f2a message send / f2a messages
  * 
- * Phase 1 修复：使用正确的 /api/messages 端点
+ * P2-4: 使用 /api/v1/messages 版本化端点
  */
 
 import { sendRequest } from './http-client.js';
@@ -34,7 +34,7 @@ function getAgentToken(agentId: string): string | undefined {
  * 发送消息到指定 Agent
  * f2a message send --from <agent_id> --to <agent_id> [--type <type>] <content>
  * 
- * Phase 1 修复：使用 POST /api/messages 端点
+ * P2-4: 使用 POST /api/v1/messages 版本化端点
  * 需要 Authorization header: agent-{token}
  */
 export async function sendMessage(options: {
@@ -67,10 +67,10 @@ export async function sendMessage(options: {
   }
 
   try {
-    // Phase 1 修复：使用 POST /api/messages 端点
+    // P2-4: 使用 POST /api/v1/messages 版本化端点
     const result = await sendRequest(
       'POST',
-      '/api/messages',
+      '/api/v1/messages',
       {
         fromAgentId,
         toAgentId,
@@ -114,7 +114,7 @@ export async function sendMessage(options: {
  * 查看消息
  * f2a message list [--agent <agent_id>] [--unread] [--limit <n>]
  * 
- * Phase 1：使用 GET /api/messages/:agentId 端点（已正确）
+ * P2-4: 使用 GET /api/v1/messages/:agentId 版本化端点
  */
 export async function getMessages(options: {
   unread?: boolean;
@@ -126,7 +126,7 @@ export async function getMessages(options: {
   const limit = options.limit || 50;
 
   try {
-    const result = await sendRequest('GET', `/api/messages/${agentId}?limit=${limit}`);
+    const result = await sendRequest('GET', `/api/v1/messages/${agentId}?limit=${limit}`);
 
     if (result.success && result.messages) {
       const messages = (result.messages as any[]);
@@ -178,7 +178,7 @@ export async function clearMessages(options: {
   try {
     const result = await sendRequest(
       'DELETE',
-      `/api/messages/${agentId}`,
+      `/api/v1/messages/${agentId}`,
       options.messageIds ? { messageIds: options.messageIds } : undefined
     );
 

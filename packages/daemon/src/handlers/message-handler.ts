@@ -3,10 +3,10 @@
  *
  * 从 control-server.ts 提取的消息相关端点处理逻辑
  *
- * 端点:
- * - POST /api/messages - 发送消息（需 agent token 认证）
- * - GET /api/messages/:agentId - 获取消息队列
- * - DELETE /api/messages/:agentId - 清除消息
+ * P2-4: API 版本化端点:
+ * - POST /api/v1/messages - 发送消息（需 agent token 认证）
+ * - GET /api/v1/messages/:agentId - 获取消息队列
+ * - DELETE /api/v1/messages/:agentId - 清除消息
  */
 
 import type { IncomingMessage, ServerResponse } from 'http';
@@ -51,7 +51,7 @@ export class MessageHandler {
 
   /**
    * 发送消息（跨进程/跨节点发送）
-   * POST /api/messages
+   * POST /api/v1/messages
    *
    * 注意：这是 async 方法，因为涉及跨进程/跨节点发送
    */
@@ -223,7 +223,7 @@ export class MessageHandler {
 
   /**
    * 获取 Agent 的消息队列
-   * GET /api/messages/:agentId
+   * GET /api/v1/messages/:agentId
    */
   handleGetMessages(agentId: string, req: IncomingMessage, res: ServerResponse): void {
     // 验证 Agent 已注册
@@ -258,7 +258,7 @@ export class MessageHandler {
 
   /**
    * 清除消息
-   * DELETE /api/messages/:agentId
+   * DELETE /api/v1/messages/:agentId
    */
   handleClearMessages(agentId: string, req: IncomingMessage, res: ServerResponse): void {
     // 验证 Agent 已注册

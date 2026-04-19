@@ -182,7 +182,7 @@ describe('MessageHandler - Error Response Code Field', () => {
     });
   });
 
-  describe('POST /api/messages - 发送消息', () => {
+  describe('POST /api/v1/messages - 发送消息', () => {
     it('缺少 fromAgentId 和 content 应返回 400 + code: INVALID_REQUEST', async () => {
       const req = createMockReq({
         method: 'POST',
@@ -473,10 +473,10 @@ describe('MessageHandler - Error Response Code Field', () => {
     });
   });
 
-  describe('GET /api/messages/:agentId - 获取消息队列', () => {
+  describe('GET /api/v1/messages/:agentId - 获取消息队列', () => {
     it('Agent 不存在应返回 404 + code: AGENT_NOT_FOUND', () => {
       (mockRegistry.get as any).mockReturnValue(undefined);
-      const req = createMockReq({ url: '/api/messages/agent:nonexistent' });
+      const req = createMockReq({ url: '/api/v1/messages/agent:nonexistent' });
       const res = createMockRes();
 
       handler.handleGetMessages('agent:nonexistent', req as IncomingMessage, res as ServerResponse);
@@ -498,7 +498,7 @@ describe('MessageHandler - Error Response Code Field', () => {
         { messageId: 'msg-1', content: 'Hello' },
         { messageId: 'msg-2', content: 'World' },
       ]);
-      const req = createMockReq({ url: '/api/messages/agent:test-peer:abc123' });
+      const req = createMockReq({ url: '/api/v1/messages/agent:test-peer:abc123' });
       const res = createMockRes();
 
       handler.handleGetMessages('agent:test-peer:abc123', req as IncomingMessage, res as ServerResponse);
@@ -512,12 +512,12 @@ describe('MessageHandler - Error Response Code Field', () => {
     });
   });
 
-  describe('DELETE /api/messages/:agentId - 清除消息', () => {
+  describe('DELETE /api/v1/messages/:agentId - 清除消息', () => {
     it('Agent 不存在应返回 404 + code: AGENT_NOT_FOUND', async () => {
       (mockRegistry.get as any).mockReturnValue(undefined);
       const req = createMockReq({
         method: 'DELETE',
-        url: '/api/messages/agent:nonexistent',
+        url: '/api/v1/messages/agent:nonexistent',
       });
       const res = createMockRes();
 
@@ -540,7 +540,7 @@ describe('MessageHandler - Error Response Code Field', () => {
       (mockMessageRouter.clearMessages as any).mockReturnValue(3);
       const req = createMockReq({
         method: 'DELETE',
-        url: '/api/messages/agent:test-peer:abc123',
+        url: '/api/v1/messages/agent:test-peer:abc123',
       });
       const res = createMockRes();
 
@@ -562,7 +562,7 @@ describe('MessageHandler - Error Response Code Field', () => {
       (mockMessageRouter.clearMessages as any).mockReturnValue(2);
       const req = createMockReq({
         method: 'DELETE',
-        url: '/api/messages/agent:test-peer:abc123',
+        url: '/api/v1/messages/agent:test-peer:abc123',
         body: { messageIds: ['msg-1', 'msg-2'] },
       });
       const res = createMockRes();

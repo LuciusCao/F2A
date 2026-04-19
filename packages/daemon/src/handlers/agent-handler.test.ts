@@ -181,7 +181,7 @@ describe('AgentHandler - Error Response Code Field', () => {
     });
   });
 
-  describe('POST /api/agents - 注册 Agent', () => {
+  describe('POST /api/v1/agents - 注册 Agent', () => {
     it('缺少 name 字段应返回 400 + code: INVALID_REQUEST', async () => {
       const req = createMockReq({
         method: 'POST',
@@ -222,7 +222,7 @@ describe('AgentHandler - Error Response Code Field', () => {
     it('无效 JSON 应返回 400 + code: INVALID_JSON', async () => {
       const req = {
         method: 'POST',
-        url: '/api/agents',
+        url: '/api/v1/agents',
         headers: {},
         socket: { remoteAddress: '127.0.0.1' },
         on: vi.fn((event: string, callback: Function) => {
@@ -248,7 +248,7 @@ describe('AgentHandler - Error Response Code Field', () => {
     });
   });
 
-  describe('DELETE /api/agents/:agentId - 注销 Agent', () => {
+  describe('DELETE /api/v1/agents/:agentId - 注销 Agent', () => {
     it('Agent 不存在应返回 404 + code: AGENT_NOT_FOUND', async () => {
       (mockRegistry.unregister as any).mockReturnValue(false);
       const res = createMockRes();
@@ -275,7 +275,7 @@ describe('AgentHandler - Error Response Code Field', () => {
     });
   });
 
-  describe('GET /api/agents/:agentId - 获取 Agent', () => {
+  describe('GET /api/v1/agents/:agentId - 获取 Agent', () => {
     it('Agent 不存在应返回 404 + code: AGENT_NOT_FOUND', () => {
       (mockRegistry.get as any).mockReturnValue(undefined);
       const res = createMockRes();
@@ -311,7 +311,7 @@ describe('AgentHandler - Error Response Code Field', () => {
     });
   });
 
-  describe('PATCH /api/agents/:agentId/webhook - 更新 Webhook', () => {
+  describe('PATCH /api/v1/agents/:agentId/webhook - 更新 Webhook', () => {
     it('缺少 Authorization header 应返回 401 + code: MISSING_TOKEN', async () => {
       const req = createMockReq({
         method: 'PATCH',
@@ -428,7 +428,7 @@ describe('AgentHandler - Error Response Code Field', () => {
     });
   });
 
-  describe('POST /api/agents/verify - Challenge-Response 验证', () => {
+  describe('POST /api/v1/agents/verify - Challenge-Response 验证', () => {
     it('无效 nonce 应返回 400 (code 字段待补充)', async () => {
       const req = createMockReq({
         method: 'POST',

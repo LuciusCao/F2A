@@ -97,6 +97,12 @@ export async function registerAgent(options: {
       // 获取实际的 agentId（用户指定或 daemon 生成）
       const actualAgentId = options.id || (result.agent as any)?.agentId;
       
+      // RFC007 Phase 3: 保存 token 到 identity 文件
+      const token = result.token as string | undefined;
+      if (actualAgentId && token) {
+        saveIdentityWithToken(actualAgentId, token);
+      }
+      
       console.log(`✅ Agent 已注册`);
       console.log(`   ID: ${actualAgentId}`);
       console.log(`   Name: ${options.name}`);

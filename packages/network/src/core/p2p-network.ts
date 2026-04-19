@@ -630,74 +630,6 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   }
 
   /**
-   * 向特定 Peer 发送任务请求（使用 MESSAGE 协议）
-   * Agent 协议层方法
-   */
-  async sendTaskRequest(
-    peerId: string,
-    taskType: string,
-    description: string,
-    parameters?: Record<string, unknown>,
-    timeout: number = 30000
-  ): Promise<Result<unknown>> {
-    const taskId = randomUUID();
-
-    const message: F2AMessage = {
-      id: taskId,
-      type: 'MESSAGE',
-      from: this.agentInfo.peerId,
-      to: peerId,
-      timestamp: Date.now(),
-      payload: {
-        topic: MESSAGE_TOPICS.TASK_REQUEST,
-        content: {
-          taskId,
-          taskType,
-          description,
-          parameters,
-          timeout: Math.floor(timeout / 1000)
-        }
-      } as StructuredMessagePayload
-    };
-
-    // 发送消息（启用 E2EE 加密）
-    const sendResult = await this.sendMessage(peerId, message, true);
-    if (!sendResult.success) {
-      return sendResult;
-    }
-
-    // 等待响应
-    return new Promise((resolve) => {
-      const taskEntry = {
-        resolve: (result: unknown) => {
-          if (!taskEntry.resolved) {
-            taskEntry.resolved = true;
-            this.pendingTasks.delete(taskId);
-            resolve(success(result));
-          }
-        },
-        reject: (error: string) => {
-          if (!taskEntry.resolved) {
-            taskEntry.resolved = true;
-            this.pendingTasks.delete(taskId);
-            resolve({ success: false, error: createError('TASK_FAILED', error) } as Result<unknown>);
-          }
-        },
-        timeout: setTimeout(() => {
-          if (!taskEntry.resolved) {
-            taskEntry.resolved = true;
-            this.pendingTasks.delete(taskId);
-            resolve(failureFromError('TIMEOUT', 'Task timeout'));
-          }
-        }, timeout),
-        resolved: false
-      };
-
-      this.pendingTasks.set(taskId, taskEntry);
-    });
-  }
-
-  /**
    * 发送自由消息给特定 Peer（Agent 协议层）
    * Agent 之间的自然语言通信，无需预定义协议
    */
@@ -769,38 +701,6 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     });
     
     return result;
-  }
-
-  /**
-   * 发送任务响应（Agent 协议层）
-   */
-  async sendTaskResponse(
-    peerId: string,
-    taskId: string,
-    status: 'success' | 'error' | 'rejected' | 'delegated',
-    result?: unknown,
-    error?: string
-  ): Promise<Result<void>> {
-    const message: F2AMessage = {
-      id: randomUUID(),
-      type: 'MESSAGE',
-      from: this.agentInfo.peerId,
-      to: peerId,
-      timestamp: Date.now(),
-      payload: {
-        topic: MESSAGE_TOPICS.TASK_RESPONSE,
-        content: {
-          taskId,
-          status,
-          result,
-          error
-        },
-        replyTo: taskId
-      } as StructuredMessagePayload
-    };
-
-    // 任务响应启用 E2EE 加密
-    return this.sendMessage(peerId, message, true);
   }
 
   /**

@@ -14,16 +14,6 @@ import type { F2A } from '@f2a/network';
 import type { P2PHandlerDeps } from '../types/handlers.js';
 
 /**
- * Delegate 命令参数
- */
-export interface DelegateCommand {
-  peerId?: string;
-  taskType?: string;
-  description?: string;
-  parameters?: Record<string, unknown>;
-}
-
-/**
  * Send 命令参数
  */
 export interface SendCommand {
@@ -61,40 +51,6 @@ export class P2PHandler {
         success: false,
         error: getErrorMessage(error),
         code: 'DISCOVER_FAILED'
-      }));
-    }
-  }
-
-  /**
-   * 委托任务给其他节点
-   */
-  async handleDelegate(command: DelegateCommand, res: ServerResponse): Promise<void> {
-    try {
-      if (!command.peerId || !command.taskType) {
-        res.writeHead(400);
-        res.end(JSON.stringify({
-          success: false,
-          error: 'Missing required fields: peerId, taskType',
-          code: 'INVALID_REQUEST'
-        }));
-        return;
-      }
-
-      const result = await this.f2a.sendTaskTo(
-        command.peerId,
-        command.taskType,
-        command.description || '',
-        command.parameters
-      );
-
-      res.writeHead(200);
-      res.end(JSON.stringify(result));
-    } catch (error) {
-      res.writeHead(500);
-      res.end(JSON.stringify({
-        success: false,
-        error: getErrorMessage(error),
-        code: 'DELEGATE_FAILED'
       }));
     }
   }

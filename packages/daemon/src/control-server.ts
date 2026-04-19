@@ -25,7 +25,7 @@ import { AgentTokenManager } from './agent-token-manager.js';
 import { AgentHandler } from './handlers/agent-handler.js';
 import { MessageHandler } from './handlers/message-handler.js';
 import { SystemHandler } from './handlers/system-handler.js';
-import { P2PHandler, DelegateCommand, SendCommand } from './handlers/p2p-handler.js';
+import { P2PHandler, SendCommand } from './handlers/p2p-handler.js';
 
 export interface ControlServerOptions {
   /** 端口，如果不传则使用构造函数传入的 port */
@@ -492,9 +492,6 @@ export class ControlServer {
           break;
         case 'discover':
           await this.p2pHandler.handleDiscover(command.capability, res);
-          break;
-        case 'delegate':
-          await this.p2pHandler.handleDelegate(command as DelegateCommand, res);
           break;
         case 'send':
           await this.p2pHandler.handleSend(command as SendCommand, res);

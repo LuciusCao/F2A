@@ -25,7 +25,7 @@ import { MessageRouter } from './message-router.js';
 import { Ed25519Signer } from './identity/ed25519-signer.js';
 import { Logger } from '../utils/logger.js';
 import { Middleware } from '../utils/middleware.js';
-import { validateAgentCapability, validateTaskDelegateOptions } from '../utils/validation.js';
+import { validateAgentCapability } from '../utils/validation.js';
 import { getErrorMessage } from '../utils/error-utils.js';
 import {
   F2AOptions,
@@ -33,8 +33,6 @@ import {
   AgentInfo,
   AgentCapability,
   Result,
-  TaskDelegateOptions,
-  TaskDelegateResult,
   MessageEvent,
   StructuredMessagePayload,
   MESSAGE_TOPICS,
@@ -77,12 +75,6 @@ export interface F2AInstance {
   discoverAgents(capability?: string): Promise<AgentInfo[]>;
   getConnectedPeers(): AgentInfo[];
   getAllPeers(): AgentInfo[];
-
-  // 任务委托
-  delegateTask(options: TaskDelegateOptions): Promise<Result<TaskDelegateResult>>;
-
-  // 直接通信
-  sendTaskTo(peerId: string, taskType: string, description: string, parameters?: Record<string, unknown>): Promise<Result<unknown>>;
 
   // 中间件
   useMiddleware(middleware: Middleware): void;
@@ -473,188 +465,6 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   }
 
   /**
-   * 委托任务给网络
-   */
-  async delegateTask(options: TaskDelegateOptions): Promise<Result<TaskDelegateResult>> {
-    // 验证任务委托选项
-    const validation = validateTaskDelegateOptions(options);
-    if (!validation.success) {
-      this.logger.error('Invalid task delegate options', {
-        errors: validation.error.errors
-      });
-      return failureFromError(
-        'INVALID_OPTIONS',
-        `Invalid options: ${validation.error.errors.map(e => e.message).join(', ')}`
-      );
-    }
-
-    // P3.1 修复:使用 randomUUID() 替代 Math.random()
-    const taskId = `task-${randomUUID()}`;
-
-    this.logger.info('Delegating task', {
-      taskId,
-      capability: options.capability,
-      description: options.description.slice(0, 50)
-    });
-
-    // 可配置的重试选项
-    const retryOptions = {
-      maxRetries: options.retryOptions?.maxRetries ?? 3,
-      retryDelayMs: options.retryOptions?.retryDelayMs ?? 1000,
-      discoverTimeoutMs: options.retryOptions?.discoverTimeoutMs ?? 5000
-    };
-
-    // 1. 发现有能力执行任务的 Agents(带重试)
-    let agents: AgentInfo[] = [];
-    let lastError: string | undefined;
-
-    for (let attempt = 0; attempt <= retryOptions.maxRetries; attempt++) {
-      agents = await this.discoverAgents(options.capability);
-
-      if (agents.length > 0) {
-        break;
-      }
-
-      if (attempt < retryOptions.maxRetries) {
-        this.logger.warn(`No agents found, retrying (${attempt + 1}/${retryOptions.maxRetries})`, {
-          capability: options.capability
-        });
-        await new Promise(resolve => setTimeout(resolve, retryOptions.retryDelayMs));
-      }
-    }
-
-    if (agents.length === 0) {
-      this.logger.warn('No agents found with capability after retries', {
-        capability: options.capability,
-        retries: retryOptions.maxRetries
-      });
-      return failureFromError(
-        'CAPABILITY_NOT_SUPPORTED',
-        `No agent found with capability: ${options.capability} (after ${retryOptions.maxRetries} retries)`
-      );
-    }
-
-    this.logger.info('Found agents with capability', {
-      count: agents.length,
-      capability: options.capability
-    });
-
-    // 2. 发送任务请求
-    const timeout = options.timeout || 30000;
-    const results: TaskDelegateResult['results'] = [];
-
-    if (options.parallel) {
-      // 并行发送给多个 Agents
-      const minResponses = options.minResponses || 1;
-
-      const promises = agents.map(async (agent) => {
-        const startTime = Date.now();
-        const result = await this.p2pNetwork.sendTaskRequest(
-          agent.peerId,
-          options.capability,
-          options.description,
-          options.parameters,
-          timeout
-        );
-        const latency = Date.now() - startTime;
-
-        return {
-          peerId: agent.peerId,
-          status: result.success ? 'success' as const : 'error' as const,
-          result: result.success ? result.data : undefined,
-          error: result.success ? undefined : (result.error?.message || String(result.error)),
-          latency
-        };
-      });
-
-      // 等待至少 minResponses 个响应
-      const settled = await Promise.allSettled(promises);
-
-      for (const outcome of settled) {
-        if (outcome.status === 'fulfilled') {
-          results.push(outcome.value);
-        }
-      }
-
-      // 检查是否达到最小响应数
-      const successCount = results.filter(r => r.status === 'success').length;
-      if (successCount < minResponses) {
-        return failureFromError(
-          'TASK_FAILED',
-          `Only ${successCount} successful responses, required ${minResponses}`
-        );
-      }
-    } else {
-      // 串行发送,优先发送给最佳节点
-      // 使用 CapabilityManager 进行智能调度(如果可用)
-      let sortedAgents = agents;
-      if (this.capabilityManager) {
-        const bestPeerId = this.capabilityManager.selectBestPeerForCapability(options.capability);
-        if (bestPeerId) {
-          // 将最佳节点排在第一位
-          sortedAgents = [
-            agents.find(a => a.peerId === bestPeerId)!,
-            ...agents.filter(a => a.peerId !== bestPeerId)
-          ].filter(Boolean);
-          this.logger.info('Using smart scheduling', {
-            bestPeer: bestPeerId.slice(0, 16),
-            capability: options.capability
-          });
-        }
-      }
-
-      for (const agent of sortedAgents) {
-        const startTime = Date.now();
-        const result = await this.p2pNetwork.sendTaskRequest(
-          agent.peerId,
-          options.capability,
-          options.description,
-          options.parameters,
-          timeout
-        );
-        const latency = Date.now() - startTime;
-
-        results.push({
-          peerId: agent.peerId,
-          status: result.success ? 'success' : 'error',
-          result: result.success ? result.data : undefined,
-          error: result.success ? undefined : (result.error?.message || String(result.error)),
-          latency
-        });
-
-        if (result.success) {
-          break; // 第一个成功就停止
-        }
-      }
-
-      // 检查是否有成功结果
-      if (!results.some(r => r.status === 'success')) {
-        return failureFromError('TASK_FAILED', 'All agents failed to execute the task');
-      }
-    }
-
-    return success({ taskId, results });
-  }
-
-  /**
-   * 直接发送任务给特定 Peer
-   */
-  async sendTaskTo(
-    peerId: string,
-    taskType: string,
-    description: string,
-    parameters?: Record<string, unknown>
-  ): Promise<Result<unknown>> {
-    return this.p2pNetwork.sendTaskRequest(
-      peerId,
-      taskType,
-      description,
-      parameters,
-      30000
-    );
-  }
-
-  /**
    * 发送自由消息给特定 Peer(Agent 协议层)
    * Agent 之间的自然语言通信
    */
@@ -744,21 +554,6 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
           if (this.messageRouter) {
             await this.messageRouter.routeIncoming(payload.content, peerId);
           }
-        } else if (payload.topic === MESSAGE_TOPICS.TASK_REQUEST) {
-          // 任务请求
-          const content = payload.content as {
-            taskId: string;
-            taskType: string;
-            description: string;
-            parameters?: Record<string, unknown>;
-          };
-          await this.handleTaskRequest(
-            content.taskId,
-            content.taskType,
-            content.description,
-            content.parameters,
-            peerId
-          );
         } else {
           // 其他消息:发出事件供上层处理
           this.emit('peer:message', {
@@ -775,72 +570,6 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     this.p2pNetwork.on('error', (error) => {
       this.emit('error', error);
     });
-  }
-
-  /**
-   * 处理收到的任务请求(MESSAGE + topic='task.request')
-   */
-  private async handleTaskRequest(
-    taskId: string,
-    taskType: string,
-    description: string,
-    parameters: Record<string, unknown> | undefined,
-    fromPeerId: string
-  ): Promise<void> {
-    this.logger.info('Received task request', {
-      fromPeerId: fromPeerId.slice(0, 16),
-      taskType,
-      taskId
-    });
-
-    // 查找对应的能力处理器
-    const capability = this.registeredCapabilities.get(taskType);
-
-    if (!capability) {
-      this.logger.warn('Capability not supported, rejecting task', {
-        taskType,
-        fromPeerId: fromPeerId.slice(0, 16)
-      });
-      // 拒绝任务
-      await this.p2pNetwork.sendTaskResponse(
-        fromPeerId,
-        taskId,
-        'rejected',
-        undefined,
-        `Capability not supported: ${taskType}`
-      );
-      return;
-    }
-
-    // 如果有注册 handler,自动执行任务并发送响应
-    if (capability.handler) {
-      try {
-        const result = await capability.handler(parameters || {});
-        await this.p2pNetwork.sendTaskResponse(
-          fromPeerId,
-          taskId,
-          'success',
-          result
-        );
-        this.logger.info('Task executed successfully', {
-          taskId,
-          fromPeerId: fromPeerId.slice(0, 16)
-        });
-      } catch (error) {
-        this.logger.error('Task execution failed', {
-          taskId,
-          fromPeerId: fromPeerId.slice(0, 16),
-          error: getErrorMessage(error)
-        });
-        await this.p2pNetwork.sendTaskResponse(
-          fromPeerId,
-          taskId,
-          'error',
-          undefined,
-          getErrorMessage(error)
-        );
-      }
-    }
   }
 
   /**
@@ -907,31 +636,6 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
         });
       }
     }
-  }
-
-  /**
-   * 发送任务响应(供 OpenClaw 调用)
-   */
-  async respondToTask(
-    peerId: string,
-    taskId: string,
-    status: 'success' | 'error' | 'rejected',
-    result?: unknown,
-    error?: string
-  ): Promise<Result<void>> {
-    const responseResult = await this.p2pNetwork.sendTaskResponse(
-      peerId,
-      taskId,
-      status,
-      result,
-      error
-    );
-
-    if (responseResult.success) {
-      // 事件已废弃,不再发出
-    }
-
-    return responseResult;
   }
 
   /**

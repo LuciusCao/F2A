@@ -462,9 +462,6 @@ export class ControlServer {
           // P2-4 修复：添加 await，确保异步操作完成
           await this.handleDiscover(command.capability, res);
           break;
-        case 'delegate':
-          this.handleDelegate(command, res);
-          break;
         case 'send':
           this.handleSend(command, res);
           break;
@@ -530,40 +527,6 @@ export class ControlServer {
         success: false,
         error: error instanceof Error ? error.message : String(error),
         code: 'DISCOVER_FAILED'
-      }));
-    }
-  }
-
-  /**
-   * 委托任务给指定 Peer
-   */
-  private async handleDelegate(command: { peerId?: string; taskType?: string; description?: string; parameters?: Record<string, unknown> }, res: ServerResponse): Promise<void> {
-    try {
-      if (!command.peerId || !command.taskType) {
-        res.writeHead(400);
-        res.end(JSON.stringify({
-          success: false,
-          error: 'Missing required fields: peerId, taskType',
-          code: 'INVALID_REQUEST'
-        }));
-        return;
-      }
-
-      const result = await this.f2a.sendTaskTo(
-        command.peerId,
-        command.taskType,
-        command.description || '',
-        command.parameters
-      );
-
-      res.writeHead(200);
-      res.end(JSON.stringify(result));
-    } catch (error) {
-      res.writeHead(500);
-      res.end(JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-        code: 'DELEGATE_FAILED'
       }));
     }
   }

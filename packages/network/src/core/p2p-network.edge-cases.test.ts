@@ -529,30 +529,6 @@ describe('P2PNetwork - 高价值边缘情况', () => {
     });
   });
 
-  // ========== 9. sendTaskRequest 超时处理 ==========
-  describe('sendTaskRequest - 超时处理', () => {
-    it('应该在无法连接 peer 时返回 PEER_NOT_FOUND 错误', async () => {
-      // 不添加 peer 到 peerTable，模拟 peer 不存在
-      (network as any).node = {
-        getConnections: vi.fn().mockReturnValue([]),
-        dial: vi.fn(),
-        stop: vi.fn().mockResolvedValue(undefined)
-      };
-      (network as any).enableE2EE = false;
-
-      const result = await network.sendTaskRequest(
-        'non-existent-peer',
-        'test-task',
-        'Test task description',
-        {},
-        1000
-      );
-
-      expect(result.success).toBe(false);
-      expect(result.error?.code).toBe('PEER_NOT_FOUND');
-    });
-  });
-
   // ========== 10. handleDiscover 的 peerId 验证 ==========
   describe('handleDiscover - peerId 验证', () => {
     it('应该拒绝 peerId 不匹配的发现消息（防止伪造）', async () => {

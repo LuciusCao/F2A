@@ -53,7 +53,6 @@ const createMockF2A = () => ({
   ]),
   getAllPeers: vi.fn().mockReturnValue([]),
   discoverAgents: vi.fn().mockResolvedValue([]),
-  sendTaskTo: vi.fn().mockResolvedValue({ success: true, result: 'done' }),
   sendMessage: vi.fn().mockResolvedValue({ success: true }),
   sendMessageToPeer: vi.fn().mockResolvedValue({ success: true }),
   registerCapability: vi.fn().mockResolvedValue({ success: true }),
@@ -818,102 +817,6 @@ describe('ControlServer', () => {
       writeHead: vi.fn(),
       end: vi.fn(),
       setHeader: vi.fn()
-    });
-
-    it('should handle delegate command with valid parameters', async () => {
-      mockRateLimiterAllow = true;
-      mockF2A.sendTaskTo = vi.fn().mockResolvedValue({ success: true, result: 'done' });
-      
-      const server = new ControlServer(mockF2A, 9001);
-      await server.start();
-      
-      const handler = lastMockServer._handler;
-      const req = createMockReq({ 
-        action: 'delegate', 
-        peerId: 'peer-123', 
-        taskType: 'test-task',
-        description: 'Test task',
-        parameters: { foo: 'bar' }
-      });
-      const res = createMockRes();
-      
-      handler(req, res);
-      
-      await new Promise(resolve => setTimeout(resolve, 10));
-      
-      expect(res.writeHead).toHaveBeenCalledWith(200);
-      
-      server.stop();
-    });
-
-    it('should reject delegate command missing peerId', async () => {
-      mockRateLimiterAllow = true;
-      
-      const server = new ControlServer(mockF2A, 9001);
-      await server.start();
-      
-      const handler = lastMockServer._handler;
-      const req = createMockReq({ 
-        action: 'delegate', 
-        taskType: 'test-task'
-      });
-      const res = createMockRes();
-      
-      handler(req, res);
-      
-      await new Promise(resolve => setTimeout(resolve, 10));
-      
-      expect(res.writeHead).toHaveBeenCalledWith(400);
-      const responseData = JSON.parse(res.end.mock.calls[0][0]);
-      expect(responseData.error).toContain('Missing required fields');
-      
-      server.stop();
-    });
-
-    it('should reject delegate command missing taskType', async () => {
-      mockRateLimiterAllow = true;
-      
-      const server = new ControlServer(mockF2A, 9001);
-      await server.start();
-      
-      const handler = lastMockServer._handler;
-      const req = createMockReq({ 
-        action: 'delegate', 
-        peerId: 'peer-123'
-      });
-      const res = createMockRes();
-      
-      handler(req, res);
-      
-      await new Promise(resolve => setTimeout(resolve, 10));
-      
-      expect(res.writeHead).toHaveBeenCalledWith(400);
-      
-      server.stop();
-    });
-
-    it('should handle delegate command failure', async () => {
-      mockRateLimiterAllow = true;
-      mockF2A.sendTaskTo = vi.fn().mockRejectedValue(new Error('Connection failed'));
-      
-      const server = new ControlServer(mockF2A, 9001);
-      await server.start();
-      
-      const handler = lastMockServer._handler;
-      const req = createMockReq({ 
-        action: 'delegate', 
-        peerId: 'peer-123', 
-        taskType: 'test-task'
-      });
-      const res = createMockRes();
-      
-      handler(req, res);
-      
-      await new Promise(resolve => setTimeout(resolve, 10));
-      
-      expect(res.writeHead).toHaveBeenCalledWith(500);
-      
-      server.stop();
     });
 
     it('should handle send command with valid parameters', async () => {

@@ -117,7 +117,7 @@ export async function initIdentity(options?: { force?: boolean }): Promise<void>
       console.log(`   Peer ID: ${nodeManager.getPeerIdString()?.slice(0, 20)}...`);
       console.log(`   Node ID: ${nodeManager.getNodeId()}`);
     } else {
-      console.log(`   ❌ Failed: ${result.error?.message || 'Unknown error'}`);
+      console.log(`   ❌ Failed：${result.error?.message || 'Unknown error'}`);
       process.exit(1);
     }
   }

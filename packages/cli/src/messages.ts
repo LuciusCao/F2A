@@ -104,7 +104,7 @@ export async function sendMessage(options: {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 F2A Daemon: ${message}`);
+    console.error(`❌ 无法连接到 F2A Daemon：${message}`);
     console.error('请确保 Daemon 正在运行：f2a daemon start');
     process.exit(1);
   }
@@ -159,7 +159,7 @@ export async function getMessages(options: {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 F2A Daemon: ${message}`);
+    console.error(`❌ 无法连接到 F2A Daemon：${message}`);
     console.error('请确保 Daemon 正在运行：f2a daemon start');
     process.exit(1);
   }
@@ -190,7 +190,7 @@ export async function clearMessages(options: {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 F2A Daemon: ${message}`);
+    console.error(`❌ 无法连接到 F2A Daemon：${message}`);
     console.error('请确保 Daemon 正在运行：f2a daemon start');
     process.exit(1);
   }

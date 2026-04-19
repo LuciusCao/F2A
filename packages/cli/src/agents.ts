@@ -66,8 +66,8 @@ export async function registerAgent(options: {
 }): Promise<void> {
   // name 必填，id 可选（由 daemon 自动生成）
   if (!options.name) {
-    console.error('❌ 错误: 缺少 --name 参数');
-    console.error('用法: f2a agent register [--id <id>] --name <name> [--capability <cap>]...');
+    console.error('❌ 错误：缺少 --name 参数');
+    console.error('用法：f2a agent register [--id <id>] --name <name> [--capability <cap>]...');
     process.exit(1);
   }
 
@@ -104,13 +104,13 @@ export async function registerAgent(options: {
         console.log(`   Webhook: ${options.webhook}`);
       }
     } else {
-      console.error(`❌ 注册失败: ${result.error}`);
+      console.error(`❌ 注册失败：${result.error}`);
       process.exit(1);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 F2A Daemon: ${message}`);
-    console.error('请确保 Daemon 正在运行: f2a daemon start');
+    console.error(`❌ 无法连接到 F2A Daemon：${message}`);
+    console.error('请确保 Daemon 正在运行：f2a daemon start');
     process.exit(1);
   }
 }
@@ -155,8 +155,8 @@ export async function listAgents(): Promise<void> {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 F2A Daemon: ${message}`);
-    console.error('请确保 Daemon 正在运行: f2a daemon start');
+    console.error(`❌ 无法连接到 F2A Daemon：${message}`);
+    console.error('请确保 Daemon 正在运行：f2a daemon start');
     process.exit(1);
   }
 }
@@ -167,8 +167,8 @@ export async function listAgents(): Promise<void> {
  */
 export async function unregisterAgent(agentId: string): Promise<void> {
   if (!agentId) {
-    console.error('❌ 错误: 缺少 Agent ID');
-    console.error('用法: f2a agent unregister <agent_id>');
+    console.error('❌ 错误：缺少 Agent ID');
+    console.error('用法：f2a agent unregister <agent_id>');
     process.exit(1);
   }
 
@@ -178,13 +178,13 @@ export async function unregisterAgent(agentId: string): Promise<void> {
     if (result.success) {
       console.log(`✅ Agent 已注销: ${agentId}`);
     } else {
-      console.error(`❌ 注销失败: ${result.error}`);
+      console.error(`❌ 注销失败：${result.error}`);
       process.exit(1);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 F2A Daemon: ${message}`);
-    console.error('请确保 Daemon 正在运行: f2a daemon start');
+    console.error(`❌ 无法连接到 F2A Daemon：${message}`);
+    console.error('请确保 Daemon 正在运行：f2a daemon start');
     process.exit(1);
   }
 }

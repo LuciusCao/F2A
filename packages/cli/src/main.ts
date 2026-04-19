@@ -481,7 +481,7 @@ async function handleStatus(): Promise<void> {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 F2A Daemon: ${message}`);
+    console.error(`❌ 无法连接到 F2A Daemon：${message}`);
     console.error('请确保 Daemon 正在运行：f2a daemon start');
     process.exit(1);
   }
@@ -527,7 +527,7 @@ async function handlePeers(): Promise<void> {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 F2A Daemon: ${message}`);
+    console.error(`❌ 无法连接到 F2A Daemon：${message}`);
     console.error('请确保 Daemon 正在运行：f2a daemon start');
     process.exit(1);
   }
@@ -550,7 +550,7 @@ async function handleHealth(): Promise<void> {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.log(`❌ 无法连接到 F2A Daemon: ${message}`);
+    console.log(`❌ 无法连接到 F2A Daemon：${message}`);
     process.exit(1);
   }
 }
@@ -591,13 +591,13 @@ async function handleDiscover(capability?: string): Promise<void> {
         console.log('');
       }
     } else {
-      console.log('❌ 发现失败:', result.error || 'Unknown error');
+      console.log('❌ 发现失败：', result.error || 'Unknown error');
       process.exit(1);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 Daemon: ${message}`);
-    console.error('请确保 Daemon 正在运行: f2a daemon start');
+    console.error(`❌ 无法连接到 Daemon：${message}`);
+    console.error('请确保 Daemon 正在运行：f2a daemon start');
     process.exit(1);
   }
 }

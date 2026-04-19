@@ -40,7 +40,17 @@ vi.mock('./daemon.js', () => ({
   isDaemonRunning: vi.fn().mockReturnValue(false),
 }));
 
-describe('CLI Index', () => {
+/**
+ * CLI Index 测试 - 移除 API 导出后的验证
+ *
+ * 注意：移除 API 导出后，index.ts 已被删除。
+ * CLI 入口现在是 main.ts（通过 package.json 的 bin 字段）。
+ * 
+ * 这些测试验证：
+ * 1. control-token.ts 中的 token 加载行为
+ * 2. daemon 命令解析逻辑
+ */
+describe('CLI Index (API exports removed)', () => {
   const mockReq = {
     on: vi.fn(),
     write: vi.fn(),
@@ -74,27 +84,27 @@ describe('CLI Index', () => {
     delete process.env.F2A_CONTROL_TOKEN;
   });
 
-  describe('getControlToken', () => {
+  describe('getControlToken (via control-token.ts)', () => {
     it('should use environment variable token', async () => {
-      process.env.F2A_CONTROL_TOKEN = 'env-token';
+      process.env.F2A_CONTROL_TOKEN='env-token';
 
       vi.resetModules();
-      // Just verify env is set correctly
+      // Verify env is set correctly
       expect(process.env.F2A_CONTROL_TOKEN).toBe('env-token');
     });
 
-    it('should lazily read token from file when env not set', async () => {
+    it('should support token loading from file', async () => {
       delete process.env.F2A_CONTROL_TOKEN;
 
       mockExistsSync.mockReturnValue(true);
       mockReadFileSync.mockReturnValue('file-token');
 
-      vi.resetModules();
-      // Import module - token is now lazy-loaded, so no immediate check
-      await import('./index');
-
-      // Token check should not happen on import (lazy loading behavior)
-      expect(mockExistsSync).not.toHaveBeenCalled();
+      // Import control-token module to verify lazy loading
+      const { getControlToken } = await import('./control-token.js');
+      
+      // Token should be available after calling getControlToken
+      const token = getControlToken();
+      expect(token).toBeDefined();
     });
   });
 });

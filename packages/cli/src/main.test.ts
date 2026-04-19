@@ -89,8 +89,11 @@ describe('CLI Main Entry (main.ts)', () => {
       it('should display correct version from package.json', async () => {
         const result = await runCli(['--version']);
         
-        // 版本应与 package.json 一致
-        expect(result.stdout.trim()).toBe('0.5.0');
+        // 版本应与 package.json 一致（动态读取）
+        const { readFileSync } = await import('fs');
+        const pkgPath = join(__dirname, '..', 'package.json');
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+        expect(result.stdout.trim()).toBe(pkg.version);
       });
     });
 

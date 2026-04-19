@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock process.exit to prevent tests from exiting
-process.exit = vi.fn() as any;
+const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('exit'); });
 
 // 在导入模块前设置环境变量
-process.env.F2A_CONTROL_TOKEN = 'test-token';
+process.env.F2A_CONTROL_TOKEN='***';
 process.env.F2A_CONTROL_PORT = '9001';
 
 import { listPending, confirm, reject } from './commands.js';
@@ -29,9 +29,9 @@ describe('CLI Commands', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    (process.exit as any).mockClear();
+    exitSpy.mockClear();
     process.env.F2A_CONTROL_PORT = '9001';
-    process.env.F2A_CONTROL_TOKEN = 'test-token';
+    process.env.F2A_CONTROL_TOKEN='***';
   });
 
   afterEach(() => {
@@ -95,12 +95,11 @@ describe('CLI Commands', () => {
       });
 
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('exit'); });
+      // 使用文件顶部的 exitSpy
 
       await expect(listPending()).rejects.toThrow('exit');
       
       consoleSpy.mockRestore();
-      exitSpy.mockRestore();
     });
   });
 
@@ -135,12 +134,11 @@ describe('CLI Commands', () => {
       });
 
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('exit'); });
+      // 使用文件顶部的 exitSpy
 
       await expect(confirm(999)).rejects.toThrow('exit');
       
       consoleSpy.mockRestore();
-      exitSpy.mockRestore();
     });
   });
 

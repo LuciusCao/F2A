@@ -1,0 +1,63 @@
+{
+  "id": "openclaw-f2a",
+  "name": "F2A P2A Network Plugin",
+  "version": "0.4.2",
+  "description": "OpenClaw plugin for F2A P2P Agent network",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "webhookPath": {
+        "type": "string",
+        "default": "/f2a/webhook",
+        "description": "Webhook 接收路径"
+      },
+      "webhookPort": {
+        "type": "number",
+        "default": 9002,
+        "description": "Webhook 监听端口"
+      },
+      "webhookToken": {
+        "type": "string",
+        "default": "",
+        "description": "Webhook 认证 Token"
+      },
+      "agentTimeout": {
+        "type": "number",
+        "default": 60000,
+        "description": "Agent 响应超时时间（毫秒）"
+      },
+      "controlPort": {
+        "type": "number",
+        "default": 9001,
+        "description": "F2A Daemon 控制端口"
+      },
+      "agentName": {
+        "type": "string",
+        "default": "OpenClaw Agent",
+        "description": "Agent 名称"
+      },
+      "agentCapabilities": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": ["chat", "task"],
+        "description": "Agent 能力列表"
+      },
+      "autoRegister": {
+        "type": "boolean",
+        "default": true,
+        "description": "启动时自动注册到 Daemon"
+      },
+      "registerRetryInterval": {
+        "type": "number",
+        "default": 5000,
+        "description": "注册重试间隔（毫秒）"
+      },
+      "registerMaxRetries": {
+        "type": "number",
+        "default": 3,
+        "description": "最大注册重试次数"
+      }
+    },
+    "additionalProperties": false
+  }
+}

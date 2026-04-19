@@ -330,11 +330,20 @@ export async function startBackground(): Promise<void> {
   console.log(`[F2A] 控制端口: ${controlPort}`);
   console.log(`[F2A] 日志文件: ${LOG_FILE}`);
 
-  // 使用脚本所在目录定位 daemon 脚本，而不是 process.cwd()
-  // 这样可以在任何目录执行 f2a daemon 命令
+  // 使用 require.resolve 定位 @f2a/daemon 包的位置
+  // 这样无论 npm 如何 hoisting 依赖，都能找到正确的路径
   const nodePath = process.execPath;
-  // __dirname = dist/cli/, 所以只需要 ../daemon/main.js
-  const daemonScript = join(__dirname, '..', 'daemon', 'main.js');
+  let daemonScript: string;
+  
+  try {
+    // 尝试通过 require.resolve 找到 daemon 包
+    const daemonPackagePath = require.resolve('@f2a/daemon/package.json');
+    const daemonDistPath = join(dirname(daemonPackagePath), 'dist', 'main.js');
+    daemonScript = daemonDistPath;
+  } catch {
+    // fallback: 尝试本地开发路径
+    daemonScript = join(__dirname, '..', 'daemon', 'main.js');
+  }
   
   // 检查 daemon 脚本是否存在
   if (!existsSync(daemonScript)) {

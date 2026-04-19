@@ -53,6 +53,20 @@ describe('CLI Main Entry (main.ts)', () => {
         expect(result.stdout).toContain('send');
         expect(result.stdout).toContain('message');  // 帮助显示为 "message"
         expect(result.stdout).toContain('agent');
+        expect(result.stdout).toContain('restart');  // restart 子命令
+      });
+    });
+
+    describe('daemon 子命令帮助', () => {
+      it('should show daemon subcommands including restart', async () => {
+        const result = await runCli(['daemon', '--help']);
+        
+        expect(result.stdout).toContain('start');
+        expect(result.stdout).toContain('stop');
+        expect(result.stdout).toContain('restart');
+        expect(result.stdout).toContain('status');
+        expect(result.stdout).toContain('foreground');
+        expect(result.code).toBe(0);
       });
     });
 

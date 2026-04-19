@@ -20,7 +20,7 @@ import { fileURLToPath } from 'url';
 import { sendRequest, CONTROL_PORT } from './http-client.js';
 import { listAgents, registerAgent, unregisterAgent } from './agents.js';
 import { sendMessage, getMessages, clearMessages } from './messages.js';
-import { startForeground, startBackground, stopDaemon, getDaemonStatus, isDaemonRunning } from './daemon.js';
+import { startForeground, startBackground, stopDaemon, getDaemonStatus, isDaemonRunning, restartDaemon } from './daemon.js';
 import { showIdentityStatus, exportIdentity, importIdentityInternal, initIdentity } from './identity.js';
 
 // ESM 环境下获取 __dirname
@@ -67,6 +67,7 @@ Commands:
   daemon     Daemon 管理
     start             启动 Daemon (后台)
     stop              停止 Daemon
+    restart           重启 Daemon
     status            查看 Daemon 状态
     foreground        前台启动 Daemon
 
@@ -106,7 +107,8 @@ Subcommands:
                     --webhook  Webhook URL（可选）
 
   unregister        注销 Agent
-                    f2a agent unregister <agent_id>
+                    f2a agent unregister <agent_id> [--token <token>]
+                    注：如果未提供 --token，将尝试从 ~/.f2a/agents/<agent_id>.json 读取
 
   verify            验证 Agent（Challenge-Response）
                     f2a agent verify <agent_id>
@@ -115,6 +117,7 @@ Examples:
   f2a agent list
   f2a agent register --name "my-agent" --capability "chat" --capability "task"
   f2a agent unregister agent-123
+  f2a agent unregister agent-123 --token agent-abc123xyz
 `);
 }
 
@@ -166,6 +169,9 @@ Subcommands:
   stop              停止 Daemon
                     f2a daemon stop
 
+  restart           重启 Daemon（先停止再启动）
+                    f2a daemon restart
+
   status            查看 Daemon 状态
                     f2a daemon status
 
@@ -176,6 +182,7 @@ Examples:
   f2a daemon start
   f2a daemon status
   f2a daemon stop
+  f2a daemon restart
 `);
 }
 
@@ -280,13 +287,20 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
       break;
 
     case 'unregister':
-      const agentId = restArgs[0];
-      if (!agentId) {
+      const unregisterAgentId = restArgs[0];
+      if (!unregisterAgentId) {
         console.error('❌ 错误：缺少 Agent ID');
-        console.error('用法：f2a agent unregister <agent_id>');
+        console.error('用法：f2a agent unregister <agent_id> [--token <token>]');
         process.exit(1);
       }
-      await unregisterAgent(agentId);
+      
+      // 解析 --token 参数
+      const tokenIndex = restArgs.indexOf('--token');
+      const unregisterToken = tokenIndex !== -1 && tokenIndex + 1 < restArgs.length
+        ? restArgs[tokenIndex + 1]
+        : undefined;
+      
+      await unregisterAgent(unregisterAgentId, unregisterToken);
       break;
 
     case 'verify':
@@ -366,6 +380,10 @@ async function handleDaemonCommand(subArgs: string[]): Promise<void> {
 
     case 'stop':
       await stopDaemon();
+      break;
+
+    case 'restart':
+      await restartDaemon();
       break;
 
     case 'status':

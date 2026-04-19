@@ -488,7 +488,7 @@ export class AgentHandler {
             hasPending: !!pending
           });
           res.writeHead(400);
-          res.end(JSON.stringify({ success: false, error: 'Invalid nonce' }));
+          res.end(JSON.stringify({ success: false, error: 'Invalid nonce', code: 'INVALID_NONCE' }));
           return;
         }
         
@@ -500,7 +500,7 @@ export class AgentHandler {
             elapsedMs: Date.now() - pending.timestamp
           });
           res.writeHead(400);
-          res.end(JSON.stringify({ success: false, error: 'Nonce expired' }));
+          res.end(JSON.stringify({ success: false, error: 'Nonce expired', code: 'NONCE_EXPIRED' }));
           return;
         }
         
@@ -511,7 +511,7 @@ export class AgentHandler {
             agentId: data.agentId?.slice(0, 16)
           });
           res.writeHead(404);
-          res.end(JSON.stringify({ success: false, error: 'Identity not found' }));
+          res.end(JSON.stringify({ success: false, error: 'Identity not found', code: 'IDENTITY_NOT_FOUND' }));
           return;
         }
         
@@ -521,7 +521,7 @@ export class AgentHandler {
             agentId: data.agentId?.slice(0, 16)
           });
           res.writeHead(400);
-          res.end(JSON.stringify({ success: false, error: 'Identity missing e2eePublicKey' }));
+          res.end(JSON.stringify({ success: false, error: 'Identity missing e2eePublicKey', code: 'MISSING_PUBLIC_KEY' }));
           return;
         }
         
@@ -537,9 +537,10 @@ export class AgentHandler {
             noncePrefix: data.nonce?.slice(0, 8)
           });
           res.writeHead(401);
-          res.end(JSON.stringify({ 
-            success: false, 
-            error: 'Signature verification failed - not the same agent' 
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Signature verification failed - not the same agent',
+            code: 'SIGNATURE_VERIFICATION_FAILED'
           }));
           return;
         }

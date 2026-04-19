@@ -205,7 +205,7 @@ export class SystemHandler {
         this.handleRegisterCapability(command, res);
       } catch {
         res.writeHead(400);
-        res.end(JSON.stringify({ success: false, error: 'Invalid JSON' }));
+        res.end(JSON.stringify({ success: false, error: 'Invalid JSON', code: 'INVALID_JSON' }));
       }
     });
   }
@@ -243,7 +243,8 @@ export class SystemHandler {
         res.writeHead(500);
         res.end(JSON.stringify({
           success: false,
-          error: error instanceof Error ? error.message : String(error)
+          error: error instanceof Error ? error.message : String(error),
+          code: 'INTERNAL_ERROR'
         }));
       }
     });

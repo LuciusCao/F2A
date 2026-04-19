@@ -17,7 +17,7 @@
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { sendRequest } from './http-client.js';
+import { sendRequest, CONTROL_PORT } from './http-client.js';
 import { listAgents, registerAgent, unregisterAgent } from './agents.js';
 import { sendMessage, getMessages, clearMessages } from './messages.js';
 import { startForeground, startBackground, stopDaemon, getDaemonStatus, isDaemonRunning } from './daemon.js';
@@ -78,6 +78,7 @@ Commands:
   status     查看系统状态
   peers      查看 P2P peers
   health     健康检查
+  discover   发现 Agent [--capability <能力>]
 
   --help     显示帮助
   --version  显示版本
@@ -555,6 +556,53 @@ async function handleHealth(): Promise<void> {
 }
 
 /**
+ * 发现 Agent（POST /control {action: 'discover'}）
+ */
+async function handleDiscover(capability?: string): Promise<void> {
+  try {
+    const result = await sendRequest('POST', '/control', {
+      action: 'discover',
+      capability
+    }) as { success: boolean; agents?: any[]; error?: string };
+
+    if (result.success && result.agents) {
+      const agents = result.agents;
+      if (agents.length === 0) {
+        console.log('🔍 没有发现 Agent');
+        if (capability) {
+          console.log(`   搜索能力: ${capability}`);
+        }
+        return;
+      }
+
+      console.log(`🔍 发现 ${agents.length} 个 Agent${capability ? ` (能力: ${capability})` : ''}:`);
+      console.log('');
+      
+      for (const agent of agents) {
+        const displayName = agent.displayName || agent.agentId?.slice(0, 16) || 'Unknown';
+        const peerId = agent.peerId?.slice(0, 16) || 'N/A';
+        const capabilities = agent.capabilities?.map((c: any) => c.name).join(', ') || 'N/A';
+        
+        console.log(`  📦 ${displayName}`);
+        console.log(`     Agent ID: ${agent.agentId || 'N/A'}`);
+        console.log(`     Peer ID: ${peerId}...`);
+        console.log(`     Capabilities: ${capabilities}`);
+        console.log(`     Agent Type: ${agent.agentType || 'N/A'}`);
+        console.log('');
+      }
+    } else {
+      console.log('❌ 发现失败:', result.error || 'Unknown error');
+      process.exit(1);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`❌ 无法连接到 Daemon: ${message}`);
+    console.error('请确保 Daemon 正在运行: f2a daemon start');
+    process.exit(1);
+  }
+}
+
+/**
  * 主入口
  */
 async function main(): Promise<void> {
@@ -608,6 +656,13 @@ async function main(): Promise<void> {
 
       case 'health':
         await handleHealth();
+        break;
+
+      case 'discover':
+        // f2a discover [--capability <cap>]
+        const capabilityArg = subArgs.find(arg => arg.startsWith('--capability'));
+        const capability = capabilityArg ? capabilityArg.split('=')[1] || subArgs[subArgs.indexOf('--capability') + 1] : undefined;
+        await handleDiscover(capability);
         break;
 
       // 向后兼容的旧命令

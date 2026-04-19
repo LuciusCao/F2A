@@ -166,7 +166,7 @@ export async function registerToDaemon(
   
   // 正常注册新 Agent
   try {
-    const response = await fetch(`http://127.0.0.1:${controlPort}/api/agents`, {
+    const response = await fetch(`http://127.0.0.1:${controlPort}/api/v1/agents`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -228,7 +228,7 @@ export async function unregisterFromDaemon(
   const controlPort = config.controlPort || 9001;
   
   try {
-    await fetch(`http://127.0.0.1:${controlPort}/api/agents/${agentId}`, {
+    await fetch(`http://127.0.0.1:${controlPort}/api/v1/agents/${agentId}`, {
       method: 'DELETE',
       headers: {
         'X-F2A-Token': config.webhookToken
@@ -565,7 +565,7 @@ async function verifyIdentity(
   
   try {
     // 1️⃣ 请求挑战
-    const challengeReq = await fetch(`http://127.0.0.1:${controlPort}/api/agents`, {
+    const challengeReq = await fetch(`http://127.0.0.1:${controlPort}/api/v1/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -600,7 +600,7 @@ async function verifyIdentity(
     const nonceSignature = signNonce(nonce, nodePrivateKey);
     
     // 3️⃣ 发送响应
-    const verifyReq = await fetch(`http://127.0.0.1:${controlPort}/api/agents/verify`, {
+    const verifyReq = await fetch(`http://127.0.0.1:${controlPort}/api/v1/agents/verify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

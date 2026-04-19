@@ -543,7 +543,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    * @param options 发现选项
    */
   async discoverAgents(capability?: string, options?: DiscoverOptions): Promise<AgentInfo[]> {
-    const timeoutMs = options?.timeoutMs ?? 2000;
+    const timeoutMs = options?.timeoutMs ?? 10000;  // 默认 10s 超时
     const waitForFirst = options?.waitForFirstResponse ?? false;
 
     // 使用锁保护创建快照，防止并发修改

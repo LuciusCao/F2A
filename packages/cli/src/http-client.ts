@@ -15,12 +15,14 @@ export const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
  * @param method HTTP 方法 (GET, POST, DELETE, PATCH)
  * @param path API 路径 (如 /api/agents, /control)
  * @param body 请求体（可选）
+ * @param customHeaders 自定义 headers（可选，如 Authorization）
  * @returns 响应 JSON 对象
  */
 export async function sendRequest(
   method: string,
   path: string,
-  body?: Record<string, unknown>
+  body?: Record<string, unknown>,
+  customHeaders?: Record<string, string>
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const payload = body ? JSON.stringify(body) : '';
@@ -32,7 +34,8 @@ export async function sendRequest(
       method,
       headers: {
         'Content-Type': 'application/json',
-        'X-F2A-Token': getControlTokenLazy()
+        'X-F2A-Token': getControlTokenLazy(),
+        ...customHeaders
       }
     };
 

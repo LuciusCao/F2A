@@ -4,13 +4,11 @@
  * Phase 4: 保存 token 到 identity 文件
  */
 
-import { request, RequestOptions } from 'http';
 import { getControlTokenLazy } from './control-token.js';
+import { sendRequest } from './http-client.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-
-const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
 
 /**
  * Phase 4: 保存 identity 文件（含 token）
@@ -53,51 +51,6 @@ function saveIdentityWithToken(agentId: string, token: string): boolean {
 }
 
 /**
- * 发送 HTTP 请求到 ControlServer
- */
-async function sendRequest(
-  method: string,
-  path: string,
-  body?: Record<string, unknown>
-): Promise<Record<string, unknown>> {
-  return new Promise((resolve, reject) => {
-    const payload = body ? JSON.stringify(body) : '';
-
-    const options: RequestOptions = {
-      hostname: '127.0.0.1',
-      port: CONTROL_PORT,
-      path,
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-F2A-Token': getControlTokenLazy()
-      }
-    };
-
-    if (payload) {
-      (options.headers as Record<string, string>)['Content-Length'] = String(Buffer.byteLength(payload));
-    }
-
-    const req = request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          resolve(JSON.parse(data));
-        } catch {
-          resolve({ success: false, error: 'Invalid response', raw: data });
-        }
-      });
-    });
-
-    req.on('error', reject);
-
-    if (payload) {
-      req.write(payload);
-    }
-    req.end();
-  });
-}
 
 /**
  * 注册 Agent

@@ -134,6 +134,9 @@ CODE_REVIEW.md
 # Skill update packages
 f2a-skill-update.tar.gz
 
+# Memory/AI decision logs (local only)
+memory/
+
 # Peer data (local storage)
 skill/memory/
 

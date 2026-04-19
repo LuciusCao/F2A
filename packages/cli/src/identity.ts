@@ -9,7 +9,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync } from 'fs';
 import { join, basename, dirname, isAbsolute } from 'path';
-import { homedir, tmpdir } from 'os';
+import { homedir, tmpdir, hostname } from 'os';
 import { NodeIdentityManager, isValidNodeId } from '@f2a/network';
 import { AgentIdentityManager } from '@f2a/network';
 import { IdentityDelegator } from '@f2a/network';
@@ -67,6 +67,114 @@ export interface ImportResult {
 /**
  * 显示身份状态
  */
+/**
+ * 初始化 F2A 节点身份
+ * 
+ * 创建 Node Identity 和基础配置文件
+ * - Node Identity: libp2p PeerId（Ed25519 密钥对）
+ * - config.json: 基础配置，agentName 默认使用 hostname
+ */
+export async function initIdentity(options?: { force?: boolean }): Promise<void> {
+  const dataDir = join(homedir(), DEFAULT_DATA_DIR);
+  const hostnameShort = hostname().split('.')[0];  // 去掉 .local 后缀
+  const defaultAgentName = `${process.env.USER || 'user'}-${hostnameShort}`;
+  
+  console.log('');
+  console.log('=== F2A Initialization ===');
+  console.log('');
+  
+  // 1. 确保 ~/.f2a 目录存在
+  if (!existsSync(dataDir)) {
+    mkdirSync(dataDir, { recursive: true });
+    console.log(`📁 Created data directory: ${dataDir}`);
+  } else {
+    console.log(`📁 Data directory exists: ${dataDir}`);
+  }
+  
+  // 2. 检查 Node Identity
+  const nodeIdentityPath = join(dataDir, 'node-identity.json');
+  const nodeExists = existsSync(nodeIdentityPath);
+  
+  if (nodeExists && !options?.force) {
+    console.log('📦 Node Identity: ✅ Already exists');
+    const nodeManager = new NodeIdentityManager({ dataDir });
+    const result = await nodeManager.loadOrCreate();
+    
+    if (result.success) {
+      console.log(`   Peer ID: ${nodeManager.getPeerIdString()?.slice(0, 20)}...`);
+      console.log(`   Node ID: ${nodeManager.getNodeId()}`);
+    } else {
+      console.log(`   ⚠️ Could not load existing identity: ${result.error?.message}`);
+    }
+  } else {
+    // 创建新的 Node Identity
+    console.log('📦 Creating Node Identity...');
+    const nodeManager = new NodeIdentityManager({ dataDir });
+    const result = await nodeManager.loadOrCreate();
+    
+    if (result.success) {
+      console.log('   ✅ Node Identity created');
+      console.log(`   Peer ID: ${nodeManager.getPeerIdString()?.slice(0, 20)}...`);
+      console.log(`   Node ID: ${nodeManager.getNodeId()}`);
+    } else {
+      console.log(`   ❌ Failed: ${result.error?.message || 'Unknown error'}`);
+      process.exit(1);
+    }
+  }
+  
+  // 3. 检查/创建 config.json
+  const configPath = join(dataDir, 'config.json');
+  
+  if (!existsSync(configPath)) {
+    console.log('');
+    console.log('⚙️  Creating config.json...');
+    
+    const defaultConfig = {
+      agentName: defaultAgentName,
+      network: {
+        bootstrapPeers: [],
+        bootstrapPeerFingerprints: {}
+      },
+      autoStart: false,
+      enableMDNS: true,
+      enableDHT: false
+    };
+    
+    writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
+    console.log(`   ✅ Created with agentName: "${defaultAgentName}"`);
+  } else {
+    console.log('');
+    console.log('⚙️  config.json: ✅ Already exists');
+    const existingConfig = JSON.parse(readFileSync(configPath, 'utf-8'));
+    console.log(`   Current agentName: "${existingConfig.agentName || 'not set'}"`);
+  }
+  
+  // 4. 创建 control-token（如果不存在）
+  const tokenPath = join(dataDir, 'control-token');
+  if (!existsSync(tokenPath)) {
+    const randomToken = Buffer.from(Array.from({ length: 32 }, () => 
+      Math.floor(Math.random() * 256)
+    ))
+      .toString('hex')
+      .slice(0, 32);
+    writeFileSync(tokenPath, randomToken);
+    console.log('');
+    console.log('🔑 Created control-token');
+  }
+  
+  console.log('');
+  console.log('=== Initialization Complete ===');
+  console.log('');
+  console.log('Next steps:');
+  console.log('  1. Run "f2a daemon start" to start the F2A daemon');
+  console.log('  2. Run "f2a agent register --name <name>" to register an Agent');
+  console.log('  3. Run "f2a configure" for advanced configuration');
+  console.log('');
+}
+
+/**
+ * 显示身份状态
+ */
 export async function showIdentityStatus(): Promise<void> {
   const dataDir = join(homedir(), DEFAULT_DATA_DIR);
   
@@ -83,7 +191,7 @@ export async function showIdentityStatus(): Promise<void> {
   
   if (legacyExists && !nodeExists) {
     console.log('📦 Node Identity: Legacy format detected (identity.json)');
-    console.log('   Run "f2a identity export" to migrate to new format');
+    console.log('   Run "f2a init" to migrate to new format');
   } else if (nodeExists) {
     const nodeManager = new NodeIdentityManager({ dataDir });
     const result = await nodeManager.loadOrCreate();
@@ -98,7 +206,7 @@ export async function showIdentityStatus(): Promise<void> {
     }
   } else {
     console.log('📦 Node Identity: ⚪ Not found');
-    console.log('   Run "f2a daemon" to create one');
+    console.log('   Run "f2a init" to create one');
   }
   
   console.log('');

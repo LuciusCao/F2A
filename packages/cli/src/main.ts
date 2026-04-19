@@ -21,7 +21,7 @@ import { sendRequest } from './http-client.js';
 import { listAgents, registerAgent, unregisterAgent } from './agents.js';
 import { sendMessage, getMessages, clearMessages } from './messages.js';
 import { startForeground, startBackground, stopDaemon, getDaemonStatus, isDaemonRunning } from './daemon.js';
-import { showIdentityStatus, exportIdentity, importIdentityInternal } from './identity.js';
+import { showIdentityStatus, exportIdentity, importIdentityInternal, initIdentity } from './identity.js';
 
 // ESM 环境下获取 __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -50,6 +50,9 @@ F2A CLI v${getVersion()} - Friend-to-Agent P2P Network
 Usage: f2a <command> [options]
 
 Commands:
+  init       初始化 F2A 节点身份 [--force 强制重新创建]
+             创建 Node Identity 和基础配置文件
+
   agent      管理 Agent 注册
     list              列出已注册的 Agent
     register          注册新 Agent [--name <name>] [--id <id>] [--capability <cap>]... [--webhook <url>]
@@ -616,10 +619,7 @@ async function main(): Promise<void> {
         break;
 
       case 'init':
-        console.error('⚠️  f2a init 命令已废弃，请使用:');
-        console.error('   f2a daemon start  # 启动 daemon');
-        console.error('   f2a identity status  # 查看身份状态');
-        process.exit(1);
+        await initIdentity({ force: subArgs.includes('--force') });
         break;
 
       case 'start':

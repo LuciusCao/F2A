@@ -10,7 +10,11 @@ import { homedir } from 'os';
 import { request, RequestOptions } from 'http';
 import { createServer } from 'net';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import { loadConfig } from './config.js';
+
+// ESM 中使用 createRequire 来获取 require.resolve
+const require = createRequire(import.meta.url);
 
 const F2A_DIR = join(homedir(), '.f2a');
 const PID_FILE = join(F2A_DIR, 'daemon.pid');
@@ -663,7 +667,8 @@ async function checkPortInUse(port: number): Promise<boolean> {
       server.close(() => resolve(false)); // 端口可用
     });
     
-    server.listen(port, '127.0.0.1');
+    // 使用 0.0.0.0 检测，因为 daemon 可能监听所有接口
+    server.listen(port, '0.0.0.0');
   });
 }
 

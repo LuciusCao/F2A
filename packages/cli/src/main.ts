@@ -20,7 +20,7 @@ import { fileURLToPath } from 'url';
 import { sendRequest, CONTROL_PORT } from './http-client.js';
 import { listAgents, registerAgent, unregisterAgent } from './agents.js';
 import { sendMessage, getMessages, clearMessages } from './messages.js';
-import { startForeground, startBackground, stopDaemon, getDaemonStatus, isDaemonRunning, restartDaemon } from './daemon.js';
+import { startForeground, startBackground, stopDaemon, getDaemonStatus, isDaemonRunning, restartDaemon, showStatus } from './daemon.js';
 import { showIdentityStatus, exportIdentity, importIdentityInternal, initIdentity } from './identity.js';
 
 // ESM 环境下获取 __dirname
@@ -387,14 +387,7 @@ async function handleDaemonCommand(subArgs: string[]): Promise<void> {
       break;
 
     case 'status':
-      const status = getDaemonStatus();
-      if (status.running) {
-        console.log(`✅ Daemon 运行中`);
-        console.log(`   PID: ${status.pid}`);
-        console.log(`   端口: ${status.port}`);
-      } else {
-        console.log(`⚪ Daemon 未运行`);
-      }
+      await showStatus();
       break;
 
     case 'foreground':

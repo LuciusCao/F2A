@@ -16,7 +16,8 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@f2a/network": "*"
+    "@f2a/network": "*",
+    "@f2a/daemon": "*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

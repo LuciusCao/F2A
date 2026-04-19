@@ -395,13 +395,15 @@ describe('P2PNetwork', () => {
     it('should count fulfilled failures in broadcast warning', async () => {
       const warnSpy = vi.spyOn((network as any).logger, 'warn');
 
+      // Setup: mock node and connected peers in peerManager
       (network as any).node = {
-        getPeers: vi.fn().mockReturnValue([
-          { toString: () => 'peer-a' },
-          { toString: () => 'peer-b' }
-        ]),
+        getPeers: vi.fn().mockReturnValue([]),
         stop: vi.fn().mockResolvedValue(undefined)
       };
+      
+      // Add connected peers to peerManager's connectedPeers Set
+      (network as any).peerManager.getConnectedPeersSet().add('peer-a');
+      (network as any).peerManager.getConnectedPeersSet().add('peer-b');
 
       const sendSpy = vi.spyOn(network as any, 'sendMessage')
         .mockResolvedValueOnce({ success: true, data: undefined })
@@ -433,7 +435,7 @@ describe('P2PNetwork', () => {
       });
 
       // 通过反射访问私有属性
-      const trustedPeers = (network as any).trustedPeers;
+      const trustedPeers = (network as any).peerManager.getTrustedPeersSet();
       expect(trustedPeers).toBeDefined();
       expect(trustedPeers.has('trusted-peer-1')).toBe(true);
       expect(trustedPeers.has('trusted-peer-2')).toBe(true);
@@ -446,7 +448,7 @@ describe('P2PNetwork', () => {
       ];
       const network = new P2PNetwork(mockAgentInfo, { bootstrapPeers });
 
-      const trustedPeers = (network as any).trustedPeers;
+      const trustedPeers = (network as any).peerManager.getTrustedPeersSet();
       expect(trustedPeers.has('12D3KooWBootstrap1')).toBe(true);
       expect(trustedPeers.has('12D3KooWBootstrap2')).toBe(true);
     });
@@ -457,14 +459,14 @@ describe('P2PNetwork', () => {
       });
 
       // 添加一些 peer，包括信任的 peer
-      (network as any).peerTable.set('trusted-peer', {
+      (network as any).peerManager.getPeerTable().set('trusted-peer', {
         peerId: 'trusted-peer',
         connected: false,
         lastSeen: Date.now() - 25 * 60 * 60 * 1000, // 25 小时前
         agentInfo: mockAgentInfo
       });
 
-      (network as any).peerTable.set('normal-peer', {
+      (network as any).peerManager.getPeerTable().set('normal-peer', {
         peerId: 'normal-peer',
         connected: false,
         lastSeen: Date.now() - 25 * 60 * 60 * 1000, // 25 小时前
@@ -472,9 +474,9 @@ describe('P2PNetwork', () => {
       });
 
       // 执行清理
-      await (network as any).cleanupStalePeers();
+      await (network as any).peerManager.cleanupStale();
 
-      const peers = (network as any).peerTable;
+      const peers = (network as any).peerManager.getPeerTable();
       expect(peers.has('trusted-peer')).toBe(true);
       expect(peers.has('normal-peer')).toBe(false);
     });
@@ -485,7 +487,7 @@ describe('P2PNetwork', () => {
       });
 
       // 添加大量 peer 触发高水位线清理
-      (network as any).peerTable.set('trusted-peer', {
+      (network as any).peerManager.getPeerTable().set('trusted-peer', {
         peerId: 'trusted-peer',
         connected: false,
         lastSeen: Date.now() - 2 * 60 * 60 * 1000, // 2 小时前
@@ -494,7 +496,7 @@ describe('P2PNetwork', () => {
 
       // 添加 900 个普通 peer（超过高水位线 900 = 1000 * 0.9）
       for (let i = 0; i < 900; i++) {
-        (network as any).peerTable.set(`peer-${i}`, {
+        (network as any).peerManager.getPeerTable().set(`peer-${i}`, {
           peerId: `peer-${i}`,
           connected: false,
           lastSeen: Date.now() - 2 * 60 * 60 * 1000,
@@ -503,9 +505,9 @@ describe('P2PNetwork', () => {
       }
 
       // 执行激进清理
-      await (network as any).cleanupStalePeers(true);
+      await (network as any).peerManager.cleanupStale({ aggressive: true });
 
-      const peers = (network as any).peerTable;
+      const peers = (network as any).peerManager.getPeerTable();
       expect(peers.has('trusted-peer')).toBe(true);
       // 信任的 peer 应该被保留
     });
@@ -516,7 +518,7 @@ describe('P2PNetwork', () => {
       const network = new P2PNetwork(mockAgentInfo);
 
       // 添加过期 peer
-      (network as any).peerTable.set('stale-peer', {
+      (network as any).peerManager.getPeerTable().set('stale-peer', {
         peerId: 'stale-peer',
         connected: false,
         lastSeen: Date.now() - 25 * 60 * 60 * 1000, // 25 小时前
@@ -525,16 +527,16 @@ describe('P2PNetwork', () => {
 
       // 添加活跃 peer（3 小时前，未连接但未超过 stale 阈值）
       // 注意：未连接超过 1 小时的 peer 会被清理，所以这个测试验证的是连接中的 peer 不会被清理
-      (network as any).peerTable.set('active-peer', {
+      (network as any).peerManager.getPeerTable().set('active-peer', {
         peerId: 'active-peer',
         connected: true, // 连接中的 peer 不应该被清理
         lastSeen: Date.now() - 3 * 60 * 60 * 1000, // 3 小时前
         agentInfo: mockAgentInfo
       });
 
-      await (network as any).cleanupStalePeers();
+      await (network as any).peerManager.cleanupStale();
 
-      const peers = (network as any).peerTable;
+      const peers = (network as any).peerManager.getPeerTable();
       expect(peers.has('stale-peer')).toBe(false);
       expect(peers.has('active-peer')).toBe(true);
     });
@@ -542,16 +544,16 @@ describe('P2PNetwork', () => {
     it('应该清理未连接超过 1 小时的 peer', async () => {
       const network = new P2PNetwork(mockAgentInfo);
 
-      (network as any).peerTable.set('disconnected-peer', {
+      (network as any).peerManager.getPeerTable().set('disconnected-peer', {
         peerId: 'disconnected-peer',
         connected: false,
         lastSeen: Date.now() - 2 * 60 * 60 * 1000, // 2 小时前，但未连接
         agentInfo: mockAgentInfo
       });
 
-      await (network as any).cleanupStalePeers();
+      await (network as any).peerManager.cleanupStale();
 
-      const peers = (network as any).peerTable;
+      const peers = (network as any).peerManager.getPeerTable();
       expect(peers.has('disconnected-peer')).toBe(false);
     });
 
@@ -561,7 +563,7 @@ describe('P2PNetwork', () => {
       // 添加超过最大容量的 peer
       const maxCount = 1000;
       for (let i = 0; i < maxCount + 50; i++) {
-        (network as any).peerTable.set(`peer-${i}`, {
+        (network as any).peerManager.getPeerTable().set(`peer-${i}`, {
           peerId: `peer-${i}`,
           connected: false,
           lastSeen: Date.now() - i * 60 * 1000, // 每个 peer 间隔 1 分钟
@@ -569,9 +571,9 @@ describe('P2PNetwork', () => {
         });
       }
 
-      await (network as any).cleanupStalePeers();
+      await (network as any).peerManager.cleanupStale({ maxSize: maxCount });
 
-      const peers = (network as any).peerTable;
+      const peers = (network as any).peerManager.getPeerTable();
       expect(peers.size).toBeLessThanOrEqual(maxCount);
     });
   });

@@ -28,7 +28,8 @@ vi.mock('./p2p-network', () => ({
     sendTaskRequest: vi.fn().mockResolvedValue({ success: true, data: { result: 'ok' } }),
     sendTaskResponse: vi.fn().mockResolvedValue({ success: true }),
     on: vi.fn(),
-    setIdentityManager: vi.fn()
+    setIdentityManager: vi.fn(),
+    setAgentRegistry: vi.fn()
   }))
 }));
 

@@ -57,15 +57,18 @@ import { RequestSigner, loadSignatureConfig, SignedMessage } from '../utils/sign
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { getErrorMessage } from '../utils/error-utils.js';
 import { isEncryptedMessage, EncryptedF2AMessage } from '../common/type-guards.js';
+import { PeerManager } from './peer-manager.js';
+import { DiscoveryService } from './discovery-service.js';
+import { DHTService } from './dht-service.js';
 
-// DHT 服务类型定义
-interface DHTService {
+// DHT 服务类型定义 (保留用于 libp2p services 类型检查)
+interface DHTServiceApi {
   findPeer(peerId: PeerId): Promise<{ multiaddrs: Multiaddr[] } | null>;
   routingTable?: { size: number };
 }
 
 interface Libp2pServices {
-  dht?: DHTService;
+  dht?: DHTServiceApi;
 }
 
 // 加密消息处理结果
@@ -102,75 +105,15 @@ export interface DiscoverOptions {
   waitForFirstResponse?: boolean;
 }
 
-/**
- * 简单的异步锁实现，用于保护关键资源的并发访问
- * 
- * P1 修复：添加超时机制，防止死锁
- */
-class AsyncLock {
-  private locked = false;
-  private queue: Array<() => void> = [];
-  /** 默认锁超时时间（毫秒） - P1-6 修复：从 10000ms 改为 30000ms */
-  private static readonly DEFAULT_TIMEOUT_MS = 30000;
-
-  /**
-   * 获取锁
-   * @param timeoutMs 超时时间（毫秒），默认 10 秒
-   * @throws Error 如果超时未能获取锁
-   */
-  async acquire(timeoutMs: number = AsyncLock.DEFAULT_TIMEOUT_MS): Promise<void> {
-    if (!this.locked) {
-      this.locked = true;
-      return;
-    }
-
-    return new Promise<void>((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        // 从队列中移除此等待者
-        const index = this.queue.indexOf(onAcquire);
-        if (index !== -1) {
-          this.queue.splice(index, 1);
-        }
-        reject(new Error(`AsyncLock acquire timeout after ${timeoutMs}ms`));
-      }, timeoutMs);
-
-      const onAcquire = () => {
-        clearTimeout(timeoutId);
-        resolve();
-      };
-
-      this.queue.push(onAcquire);
-    });
-  }
-
-  release(): void {
-    const next = this.queue.shift();
-    if (next) {
-      // 保持 locked = true，直接传递给下一个等待者
-      next();
-    } else {
-      this.locked = false;
-    }
-  }
-
-  /**
-   * 检查锁是否被持有
-   */
-  isLocked(): boolean {
-    return this.locked;
-  }
-}
-
 export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private node: Libp2p | null = null;
   private config: P2PNetworkConfig;
-  private peerTable: Map<string, PeerInfo> = new Map();
-  /** P2.4 修复：已连接 Peer 索引，用于 O(1) 查询 */
-  private connectedPeers: Set<string> = new Set();
-  /** P1 修复：信任的 Peer 白名单，不会被清理 */
-  private trustedPeers: Set<string> = new Set();
-  /** 用于保护 peerTable 并发访问的锁 */
-  private peerTableLock = new AsyncLock();
+  /** PeerManager: 管理 Peer 状态（peerTable, connectedPeers, trustedPeers） */
+  private peerManager: PeerManager;
+  /** DiscoveryService: 管理 Agent 发现 */
+  private discoveryService: DiscoveryService;
+  /** DHTService: 管理 DHT 发现、注册和 Relay 连接 */
+  private dhtService: DHTService;
   /** P2-4 修复：DISCOVER 消息速率限制器（每个 peer） */
   private discoverRateLimiter = new RateLimiter({
     maxRequests: 10, // 每个 peer 每分钟最多 10 次 DISCOVER 消息
@@ -231,10 +174,36 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     };
     this.logger = new Logger({ component: 'P2P' });
     
-    // 初始化信任的 Peer 白名单
-    if (this.config.trustedPeers) {
-      this.config.trustedPeers.forEach(peerId => this.trustedPeers.add(peerId));
-    }
+    // 初始化 PeerManager（管理 peer 状态）
+    this.peerManager = new PeerManager(this.config.trustedPeers);
+    
+    // 初始化 DiscoveryService（管理 Agent 发现）
+    this.discoveryService = new DiscoveryService({
+      peerManager: this.peerManager,
+      agentInfo: this.agentInfo,
+    });
+    
+    // 初始化 DHTService（管理 DHT 发现、注册和 Relay 连接）
+    this.dhtService = new DHTService();
+    
+    // 监听 DiscoveryService 事件，转发到实际发送逻辑
+    this.discoveryService.on('broadcast', (message) => {
+      // 广播消息到所有连接的 peers
+      this.broadcast(message).catch(err => {
+        this.logger.warn('Discovery broadcast failed', { error: getErrorMessage(err) });
+      });
+    });
+    
+    this.discoveryService.on('send', ({ peerId, message }) => {
+      // 发送消息到特定 peer
+      this.sendMessage(peerId, message, false).catch(err => {
+        this.logger.warn('Discovery send failed', { 
+          peerId: peerId.slice(0, 16), 
+          error: getErrorMessage(err) 
+        });
+      });
+    });
+    
     // 引导节点自动加入白名单
     if (this.config.bootstrapPeers) {
       this.config.bootstrapPeers.forEach(addr => {
@@ -243,7 +212,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           const ma = multiaddr(addr);
           const components = ma.getComponents();
           const p2pComponent = components.find(c => c.name === 'p2p');
-          if (p2pComponent?.value) this.trustedPeers.add(p2pComponent.value);
+          if (p2pComponent?.value) this.peerManager.addTrusted(p2pComponent.value);
         } catch { /* ignore invalid addresses */ }
       });
     }
@@ -267,8 +236,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     // 初始化 AgentIdentityVerifier（同步创建）
     this.agentIdentityVerifier = new AgentIdentityVerifier(
       this.e2eeCrypto,
-      this.peerTable,
-      this.connectedPeers
+      this.peerManager.getPeerTable(),
+      this.peerManager.getConnectedPeersSet()
     );
     
     this.logger.info('AgentRegistry and AgentIdentityVerifier configured', {
@@ -289,7 +258,10 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    */
   updateVerifierPeerReferences(): void {
     if (this.agentIdentityVerifier) {
-      this.agentIdentityVerifier.updatePeerReferences(this.peerTable, this.connectedPeers);
+      this.agentIdentityVerifier.updatePeerReferences(
+        this.peerManager.getPeerTable(),
+        this.peerManager.getConnectedPeersSet()
+      );
     }
   }
 
@@ -479,6 +451,19 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         this.logger.info('NAT traversal manager initialized');
       }
 
+      // Phase 5: 配置 DHTService
+      if (this.node) {
+        this.dhtService.setNode(this.node);
+        this.dhtService.setPeerManager(this.peerManager);
+        this.dhtService.setDHTServerMode(this.config.dhtServerMode || false);
+        
+        if (this.natTraversalManager) {
+          this.dhtService.setNATTraversalManager(this.natTraversalManager);
+        }
+        
+        this.logger.info('DHTService configured');
+      }
+
       this.logger.info('Started', { peerId: peerId.toString().slice(0, 16) });
       this.logger.info('Listening', { addresses: addrs });
       this.logger.info('Connection encryption enabled', { protocol: 'Noise' });
@@ -509,6 +494,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     this.discoverRateLimiter.stop();
     // P0-2 修复：停止 DECRYPT_FAILED 消息速率限制器
     this.decryptFailedRateLimiter.stop();
+    
+    // Phase 4: 停止 DiscoveryService
+    this.discoveryService.stop();
 
     // P1-1 修复：停止 E2EE 加密模块，清理定时器资源
     if (this.e2eeCrypto && typeof this.e2eeCrypto.stop === 'function') {
@@ -562,9 +550,10 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     const agents: AgentInfo[] = [];
     const seenPeerIds = new Set<string>();
     
-    await this.peerTableLock.acquire();
+    // No longer needed - PeerManager handles locking internally
+    // Old code used peerTableLock for atomic operations
     try {
-      for (const peer of this.peerTable.values()) {
+      for (const peer of this.peerManager.getPeerTable().values()) {
         if (peer.agentInfo) {
           if (!capability || this.hasCapability(peer.agentInfo, capability)) {
             agents.push(peer.agentInfo);
@@ -573,7 +562,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         }
       }
     } finally {
-      this.peerTableLock.release();
+      // Lock no longer needed
     }
 
     // 如果已经有足够的 agents 且不需要等待响应，直接返回
@@ -622,9 +611,10 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     }
 
     // 再次收集 - 使用锁保护创建快照
-    await this.peerTableLock.acquire();
+    // No longer needed - PeerManager handles locking internally
+    // Old code used peerTableLock for atomic operations
     try {
-      for (const peer of this.peerTable.values()) {
+      for (const peer of this.peerManager.getPeerTable().values()) {
         if (peer.agentInfo && !seenPeerIds.has(peer.agentInfo.peerId)) {
           if (!capability || this.hasCapability(peer.agentInfo, capability)) {
             agents.push(peer.agentInfo);
@@ -633,7 +623,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         }
       }
     } finally {
-      this.peerTableLock.release();
+      // Lock no longer needed
     }
 
     return agents;
@@ -815,17 +805,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
   /**
    * 广播发现消息
+   * Phase 4: 使用 DiscoveryService 进行广播
    */
   private async broadcastDiscovery(): Promise<void> {
-    const message: F2AMessage = {
-      id: randomUUID(),
-      type: 'DISCOVER',
-      from: this.agentInfo.peerId,
-      timestamp: Date.now(),
-      payload: { agentInfo: this.agentInfo } as DiscoverPayload
-    };
-
-    await this.broadcast(message);
+    // DiscoveryService 会发出 'broadcast' 事件，在构造函数中已订阅
+    this.discoveryService.broadcastDiscovery();
   }
 
   /**
@@ -837,7 +821,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     // 【关键修复】使用 connectedPeers 而非 node.getPeers()
     // 问题：node.getPeers() 返回路由表中的所有 peer，包括已断开的
     // 解决：只向真正已连接的 peer 发送消息
-    const connectedPeerIds = Array.from(this.connectedPeers);
+    const connectedPeerIds = Array.from(this.peerManager.getConnectedPeersSet());
     
     if (connectedPeerIds.length === 0) {
       this.logger.debug('No connected peers to broadcast to');
@@ -889,7 +873,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       // 背景：libp2p getConnections() 可能返回已关闭的连接
       // 原因：peer:disconnect 事件在某些情况下不会触发（网络中断、重启残留）
       // 解决：维护自己的连接索引，并在失败时清除
-      const isConnected = this.connectedPeers.has(peerId);
+      const isConnected = this.peerManager.getConnectedPeersSet().has(peerId);
       
       let connection;
       if (isConnected) {
@@ -903,13 +887,13 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           this.logger.warn('Connection index inconsistent, clearing', {
             peerId: peerId.slice(0, 16)
           });
-          this.connectedPeers.delete(peerId);
+          this.peerManager.getConnectedPeersSet().delete(peerId);
         }
       }
       
       if (!connection) {
         // 未连接，需要 dial
-        const peerInfo = this.peerTable.get(peerId);
+        const peerInfo = this.peerManager.getPeerTable().get(peerId);
         if (!peerInfo || peerInfo.multiaddrs.length === 0) {
           return failureFromError('PEER_NOT_FOUND', `Peer ${peerId} not found`);
         }
@@ -980,9 +964,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         });
         
         // 清除连接索引
-        this.connectedPeers.delete(peerId);
+        this.peerManager.getConnectedPeersSet().delete(peerId);
         
-        const peerInfo = this.peerTable.get(peerId);
+        const peerInfo = this.peerManager.getPeerTable().get(peerId);
         if (peerInfo && peerInfo.multiaddrs.length > 0) {
           try {
             // 【关键修复】选择合适的 multiaddr（过滤掉 localhost）
@@ -1014,7 +998,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         await (stream as any).sendCloseWrite?.();
       } catch (streamError) {
         // 发送失败，清除连接索引
-        this.connectedPeers.delete(peerId);
+        this.peerManager.getConnectedPeersSet().delete(peerId);
         // 发送失败时确保 stream 被关闭
         try { await stream.close(); } catch {}
         throw streamError;
@@ -1045,24 +1029,14 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           multiaddrs: multiaddrs.length 
         });
 
-        // 更新路由表
+        // 更新路由表（使用 PeerManager）
         const now = Date.now();
-        await this.upsertPeer(
-          peerId,
-          () => ({
-            peerId,
-            multiaddrs: evt.detail.multiaddrs,
-            connected: false,
-            // P2 修复：mDNS 发现的节点信誉初始化为 25，表示"未验证"状态
-            reputation: 25,
-            lastSeen: now
-          }),
-          (peer) => ({
-            ...peer,
-            multiaddrs: evt.detail.multiaddrs,
-            lastSeen: now
-          })
-        );
+        await this.peerManager.upsert(peerId, {
+          multiaddrs: evt.detail.multiaddrs,
+          connected: false,
+          reputation: 25, // mDNS 发现的节点信誉初始化为 25，表示"未验证"状态
+          lastSeen: now
+        });
 
         // 触发发现事件
         // P2 修复：mDNS 发现的 AgentInfo 使用占位符标记为"待验证"
@@ -1120,29 +1094,17 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
           // 无法获取 multiaddrs，使用空数组
         }
 
-        // P2.4 修复：使用原子操作更新路由表和连接索引
+        // P2.4 修复：使用 PeerManager 更新路由表和连接索引
         const now = Date.now();
-        await this.upsertPeer(
-          peerId,
-          () => ({
-            peerId,
-            multiaddrs,
-            connected: true,
-            reputation: 50,
-            connectedAt: now,
-            lastSeen: now
-          }),
-          (peer) => ({
-            ...peer,
-            connected: true,
-            connectedAt: now,
-            lastSeen: now,
-            ...(multiaddrs.length > 0 ? { multiaddrs } : {})
-          })
-        );
+        await this.peerManager.upsert(peerId, {
+          multiaddrs,
+          connected: true,
+          connectedAt: now,
+          lastSeen: now
+        });
         
         // P2.4 修复：维护连接索引
-        this.connectedPeers.add(peerId);
+        this.peerManager.getConnectedPeersSet().add(peerId);
         
         // Phase 1 修复：连接建立后自动交换公钥
         if (this.enableE2EE && this.e2eeCrypto && this.agentInfo.encryptionPublicKey) {
@@ -1173,19 +1135,19 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         this.emit('peer:disconnected', { peerId });
 
         // P2.4 修复：从连接索引中移除
-        this.connectedPeers.delete(peerId);
+        this.peerManager.getConnectedPeersSet().delete(peerId);
 
         // P1-2 修复：清理对等方的加密资源
         this.e2eeCrypto.unregisterPeer(peerId);
 
-        // 使用原子操作更新路由表
-        const updated = await this.updatePeer(peerId, (peer) => ({
-          ...peer,
-          connected: false,
-          lastSeen: Date.now()
-        }));
-
-        if (!updated) {
+        // 使用 PeerManager 更新路由表（如果存在）
+        const peer = this.peerManager.get(peerId);
+        if (peer) {
+          await this.peerManager.upsert(peerId, {
+            connected: false,
+            lastSeen: Date.now()
+          });
+        } else {
           // Peer 不在路由表中，记录警告但不创建条目（已断开）
           this.logger.warn('Peer disconnected but not in routing table', { peerId: peerId.slice(0, 16) });
         }
@@ -1262,12 +1224,12 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       // sendMessage 会检查 connectedPeers，需要等待事件处理器更新
       let retries = 0;
       const maxRetries = 10;
-      while (!this.connectedPeers.has(peerId) && retries < maxRetries) {
+      while (!this.peerManager.getConnectedPeersSet().has(peerId) && retries < maxRetries) {
         await new Promise(resolve => setTimeout(resolve, 100));
         retries++;
       }
       
-      if (!this.connectedPeers.has(peerId)) {
+      if (!this.peerManager.getConnectedPeersSet().has(peerId)) {
         this.logger.warn('Connection established but peer:connect event not received', {
           peerId: peerId.slice(0, 16),
           waitMs: retries * 100
@@ -1315,7 +1277,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     this.logger.info('Received message', { type: message.type, peerId: peerId.slice(0, 16) });
 
     // 更新最后活跃时间
-    const peerInfo = this.peerTable.get(peerId);
+    const peerInfo = this.peerManager.getPeerTable().get(peerId);
     if (peerInfo) {
       peerInfo.lastSeen = Date.now();
     }
@@ -1732,7 +1694,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     });
     
     // 尝试重新注册公钥以重新建立加密通道
-    const peerInfo = this.peerTable.get(peerId);
+    const peerInfo = this.peerManager.getPeerTable().get(peerId);
     if (peerInfo?.agentInfo?.encryptionPublicKey) {
       this.e2eeCrypto.registerPeerPublicKey(peerId, peerInfo.agentInfo.encryptionPublicKey);
       this.logger.info('Re-registered encryption key after decrypt failure', {
@@ -1764,22 +1726,23 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     let needsAggressiveCleanup = false;
 
     // 使用锁保护容量检查和创建操作的原子性
-    await this.peerTableLock.acquire();
+    // No longer needed - PeerManager handles locking internally
+    // Old code used peerTableLock for atomic operations
     try {
       // 检查是否需要清理以腾出空间
-      if (!this.peerTable.has(peerId)) {
+      if (!this.peerManager.getPeerTable().has(peerId)) {
         // 新 peer，需要检查容量
         const highWatermark = Math.floor(PEER_TABLE_MAX_SIZE * PEER_TABLE_HIGH_WATERMARK);
-        if (this.peerTable.size >= highWatermark) {
+        if (this.peerManager.getPeerTable().size >= highWatermark) {
           // P1 修复：不在锁内执行耗时清理，仅标记需要清理
           needsAggressiveCleanup = true;
         }
         
-        if (this.peerTable.size >= PEER_TABLE_MAX_SIZE) {
+        if (this.peerManager.getPeerTable().size >= PEER_TABLE_MAX_SIZE) {
           // 清理后仍无空间，拒绝新 peer
           this.logger.warn('Peer table full, rejecting new peer', {
             peerId: peerId.slice(0, 16),
-            currentSize: this.peerTable.size,
+            currentSize: this.peerManager.getPeerTable().size,
             maxSize: PEER_TABLE_MAX_SIZE
           });
           return;
@@ -1788,16 +1751,16 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
       // 更新路由表
       const now = Date.now();
-      const existing = this.peerTable.get(peerId);
+      const existing = this.peerManager.getPeerTable().get(peerId);
       if (existing) {
-        this.peerTable.set(peerId, {
+        this.peerManager.getPeerTable().set(peerId, {
           ...existing,
           agentInfo,
           lastSeen: now,
           multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma))
         });
       } else {
-        this.peerTable.set(peerId, {
+        this.peerManager.getPeerTable().set(peerId, {
           peerId,
           agentInfo,
           multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma)),
@@ -1807,14 +1770,14 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         });
       }
     } finally {
-      this.peerTableLock.release();
+      // Lock no longer needed
     }
 
     // P1 修复：在锁外异步执行清理，避免阻塞并发操作
     if (needsAggressiveCleanup) {
       // 使用 setImmediate 异步执行，不阻塞当前操作
       setImmediate(() => {
-        this.cleanupStalePeers(true).catch(err => {
+        this.peerManager.cleanupStale({ aggressive: true }).catch(err => {
           this.logger.error('Background cleanup failed', { error: err });
         });
       });
@@ -1869,30 +1832,25 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    */
   private async upsertPeerFromAgentInfo(agentInfo: AgentInfo, peerId: string): Promise<void> {
     // P2-5 修复：使用 async/await 确保锁正确等待
-    await this.peerTableLock.acquire();
+    // No longer needed - PeerManager handles locking internally
+    // Old code used peerTableLock for atomic operations
     try {
       // 检查是否需要清理以腾出空间
-      if (this.peerTable.size >= PEER_TABLE_MAX_SIZE && !this.peerTable.has(peerId)) {
-        this.cleanupStalePeersLocked(true);
-      }
-
-      const existing = this.peerTable.get(peerId);
-      if (existing) {
-        existing.agentInfo = agentInfo;
-        existing.lastSeen = Date.now();
-        existing.multiaddrs = agentInfo.multiaddrs.map(ma => multiaddr(ma));
-      } else {
-        this.peerTable.set(peerId, {
-          peerId,
-          agentInfo,
-          multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma)),
-          connected: false,
-          reputation: 50,
-          lastSeen: Date.now()
+      if (this.peerManager.size() >= PEER_TABLE_MAX_SIZE && !this.peerManager.get(peerId)) {
+        this.peerManager.cleanupStale({ aggressive: true }).catch(err => {
+          this.logger.error('Cleanup failed', { error: err });
         });
       }
+
+      await this.peerManager.upsert(peerId, {
+        agentInfo,
+        multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma)),
+        connected: false,
+        reputation: 50,
+        lastSeen: Date.now()
+      });
     } finally {
-      this.peerTableLock.release();
+      // Lock no longer needed
     }
 
     // 注册对等方的加密公钥
@@ -1980,197 +1938,21 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    * 启动定期清理任务
    */
   private startCleanupTask(): void {
-    // 立即执行一次
-    this.cleanupStalePeers();
+    // 立即执行一次（委托给 PeerManager）
+    this.peerManager.cleanupStale().catch(err => {
+      this.logger.error('Cleanup failed', { error: getErrorMessage(err) });
+    });
 
     // 每 5 分钟清理一次
     this.cleanupInterval = setInterval(() => {
-      this.cleanupStalePeers();
-    }, PEER_TABLE_CLEANUP_INTERVAL);
-  }
-
-  /**
-   * 清理过期的 Peer 记录（带锁保护）
-   * @param aggressive 是否使用激进清理策略（清理更多条目）
-   */
-  private async cleanupStalePeers(aggressive = false): Promise<void> {
-    await this.peerTableLock.acquire();
-    try {
-      this.cleanupStalePeersLocked(aggressive);
-    } finally {
-      this.peerTableLock.release();
-    }
-  }
-
-  /**
-   * 清理过期的 Peer 记录（内部方法，调用前必须持有锁）
-   * @param aggressive 是否使用激进清理策略（清理更多条目）
-   */
-  private cleanupStalePeersLocked(aggressive = false): void {
-    const now = Date.now();
-    const threshold = aggressive ? 0 : PEER_STALE_THRESHOLD;
-    let cleaned = 0;
-    let skippedTrusted = 0;
-
-    // 辅助函数：检查 peer 是否在白名单中
-    const isTrusted = (peerId: string): boolean => this.trustedPeers.has(peerId);
-
-    // 激进清理：清理更多类型的条目
-    if (aggressive) {
-      // 1. 清理所有未连接且超过 1 小时的 peer（跳过白名单）
-      for (const [peerId, peer] of this.peerTable) {
-        if (isTrusted(peerId)) {
-          skippedTrusted++;
-          continue;
+      this.peerManager.cleanupStale().then(result => {
+        if (result.removed > 0) {
+          this.logger.info('Cleaned up stale peers', result);
         }
-        if (!peer.connected && now - peer.lastSeen > 60 * 60 * 1000) {
-          this.peerTable.delete(peerId);
-          cleaned++;
-        }
-      }
-      
-      // 2. 如果仍然超过高水位线，按最后活跃时间排序后删除最旧的（跳过白名单）
-      const highWatermark = Math.floor(PEER_TABLE_MAX_SIZE * PEER_TABLE_HIGH_WATERMARK);
-      if (this.peerTable.size > highWatermark) {
-        const targetSize = Math.floor(PEER_TABLE_MAX_SIZE * PEER_TABLE_AGGRESSIVE_CLEANUP_THRESHOLD);
-        const sorted = Array.from(this.peerTable.entries())
-          .sort((a, b) => a[1].lastSeen - b[1].lastSeen);
-        
-        // 优先删除未连接的 peer（跳过白名单）
-        const toRemove = sorted
-          .filter(([peerId, peer]) => !isTrusted(peerId) && !peer.connected)
-          .slice(0, this.peerTable.size - targetSize);
-        
-        for (const [peerId] of toRemove) {
-          this.peerTable.delete(peerId);
-          cleaned++;
-        }
-      }
-    } else {
-      // 常规清理：清理过期条目（跳过白名单）
-      for (const [peerId, peer] of this.peerTable) {
-        // 跳过白名单中的 peer
-        if (isTrusted(peerId)) {
-          skippedTrusted++;
-          continue;
-        }
-        
-        // 清理条件：长时间未活跃，或者未连接且超过一定时间
-        const shouldClean = 
-          now - peer.lastSeen > threshold ||
-          (!peer.connected && now - peer.lastSeen > 60 * 60 * 1000); // 未连接超过 1 小时
-
-        if (shouldClean) {
-          this.peerTable.delete(peerId);
-          cleaned++;
-        }
-      }
-    }
-
-    // 如果仍然超过最大容量，按最后活跃时间排序后删除最旧的（跳过白名单）
-    if (this.peerTable.size > PEER_TABLE_MAX_SIZE) {
-      const sorted = Array.from(this.peerTable.entries())
-        .sort((a, b) => a[1].lastSeen - b[1].lastSeen);
-
-      // 优先删除未连接的 peer（跳过白名单）
-      const disconnected = sorted.filter(([peerId, _]) => !isTrusted(peerId) && !this.connectedPeers.has(peerId));
-      const toRemove = disconnected.length > 0 
-        ? disconnected.slice(0, this.peerTable.size - PEER_TABLE_MAX_SIZE)
-        : sorted.filter(([peerId, _]) => !isTrusted(peerId)).slice(0, this.peerTable.size - PEER_TABLE_MAX_SIZE);
-      
-      for (const [peerId] of toRemove) {
-        this.peerTable.delete(peerId);
-        cleaned++;
-      }
-
-      this.logger.info('Removed oldest peers to maintain limit', { removed: toRemove.length });
-    }
-
-    if (cleaned > 0 || skippedTrusted > 0) {
-      this.logger.info('Cleaned up stale peers', { 
-        cleaned, 
-        skippedTrusted,
-        remaining: this.peerTable.size, 
-        aggressive,
-        trustedCount: this.trustedPeers.size 
+      }).catch(err => {
+        this.logger.error('Cleanup failed', { error: getErrorMessage(err) });
       });
-    }
-  }
-
-  /**
-   * 原子操作：获取 peer 信息
-   */
-  private getPeer(peerId: string): PeerInfo | undefined {
-    return this.peerTable.get(peerId);
-  }
-
-  /**
-   * 原子操作：设置 peer 信息
-   */
-  private setPeer(peerId: string, info: PeerInfo): void {
-    this.peerTable.set(peerId, info);
-  }
-
-  /**
-   * 原子操作：更新 peer 信息（线程安全）
-   * @param peerId Peer ID
-   * @param updater 更新函数，接收当前值，返回新值
-   * @returns 更新后的 peer 信息，如果 peer 不存在则返回 undefined
-   */
-  private async updatePeer(
-    peerId: string,
-    updater: (peer: PeerInfo) => PeerInfo
-  ): Promise<PeerInfo | undefined> {
-    await this.peerTableLock.acquire();
-    try {
-      const peer = this.peerTable.get(peerId);
-      if (!peer) return undefined;
-      const updated = updater(peer);
-      this.peerTable.set(peerId, updated);
-      return updated;
-    } finally {
-      this.peerTableLock.release();
-    }
-  }
-
-  /**
-   * 原子操作：安全地更新或创建 peer
-   * @param peerId Peer ID
-   * @param creator 创建新 peer 的函数（如果不存在）
-   * @param updater 更新函数（如果存在）
-   */
-  private async upsertPeer(
-    peerId: string,
-    creator: () => PeerInfo,
-    updater: (peer: PeerInfo) => PeerInfo
-  ): Promise<PeerInfo> {
-    await this.peerTableLock.acquire();
-    try {
-      const existing = this.peerTable.get(peerId);
-      if (existing) {
-        const updated = updater(existing);
-        this.peerTable.set(peerId, updated);
-        return updated;
-      } else {
-        const created = creator();
-        this.peerTable.set(peerId, created);
-        return created;
-      }
-    } finally {
-      this.peerTableLock.release();
-    }
-  }
-
-  /**
-   * 原子操作：删除 peer
-   */
-  private async deletePeer(peerId: string): Promise<boolean> {
-    await this.peerTableLock.acquire();
-    try {
-      return this.peerTable.delete(peerId);
-    } finally {
-      this.peerTableLock.release();
-    }
+    }, PEER_TABLE_CLEANUP_INTERVAL);
   }
 
   /**
@@ -2186,8 +1968,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    */
   getConnectedPeers(): PeerInfo[] {
     const result: PeerInfo[] = [];
-    for (const peerId of this.connectedPeers) {
-      const peer = this.peerTable.get(peerId);
+    for (const peerId of this.peerManager.getConnectedPeersSet()) {
+      const peer = this.peerManager.getPeerTable().get(peerId);
       if (peer) {
         result.push(peer);
       }
@@ -2199,7 +1981,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    * 获取所有已知的 Peers
    */
   getAllPeers(): PeerInfo[] {
-    return Array.from(this.peerTable.values());
+    return Array.from(this.peerManager.getPeerTable().values());
   }
 
   /**
@@ -2237,44 +2019,26 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
   /**
    * 通过 DHT 查找节点 (全局发现)
+   * Phase 5: 委托给 DHTService
    */
   async findPeerViaDHT(peerId: string): Promise<Result<string[]>> {
-    if (!this.node) {
-      return failureFromError('NETWORK_NOT_STARTED', 'P2P network not started');
-    }
-
-    const dht = (this.node.services as Libp2pServices).dht;
-    if (!dht) {
-      return failureFromError('DHT_NOT_AVAILABLE', 'DHT service not enabled');
-    }
-
-    try {
-      const peerIdObj = peerIdFromString(peerId);
-      const peerInfo = await dht.findPeer(peerIdObj);
-      
-      if (peerInfo && peerInfo.multiaddrs.length > 0) {
-        return success(peerInfo.multiaddrs.map(ma => ma.toString()));
-      }
-      
-      return failureFromError('PEER_NOT_FOUND', `Peer ${peerId} not found in DHT`);
-    } catch (error) {
-      return failureFromError('DHT_LOOKUP_FAILED', 'DHT lookup failed', error as Error);
-    }
+    return this.dhtService.findPeerViaDHT(peerId);
   }
 
   /**
    * 获取 DHT 路由表大小
+   * Phase 5: 委托给 DHTService
    */
   getDHTPeerCount(): number {
-    const dht = (this.node?.services as Libp2pServices)?.dht;
-    return dht?.routingTable?.size || 0;
+    return this.dhtService.getDHTPeerCount();
   }
 
   /**
    * 检查 DHT 是否启用
+   * Phase 5: 委托给 DHTService
    */
   isDHTEnabled(): boolean {
-    return !!(this.node?.services as Libp2pServices)?.dht;
+    return this.dhtService.isDHTEnabled();
   }
 
   /**
@@ -2283,6 +2047,8 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    * DHT 提供两种发现模式：
    * 1. 查找特定节点（需要知道 Peer ID）
    * 2. 发现随机节点（构建路由表）
+   * 
+   * Phase 5: 委托给 DHTService
    * 
    * @param options 发现选项
    * @returns 发现的节点地址列表
@@ -2293,93 +2059,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     /** 超时时间（毫秒，默认 10000） */
     timeout?: number;
   }): Promise<Result<string[]>> {
-    if (!this.node) {
-      return failureFromError('NETWORK_NOT_STARTED', 'P2P network not started');
-    }
-
-    const dht = (this.node.services as Libp2pServices).dht;
-    if (!dht) {
-      return failureFromError('DHT_NOT_AVAILABLE', 'DHT service not enabled');
-    }
-
-    const timeout = options?.timeout ?? 10000;
-
-    try {
-      const discoveredAddresses: string[] = [];
-
-      if (options?.peerId) {
-        // P1-1 修复：验证 peerId 格式
-        if (!options.peerId || typeof options.peerId !== 'string') {
-          return failureFromError('INVALID_PEER_ID', 'Invalid peer ID format');
-        }
-
-        // 查找特定节点
-        this.logger.info('Finding peer via DHT', { peerId: options.peerId.slice(0, 16) });
-
-        let peerIdObj: PeerId;
-        try {
-          peerIdObj = peerIdFromString(options.peerId);
-        } catch (error) {
-          const err = error instanceof Error ? error : new Error(String(error));
-          if (err.message?.includes('invalid')) {
-            return failureFromError('INVALID_PEER_ID', 'Invalid peer ID format', err);
-          }
-          throw error;
-        }
-
-        // P0-1 修复：使用 Promise.race 实现超时，并正确清理定时器
-        let timeoutId: ReturnType<typeof setTimeout> | undefined;
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          timeoutId = setTimeout(() => reject(new Error('DHT lookup timeout')), timeout);
-        });
-
-        try {
-          const peerInfo = await Promise.race([
-            dht.findPeer(peerIdObj),
-            timeoutPromise
-          ]);
-
-          if (peerInfo && peerInfo.multiaddrs.length > 0) {
-            discoveredAddresses.push(...peerInfo.multiaddrs.map(ma => ma.toString()));
-          }
-        } finally {
-          if (timeoutId) clearTimeout(timeoutId);
-        }
-      } else {
-        // 发现随机节点（通过路由表）
-        this.logger.info('Discovering peers via DHT routing table');
-        
-        // 获取路由表中的节点
-        const routingTableSize = dht.routingTable?.size || 0;
-        this.logger.info('DHT routing table size', { size: routingTableSize });
-
-        // libp2p DHT 会自动维护路由表
-        // 我们可以通过连接到已知的节点来触发更多发现
-        const knownPeers = this.getConnectedPeers();
-        this.logger.info('Known peers for DHT discovery', { count: knownPeers.length });
-        
-        // 返回当前已知的节点
-        for (const peer of knownPeers) {
-          if (peer.multiaddrs && Array.isArray(peer.multiaddrs)) {
-            // Multiaddr[] 转换为 string[]
-            discoveredAddresses.push(...peer.multiaddrs.map(ma => ma.toString()));
-          }
-        }
-      }
-
-      if (discoveredAddresses.length === 0) {
-        return failureFromError('PEER_NOT_FOUND', 'No peers discovered via DHT');
-      }
-
-      this.logger.info('DHT discovery complete', { 
-        count: discoveredAddresses.length 
-      });
-
-      return success(discoveredAddresses);
-    } catch (error) {
-      this.logger.error('DHT discovery failed', { error });
-      return failureFromError('DHT_LOOKUP_FAILED', 'DHT discovery failed', error as Error);
-    }
+    return this.dhtService.discoverPeersViaDHT(options);
   }
 
   /**
@@ -2387,32 +2067,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    * 
    * 注意：只有公网可达的节点才能作为 DHT 服务器
    * NAT 后的节点只能作为客户端
+   * 
+   * Phase 5: 委托给 DHTService
    */
   async registerToDHT(): Promise<Result<void>> {
-    if (!this.node) {
-      return failureFromError('NETWORK_NOT_STARTED', 'P2P network not started');
-    }
-
-    const dht = (this.node.services as Libp2pServices).dht;
-    if (!dht) {
-      return failureFromError('DHT_NOT_AVAILABLE', 'DHT service not enabled');
-    }
-
-    try {
-      // DHT 会自动注册，这里主要是检查和日志
-      const peerId = this.node.peerId.toString();
-      const addresses = this.node.getMultiaddrs().map(ma => ma.toString());
-      
-      this.logger.info('DHT registration info', {
-        peerId: peerId.slice(0, 16),
-        addresses: addresses.length,
-        isServer: this.config.dhtServerMode
-      });
-
-      return success(undefined);
-    } catch (error) {
-      return failureFromError('INTERNAL_ERROR', 'DHT registration failed', error as Error);
-    }
+    return this.dhtService.registerToDHT();
   }
 
   /**
@@ -2459,23 +2118,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
   /**
    * 连接到 Relay 服务器
+   * Phase 5: 委托给 DHTService
    * @param relayAddress Relay 服务器地址（multiaddr 格式）
    * @returns 是否连接成功
    */
   async connectToRelay(relayAddress: string): Promise<boolean> {
-    if (!this.natTraversalManager) {
-      this.logger.warn('NAT traversal not enabled, cannot connect to relay');
-      return false;
-    }
-
-    // 验证地址格式
-    try {
-      multiaddr(relayAddress); // 验证格式，无效则抛出异常
-    } catch (error) {
-      this.logger.error('Invalid relay address format', { relayAddress, error });
-      return false;
-    }
-
-    return this.natTraversalManager.connectToRelay(relayAddress);
+    return this.dhtService.connectToRelay(relayAddress);
   }
 }

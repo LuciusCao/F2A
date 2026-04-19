@@ -178,7 +178,7 @@ describe('P2PNetwork - 高价值边缘情况', () => {
       (network as any).logger = { error: vi.fn(), info: vi.fn() };
 
       // 先在 peer 表中添加带有公钥的 peer
-      (network as any).peerTable.set('peer-1', {
+      (network as any).peerManager.getPeerTable().set('peer-1', {
         peerId: 'peer-1',
         agentInfo: {
           ...mockAgentInfo,
@@ -291,7 +291,7 @@ describe('P2PNetwork - 高价值边缘情况', () => {
   describe('discoverAgents - waitForFirstResponse 模式', () => {
     it('应该在收到首个匹配响应后立即返回', async () => {
       // 模拟 peer 表中有 peer
-      (network as any).peerTable.set('peer-1', {
+      (network as any).peerManager.getPeerTable().set('peer-1', {
         peerId: 'peer-1',
         agentInfo: {
           ...mockAgentInfo,
@@ -336,7 +336,7 @@ describe('P2PNetwork - 高价值边缘情况', () => {
   describe('sendMessage - E2EE 加密路径', () => {
     it('应该在启用加密但没有共享密钥时拒绝发送', async () => {
       // 添加 peer 到 peerTable
-      (network as any).peerTable.set('peer-1', {
+      (network as any).peerManager.getPeerTable().set('peer-1', {
         peerId: 'peer-1',
         multiaddrs: ['/ip4/127.0.0.1/tcp/9001'],
         connected: false,
@@ -370,7 +370,7 @@ describe('P2PNetwork - 高价值边缘情况', () => {
     });
 
     it('应该在加密失败时拒绝发送', async () => {
-      (network as any).peerTable.set('peer-2', {
+      (network as any).peerManager.getPeerTable().set('peer-2', {
         peerId: 'peer-2',
         multiaddrs: ['/ip4/127.0.0.1/tcp/9002'],
         connected: false,
@@ -464,8 +464,8 @@ describe('P2PNetwork - 高价值边缘情况', () => {
   describe('Peer 断连处理', () => {
     it('应该从 connectedPeers 索引中移除断开的 peer', async () => {
       // 先添加 peer 到连接索引
-      (network as any).connectedPeers.add('peer-1');
-      (network as any).peerTable.set('peer-1', {
+      (network as any).peerManager.getConnectedPeersSet().add('peer-1');
+      (network as any).peerManager.getPeerTable().set('peer-1', {
         peerId: 'peer-1',
         connected: true,
         lastSeen: Date.now(),
@@ -496,7 +496,7 @@ describe('P2PNetwork - 高价值边缘情况', () => {
         await handler(mockEvent);
       }
 
-      expect((network as any).connectedPeers.has('peer-1')).toBe(false);
+      expect((network as any).peerManager.getConnectedPeersSet().has('peer-1')).toBe(false);
     });
 
     it('应该记录不在路由表中的 peer 断连警告', async () => {

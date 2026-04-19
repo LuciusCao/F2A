@@ -47,7 +47,7 @@
 - 适合本地测试和体验
 
 ```bash
-npm install -g @f2a/network
+npm install -g @f2a/cli
 ```
 
 **方式二：一键安装脚本**
@@ -147,7 +147,7 @@ npm install
 npm run build
 
 # 方式三：NPM 全局安装
-npm install -g @f2a/network
+npm install -g @f2a/cli
 ```
 
 ### 2.2 配置
@@ -395,10 +395,13 @@ F2A/
 │   ├── cli/                  # 命令行工具
 │   └── utils/                # 工具函数
 ├── packages/
-│   ├── openclaw-f2a/         # OpenClaw 插件
-│   └── dashboard/            # Web 可视化面板
-├── docs/                     # 文档
-└── tests/                    # 测试
+│   ├── network/             # [@f2a/network](./packages/network/README.md) - P2P 核心库
+│   ├── daemon/              # [@f2a/daemon](./packages/daemon/README.md) - HTTP API 服务
+│   ├── cli/                 # [@f2a/cli](./packages/cli/README.md) - 命令行工具（统一入口）
+│   ├── openclaw-f2a/        # [@f2a/openclaw-f2a](./packages/openclaw-f2a/README.md) - OpenClaw 插件
+│   └── dashboard/           # Web 可视化面板
+├── docs/                    # 文档
+└── tests/                   # 测试
 ```
 
 ### 4.2 核心 API
@@ -483,7 +486,7 @@ f2a status
 
 ```bash
 # 1. 安装
-npm install -g @f2a/network
+npm install -g @f2a/cli
 
 # 2. 配置
 f2a configure

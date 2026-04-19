@@ -1,13 +1,10 @@
 {
-  "name": "@f2a/cli",
-  "version": "0.5.1",
-  "description": "F2A CLI - Command line tools for Friend-to-Agent P2P networking",
+  "name": "@f2a/openclaw-f2a",
+  "version": "0.4.0",
+  "description": "OpenClaw plugin for F2A P2P Agent network",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "f2a": "./dist/main.js"
-  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
@@ -16,8 +13,9 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@f2a/network": "*",
-    "@f2a/daemon": "*"
+    "@f2a/network": "^0.5.0",
+    "eventemitter3": "^5.0.4",
+    "zod": "^3.22.4"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -28,15 +26,16 @@
     "node": ">=18.0.0"
   },
   "keywords": [
+    "openclaw",
     "f2a",
     "p2p",
     "agent",
-    "cli"
+    "plugin"
   ],
   "repository": {
     "type": "git",
     "url": "https://github.com/LuciusCao/F2A.git",
-    "directory": "packages/cli"
+    "directory": "packages/openclaw-f2a"
   },
   "license": "MIT"
 }

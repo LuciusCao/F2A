@@ -319,7 +319,7 @@ describe('CLI Agent Commands', () => {
   });
 
   describe('unregisterAgent', () => {
-    it('should unregister agent successfully', async () => {
+    it('should unregister agent successfully with token parameter', async () => {
       const responseData = { success: true };
 
       mockResponse.on.mockImplementation((event: string, callback: Function) => {
@@ -328,13 +328,15 @@ describe('CLI Agent Commands', () => {
       });
 
       (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
+        // 验证 Authorization header
+        expect(options.headers['Authorization']).toBe('agent-test-token-123');
         callback(mockResponse);
         return mockRequest;
       });
 
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       
-      await unregisterAgent('agent:test');
+      await unregisterAgent('agent:test', 'test-token-123');
 
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('已注销'));
       
@@ -350,6 +352,43 @@ describe('CLI Agent Commands', () => {
       expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('缺少 Agent ID'));
       
       consoleErrorSpy.mockRestore();
+    });
+
+    it('should fail when token is missing and identity file does not exist', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      
+      // 不传 token，identity 文件不存在时会失败
+      await unregisterAgent('agent:nonexistent');
+
+      expect(process.exit).toHaveBeenCalledWith(1);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('缺少 Agent Token'));
+      
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('should send Authorization header with agent- prefix', async () => {
+      const responseData = { success: true };
+
+      mockResponse.on.mockImplementation((event: string, callback: Function) => {
+        if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
+        if (event === 'end') callback();
+      });
+
+      let capturedOptions: RequestOptions | null = null;
+      (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
+        capturedOptions = options;
+        callback(mockResponse);
+        return mockRequest;
+      });
+
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      
+      await unregisterAgent('agent:test', 'my-secret-token');
+
+      // 验证 Authorization header 格式正确
+      expect(capturedOptions?.headers?.['Authorization']).toBe('agent-my-secret-token');
+      
+      consoleSpy.mockRestore();
     });
   });
 });

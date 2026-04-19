@@ -299,12 +299,51 @@ export class AgentHandler {
    * 注销 Agent（需要删除持久化文件）
    * DELETE /api/v1/agents/:agentId（需认证）
    */
-  async handleUnregisterAgent(agentId: string, res: ServerResponse): Promise<void> {
+  async handleUnregisterAgent(agentId: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // === RFC 007: Token 验证 ===
+    // 从 Authorization header 获取 agent token
+    const authHeader = req.headers['authorization'] as string;
+    const agentToken = authHeader?.startsWith('agent-') 
+      ? authHeader.slice(6)  // 去掉 'agent-' 前缀
+      : undefined;
+
+    if (!agentToken) {
+      this.logger.warn('UnregisterAgent request missing Authorization header', {
+        agentIdPrefix: agentId?.slice(0, 16),
+      });
+      res.writeHead(401);
+      res.end(JSON.stringify({
+        success: false,
+        error: 'Missing Authorization header. Expected format: Authorization: agent-{token}',
+        code: 'MISSING_TOKEN',
+      }));
+      return;
+    }
+
+    // 使用全局 AgentTokenManager 验证 token 属于该 agentId
+    const verifyResult = this.agentTokenManager.verifyForAgent(agentToken, agentId);
+    if (!verifyResult.valid) {
+      this.logger.warn('UnregisterAgent token verification failed', {
+        agentIdPrefix: agentId?.slice(0, 16),
+        error: verifyResult.error,
+      });
+      res.writeHead(401);
+      res.end(JSON.stringify({
+        success: false,
+        error: verifyResult.error || 'Invalid token',
+        code: 'TOKEN_INVALID',
+      }));
+      return;
+    }
+
     const removed = this.agentRegistry.unregister(agentId);
     
     if (removed) {
       // 删除消息队列
       this.messageRouter.deleteQueue(agentId);
+
+      // 撤销该 Agent 的所有 token
+      this.agentTokenManager.revokeAllForAgent(agentId);
 
       // RFC 004 Phase 6: 删除持久化身份文件
       await this.identityStore.delete(agentId);

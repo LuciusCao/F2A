@@ -82,8 +82,11 @@ export async function registerAgent(options: {
     const requestBody: Record<string, unknown> = {
       name: options.name,
       capabilities,
-      webhookUrl: options.webhook
     };
+    // webhook 需要嵌套结构
+    if (options.webhook) {
+      requestBody.webhook = { url: options.webhook };
+    }
     if (options.id) {
       requestBody.agentId = options.id;
     }
@@ -162,20 +165,58 @@ export async function listAgents(): Promise<void> {
 }
 
 /**
- * 注销 Agent
- * f2a agent unregister <agent_id>
+ * 从 identity 文件读取 token
  */
-export async function unregisterAgent(agentId: string): Promise<void> {
+function getTokenFromIdentity(agentId: string): string | null {
+  try {
+    const identityFile = join(homedir(), '.f2a', 'agents', `${agentId}.json`);
+    if (!existsSync(identityFile)) {
+      return null;
+    }
+    const identity = JSON.parse(readFileSync(identityFile, 'utf-8'));
+    return identity.token as string | null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 注销 Agent
+ * f2a agent unregister <agent_id> [--token <token>]
+ */
+export async function unregisterAgent(agentId: string, token?: string): Promise<void> {
   if (!agentId) {
     console.error('❌ 错误：缺少 Agent ID');
-    console.error('用法：f2a agent unregister <agent_id>');
+    console.error('用法：f2a agent unregister <agent_id> [--token <token>]');
+    process.exit(1);
+  }
+
+  // 如果没有传入 token，尝试从 identity 文件读取
+  const agentToken = token || getTokenFromIdentity(agentId);
+  
+  if (!agentToken) {
+    console.error('❌ 错误：缺少 Agent Token');
+    console.error('请提供 --token 参数，或确保 identity 文件中包含 token');
+    console.error('用法：f2a agent unregister <agent_id> --token <token>');
     process.exit(1);
   }
 
   try {
-    const result = await sendRequest('DELETE', `/api/v1/agents/${agentId}`);
+    const result = await sendRequest('DELETE', `/api/v1/agents/${agentId}`, undefined, {
+      'Authorization': `agent-${agentToken}`
+    });
 
     if (result.success) {
+      // 删除 identity 文件（如果存在）
+      const identityFile = join(homedir(), '.f2a', 'agents', `${agentId}.json`);
+      if (existsSync(identityFile)) {
+        try {
+          const { unlinkSync } = await import('fs');
+          unlinkSync(identityFile);
+        } catch {
+          // 忽略删除失败
+        }
+      }
       console.log(`✅ Agent 已注销: ${agentId}`);
     } else {
       console.error(`❌ 注销失败：${result.error}`);

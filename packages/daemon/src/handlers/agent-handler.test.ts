@@ -250,10 +250,16 @@ describe('AgentHandler - Error Response Code Field', () => {
 
   describe('DELETE /api/v1/agents/:agentId - 注销 Agent', () => {
     it('Agent 不存在应返回 404 + code: AGENT_NOT_FOUND', async () => {
+      // Mock token verification 成功
+      (mockTokenManager.verifyForAgent as any).mockReturnValue({ valid: true });
       (mockRegistry.unregister as any).mockReturnValue(false);
+      
+      const req = createMockReq({
+        headers: { 'authorization': 'agent-test-token' }  // 小写 key
+      });
       const res = createMockRes();
 
-      await handler.handleUnregisterAgent('agent:nonexistent', res as ServerResponse);
+      await handler.handleUnregisterAgent('agent:nonexistent', req as IncomingMessage, res as ServerResponse);
 
       expect(res.writeHead).toHaveBeenCalledWith(404);
       const data = getResponseData(res);
@@ -263,15 +269,54 @@ describe('AgentHandler - Error Response Code Field', () => {
     });
 
     it('Agent 存在应成功注销', async () => {
+      // Mock token verification 成功
+      (mockTokenManager.verifyForAgent as any).mockReturnValue({ valid: true });
       (mockRegistry.unregister as any).mockReturnValue(true);
+      
+      const req = createMockReq({
+        headers: { 'authorization': 'agent-test-token' }  // 小写 key
+      });
       const res = createMockRes();
 
-      await handler.handleUnregisterAgent('agent:test-peer:abc123', res as ServerResponse);
+      await handler.handleUnregisterAgent('agent:test-peer:abc123', req as IncomingMessage, res as ServerResponse);
 
       expect(res.writeHead).toHaveBeenCalledWith(200);
       const data = getResponseData(res);
       expect(data.success).toBe(true);
       expect(data.message).toBe('Agent unregistered');
+    });
+
+    it('缺少 Authorization header 应返回 401 + code: MISSING_TOKEN', async () => {
+      const req = createMockReq({
+        headers: {} // 没有 authorization
+      });
+      const res = createMockRes();
+
+      await handler.handleUnregisterAgent('agent:test-peer:abc123', req as IncomingMessage, res as ServerResponse);
+
+      expect(res.writeHead).toHaveBeenCalledWith(401);
+      const data = getResponseData(res);
+      expect(data.success).toBe(false);
+      expect(data.code).toBe('MISSING_TOKEN');
+    });
+
+    it('Token 验证失败应返回 401 + code: TOKEN_INVALID', async () => {
+      (mockTokenManager.verifyForAgent as any).mockReturnValue({ 
+        valid: false, 
+        error: 'Token does not belong to this agent' 
+      });
+      
+      const req = createMockReq({
+        headers: { 'authorization': 'agent-wrong-token' }  // 小写 key
+      });
+      const res = createMockRes();
+
+      await handler.handleUnregisterAgent('agent:test-peer:abc123', req as IncomingMessage, res as ServerResponse);
+
+      expect(res.writeHead).toHaveBeenCalledWith(401);
+      const data = getResponseData(res);
+      expect(data.success).toBe(false);
+      expect(data.code).toBe('TOKEN_INVALID');
     });
   });
 

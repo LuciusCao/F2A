@@ -334,7 +334,7 @@ export class ControlServer {
     // DELETE /api/v1/agents/:agentId - 注销 Agent（需认证）
     const deleteAgentMatch = req.url?.match(/^\/api\/v1\/agents\/([^\/]+)$/);
     if (req.method === 'DELETE' && deleteAgentMatch) {
-      this.agentHandler.handleUnregisterAgent(decodeURIComponent(deleteAgentMatch[1]), res);
+      this.agentHandler.handleUnregisterAgent(decodeURIComponent(deleteAgentMatch[1]), req, res);
       return;
     }
     

@@ -1,6 +1,6 @@
 {
   "name": "@f2a/openclaw-f2a",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "OpenClaw plugin for F2A P2P Agent network",
   "type": "module",
   "main": "./dist/index.js",
@@ -38,7 +38,14 @@
     "directory": "packages/openclaw-f2a"
   },
   "license": "MIT",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
   "openclaw": {
-    "extensions": ["./dist/plugin.js"]
+    "extensions": [
+      "./dist/plugin.js"
+    ]
   }
 }

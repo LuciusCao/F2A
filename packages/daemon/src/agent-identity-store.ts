@@ -9,7 +9,8 @@
  * - 删除 Agent Identity
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'fs';
+import { promises as fs } from 'fs';
 import { join } from 'path';
 import { Logger } from '@f2a/network';
 import type { AgentCapability } from '@f2a/network';
@@ -153,7 +154,7 @@ export class AgentIdentityStore {
   /**
    * 保存 Agent Identity 文件
    */
-  save(identity: AgentIdentity): void {
+  async save(identity: AgentIdentity): Promise<void> {
     this.ensureDir();
     
     // 验证结构
@@ -167,7 +168,7 @@ export class AgentIdentityStore {
     this.identities.set(identity.agentId, identity);
     
     // 写入文件
-    writeFileSync(filePath, JSON.stringify(identity, null, 2), 'utf-8');
+    await fs.writeFile(filePath, JSON.stringify(identity, null, 2), 'utf-8');
     
     this.logger.info('Agent identity saved', { agentId: identity.agentId, path: filePath });
   }
@@ -189,7 +190,7 @@ export class AgentIdentityStore {
   /**
    * 更新 Agent Webhook
    */
-  updateWebhook(agentId: string, webhook: AgentWebhook | undefined): AgentIdentity {
+  async updateWebhook(agentId: string, webhook: AgentWebhook | undefined): Promise<AgentIdentity> {
     const identity = this.identities.get(agentId);
     if (!identity) {
       throw new Error('Agent identity not found');
@@ -199,7 +200,7 @@ export class AgentIdentityStore {
     identity.lastActiveAt = new Date().toISOString();
     
     // 保存更新
-    this.save(identity);
+    await this.save(identity);
     
     this.logger.info('Agent webhook updated', { 
       agentId, 
@@ -213,14 +214,14 @@ export class AgentIdentityStore {
   /**
    * 更新最后活跃时间
    */
-  updateLastActive(agentId: string): AgentIdentity {
+  async updateLastActive(agentId: string): Promise<AgentIdentity> {
     const identity = this.identities.get(agentId);
     if (!identity) {
       throw new Error('Agent identity not found');
     }
     
     identity.lastActiveAt = new Date().toISOString();
-    this.save(identity);
+    await this.save(identity);
     
     return identity;
   }
@@ -228,7 +229,7 @@ export class AgentIdentityStore {
   /**
    * 删除 Agent Identity
    */
-  delete(agentId: string): boolean {
+  async delete(agentId: string): Promise<boolean> {
     const identity = this.identities.get(agentId);
     if (!identity) {
       this.logger.warn('Agent identity not found for deletion', { agentId });
@@ -241,7 +242,7 @@ export class AgentIdentityStore {
     // 删除文件
     const filePath = join(this.agentsDir, `${agentId}.json`);
     if (existsSync(filePath)) {
-      rmSync(filePath);
+      await fs.rm(filePath);
       this.logger.info('Agent identity file deleted', { agentId, path: filePath });
     }
     
@@ -288,13 +289,13 @@ export class AgentIdentityStore {
   /**
    * 清理所有 Identity（用于测试）
    */
-  clear(): void {
+  async clear(): Promise<void> {
     this.identities.clear();
     if (existsSync(this.agentsDir)) {
       const files = readdirSync(this.agentsDir)
         .filter(f => f.endsWith('.json') && f.startsWith('agent:'));
       for (const file of files) {
-        rmSync(join(this.agentsDir, file));
+        await fs.rm(join(this.agentsDir, file));
       }
     }
   }
@@ -313,14 +314,14 @@ export class AgentIdentityStore {
   /**
    * 导入 Identity（用于恢复）
    */
-  import(jsonContent: string): AgentIdentity {
+  async import(jsonContent: string): Promise<AgentIdentity> {
     const identity = JSON.parse(jsonContent) as AgentIdentity;
     
     if (!this.validateIdentityStructure(identity)) {
       throw new Error('Invalid AgentIdentity structure in import');
     }
     
-    this.save(identity);
+    await this.save(identity);
     return identity;
   }
 }

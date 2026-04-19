@@ -117,10 +117,10 @@ export class AgentHandler {
    * - 否则注册新 Agent（节点签发 AgentId）
    * - Phase 7: 支持 Challenge-Response 验证
    */
-  handleRegisterAgent(req: IncomingMessage, res: ServerResponse): void {
+  async handleRegisterAgent(req: IncomingMessage, res: ServerResponse): Promise<void> {
     let body = '';
     req.on('data', chunk => { body += chunk; });
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const data: RegisterAgentBody = JSON.parse(body);
         
@@ -155,7 +155,7 @@ export class AgentHandler {
           if (existingIdentity) {
             // 恢复身份：更新 webhook
             if (data.webhook) {
-              const updated = this.identityStore.updateWebhook(data.agentId, data.webhook);
+              const updated = await this.identityStore.updateWebhook(data.agentId, data.webhook);
               if (!updated) {
                 this.logger.warn('Failed to update webhook in identity file', { agentId: data.agentId });
                 // 可以继续，因为 webhook 不是必需的
@@ -260,7 +260,7 @@ export class AgentHandler {
           createdAt: registration.registeredAt.toISOString(),
           lastActiveAt: new Date().toISOString(),
         };
-        this.identityStore.save(identity);
+        await this.identityStore.save(identity);
 
         // 创建消息队列
         this.messageRouter.createQueue(registration.agentId);
@@ -297,7 +297,7 @@ export class AgentHandler {
    * 注销 Agent（需要删除持久化文件）
    * DELETE /api/agents/:agentId（需认证）
    */
-  handleUnregisterAgent(agentId: string, res: ServerResponse): void {
+  async handleUnregisterAgent(agentId: string, res: ServerResponse): Promise<void> {
     const removed = this.agentRegistry.unregister(agentId);
     
     if (removed) {
@@ -305,7 +305,7 @@ export class AgentHandler {
       this.messageRouter.deleteQueue(agentId);
 
       // RFC 004 Phase 6: 删除持久化身份文件
-      this.identityStore.delete(agentId);
+      await this.identityStore.delete(agentId);
 
       // 同步注册表到消息路由器（P1-1: MessageRouter 直接引用 AgentRegistry，无需同步）
       
@@ -368,10 +368,10 @@ export class AgentHandler {
    * 更新 Agent webhook（RFC 004: Agent 级 Webhook）
    * PATCH /api/agents/:agentId/webhook（需认证）
    */
-  handleUpdateWebhook(agentId: string, req: IncomingMessage, res: ServerResponse): void {
+  async handleUpdateWebhook(agentId: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
     let body = '';
     req.on('data', chunk => { body += chunk; });
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const data: UpdateWebhookBody = JSON.parse(body);
         
@@ -426,7 +426,7 @@ export class AgentHandler {
         const webhook = data.webhook || (data.webhookUrl ? { url: data.webhookUrl, token: data.webhookToken } : undefined);
         
         // 先持久化文件，再更新内存（避免持久化失败导致数据丢失）
-        const identityUpdated = this.identityStore.updateWebhook(agentId, webhook);
+        const identityUpdated = await this.identityStore.updateWebhook(agentId, webhook);
         if (!identityUpdated) {
           res.writeHead(500);
           res.end(JSON.stringify({
@@ -473,10 +473,10 @@ export class AgentHandler {
    * POST /api/agents/verify（无需认证）
    * Phase 7: 验证 Challenge-Response
    */
-  handleVerifyAgent(req: IncomingMessage, res: ServerResponse): void {
+  async handleVerifyAgent(req: IncomingMessage, res: ServerResponse): Promise<void> {
     let body = '';
     req.on('data', chunk => { body += chunk; });
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const data: VerifyAgentBody = JSON.parse(body);
         
@@ -557,7 +557,7 @@ export class AgentHandler {
           // 6️⃣ 更新 identity
           identity.webhook = pending.webhook;
           identity.lastActiveAt = new Date().toISOString();
-          this.identityStore.save(identity);
+          await this.identityStore.save(identity);
           
           // 7️⃣ 清理 pending challenge
           this.pendingChallenges.delete(data.agentId);

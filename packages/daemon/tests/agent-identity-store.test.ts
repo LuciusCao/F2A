@@ -63,9 +63,9 @@ describe('AgentIdentityStore', () => {
   });
 
   describe('save()', () => {
-    it('should save identity file', () => {
+    it('should save identity file', async () => {
       const identity = createMockIdentity();
-      store.save(identity);
+      await store.save(identity);
 
       const file = join(agentsDir, `${identity.agentId}.json`);
       expect(existsSync(file)).toBe(true);
@@ -75,24 +75,24 @@ describe('AgentIdentityStore', () => {
       expect(content.name).toBe(identity.name);
     });
 
-    it('should create agents directory if not exists', () => {
+    it('should create agents directory if not exists', async () => {
       // 测试目录存在，但 agents 子目录不存在
       expect(existsSync(agentsDir)).toBe(false);
 
       const identity = createMockIdentity();
-      store.save(identity);
+      await store.save(identity);
 
       // agents 目录应该被自动创建
       expect(existsSync(agentsDir)).toBe(true);
     });
 
-    it('should update existing identity', () => {
+    it('should update existing identity', async () => {
       const identity = createMockIdentity();
-      store.save(identity);
+      await store.save(identity);
 
       // 更新名称
       identity.name = 'Updated Name';
-      store.save(identity);
+      await store.save(identity);
 
       const retrieved = store.get(identity.agentId);
       expect(retrieved?.name).toBe('Updated Name');
@@ -103,14 +103,14 @@ describe('AgentIdentityStore', () => {
       expect(content.name).toBe('Updated Name');
     });
 
-    it('should throw on invalid identity structure', () => {
+    it('should throw on invalid identity structure', async () => {
       const invalidIdentity = {
         // 缺少必须字段
         agentId: 'agent:xxx',
         name: 'Invalid',
       } as AgentIdentity;
 
-      expect(() => store.save(invalidIdentity)).toThrow('Invalid AgentIdentity structure');
+      await expect(store.save(invalidIdentity)).rejects.toThrow('Invalid AgentIdentity structure');
     });
   });
 
@@ -177,9 +177,9 @@ describe('AgentIdentityStore', () => {
   });
 
   describe('get()', () => {
-    it('should return saved identity', () => {
+    it('should return saved identity', async () => {
       const identity = createMockIdentity();
-      store.save(identity);
+      await store.save(identity);
 
       const retrieved = store.get(identity.agentId);
 
@@ -196,12 +196,12 @@ describe('AgentIdentityStore', () => {
   });
 
   describe('list()', () => {
-    it('should return all identities', () => {
+    it('should return all identities', async () => {
       const identity1 = createMockIdentity('agent:xxx:11111111');
       const identity2 = createMockIdentity('agent:xxx:22222222');
 
-      store.save(identity1);
-      store.save(identity2);
+      await store.save(identity1);
+      await store.save(identity2);
 
       const list = store.list();
 
@@ -218,12 +218,12 @@ describe('AgentIdentityStore', () => {
   });
 
   describe('updateWebhook()', () => {
-    it('should update webhook URL', () => {
+    it('should update webhook URL', async () => {
       const identity = createMockIdentity();
-      store.save(identity);
+      await store.save(identity);
 
       const newWebhook: AgentWebhook = { url: 'http://new-url', token: 'new-token' };
-      const updated = store.updateWebhook(identity.agentId, newWebhook);
+      const updated = await store.updateWebhook(identity.agentId, newWebhook);
 
       expect(updated.webhook?.url).toBe('http://new-url');
       expect(updated.webhook?.token).toBe('new-token');
@@ -233,27 +233,27 @@ describe('AgentIdentityStore', () => {
       expect(retrieved?.webhook?.url).toBe('http://new-url');
     });
 
-    it('should remove webhook when undefined', () => {
+    it('should remove webhook when undefined', async () => {
       const identity = createMockIdentity();
       identity.webhook = { url: 'http://original-url' };
-      store.save(identity);
+      await store.save(identity);
 
-      const updated = store.updateWebhook(identity.agentId, undefined);
+      const updated = await store.updateWebhook(identity.agentId, undefined);
 
       expect(updated.webhook).toBeUndefined();
     });
 
-    it('should throw if identity not found', () => {
-      expect(() => store.updateWebhook('agent:not-exist', { url: 'http://...' }))
-        .toThrow('Agent identity not found');
+    it('should throw if identity not found', async () => {
+      await expect(store.updateWebhook('agent:not-exist', { url: 'http://...' }))
+        .rejects.toThrow('Agent identity not found');
     });
 
-    it('should update lastActiveAt', () => {
+    it('should update lastActiveAt', async () => {
       const identity = createMockIdentity();
       identity.lastActiveAt = '2020-01-01T00:00:00Z';
-      store.save(identity);
+      await store.save(identity);
 
-      const updated = store.updateWebhook(identity.agentId, { url: 'http://new' });
+      const updated = await store.updateWebhook(identity.agentId, { url: 'http://new' });
 
       // lastActiveAt 应该更新为当前时间
       expect(new Date(updated.lastActiveAt).getTime()).toBeGreaterThan(
@@ -263,30 +263,30 @@ describe('AgentIdentityStore', () => {
   });
 
   describe('updateLastActive()', () => {
-    it('should update lastActiveAt', () => {
+    it('should update lastActiveAt', async () => {
       const identity = createMockIdentity();
       identity.lastActiveAt = '2020-01-01T00:00:00Z';
-      store.save(identity);
+      await store.save(identity);
 
-      const updated = store.updateLastActive(identity.agentId);
+      const updated = await store.updateLastActive(identity.agentId);
 
       expect(new Date(updated.lastActiveAt).getTime()).toBeGreaterThan(
         new Date('2020-01-01T00:00:00Z').getTime()
       );
     });
 
-    it('should throw if identity not found', () => {
-      expect(() => store.updateLastActive('agent:not-exist'))
-        .toThrow('Agent identity not found');
+    it('should throw if identity not found', async () => {
+      await expect(store.updateLastActive('agent:not-exist'))
+        .rejects.toThrow('Agent identity not found');
     });
   });
 
   describe('delete()', () => {
-    it('should delete identity', () => {
+    it('should delete identity', async () => {
       const identity = createMockIdentity();
-      store.save(identity);
+      await store.save(identity);
 
-      const result = store.delete(identity.agentId);
+      const result = await store.delete(identity.agentId);
 
       expect(result).toBe(true);
       expect(store.get(identity.agentId)).toBeUndefined();
@@ -296,17 +296,17 @@ describe('AgentIdentityStore', () => {
       expect(existsSync(file)).toBe(false);
     });
 
-    it('should return false for non-existent identity', () => {
-      const result = store.delete('agent:not-exist');
+    it('should return false for non-existent identity', async () => {
+      const result = await store.delete('agent:not-exist');
 
       expect(result).toBe(false);
     });
   });
 
   describe('has()', () => {
-    it('should return true for existing identity', () => {
+    it('should return true for existing identity', async () => {
       const identity = createMockIdentity();
-      store.save(identity);
+      await store.save(identity);
 
       expect(store.has(identity.agentId)).toBe(true);
     });
@@ -317,29 +317,29 @@ describe('AgentIdentityStore', () => {
   });
 
   describe('size()', () => {
-    it('should return correct count', () => {
+    it('should return correct count', async () => {
       expect(store.size()).toBe(0);
 
-      store.save(createMockIdentity('agent:xxx:1111'));
+      await store.save(createMockIdentity('agent:xxx:1111'));
       expect(store.size()).toBe(1);
 
-      store.save(createMockIdentity('agent:xxx:2222'));
+      await store.save(createMockIdentity('agent:xxx:2222'));
       expect(store.size()).toBe(2);
 
-      store.delete('agent:xxx:1111');
+      await store.delete('agent:xxx:1111');
       expect(store.size()).toBe(1);
     });
   });
 
   describe('findBy()', () => {
-    it('should find identities matching predicate', () => {
+    it('should find identities matching predicate', async () => {
       const identity1 = createMockIdentity('agent:xxx:1111');
       identity1.name = 'Agent A';
       const identity2 = createMockIdentity('agent:xxx:2222');
       identity2.name = 'Agent B';
 
-      store.save(identity1);
-      store.save(identity2);
+      await store.save(identity1);
+      await store.save(identity2);
 
       const found = store.findBy(i => i.name === 'Agent A');
 
@@ -349,7 +349,7 @@ describe('AgentIdentityStore', () => {
   });
 
   describe('findByPeerId()', () => {
-    it('should find identities by peerId', () => {
+    it('should find identities by peerId', async () => {
       const identity1 = createMockIdentity('agent:peer1:1111');
       identity1.peerId = 'peer1';
       const identity2 = createMockIdentity('agent:peer2:2222');
@@ -357,9 +357,9 @@ describe('AgentIdentityStore', () => {
       const identity3 = createMockIdentity('agent:peer1:3333');
       identity3.peerId = 'peer1';
 
-      store.save(identity1);
-      store.save(identity2);
-      store.save(identity3);
+      await store.save(identity1);
+      await store.save(identity2);
+      await store.save(identity3);
 
       const found = store.findByPeerId('peer1');
 
@@ -370,14 +370,14 @@ describe('AgentIdentityStore', () => {
   });
 
   describe('findByCapability()', () => {
-    it('should find identities by capability', () => {
+    it('should find identities by capability', async () => {
       const identity1 = createMockIdentity('agent:xxx:1111');
       identity1.capabilities = [{ name: 'chat', version: '1.0.0' }];
       const identity2 = createMockIdentity('agent:xxx:2222');
       identity2.capabilities = [{ name: 'code-gen', version: '1.0.0' }];
 
-      store.save(identity1);
-      store.save(identity2);
+      await store.save(identity1);
+      await store.save(identity2);
 
       const found = store.findByCapability('chat');
 
@@ -385,13 +385,13 @@ describe('AgentIdentityStore', () => {
       expect(found[0].agentId).toBe(identity1.agentId);
     });
 
-    it('should find identities with multiple capabilities', () => {
+    it('should find identities with multiple capabilities', async () => {
       const identity = createMockIdentity();
       identity.capabilities = [
         { name: 'chat', version: '1.0.0' },
         { name: 'code-gen', version: '1.0.0' },
       ];
-      store.save(identity);
+      await store.save(identity);
 
       expect(store.findByCapability('chat').length).toBe(1);
       expect(store.findByCapability('code-gen').length).toBe(1);
@@ -399,11 +399,11 @@ describe('AgentIdentityStore', () => {
   });
 
   describe('clear()', () => {
-    it('should clear all identities', () => {
-      store.save(createMockIdentity('agent:xxx:1111'));
-      store.save(createMockIdentity('agent:xxx:2222'));
+    it('should clear all identities', async () => {
+      await store.save(createMockIdentity('agent:xxx:1111'));
+      await store.save(createMockIdentity('agent:xxx:2222'));
 
-      store.clear();
+      await store.clear();
 
       expect(store.size()).toBe(0);
 
@@ -414,9 +414,9 @@ describe('AgentIdentityStore', () => {
   });
 
   describe('export()', () => {
-    it('should export identity as JSON string', () => {
+    it('should export identity as JSON string', async () => {
       const identity = createMockIdentity();
-      store.save(identity);
+      await store.save(identity);
 
       const exported = store.export(identity.agentId);
 
@@ -435,21 +435,21 @@ describe('AgentIdentityStore', () => {
   });
 
   describe('import()', () => {
-    it('should import identity from JSON string', () => {
+    it('should import identity from JSON string', async () => {
       const identity = createMockIdentity('agent:import:1234');
       const json = JSON.stringify(identity);
 
-      const imported = store.import(json);
+      const imported = await store.import(json);
 
       expect(imported.agentId).toBe(identity.agentId);
       expect(store.get(identity.agentId)).toBeDefined();
     });
 
-    it('should throw on invalid structure', () => {
+    it('should throw on invalid structure', async () => {
       const invalidJson = JSON.stringify({ agentId: 'invalid' });
 
-      expect(() => store.import(invalidJson))
-        .toThrow('Invalid AgentIdentity structure in import');
+      await expect(store.import(invalidJson))
+        .rejects.toThrow('Invalid AgentIdentity structure in import');
     });
   });
 

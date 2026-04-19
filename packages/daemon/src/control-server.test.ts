@@ -66,18 +66,18 @@ vi.mock('./agent-identity-store.js', () => ({
   AgentIdentityStore: vi.fn().mockImplementation(() => {
     mockIdentityStoreInstance = {
       get: vi.fn(),
-      save: vi.fn(),
-      delete: vi.fn().mockReturnValue(true),
+      save: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(true),
       loadAll: vi.fn(),
       list: vi.fn().mockReturnValue([]),
-      updateWebhook: vi.fn().mockReturnValue({ agentId: 'agent:test-peer:abc123', name: 'TestAgent' }),
-      updateLastActive: vi.fn().mockReturnValue({ agentId: 'agent:test-peer:abc123' }),
+      updateWebhook: vi.fn().mockResolvedValue({ agentId: 'agent:test-peer:abc123', name: 'TestAgent' }),
+      updateLastActive: vi.fn().mockResolvedValue({ agentId: 'agent:test-peer:abc123' }),
       has: vi.fn().mockReturnValue(false),
       size: vi.fn().mockReturnValue(0),
       findBy: vi.fn().mockReturnValue([]),
       findByPeerId: vi.fn().mockReturnValue([]),
       findByCapability: vi.fn().mockReturnValue([]),
-      clear: vi.fn(),
+      clear: vi.fn().mockResolvedValue(undefined),
     };
     return mockIdentityStoreInstance;
   }),
@@ -281,6 +281,7 @@ describe('ControlServer', () => {
     body?: object;
     headers?: Record<string, string>;
   } = {}) => {
+    let endPromise: Promise<any> | undefined;
     const req = {
       method: options.method || 'GET',
       url: options.url || '/',
@@ -293,9 +294,14 @@ describe('ControlServer', () => {
           callback(Buffer.from(JSON.stringify(options.body)));
         }
         if (event === 'end') {
-          callback();
+          // 捕获 async callback 返回的 Promise
+          endPromise = callback();
         }
       }),
+      // 测试可以等待 endPromise
+      _waitForEnd: async () => {
+        if (endPromise) await endPromise;
+      },
     };
     return req as any;
   };
@@ -413,6 +419,7 @@ describe('ControlServer', () => {
       const res = createMockRes();
       
       handler(req, res);
+      await req._waitForEnd();  // 等待 async handler 完成
       
       expect(res.writeHead).toHaveBeenCalledWith(201);
       const responseData = JSON.parse(res.end.mock.calls[0][0]);

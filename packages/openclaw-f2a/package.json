@@ -37,5 +37,8 @@
     "url": "https://github.com/LuciusCao/F2A.git",
     "directory": "packages/openclaw-f2a"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "openclaw": {
+    "extensions": ["./dist/plugin.js"]
+  }
 }

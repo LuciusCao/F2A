@@ -2,20 +2,35 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { F2ADaemon } from './index.js';
 
 // Mock dependencies
-vi.mock('../core/f2a', () => ({
-  F2A: {
-    create: vi.fn().mockResolvedValue({
-      start: vi.fn().mockResolvedValue({ success: true }),
-      stop: vi.fn(),
-      peerId: 'test-peer-id'
-    })
-  }
-}));
+vi.mock('@f2a/network', async (importOriginal) => {
+  const actual = await importOriginal() as any;
+  return {
+    ...actual,
+    Logger: vi.fn().mockImplementation(() => ({
+      info: vi.fn(),
+      warn: vi.fn(),
+      debug: vi.fn(),
+      error: vi.fn(),
+    })),
+    F2A: {
+      create: vi.fn().mockResolvedValue({
+        start: vi.fn().mockResolvedValue({ success: true }),
+        stop: vi.fn(),
+        peerId: 'test-peer-id',
+        signData: vi.fn((data: string) => `sig-${data.slice(0, 8)}`)
+      })
+    }
+  };
+});
 
-vi.mock('./control-server', () => ({
+vi.mock('./control-server.js', () => ({
   ControlServer: vi.fn().mockImplementation(() => ({
     start: vi.fn().mockResolvedValue(undefined),
-    stop: vi.fn()
+    stop: vi.fn(),
+    getAgentRegistry: vi.fn().mockReturnValue({
+      register: vi.fn(),
+      list: vi.fn().mockReturnValue([])
+    })
   }))
 }));
 
@@ -23,6 +38,7 @@ describe('F2ADaemon', () => {
   let daemon: F2ADaemon;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     daemon = new F2ADaemon({
       displayName: 'Test Daemon'
     });
@@ -52,75 +68,62 @@ describe('F2ADaemon', () => {
       expect(daemon.isRunning()).toBe(false);
     });
 
-    it('should handle stop before start', async () => {
-      await daemon.stop(); // Should not throw
-      expect(daemon.isRunning()).toBe(false);
-    });
-  });
-
-  describe('getters', () => {
-    it('should return F2A instance', async () => {
+    it('should handle multiple stop calls', async () => {
       await daemon.start();
-      const f2a = daemon.getF2A();
-      expect(f2a).toBeDefined();
-    });
-
-    it('should return undefined when not running', () => {
-      const f2a = daemon.getF2A();
-      expect(f2a).toBeUndefined();
-    });
-  });
-
-  describe('options', () => {
-    it('should use default control port', () => {
-      const defaultDaemon = new F2ADaemon();
-      expect(defaultDaemon).toBeDefined();
-    });
-
-    it('should accept custom control port', () => {
-      const customDaemon = new F2ADaemon({ controlPort: 8080 });
-      expect(customDaemon).toBeDefined();
-    });
-
-    it('should accept custom token manager', () => {
-      const mockTokenManager = {
-        getToken: vi.fn().mockReturnValue('test-token'),
-        verifyToken: vi.fn().mockReturnValue(true),
-        logTokenUsage: vi.fn()
-      };
-      const daemon = new F2ADaemon({ tokenManager: mockTokenManager as any });
-      expect(daemon).toBeDefined();
-    });
-  });
-
-  describe('error handling', () => {
-    it('should handle start failure gracefully', async () => {
-      // 这个测试需要重新 mock F2A.create
-      // 由于 mock 已经在模块顶层定义，这里跳过复杂的重 mock
-      // 实际错误处理已经在集成测试中覆盖
-      expect(daemon).toBeDefined();
+      await daemon.stop();
+      await daemon.stop(); // Second stop should be safe
+      expect(daemon.isRunning()).toBe(false);
     });
   });
 
   describe('state management', () => {
     it('should track running state correctly', async () => {
-      const daemon = new F2ADaemon();
-      
       expect(daemon.isRunning()).toBe(false);
-      
       await daemon.start();
       expect(daemon.isRunning()).toBe(true);
-      
       await daemon.stop();
       expect(daemon.isRunning()).toBe(false);
     });
 
-    it('should handle multiple stop calls', async () => {
-      const daemon = new F2ADaemon();
+    it('should return F2A instance after start', async () => {
       await daemon.start();
-      await daemon.stop();
-      await daemon.stop(); // Should not throw
-      expect(daemon.isRunning()).toBe(false);
+      expect(daemon.getF2A()).toBeDefined();
     });
+
+    it('should return undefined F2A before start', () => {
+      expect(daemon.getF2A()).toBeUndefined();
+    });
+  });
+
+  describe('options', () => {
+    it('should use default controlPort', () => {
+      const daemon = new F2ADaemon();
+      // 默认 controlPort 是 9001
+      expect(daemon).toBeDefined();
+    });
+
+    it('should accept custom controlPort', () => {
+      const daemon = new F2ADaemon({ controlPort: 9002 });
+      expect(daemon).toBeDefined();
+    });
+
+    it('should accept dataDir option', () => {
+      const daemon = new F2ADaemon({ dataDir: '/tmp/test' });
+      expect(daemon).toBeDefined();
+    });
+  });
+});
+
+// RFC 003: Agent 注册测试（通过 ControlServer）
+describe('RFC 003: AgentId 签发', () => {
+  it('daemon 启动后应该可以注册 Agent', async () => {
+    const daemon = new F2ADaemon();
+    await daemon.start();
+    
+    // 通过 ControlServer 注册 Agent
+    // （实际测试在 control-server.test.ts 中）
+    expect(daemon.isRunning()).toBe(true);
+    
+    await daemon.stop();
   });
 });

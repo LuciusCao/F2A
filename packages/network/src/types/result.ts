@@ -72,6 +72,8 @@ export type ErrorCode =
   // 通用错误
   | 'INVALID_PARAMS'
   | 'INTERNAL_ERROR'
+  // 持久化错误
+  | 'PERSISTENCE_ERROR'
   | 'UNKNOWN';
 
 export interface F2AError {

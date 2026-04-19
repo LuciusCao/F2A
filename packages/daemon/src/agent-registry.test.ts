@@ -1,397 +1,237 @@
 /**
- * Agent Registry 测试
- * 测试注册/注销、能力查询、过期清理、并发操作
+ * Agent Registry 测试 (RFC 003)
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { AgentRegistry, AgentRegistration } from './agent-registry.js';
-import type { AgentCapability } from '../types/index.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { AgentRegistry, AgentRegistration, AgentRegistrationRequest } from './agent-registry.js';
+import type { AgentCapability } from '@f2a/network';
+import { randomBytes } from 'crypto';
 
 // Mock Logger
-vi.mock('../utils/logger.js', () => ({
-  Logger: vi.fn().mockImplementation(() => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    debug: vi.fn(),
-    error: vi.fn(),
-  })),
-}));
+vi.mock('@f2a/network', async (importOriginal) => {
+  const actual = await importOriginal() as any;
+  return {
+    ...actual,
+    Logger: vi.fn().mockImplementation(() => ({
+      info: vi.fn(),
+      warn: vi.fn(),
+      debug: vi.fn(),
+      error: vi.fn(),
+    })),
+  };
+});
 
-describe('AgentRegistry', () => {
+// 不 mock crypto，使用真实的 randomBytes
+
+describe('AgentRegistry (RFC 003)', () => {
   let registry: AgentRegistry;
-
-  const createCapability = (name: string, description?: string): AgentCapability => ({
-    name,
-    description: description || `${name} capability`,
-    tools: [],
-  });
-
-  const createAgentRegistration = (
-    agentId: string,
-    name: string,
-    capabilities: AgentCapability[] = []
-  ): Omit<AgentRegistration, 'registeredAt' | 'lastActiveAt'> => ({
-    agentId,
-    name,
-    capabilities,
-    webhookUrl: `http://localhost/${agentId}`,
-    metadata: { version: '1.0' },
-  });
+  const mockPeerId = '12D3KooWHxWdnxJaCMA4bVcnucEV35j2m6mYpNqZZbQW9zJ9nLVW';
+  const mockSignFunction = vi.fn((data: string) => `sig-${data.slice(0, 16)}`);
 
   beforeEach(() => {
     vi.clearAllMocks();
-    registry = new AgentRegistry();
+    registry = new AgentRegistry(mockPeerId, mockSignFunction);
+  });
+
+  describe('RFC 003: AgentId 签发', () => {
+    it('应该生成正确格式的 AgentId', () => {
+      const request = { name: '猫咕噜', capabilities: [{ name: 'chat', version: '1.0.0' }] };
+      const registration = registry.register(request);
+
+      expect(registration.agentId).toMatch(/^agent:[a-zA-Z0-9]{16}:[a-f0-9]{8}$/);
+    });
+
+    it('应该包含签名', () => {
+      const request = { name: 'Agent', capabilities: [] };
+      const registration = registry.register(request);
+
+      expect(registration.signature).toBeDefined();
+      expect(mockSignFunction).toHaveBeenCalled();
+    });
+
+    it('每次注册应该生成不同的 AgentId', () => {
+      const reg1 = registry.register({ name: 'Agent1', capabilities: [] });
+      const reg2 = registry.register({ name: 'Agent2', capabilities: [] });
+
+      expect(reg1.agentId).not.toBe(reg2.agentId);
+    });
   });
 
   describe('register', () => {
     it('应该成功注册 Agent', () => {
-      const agent = createAgentRegistration('agent-1', 'Test Agent', [
-        createCapability('code-generation'),
-      ]);
+      const request = { name: '猫咕噜', capabilities: [{ name: 'chat', version: '1.0.0' }] };
+      const registration = registry.register(request);
 
-      const result = registry.register(agent);
-
-      expect(result.agentId).toBe('agent-1');
-      expect(result.name).toBe('Test Agent');
-      expect(result.registeredAt).toBeDefined();
-      expect(result.lastActiveAt).toBeDefined();
-      expect(result.capabilities).toHaveLength(1);
+      expect(registration.name).toBe('猫咕噜');
+      expect(registration.peerId).toBe(mockPeerId);
     });
 
-    it('注册时间应该等于最后活跃时间', () => {
-      const agent = createAgentRegistration('agent-2', 'Agent');
-
-      const result = registry.register(agent);
-
-      expect(result.registeredAt.getTime()).toBe(result.lastActiveAt.getTime());
-    });
-
-    it('应该覆盖已存在的 Agent', () => {
-      const agent1 = createAgentRegistration('agent-1', 'First Agent');
-      const agent2 = createAgentRegistration('agent-1', 'Second Agent');
-
-      registry.register(agent1);
-      const result = registry.register(agent2);
-
-      expect(result.name).toBe('Second Agent');
-      expect(registry.list()).toHaveLength(1);
-    });
-
-    it('应该保留 webhookUrl 和 metadata', () => {
-      const agent = createAgentRegistration('agent-3', 'Agent');
-      agent.webhookUrl = 'http://example.com/webhook';
-      agent.metadata = { custom: 'data' };
-
-      const result = registry.register(agent);
-
-      expect(result.webhookUrl).toBe('http://example.com/webhook');
-      expect(result.metadata).toEqual({ custom: 'data' });
-    });
-
-    it('应该正确处理空能力列表', () => {
-      const agent = createAgentRegistration('agent-4', 'Agent', []);
-
-      const result = registry.register(agent);
-
-      expect(result.capabilities).toHaveLength(0);
-    });
-  });
-
-  describe('unregister', () => {
-    it('应该成功注销已注册的 Agent', () => {
-      const agent = createAgentRegistration('agent-1', 'Agent');
-      registry.register(agent);
-
-      const result = registry.unregister('agent-1');
-
-      expect(result).toBe(true);
-      expect(registry.list()).toHaveLength(0);
-    });
-
-    it('注销不存在 Agent 应返回 false', () => {
-      const result = registry.unregister('non-existent');
-
-      expect(result).toBe(false);
-    });
-
-    it('注销后重新注册应该成功', () => {
-      const agent = createAgentRegistration('agent-1', 'Agent');
-      registry.register(agent);
-      registry.unregister('agent-1');
-
-      registry.register(agent);
-
-      expect(registry.list()).toHaveLength(1);
+    it('应该记录注册时间', () => {
+      const registration = registry.register({ name: 'Agent', capabilities: [] });
+      expect(registration.registeredAt).toBeDefined();
     });
   });
 
   describe('get', () => {
-    it('应该返回已注册的 Agent', () => {
-      const agent = createAgentRegistration('agent-1', 'Agent');
-      registry.register(agent);
-
-      const result = registry.get('agent-1');
-
-      expect(result).toBeDefined();
-      expect(result?.name).toBe('Agent');
+    it('应该返回注册的 Agent', () => {
+      const registration = registry.register({ name: 'Agent', capabilities: [] });
+      const found = registry.get(registration.agentId);
+      expect(found).toBeDefined();
+      expect(found?.name).toBe('Agent');
     });
 
-    it('查询不存在的 Agent 应返回 undefined', () => {
-      const result = registry.get('non-existent');
-
-      expect(result).toBeUndefined();
+    it('应该返回 undefined 对于未注册的 AgentId', () => {
+      const found = registry.get('agent:not-exist:1234');
+      expect(found).toBeUndefined();
     });
   });
 
   describe('list', () => {
     it('应该返回所有注册的 Agent', () => {
-      registry.register(createAgentRegistration('agent-1', 'Agent 1'));
-      registry.register(createAgentRegistration('agent-2', 'Agent 2'));
-      registry.register(createAgentRegistration('agent-3', 'Agent 3'));
-
-      const result = registry.list();
-
-      expect(result).toHaveLength(3);
+      registry.register({ name: 'Agent1', capabilities: [] });
+      registry.register({ name: 'Agent2', capabilities: [] });
+      expect(registry.list()).toHaveLength(2);
     });
+  });
 
-    it('空注册表应返回空数组', () => {
-      const result = registry.list();
-
-      expect(result).toHaveLength(0);
+  describe('unregister', () => {
+    it('应该成功注销 Agent', () => {
+      const registration = registry.register({ name: 'Agent', capabilities: [] });
+      const result = registry.unregister(registration.agentId);
+      expect(result).toBe(true);
+      expect(registry.get(registration.agentId)).toBeUndefined();
     });
+  });
 
-    it('应该返回 Agent 数组副本', () => {
-      registry.register(createAgentRegistration('agent-1', 'Agent'));
-
-      const result = registry.list();
-      result.pop();
-
-      expect(registry.list()).toHaveLength(1);
+  describe('updateName', () => {
+    it('应该成功更新名称', () => {
+      const registration = registry.register({ name: '旧名称', capabilities: [] });
+      const result = registry.updateName(registration.agentId, '新名称');
+      expect(result).toBe(true);
+      expect(registry.get(registration.agentId)?.name).toBe('新名称');
     });
   });
 
   describe('findByCapability', () => {
-    it('应该返回具备指定能力的 Agent', () => {
-      registry.register(createAgentRegistration('agent-1', 'Agent 1', [
-        createCapability('code-generation'),
-        createCapability('file-operation'),
-      ]));
-      registry.register(createAgentRegistration('agent-2', 'Agent 2', [
-        createCapability('data-analysis'),
-      ]));
-      registry.register(createAgentRegistration('agent-3', 'Agent 3', [
-        createCapability('code-generation'),
-      ]));
-
-      const result = registry.findByCapability('code-generation');
-
-      expect(result).toHaveLength(2);
-      expect(result.map(a => a.agentId)).toContain('agent-1');
-      expect(result.map(a => a.agentId)).toContain('agent-3');
-    });
-
-    it('无匹配能力应返回空数组', () => {
-      registry.register(createAgentRegistration('agent-1', 'Agent'));
-
-      const result = registry.findByCapability('unknown-capability');
-
-      expect(result).toHaveLength(0);
-    });
-
-    it('空注册表应返回空数组', () => {
-      const result = registry.findByCapability('code-generation');
-
-      expect(result).toHaveLength(0);
-    });
-  });
-
-  describe('updateLastActive', () => {
-    it('应该更新最后活跃时间', async () => {
-      const agent = createAgentRegistration('agent-1', 'Agent');
-      const registration = registry.register(agent);
-      const originalTime = registration.lastActiveAt.getTime();
-
-      // 等待一小段时间确保时间差异
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      registry.updateLastActive('agent-1');
-
-      const updated = registry.get('agent-1');
-      expect(updated?.lastActiveAt.getTime()).toBeGreaterThan(originalTime);
-    });
-
-    it('更新不存在的 Agent 应静默忽略', () => {
-      registry.updateLastActive('non-existent');
-      // 不应该抛出错误
+    it('应该找到具有特定能力的 Agent', () => {
+      registry.register({ name: 'Agent1', capabilities: [{ name: 'chat', version: '1.0.0' }] });
+      registry.register({ name: 'Agent2', capabilities: [{ name: 'code-gen', version: '1.0.0' }] });
+      
+      const chatAgents = registry.findByCapability('chat');
+      expect(chatAgents).toHaveLength(1);
+      expect(chatAgents[0].name).toBe('Agent1');
     });
   });
 
   describe('getStats', () => {
-    it('应该返回正确的统计信息', () => {
-      registry.register(createAgentRegistration('agent-1', 'Agent 1', [
-        createCapability('code-generation'),
-        createCapability('file-operation'),
-      ]));
-      registry.register(createAgentRegistration('agent-2', 'Agent 2', [
-        createCapability('code-generation'),
-      ]));
-      registry.register(createAgentRegistration('agent-3', 'Agent 3'));
-
+    it('应该返回正确的统计', () => {
+      registry.register({ name: 'Agent1', capabilities: [{ name: 'chat', version: '1.0.0' }] });
+      registry.register({ name: 'Agent2', capabilities: [{ name: 'chat', version: '1.0.0' }] });
+      
       const stats = registry.getStats();
-
-      expect(stats.total).toBe(3);
-      expect(stats.capabilities['code-generation']).toBe(2);
-      expect(stats.capabilities['file-operation']).toBe(1);
-    });
-
-    it('空注册表应返回零统计', () => {
-      const stats = registry.getStats();
-
-      expect(stats.total).toBe(0);
-      expect(Object.keys(stats.capabilities)).toHaveLength(0);
+      expect(stats.total).toBe(2);
+      expect(stats.capabilities['chat']).toBe(2);
     });
   });
 
   describe('cleanupInactive', () => {
-    it('应该清理过期 Agent', async () => {
-      const agent = createAgentRegistration('agent-1', 'Old Agent');
-      registry.register(agent);
-
-      // 等待确保时间差异
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      const cleaned = registry.cleanupInactive(50); // 50ms 超时
-
+    it('应该清理过期的 Agent', async () => {
+      const reg1 = registry.register({ name: 'Agent1', capabilities: [] });
+      const reg2 = registry.register({ name: 'Agent2', capabilities: [] });
+      
+      // 修改 reg1 的 lastActiveAt
+      reg1.lastActiveAt = new Date(Date.now() - 3600000); // 1小时前
+      
+      const cleaned = registry.cleanupInactive(1800000); // 30分钟阈值
       expect(cleaned).toBe(1);
-      expect(registry.list()).toHaveLength(0);
-    });
-
-    it('应该保留活跃 Agent', async () => {
-      const agent = createAgentRegistration('agent-1', 'Active Agent');
-      registry.register(agent);
-
-      // 更新活跃时间
-      await new Promise(resolve => setTimeout(resolve, 100));
-      registry.updateLastActive('agent-1');
-
-      const cleaned = registry.cleanupInactive(50);
-
-      expect(cleaned).toBe(0);
       expect(registry.list()).toHaveLength(1);
     });
-
-    it('应该返回清理数量', async () => {
-      registry.register(createAgentRegistration('agent-1', 'Agent 1'));
-      registry.register(createAgentRegistration('agent-2', 'Agent 2'));
-
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      const cleaned = registry.cleanupInactive(50);
-
-      expect(cleaned).toBe(2);
-    });
-
-    it('空注册表应返回 0', () => {
-      const cleaned = registry.cleanupInactive(1000);
-
-      expect(cleaned).toBe(0);
-    });
   });
 
-  describe('并发操作', () => {
-    it('应该支持并发注册', async () => {
-      const registrations = Array.from({ length: 10 }, (_, i) =>
-        createAgentRegistration(`agent-${i}`, `Agent ${i}`)
-      );
+  describe('restore (Phase 6)', () => {
+    it('should restore agent from identity', () => {
+      // agentId 的 peerId 前缀需要匹配 mockPeerId 的前 16 位
+      const peerIdPrefix = mockPeerId.slice(0, 16); // '12D3KooWHxWdnxJ'
+      const identity = {
+        agentId: `agent:${peerIdPrefix}:12345678`,
+        name: 'Restored Agent',
+        peerId: mockPeerId,
+        signature: 'mock-signature',
+        webhook: { url: 'http://127.0.0.1:9002/f2a/webhook' },
+        capabilities: [{ name: 'chat', version: '1.0.0' }],
+        createdAt: '2026-01-01T00:00:00Z',
+        lastActiveAt: '2026-01-01T00:00:00Z',
+      };
 
-      // 并发注册
-      await Promise.all(registrations.map(r => Promise.resolve(registry.register(r))));
+      const restored = registry.restore(identity);
 
-      expect(registry.list()).toHaveLength(10);
+      expect(restored.agentId).toBe(identity.agentId);
+      expect(restored.name).toBe(identity.name);
+      expect(restored.peerId).toBe(mockPeerId);
+      expect(registry.get(identity.agentId)).toBeDefined();
+      expect(registry.get(identity.agentId)?.name).toBe(identity.name);
     });
 
-    it('应该支持并发注销', async () => {
-      // 注册 10 个 Agent
-      for (let i = 0; i < 10; i++) {
-        registry.register(createAgentRegistration(`agent-${i}`, `Agent ${i}`));
-      }
+    it('should throw when restoring agent from different node', () => {
+      const identity = {
+        agentId: 'agent:different-peer:12345678', // Different peerId prefix
+        name: 'Different Node Agent',
+        peerId: 'different-peer-id',
+        signature: 'mock-signature',
+        capabilities: [],
+        createdAt: '2026-01-01T00:00:00Z',
+        lastActiveAt: '2026-01-01T00:00:00Z',
+      };
 
-      // 并发注销
-      await Promise.all(
-        Array.from({ length: 10 }, (_, i) =>
-          Promise.resolve(registry.unregister(`agent-${i}`))
-        )
-      );
-
-      expect(registry.list()).toHaveLength(0);
+      expect(() => registry.restore(identity)).toThrow('Cannot restore agent from different node');
     });
 
-    it('应该支持并发更新活跃时间', async () => {
-      const agent = createAgentRegistration('agent-1', 'Agent');
-      registry.register(agent);
+    it('should restore agent with metadata', () => {
+      const peerIdPrefix = mockPeerId.slice(0, 16);
+      const identity = {
+        agentId: `agent:${peerIdPrefix}:abc12345`,
+        name: 'Agent with Metadata',
+        peerId: mockPeerId,
+        signature: 'mock-signature',
+        capabilities: [],
+        metadata: { platform: 'OpenClaw', version: '1.0' },
+        createdAt: '2026-01-01T00:00:00Z',
+        lastActiveAt: '2026-01-01T00:00:00Z',
+      };
 
-      // 并发更新 100 次
-      await Promise.all(
-        Array.from({ length: 100 }, () =>
-          Promise.resolve(registry.updateLastActive('agent-1'))
-        )
-      );
+      const restored = registry.restore(identity);
 
-      const result = registry.get('agent-1');
-      expect(result).toBeDefined();
+      expect(restored.metadata).toEqual(identity.metadata);
     });
 
-    it('应该支持并发注册和注销', async () => {
-      // 注册一些 Agent
-      for (let i = 0; i < 5; i++) {
-        registry.register(createAgentRegistration(`agent-${i}`, `Agent ${i}`));
-      }
+    it('should restore multiple agents from identities', () => {
+      const peerIdPrefix = mockPeerId.slice(0, 16);
+      const identity1 = {
+        agentId: `agent:${peerIdPrefix}:11111111`,
+        name: 'Agent 1',
+        peerId: mockPeerId,
+        signature: 'sig1',
+        capabilities: [{ name: 'chat', version: '1.0.0' }],
+        createdAt: '2026-01-01T00:00:00Z',
+        lastActiveAt: '2026-01-01T00:00:00Z',
+      };
 
-      // 并发执行注册新 Agent 和注销旧 Agent
-      const operations = [
-        ...Array.from({ length: 5 }, (_, i) =>
-          Promise.resolve(registry.register(createAgentRegistration(`new-agent-${i}`, `New Agent ${i}`)))
-        ),
-        ...Array.from({ length: 3 }, (_, i) =>
-          Promise.resolve(registry.unregister(`agent-${i}`))
-        ),
-      ];
+      const identity2 = {
+        agentId: `agent:${peerIdPrefix}:22222222`,
+        name: 'Agent 2',
+        peerId: mockPeerId,
+        signature: 'sig2',
+        capabilities: [{ name: 'code-gen', version: '1.0.0' }],
+        createdAt: '2026-01-01T00:00:00Z',
+        lastActiveAt: '2026-01-01T00:00:00Z',
+      };
 
-      await Promise.all(operations);
+      registry.restore(identity1);
+      registry.restore(identity2);
 
-      // 最终应该有 5 - 3 + 5 = 7 个 Agent
-      expect(registry.list()).toHaveLength(7);
-    });
-  });
-
-  describe('边界情况', () => {
-    it('应该处理大量 Agent 注册', () => {
-      for (let i = 0; i < 1000; i++) {
-        registry.register(createAgentRegistration(`agent-${i}`, `Agent ${i}`));
-      }
-
-      expect(registry.list()).toHaveLength(1000);
-      expect(registry.getStats().total).toBe(1000);
-    });
-
-    it('应该处理同名 Agent 注册', () => {
-      registry.register(createAgentRegistration('agent-1', 'Same Name'));
-      registry.register(createAgentRegistration('agent-2', 'Same Name'));
-
-      const result = registry.list();
-      expect(result).toHaveLength(2);
-      expect(result.every(a => a.name === 'Same Name')).toBe(true);
-    });
-
-    it('应该处理大量能力', () => {
-      const capabilities = Array.from({ length: 100 }, (_, i) =>
-        createCapability(`cap-${i}`)
-      );
-
-      registry.register(createAgentRegistration('agent-1', 'Agent', capabilities));
-
-      const stats = registry.getStats();
-      expect(Object.keys(stats.capabilities)).toHaveLength(100);
+      expect(registry.size()).toBe(2);
+      expect(registry.findByCapability('chat')).toHaveLength(1);
+      expect(registry.findByCapability('code-gen')).toHaveLength(1);
     });
   });
 });

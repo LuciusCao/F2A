@@ -1,162 +1,645 @@
 /**
- * F2A OpenClaw Plugin
- * OpenClaw 插件标准入口
+ * F2A Webhook Plugin (Simplified)
+ * Minimal OpenClaw plugin for F2A webhook handling
  *
- * 架构说明:
- * - register() 只调用 initialize(),保存配置,不打开资源
- * - registerService() 注册后台服务,在 Gateway 启动后异步启用 F2A
- * - 使用 setImmediate() 避免阻塞 Gateway 启动
- * - 所有网络资源和定时器都使用 unref(),确保 Gateway 可以正常退出
+ * Architecture per RFC004:
+ * - register() saves config, does not start services
+ * - registerService() starts webhook listener in background
+ * - handleWebhook() processes incoming messages and forwards to Agent
  */
 
-import type { OpenClawPluginApi } from './types.js';
-import { F2APlugin } from './connector.js';
-
-/** 全局单例 - 防止重复创建插件实例 */
-let _pluginInstance: F2APlugin | null = null;
-
-/** 记录创建实例的进程 PID,用于检测 Gateway 是否重启 */
-let _instancePid: number | null = null;
+import type { OpenClawPluginApi, WebhookConfig, ApiLogger } from './types.js';
+import { join } from 'path';
+import { homedir } from 'os';
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { createHmac } from 'crypto';
 
 /**
- * OpenClaw 插件注册函数
- * 这是 OpenClaw 加载插件时调用的入口
- * 
- * ⚠️ 重要：必须是同步函数，不能是 async！
- * Gateway 不支持异步插件注册，async register() 会被忽略。
- * 
- * ⚠️ Gateway 可能会多次调用 register()，每次都应该重新注册工具和服务。
- * 不使用单例检测，让 Gateway 自己处理重复注册。
+ * 读取已保存的 Agent Identity
+ * Phase 6: 支持身份恢复
  */
-export default function register(api: OpenClawPluginApi) {
-  // 不使用单例，每次都重新注册
-  // Gateway 可能多次调用 register，每次都应该注册工具和服务
-  const plugin = new F2APlugin();
+function readSavedAgentId(): string | null {
+  const agentsDir = join(homedir(), '.f2a', 'agents');
   
-  // 从 OpenClaw 配置中获取插件配置
-  const pluginsConfig = api.config.plugins;
-  const config = pluginsConfig?.entries?.['openclaw-f2a']?.config || {}; 
+  if (!existsSync(agentsDir)) {
+    return null;
+  }
   
-  // 将 API 引用传递给插件（用于触发心跳等操作）
-  const fullConfig = {
-    ...config,
-    _api: api
-  };
-
-  // 初始化插件 - 同步保存配置，不启动服务
-  // ⚠️ 重要：initialize() 必须同步完成，不能 await
-  // 异步启动移到 registerService.start() 中
-  plugin.initialize(fullConfig);
-  api.logger?.info('[F2A Plugin] 初始化完成（延迟模式）');
-
-  // 注册所有工具
-  const tools = plugin.getTools();
-  for (const tool of tools) {
-    api.registerTool?.({
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-      async execute(sessionId: string, params: unknown) {
-        const toolName = tool.name;
-        const startTime = Date.now();
-
-        // 确保适配器已启用
-        if (!plugin.isInitialized()) {
-          api.logger?.info('[F2A Plugin] 首次使用工具，启用适配器...', { toolName, sessionId });
-          try {
-            await plugin.enable();
-          } catch (enableError: any) {
-            api.logger?.error('[F2A Plugin] 启用失败:', { toolName, sessionId, error: enableError.message });
-            throw new Error(`F2A Plugin 启用失败: ${enableError.message}`);
-          }
-        }
-
-        // 记录工具执行开始
-        api.logger?.info('[F2A Plugin] 工具执行开始:', { toolName, sessionId });
-
-        try {
-          const workspace = api.config.agents?.defaults?.workspace || '.';
-          const mockContext = {
-            sessionId,
-            workspace,
-            toJSON: () => ({})
-          };
-
-          const result = await tool.handler(params as Record<string, unknown>, mockContext);
-
-          // 记录工具执行完成
-          const duration = Date.now() - startTime;
-          api.logger?.info('[F2A Plugin] 工具执行完成:', {
-            toolName,
-            sessionId,
-            duration: `${duration}ms`,
-            success: true
-          });
-
-          if (typeof result === 'string') {
-            return { content: [{ type: 'text', text: result }] };
-          }
-
-          if (result?.content) {
-            return { content: [{ type: 'text', text: result.content }] };
-          }
-
-          return { content: [{ type: 'text', text: JSON.stringify(result) }] };
-        } catch (error: any) {
-          // 记录工具执行失败
-          const duration = Date.now() - startTime;
-          api.logger?.error('[F2A Plugin] 工具执行失败:', {
-            toolName,
-            sessionId,
-            duration: `${duration}ms`,
-            error: error.message,
-            stack: error.stack
-          });
-          throw error;
+  // 查找第一个有效的 Agent Identity 文件
+  // 每个节点通常只有一个 agent，所以直接查找第一个即可
+  const files = readdirSync(agentsDir)
+    .filter(f => f.endsWith('.json') && f.startsWith('agent:'));
+  
+  if (files.length === 0) {
+    return null;
+  }
+  
+  // 查找最新的 identity 文件（按最后活跃时间排序）
+  let latestIdentity: { agentId: string; lastActiveAt: string } | null = null;
+  
+  for (const file of files) {
+    try {
+      const content = readFileSync(join(agentsDir, file), 'utf-8');
+      const identity = JSON.parse(content);
+      
+      if (identity && identity.agentId) {
+        if (!latestIdentity || identity.lastActiveAt > latestIdentity.lastActiveAt) {
+          latestIdentity = identity;
         }
       }
-    });
+    } catch (err) {
+      // 跳过无效文件
+    }
   }
+  
+  return latestIdentity?.agentId || null;
+}
 
-  // 注册后台服务
-  // 使用 setImmediate 异步启动 F2A,避免阻塞 Gateway
+/** Default configuration */
+const DEFAULT_CONFIG: Required<WebhookConfig> = {
+  webhookPath: '/f2a/webhook',
+  webhookPort: 9002,
+  webhookToken: '',
+  agentTimeout: 60000,
+  controlPort: 9001,
+  agentName: 'OpenClaw Agent',
+  agentCapabilities: ['chat', 'task'],
+  autoRegister: true,
+  registerRetryInterval: 5000,
+  registerMaxRetries: 3,
+  _registeredAgentId: ''
+};
+
+/**
+ * OpenClaw Plugin entry point
+ * This is called by OpenClaw Gateway when loading the plugin
+ *
+ * ⚠️ Important: Must be synchronous, Gateway doesn't support async register()
+ */
+export default function register(api: OpenClawPluginApi) {
+  // Get plugin config from OpenClaw
+  const pluginsConfig = api.config.plugins;
+  const rawConfig = pluginsConfig?.entries?.['openclaw-f2a']?.config || {};
+
+  // Merge with defaults
+  const config: Required<WebhookConfig> = {
+    ...DEFAULT_CONFIG,
+    ...rawConfig
+  };
+
+  api.logger?.info(`[F2A Webhook] Initializing... webhookPath=${config.webhookPath} webhookPort=${config.webhookPort}`);
+
+  // Register service for webhook handling
   api.registerService?.({
-    id: 'f2a-plugin-service',
+    id: 'f2a-webhook-service',
     start: () => {
-      api.logger?.info('[F2A Plugin] 服务已启动');
+      api.logger?.info('[F2A Webhook] Service started');
 
-      // 使用 setImmediate 在下一个事件循环中启动 F2A
-      // 这样不会阻塞 Gateway 的启动流程
+      // Start webhook listener asynchronously
       setImmediate(async () => {
         try {
-          // 检查是否配置了 autoStart(默认 true)
-          const autoStart = config.autoStart !== false;
-
-          if (autoStart) {
-            api.logger?.info('[F2A Plugin] 正在启用 F2A 实例(后台模式)...');
-            await plugin.enable();
-            api.logger?.info('[F2A Plugin] F2A 实例已启用');
-          }
-        } catch (error: any) {
-          // 启动失败不影响 Gateway 运行
-          api.logger?.warn('[F2A Plugin] F2A 实例启动失败:', { error: error.message });
-          api.logger?.warn('[F2A Plugin] P2P 功能将不可用,但 Gateway 可继续运行');
+          await startWebhookListener(api, config);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          api.logger?.warn(`[F2A Webhook] Webhook listener failed to start: ${msg}`);
         }
       });
     },
     stop: async () => {
-      api.logger?.info('[F2A Plugin] 正在停止服务...');
-      await plugin.shutdown?.();
-      api.logger?.info('[F2A Plugin] 服务已停止');
+      // 🔑 注销 Agent（新增）
+      // @ts-ignore
+      if (config._registeredAgentId) {
+        await unregisterFromDaemon(api, config, config._registeredAgentId);
+      }
+      api.logger?.info('[F2A Webhook] Service stopped');
     }
   });
 
-  api.logger?.info('[F2A Plugin] 已注册工具:', { count: tools.length, mode: '延迟初始化' });
+  api.logger?.info('[F2A Webhook] Registered successfully');
 }
 
-// 重新导出主要类,供外部使用
-export { F2APlugin } from './connector.js';
+/**
+ * 自动注册到 F2A Daemon
+ * Phase 6: 支持恢复已有身份
+ * Phase 7: 使用 Challenge-Response 验证身份
+ * Phase 4: 保存 token 到 identity 文件
+ */
+export async function registerToDaemon(
+  api: OpenClawPluginApi,
+  config: Required<WebhookConfig>
+): Promise<{ success: boolean; restored?: boolean; verified?: boolean; agent?: { agentId: string }; token?: string }> {
+  const controlPort = config.controlPort || 9001;
+  
+  // 检测 Daemon 是否运行
+  try {
+    const healthResponse = await fetch(`http://127.0.0.1:${controlPort}/health`, {
+      signal: AbortSignal.timeout(2000)
+    });
+    
+    if (!healthResponse.ok) {
+      api.logger?.warn('[F2A] Daemon health check failed');
+      return { success: false };
+    }
+  } catch (err) {
+    api.logger?.warn('[F2A] Daemon not running or unreachable:', String(err));
+    return { success: false };
+  }
+  
+  // 🔑 Phase 7: 查找已保存的 AgentId，尝试 Challenge-Response 验证
+  const savedAgentId = readSavedAgentId();
+  if (savedAgentId) {
+    const identity = readIdentityFile(savedAgentId);
+    
+    if (identity && identity.e2eePublicKey) {
+      api.logger?.info('[F2A] Found saved agentId with e2eePublicKey, attempting Challenge-Response...', savedAgentId.slice(0, 16));
+      
+      const result = await verifyIdentity(api, config, identity);
+      if (result.success && result.agent?.agentId) {
+        api.logger?.info('[F2A] Identity verified via Challenge-Response:', result.agent.agentId.slice(0, 16));
+        // Phase 4: token 已在 verifyIdentity 中保存
+        return { success: true, restored: true, verified: true, agent: result.agent, token: result.sessionToken };
+      } else {
+        api.logger?.warn('[F2A] Challenge-Response failed, falling back to new registration');
+      }
+    }
+  }
+  
+  // 正常注册新 Agent
+  try {
+    const response = await fetch(`http://127.0.0.1:${controlPort}/api/agents`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-F2A-Token': config.webhookToken
+      },
+      body: JSON.stringify({
+        name: config.agentName || 'OpenClaw Agent',
+        agentId: savedAgentId,  // 🔑 如果有已保存的，传给 daemon（可能只是恢复而不需要 Challenge-Response）
+        capabilities: (config.agentCapabilities || ['chat', 'task']).map(name => ({
+          name,
+          version: '1.0.0'
+        })),
+        webhook: {
+          url: `http://127.0.0.1:${config.webhookPort}${config.webhookPath}`,
+          token: config.webhookToken
+        }
+      }),
+      signal: AbortSignal.timeout(5000)
+    });
+    
+    if (!response.ok) {
+      api.logger?.warn('[F2A] Registration API failed:', response.status);
+      return { success: false };
+    }
+    
+    // Phase 4: 解析包含 token 的响应
+    const result = await response.json() as { success?: boolean; restored?: boolean; agent?: { agentId: string }; token?: string };
+    
+    // Phase 4: 保存 token 到 identity 文件
+    if (result.token && result.agent?.agentId) {
+      if (saveIdentityWithToken(result.agent.agentId, result.token)) {
+        api.logger?.info('[F2A] Token saved to identity file:', result.agent.agentId.slice(0, 16));
+      } else {
+        api.logger?.warn('[F2A] Failed to save token to identity file');
+      }
+    }
+    
+    if (result.restored) {
+      api.logger?.info('[F2A] Agent identity restored:', result.agent?.agentId);
+    } else {
+      api.logger?.info('[F2A] New agent registered:', result.agent?.agentId);
+    }
+    
+    return { success: result.success ?? false, restored: result.restored, agent: result.agent, token: result.token };
+  } catch (err) {
+    api.logger?.error('[F2A] Registration request failed:', String(err));
+    return { success: false };
+  }
+}
+
+/**
+ * 注销 Agent
+ */
+export async function unregisterFromDaemon(
+  api: OpenClawPluginApi,
+  config: Required<WebhookConfig>,
+  agentId: string
+): Promise<void> {
+  const controlPort = config.controlPort || 9001;
+  
+  try {
+    await fetch(`http://127.0.0.1:${controlPort}/api/agents/${agentId}`, {
+      method: 'DELETE',
+      headers: {
+        'X-F2A-Token': config.webhookToken
+      },
+      signal: AbortSignal.timeout(5000)
+    });
+    
+    api.logger?.info('[F2A] Agent unregistered:', agentId);
+  } catch (err) {
+    api.logger?.warn('[F2A] Unregister failed:', String(err));
+  }
+}
+
+/**
+ * Start webhook listener
+ * Creates a simple HTTP server to receive F2A webhook requests
+ */
+async function startWebhookListener(
+  api: OpenClawPluginApi,
+  config: Required<WebhookConfig>
+): Promise<void> {
+  const http = await import('http');
+  const { exec } = await import('child_process');
+
+  const server = http.createServer(async (req, res) => {
+    // Parse URL path - support both global webhook and agent-specific webhook
+    // Global: /f2a/webhook
+    // Agent-specific: /f2a/webhook/agent:<id_prefix>
+    const urlPath = req.url || '';
+    
+    // Check for agent-specific webhook path
+    // Agent ID prefix can include lowercase letters, numbers, and uppercase
+    const agentMatch = urlPath.match(/^\/f2a\/webhook\/agent:([a-zA-Z0-9]+)(?:\/|$)/);
+    const isAgentWebhook = agentMatch !== null;
+    const isGlobalWebhook = urlPath === config.webhookPath || urlPath === '/f2a/webhook';
+    
+    // Only handle POST to webhook paths
+    if (req.method !== 'POST' || (!isGlobalWebhook && !isAgentWebhook)) {
+      res.writeHead(404);
+      res.end('Not found');
+      return;
+    }
+    
+    // Extract agent ID prefix if present
+    const agentIdPrefix = isAgentWebhook ? agentMatch![1] : null;
+
+    // Validate token
+    const authHeader = req.headers['authorization'] || req.headers['x-f2a-token'];
+    const token = typeof authHeader === 'string' ? authHeader.replace('Bearer ', '') : '';
+    if (config.webhookToken && token !== config.webhookToken) {
+      res.writeHead(401);
+      res.end('Unauthorized');
+      return;
+    }
+
+    // Parse body
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    
+    let payload: { 
+      from?: string | { agentId?: string; name?: string }; 
+      fromAgentId?: string; 
+      content?: string; 
+      message?: string;
+      topic?: string;
+      type?: string;
+      to?: { agentId?: string; name?: string };
+      messageId?: string;
+    };
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      res.writeHead(400);
+      res.end('Invalid JSON');
+      return;
+    }
+
+    // 兼容 MessageRouter 的 payload 格式：
+    // - from 可以是字符串或 { agentId, name } 对象
+    // - content 或 message 字段
+    const fromAgentId = typeof payload.from === 'string' 
+      ? payload.from 
+      : payload.from?.agentId || payload.fromAgentId || '';
+    const message = payload.content || payload.message || '';
+    
+    if (!fromAgentId || !message) {
+      res.writeHead(400);
+      res.end('Missing from or content');
+      return;
+    }
+
+// Log with webhook type info
+    const webhookType = isAgentWebhook ? `agent:${agentIdPrefix}` : 'global';
+    api.logger?.info(`[F2A Webhook] Received message (${webhookType}) from ${fromAgentId.slice(0, 16)}, length=${message.length}`);
+
+    // Invoke Agent to generate reply
+    // Use agentIdPrefix as session key if available, otherwise use fromAgentId prefix
+    const sessionKeyPrefix = agentIdPrefix || fromAgentId.slice(0, 16);
+    const reply = await invokeAgent(api, sessionKeyPrefix, message, config.agentTimeout);
+
+    // Send reply via f2a CLI
+    if (reply) {
+      try {
+        exec(`f2a send --to "${fromAgentId}" --message "${reply.replace(/"/g, '\\\\"')}"`, {
+          timeout: 10000
+        });
+        api.logger?.info(`[F2A Webhook] Reply sent to ${fromAgentId.slice(0, 16)}`);
+      } catch (err) {
+        api.logger?.error(`[F2A Webhook] Failed to send reply: ${String(err)}`);
+      }
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true }));
+  });
+
+  // Use unref() to allow Gateway to exit cleanly
+  server.listen(config.webhookPort, '127.0.0.1', () => {
+    api.logger?.info(`[F2A Webhook] Listening on http://127.0.0.1:${config.webhookPort}${config.webhookPath}`);
+    server.unref();
+    
+    // 🔑 自动注册（新增）
+    if (config.autoRegister) {
+      setImmediate(async () => {
+        const result = await registerToDaemon(api, config);
+        if (result.success && result.agent?.agentId) {
+          api.logger?.info('[F2A] Registered successfully:', result.agent.agentId);
+          // @ts-ignore - store agentId for cleanup
+          config._registeredAgentId = result.agent.agentId;
+        } else {
+          api.logger?.warn('[F2A] Registration failed, will retry later');
+        }
+      });
+    }
+  });
+}
+
+/**
+ * Invoke Agent to generate reply
+ * Uses OpenClaw subagent API if available
+ * 
+ * @param api - OpenClaw plugin API
+ * @param sessionKeyPrefix - Prefix for session key (agentId or from prefix)
+ * @param message - Message content
+ * @param timeout - Timeout in milliseconds
+ */
+async function invokeAgent(
+  api: OpenClawPluginApi,
+  sessionKeyPrefix: string,
+  message: string,
+  timeout: number
+): Promise<string | undefined> {
+  const logger = api.logger;
+
+  // Check if subagent API is available
+  if (api.runtime?.subagent?.run && api.runtime?.subagent?.waitForRun) {
+    try {
+      const sessionKey = `f2a-webhook-${sessionKeyPrefix}`;
+      const idempotencyKey = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const { runId } = await api.runtime.subagent.run({
+        sessionKey,
+        message,
+        deliver: true,
+        idempotencyKey
+      });
+
+      const result = await api.runtime.subagent.waitForRun({
+        runId,
+        timeoutMs: timeout
+      });
+
+      if (result.status === 'ok') {
+        const messagesResult = await api.runtime.subagent.getSessionMessages({
+          sessionKey,
+          limit: 10
+        });
+
+        const messages = messagesResult.messages as any[];
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const msg = messages[i];
+          if (msg.role === 'assistant' && msg.content) {
+            const reply = typeof msg.content === 'string'
+              ? msg.content
+              : msg.content.find((c: any) => c.type === 'text')?.text;
+            if (reply) {
+              logger?.info(`[F2A Webhook] Got Agent reply, length=${reply.length}`);
+              return reply;
+            }
+          }
+        }
+      }
+
+      if (result.status === 'timeout') {
+        logger?.warn('[F2A Webhook] Agent timeout');
+        return 'Sorry, I took too long to respond.';
+      }
+
+      logger?.error(`[F2A Webhook] Agent error: ${result.error}`);
+      return undefined;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger?.error(`[F2A Webhook] Failed to invoke Agent: ${msg}`);
+      return undefined;
+    }
+  }
+
+  // No subagent API available
+  logger?.warn('[F2A Webhook] Subagent API not available, cannot invoke Agent');
+  return undefined;
+}
+
+// ========== Phase 7: Challenge-Response 辅助函数 ==========
+
+/**
+ * Agent Identity 结构（简化版）
+ * Phase 4: 添加 token 字段
+ */
+interface AgentIdentityFile {
+  agentId: string;
+  name: string;
+  peerId: string;
+  signature: string;
+  e2eePublicKey?: string;
+  webhook?: { url: string; token?: string };
+  capabilities?: { name: string; version?: string }[];
+  createdAt: string;
+  lastActiveAt: string;
+  /** Phase 4: Agent Token（用于 API 认证） */
+  token?: string;
+}
+
+/**
+ * 读取 Identity 文件
+ */
+function readIdentityFile(agentId: string): AgentIdentityFile | null {
+  try {
+    const dataDir = join(homedir(), '.f2a');
+    const identityFile = join(dataDir, 'agents', `${agentId}.json`);
+    if (existsSync(identityFile)) {
+      return JSON.parse(readFileSync(identityFile, 'utf-8')) as AgentIdentityFile;
+    }
+  } catch {
+    // 忽略错误
+  }
+  return null;
+}
+
+/**
+ * Phase 4: 保存 Identity 文件（含 token）
+ * 更新 identity 文件中的 token 字段
+ */
+function saveIdentityWithToken(agentId: string, token: string): boolean {
+  try {
+    const dataDir = join(homedir(), '.f2a');
+    const agentsDir = join(dataDir, 'agents');
+    
+    // 确保目录存在
+    if (!existsSync(agentsDir)) {
+      mkdirSync(agentsDir, { recursive: true });
+    }
+    
+    const identityFile = join(agentsDir, `${agentId}.json`);
+    
+    // 读取现有 identity（如果存在）
+    let identity: AgentIdentityFile;
+    if (existsSync(identityFile)) {
+      identity = JSON.parse(readFileSync(identityFile, 'utf-8')) as AgentIdentityFile;
+    } else {
+      // 如果不存在，创建基本的 identity 结构
+      identity = {
+        agentId,
+        name: 'OpenClaw Agent',
+        peerId: '',
+        signature: '',
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+      };
+    }
+    
+    // 更新 token 和 lastActiveAt
+    identity.token = token;
+    identity.lastActiveAt = new Date().toISOString();
+    
+    // 写入文件
+    writeFileSync(identityFile, JSON.stringify(identity, null, 2), { mode: 0o600 });
+    return true;
+  } catch (err) {
+    // 忽略错误
+    return false;
+  }
+}
+
+/**
+ * 读取节点 E2EE 私钥
+ */
+function readNodePrivateKey(): string | null {
+  try {
+    const nodeIdentityPath = join(homedir(), '.f2a', 'node-identity.json');
+    if (existsSync(nodeIdentityPath)) {
+      const nodeIdentity = JSON.parse(readFileSync(nodeIdentityPath, 'utf-8'));
+      // node-identity.json 包含 e2eeKeyPair.privateKey
+      if (nodeIdentity.e2eeKeyPair?.privateKey) {
+        return nodeIdentity.e2eeKeyPair.privateKey;
+      }
+    }
+  } catch {
+    // 忽略错误
+  }
+  return null;
+}
+
+/**
+ * 签名 nonce（使用 E2EE 私钥）
+ * X25519 不能直接签名，使用 HMAC-SHA256
+ */
+function signNonce(nonce: string, privateKeyBase64: string): string {
+  const privateKey = Buffer.from(privateKeyBase64, 'base64');
+  const signature = createHmac('sha256', privateKey)
+    .update(nonce, 'utf-8')
+    .digest('base64');
+  return signature;
+}
+
+/**
+ * Challenge-Response 验证
+ */
+async function verifyIdentity(
+  api: OpenClawPluginApi,
+  config: Required<WebhookConfig>,
+  identity: AgentIdentityFile
+): Promise<{ success: boolean; agent?: { agentId: string }; sessionToken?: string }> {
+  const controlPort = config.controlPort || 9001;
+  
+  try {
+    // 1️⃣ 请求挑战
+    const challengeReq = await fetch(`http://127.0.0.1:${controlPort}/api/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agentId: identity.agentId,
+        webhook: { url: `http://127.0.0.1:${config.webhookPort}${config.webhookPath}`, token: config.webhookToken },
+        requestChallenge: true
+      }),
+      signal: AbortSignal.timeout(5000)
+    });
+    
+    if (!challengeReq.ok) {
+      api.logger?.warn('[F2A] Challenge request failed:', challengeReq.status);
+      return { success: false };
+    }
+    
+    const challengeResult = await challengeReq.json() as { challenge?: boolean; nonce?: string; expiresIn?: number };
+    if (!challengeResult.challenge || !challengeResult.nonce) {
+      api.logger?.warn('[F2A] No challenge returned from daemon');
+      return { success: false };
+    }
+    
+    const nonce = challengeResult.nonce;
+    api.logger?.info('[F2A] Challenge received, nonce prefix:', nonce.slice(0, 8));
+    
+    // 2️⃣ 签名 nonce（用节点 E2EE 私钥）
+    const nodePrivateKey = readNodePrivateKey();
+    if (!nodePrivateKey) {
+      api.logger?.warn('[F2A] No node private key found, cannot sign nonce');
+      return { success: false };
+    }
+    
+    const nonceSignature = signNonce(nonce, nodePrivateKey);
+    
+    // 3️⃣ 发送响应
+    const verifyReq = await fetch(`http://127.0.0.1:${controlPort}/api/agents/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agentId: identity.agentId,
+        nonce,
+        nonceSignature
+      }),
+      signal: AbortSignal.timeout(5000)
+    });
+    
+    if (!verifyReq.ok) {
+      api.logger?.warn('[F2A] Verify request failed:', verifyReq.status);
+      return { success: false };
+    }
+    
+    const result = await verifyReq.json() as { success?: boolean; verified?: boolean; agentToken?: string; sessionToken?: string; agent?: { agentId: string } };
+    
+    // Phase 4: 服务器返回 agentToken，兼容旧的 sessionToken 字段名
+    const token = result.agentToken || result.sessionToken;
+    
+    if (result.success && result.verified && token) {
+      // Phase 4: 保存 token 到 identity 文件
+      if (saveIdentityWithToken(identity.agentId, token)) {
+        api.logger?.info('[F2A] Token saved to identity file:', identity.agentId.slice(0, 16));
+      } else {
+        api.logger?.warn('[F2A] Failed to save token to identity file');
+      }
+      
+      api.logger?.info('[F2A] Identity verified via Challenge-Response:', identity.agentId.slice(0, 16));
+      return { success: true, sessionToken: token, agent: result.agent };
+    }
+    
+    api.logger?.warn('[F2A] Identity verification failed:', JSON.stringify(result));
+    return { success: false };
+  } catch (err) {
+    api.logger?.error('[F2A] Challenge-Response failed:', String(err));
+    return { success: false };
+  }
+}
+
+// Re-export types
 export * from './types.js';
-export { TaskQueue, QueuedTask, TaskQueueStats } from './task-queue.js';
-export { AnnouncementQueue, AnnouncementQueueStats } from './announcement-queue.js';
-export { TaskGuard, TaskGuardReport, TaskGuardRule, TaskGuardConfig, taskGuard } from './task-guard.js';

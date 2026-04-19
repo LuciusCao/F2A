@@ -23,7 +23,7 @@ process.on('SIGTERM', async () => {
 });
 
 // 启动
-daemon.start().catch((error) => {
+daemon.start().catch((error: unknown) => {
   console.error('[Daemon] Failed to start:', error);
   process.exit(1);
 });

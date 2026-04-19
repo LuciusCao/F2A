@@ -3,18 +3,29 @@
  * 接收 CLI 命令 - P2P 版本
  * 
  * Phase 1 扩展：支持 Agent 注册和消息路由
+ * 
+ * P0-3 Refactoring: 简化为路由分发
+ * - 所有端点处理逻辑已提取到 Handler 类
+ * - 本文件只负责路由分发和基础设施管理
  */
 
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
-import { randomUUID } from 'crypto';
-import { F2A } from '../core/f2a.js';
-import { TokenManager } from '../core/token-manager.js';
-import { Logger } from '../utils/logger.js';
-import { RateLimiter } from '../utils/rate-limiter.js';
-import { getErrorMessage } from '../utils/error-utils.js';
-import { AgentRegistry, AgentRegistration } from './agent-registry.js';
-import { MessageRouter, RoutableMessage } from './message-router.js';
-import type { AgentCapability } from '../types/index.js';
+import { homedir } from 'os';
+import { join } from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { F2A } from '@f2a/network';
+import { TokenManager } from '@f2a/network';
+import { Logger } from '@f2a/network';
+import { RateLimiter } from '@f2a/network';
+import { getErrorMessage } from '@f2a/network';
+import { E2EECrypto } from '@f2a/network';
+import { AgentRegistry, MessageRouter } from '@f2a/network';
+import { AgentIdentityStore } from './agent-identity-store.js';
+import { AgentTokenManager } from './agent-token-manager.js';
+import { AgentHandler } from './handlers/agent-handler.js';
+import { MessageHandler } from './handlers/message-handler.js';
+import { SystemHandler } from './handlers/system-handler.js';
+import { P2PHandler, SendCommand } from './handlers/p2p-handler.js';
 
 export interface ControlServerOptions {
   /** 端口，如果不传则使用构造函数传入的 port */
@@ -87,12 +98,26 @@ export class ControlServer {
   // Phase 1: Agent 注册表和消息路由器
   private agentRegistry: AgentRegistry;
   private messageRouter: MessageRouter;
+  // Phase 6: Agent Identity Manager
+  private identityStore: AgentIdentityStore;
+  // Phase 7: E2EECrypto 用于签名验证
+  private e2eeCrypto!: E2EECrypto;
+  private dataDir: string;
+  // Phase 1: 全局 AgentTokenManager（纯内存版本）
+  private agentTokenManager: AgentTokenManager;
+  
+  // Handlers
+  private agentHandler: AgentHandler;
+  private messageHandler: MessageHandler;
+  private systemHandler: SystemHandler;
+  private p2pHandler: P2PHandler;
 
   constructor(f2a: F2A, port: number, tokenManager?: TokenManager, options?: ControlServerOptions) {
     this.f2a = f2a;
     this.port = port;
     // 使用传入的 dataDir 创建 TokenManager
-    this.tokenManager = tokenManager || new TokenManager(options?.dataDir);
+    this.dataDir = options?.dataDir || join(homedir(), '.f2a');
+    this.tokenManager = tokenManager || new TokenManager(this.dataDir);
     this.logger = new Logger({ component: 'ControlServer' });
     // 速率限制: 每分钟最多 60 个请求
     this.rateLimiter = new RateLimiter({ maxRequests: 60, windowMs: 60000 });
@@ -104,12 +129,89 @@ export class ControlServer {
     // P2 修复：生产环境强制验证 CORS 配置
     validateCorsConfig(this.allowedOrigins);
     
-    // Phase 1: 初始化 Agent 注册表和消息路由器
-    this.agentRegistry = new AgentRegistry();
-    this.messageRouter = new MessageRouter(
-      // 使用 getter 来访问注册表，因为 Map 是引用类型
-      new Map<string, AgentRegistration>()
-    );
+    // P0 修复：使用 F2A 已初始化的 AgentRegistry 和 MessageRouter
+    // 避免创建独立实例导致数据不一致
+    this.agentRegistry = f2a.getAgentRegistry();
+    this.messageRouter = f2a.getMessageRouter();
+    
+    // Phase 6: 初始化 Identity Manager（daemon 特有的 Agent 身份持久化）
+    this.identityStore = new AgentIdentityStore(this.dataDir);
+    this.identityStore.loadAll();
+
+    // Phase 1: 初始化全局 AgentTokenManager（纯内存版本）
+    this.agentTokenManager = new AgentTokenManager();
+
+    // Phase 7: 初始化 E2EECrypto（用于 Challenge-Response 签名验证）
+    this.e2eeCrypto = new E2EECrypto();
+    // 尝试从 node-identity.json 加载 E2EE 密钥
+    const nodeIdentityPath = join(this.dataDir, 'node-identity.json');
+    try {
+      if (existsSync(nodeIdentityPath)) {
+        const nodeIdentity = JSON.parse(readFileSync(nodeIdentityPath, 'utf-8'));
+        if (nodeIdentity.e2eeKeyPair?.publicKey && nodeIdentity.e2eeKeyPair?.privateKey) {
+          const publicKey = Buffer.from(nodeIdentity.e2eeKeyPair.publicKey, 'base64');
+          const privateKey = Buffer.from(nodeIdentity.e2eeKeyPair.privateKey, 'base64');
+          this.e2eeCrypto.initializeWithKeyPair(privateKey, publicKey);
+          this.logger.info('E2EECrypto initialized from node-identity.json');
+        }
+      } else {
+        // node-identity.json 不存在，异步初始化
+        this.e2eeCrypto.initialize().catch(err => {
+          this.logger.warn('E2EECrypto initialization failed', { error: getErrorMessage(err) });
+        });
+      }
+    } catch (err) {
+      this.logger.warn('Failed to load node-identity.json for E2EECrypto', { error: getErrorMessage(err) });
+    }
+
+    // 初始化 Handlers（依赖注入）
+    this.agentHandler = new AgentHandler({
+      agentRegistry: this.agentRegistry,
+      identityStore: this.identityStore,
+      agentTokenManager: this.agentTokenManager,
+      e2eeCrypto: this.e2eeCrypto,
+      messageRouter: this.messageRouter,
+      logger: this.logger,
+    });
+
+    this.messageHandler = new MessageHandler({
+      messageRouter: this.messageRouter,
+      agentRegistry: this.agentRegistry,
+      f2a: this.f2a,
+      agentTokenManager: this.agentTokenManager,
+      logger: this.logger,
+    });
+
+    this.systemHandler = new SystemHandler({
+      f2a: this.f2a,
+      tokenManager: this.tokenManager,
+      logger: this.logger,
+      rateLimiter: this.rateLimiter,
+    });
+
+    this.p2pHandler = new P2PHandler({
+      f2a: this.f2a,
+      logger: this.logger,
+    });
+
+    // RFC 004 Phase 6: 启动时恢复所有持久化的 Agent 身份到运行时注册表
+    // 注意：这是 daemon 特有的功能，从 agents/*.json 恢复到 AgentRegistry
+    for (const identity of this.identityStore.list()) {
+      try {
+        this.agentRegistry.restore(identity);
+        // 同时为恢复的 Agent 创建消息队列（与 POST /api/agents 保持一致）
+        this.messageRouter.createQueue(identity.agentId);
+        this.logger.info('Agent restored on startup', {
+          agentId: identity.agentId,
+          name: identity.name,
+        });
+      } catch (err) {
+        this.logger.warn('Failed to restore agent on startup', {
+          agentId: identity.agentId,
+          error: getErrorMessage(err),
+        });
+      }
+    }
   }
   
   /**
@@ -142,6 +244,8 @@ export class ControlServer {
 
       this.server.listen(this.port, () => {
         this.logger.info('Listening', { port: this.port });
+        // P2-2: 启动 challenge 清理任务
+        this.agentHandler.startCleanupTask();
         resolve();
       });
     });
@@ -151,6 +255,9 @@ export class ControlServer {
    * 停止控制服务器
    */
   stop(): void {
+    // P2-2: 停止 challenge 清理任务
+    this.agentHandler.stopCleanupTask();
+    
     if (this.server) {
       this.server.close();
       this.server = undefined;
@@ -170,17 +277,17 @@ export class ControlServer {
   }
 
   /**
-   * 处理请求
+   * 处理请求 - 路由分发
    */
   private handleRequest(req: IncomingMessage, res: ServerResponse): void {
-// 设置 CORS - 使用配置的允许来源
+    // 设置 CORS - 使用配置的允许来源
     const origin = req.headers.origin;
     const allowOrigin = origin && this.allowedOrigins.includes(origin) 
       ? origin 
       : this.allowedOrigins[0];
     
     res.setHeader('Access-Control-Allow-Origin', allowOrigin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, PATCH, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-F2A-Token, Authorization');
 
     if (req.method === 'OPTIONS') {
@@ -189,175 +296,117 @@ export class ControlServer {
       return;
     }
 
-    // 健康检查端点 (不需要认证)
+    // ========== 健康检查端点（无需认证）==========
     if (req.method === 'GET' && req.url === '/health') {
-      res.writeHead(200);
-      res.end(JSON.stringify({ status: 'ok', peerId: this.f2a.peerId }));
+      this.systemHandler.handleHealth(res);
       return;
     }
 
-    // ========== Phase 1: Agent 注册接口 ==========
+    // ========== API 版本控制检查 ==========
+    // 旧路径提示 - 向后兼容
+    if (req.url?.startsWith('/api/agents') || req.url?.startsWith('/api/messages')) {
+      if (!req.url?.startsWith('/api/v1/')) {
+        res.writeHead(400);
+        res.end(JSON.stringify({
+          success: false,
+          error: 'API version required. Please use /api/v1/ prefix',
+          code: 'API_VERSION_REQUIRED',
+          hint: `Try: ${req.url.replace('/api/', '/api/v1/')}`
+        }));
+        return;
+      }
+    }
+
+    // ========== Agent 注册接口 ==========
     
-    // GET /api/agents - 列出所有注册的 Agent
-    if (req.method === 'GET' && req.url === '/api/agents') {
-      this.handleListAgents(res);
+    // GET /api/v1/agents - 列出所有注册的 Agent（无需认证）
+    if (req.method === 'GET' && req.url === '/api/v1/agents') {
+      this.agentHandler.handleListAgents(res);
       return;
     }
     
-    // POST /api/agents - 注册 Agent
-    if (req.method === 'POST' && req.url === '/api/agents') {
-      this.handleRegisterAgent(req, res);
+    // POST /api/v1/agents - 注册 Agent（无需认证，但有 webhook 验证）
+    if (req.method === 'POST' && req.url === '/api/v1/agents') {
+      this.agentHandler.handleRegisterAgent(req, res);
       return;
     }
     
-    // DELETE /api/agents/:agentId - 注销 Agent
-    const deleteAgentMatch = req.url?.match(/^\/api\/agents\/([^\/]+)$/);
+    // DELETE /api/v1/agents/:agentId - 注销 Agent（需认证）
+    const deleteAgentMatch = req.url?.match(/^\/api\/v1\/agents\/([^\/]+)$/);
     if (req.method === 'DELETE' && deleteAgentMatch) {
-      this.handleUnregisterAgent(deleteAgentMatch[1], res);
+      this.agentHandler.handleUnregisterAgent(decodeURIComponent(deleteAgentMatch[1]), res);
       return;
     }
     
-    // GET /api/agents/:agentId - 获取 Agent 信息
-    const getAgentMatch = req.url?.match(/^\/api\/agents\/([^\/]+)$/);
+    // GET /api/v1/agents/:agentId - 获取 Agent 信息（无需认证）
+    const getAgentMatch = req.url?.match(/^\/api\/v1\/agents\/([^\/]+)$/);
     if (req.method === 'GET' && getAgentMatch) {
-      this.handleGetAgent(getAgentMatch[1], res);
+      this.agentHandler.handleGetAgent(decodeURIComponent(getAgentMatch[1]), res);
       return;
     }
     
-    // ========== Phase 1: 消息接口 ==========
-    
-    // POST /api/messages - 发送消息
-    if (req.method === 'POST' && req.url === '/api/messages') {
-      this.handleSendMessage(req, res);
+    // PATCH /api/v1/agents/:agentId/webhook - 更新 Agent webhook（需认证）
+    const webhookMatch = req.url?.match(/^\/api\/v1\/agents\/([^\/]+)\/webhook$/);
+    if (req.method === 'PATCH' && webhookMatch) {
+      this.agentHandler.handleUpdateWebhook(decodeURIComponent(webhookMatch[1]), req, res);
       return;
     }
     
-    // GET /api/messages/:agentId - 获取 Agent 的消息队列
-    const getMessagesMatch = req.url?.match(/^\/api\/messages\/([^\/]+)$/);
+    // POST /api/v1/agents/verify - Challenge-Response 验证（无需认证）
+    if (req.method === 'POST' && req.url === '/api/v1/agents/verify') {
+      this.agentHandler.handleVerifyAgent(req, res);
+      return;
+    }
+    
+    // ========== 消息接口 ==========
+    
+    // POST /api/v1/messages - 发送消息（需 agent token 认证）
+    if (req.method === 'POST' && req.url === '/api/v1/messages') {
+      this.messageHandler.handleSendMessage(req, res);
+      return;
+    }
+    
+    // GET /api/v1/messages/:agentId - 获取 Agent 的消息队列
+    const getMessagesMatch = req.url?.match(/^\/api\/v1\/messages\/([^\/]+)$/);
     if (req.method === 'GET' && getMessagesMatch) {
-      this.handleGetMessages(getMessagesMatch[1], req, res);
+      this.messageHandler.handleGetMessages(decodeURIComponent(getMessagesMatch[1]), req, res);
       return;
     }
     
-    // DELETE /api/messages/:agentId - 清除消息
-    const clearMessagesMatch = req.url?.match(/^\/api\/messages\/([^\/]+)$/);
+    // DELETE /api/v1/messages/:agentId - 清除消息
+    const clearMessagesMatch = req.url?.match(/^\/api\/v1\/messages\/([^\/]+)$/);
     if (req.method === 'DELETE' && clearMessagesMatch) {
-      this.handleClearMessages(clearMessagesMatch[1], req, res);
+      this.messageHandler.handleClearMessages(decodeURIComponent(clearMessagesMatch[1]), req, res);
       return;
     }
 
-    // GET /status - 获取状态 (需要认证)
+    // ========== 系统状态接口（需认证）==========
+    
+    // GET /status - 获取状态
     if (req.method === 'GET' && req.url === '/status') {
-      const clientIp = req.socket.remoteAddress || 'unknown';
-      if (!this.rateLimiter.allowRequest(clientIp)) {
-        res.writeHead(429);
-        res.end(JSON.stringify({ success: false, error: 'Too many requests' }));
-        return;
-      }
-      // 支持 X-F2A-Token 或 Authorization: Bearer xxx
-      const token = req.headers['x-f2a-token'] as string | undefined 
-        || this.extractBearerToken(req.headers.authorization);
-      if (!this.tokenManager.verifyToken(token)) {
-        res.writeHead(401);
-        res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
-        return;
-      }
-      res.writeHead(200);
-      res.end(JSON.stringify({
-        success: true,
-        peerId: this.f2a.peerId,
-        multiaddrs: this.f2a.agentInfo.multiaddrs || []
-      }));
+      this.systemHandler.handleStatusEndpoint(req, res);
       return;
     }
 
-    // GET /peers - 获取已知的 Peers (需要认证)
+    // GET /peers - 获取已知的 Peers
     if (req.method === 'GET' && req.url === '/peers') {
-      const clientIp = req.socket.remoteAddress || 'unknown';
-      if (!this.rateLimiter.allowRequest(clientIp)) {
-        res.writeHead(429);
-        res.end(JSON.stringify({ success: false, error: 'Too many requests' }));
-        return;
-      }
-      // 支持 X-F2A-Token 或 Authorization: Bearer xxx
-      const token = req.headers['x-f2a-token'] as string | undefined 
-        || this.extractBearerToken(req.headers.authorization);
-      if (!this.tokenManager.verifyToken(token)) {
-        res.writeHead(401);
-        res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
-        return;
-      }
-      // 返回所有已知的节点（包括已断开但已发现的）
-      const peers = this.f2a.getAllPeers();
-      res.writeHead(200);
-      res.end(JSON.stringify(peers));
+      this.systemHandler.handlePeersEndpoint(req, res);
       return;
     }
 
-    // POST /register-capability - 注册能力 (需要认证)
+    // POST /register-capability - 注册能力
     if (req.method === 'POST' && req.url === '/register-capability') {
-      const clientIp = req.socket.remoteAddress || 'unknown';
-      const token = req.headers['x-f2a-token'] as string | undefined 
-        || this.extractBearerToken(req.headers.authorization);
-      if (!this.tokenManager.verifyToken(token)) {
-        res.writeHead(401);
-        res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
-        return;
-      }
-      
-      let body = '';
-      req.on('data', chunk => { body += chunk; });
-      req.on('end', () => {
-        try {
-          const command = JSON.parse(body);
-          this.handleRegisterCapability(command, res);
-        } catch {
-          res.writeHead(400);
-          res.end(JSON.stringify({ success: false, error: 'Invalid JSON' }));
-        }
-      });
+      this.systemHandler.handleRegisterCapabilityEndpoint(req, res);
       return;
     }
 
-    // POST /agent/update - 更新 Agent 信息 (需要认证)
+    // POST /agent/update - 更新 Agent 信息
     if (req.method === 'POST' && req.url === '/agent/update') {
-      const clientIp = req.socket.remoteAddress || 'unknown';
-      const token = req.headers['x-f2a-token'] as string | undefined 
-        || this.extractBearerToken(req.headers.authorization);
-      if (!this.tokenManager.verifyToken(token)) {
-        res.writeHead(401);
-        res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
-        return;
-      }
-      
-      let body = '';
-      req.on('data', chunk => { body += chunk; });
-      req.on('end', () => {
-        try {
-          const update = JSON.parse(body);
-          // 更新 agentInfo
-          if (update.displayName) {
-            this.f2a.agentInfo.displayName = update.displayName;
-          }
-          if (update.capabilities) {
-            // 注册每个能力
-            for (const cap of update.capabilities) {
-              this.f2a.registerCapability(cap, async () => ({ ok: true }));
-            }
-          }
-          res.writeHead(200);
-          res.end(JSON.stringify({ success: true }));
-        } catch (error) {
-          res.writeHead(500);
-          res.end(JSON.stringify({ 
-            success: false, 
-            error: error instanceof Error ? error.message : String(error) 
-          }));
-        }
-      });
+      this.systemHandler.handleAgentUpdate(req, res);
       return;
     }
 
+    // ========== POST /control 命令处理（需认证）==========
     if (req.method !== 'POST') {
       res.writeHead(405);
       res.end(JSON.stringify({ 
@@ -367,6 +416,7 @@ export class ControlServer {
       }));
       return;
     }
+    
     const clientIp = req.socket.remoteAddress || 'unknown';
     if (!this.rateLimiter.allowRequest(clientIp)) {
       this.logger.warn('Rate limit exceeded', { clientIp });
@@ -446,7 +496,7 @@ export class ControlServer {
   }
 
   /**
-   * 处理命令
+   * 处理命令 - POST /control 路由
    * P2-4 修复：改为 async 方法，确保异步操作正确处理
    */
   private async processCommand(body: string, res: ServerResponse): Promise<void> {
@@ -455,23 +505,19 @@ export class ControlServer {
       
       switch (command.action) {
         case 'status':
-          this.handleStatus(res);
+          this.systemHandler.handleStatus(res);
           break;
         case 'peers':
-          this.handlePeers(res);
+          this.systemHandler.handlePeers(res);
           break;
         case 'discover':
-          // P2-4 修复：添加 await，确保异步操作完成
-          await this.handleDiscover(command.capability, res);
-          break;
-        case 'delegate':
-          this.handleDelegate(command, res);
+          await this.p2pHandler.handleDiscover(command.capability, res);
           break;
         case 'send':
-          this.handleSend(command, res);
+          await this.p2pHandler.handleSend(command as SendCommand, res);
           break;
         case 'register-capability':
-          this.handleRegisterCapability(command, res);
+          this.systemHandler.handleRegisterCapability(command, res);
           break;
         default:
           res.writeHead(400);
@@ -489,506 +535,5 @@ export class ControlServer {
         code: 'INVALID_JSON'
       }));
     }
-  }
-
-  /**
-   * 获取状态
-   */
-  private handleStatus(res: ServerResponse): void {
-    res.writeHead(200);
-    res.end(JSON.stringify({
-      success: true,
-      peerId: this.f2a.peerId,
-      agentInfo: this.f2a.agentInfo
-    }));
-  }
-
-  /**
-   * 获取已连接的 Peers
-   */
-  private handlePeers(res: ServerResponse): void {
-    const peers = this.f2a.getConnectedPeers();
-    res.writeHead(200);
-    res.end(JSON.stringify({
-      success: true,
-      peers
-    }));
-  }
-
-  /**
-   * 发现 Agents
-   */
-  private async handleDiscover(capability: string | undefined, res: ServerResponse): Promise<void> {
-    try {
-      const agents = await this.f2a.discoverAgents(capability);
-      res.writeHead(200);
-      res.end(JSON.stringify({
-        success: true,
-        agents
-      }));
-    } catch (error) {
-      res.writeHead(500);
-      res.end(JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-        code: 'DISCOVER_FAILED'
-      }));
-    }
-  }
-
-  /**
-   * 委托任务给指定 Peer
-   */
-  private async handleDelegate(command: { peerId?: string; taskType?: string; description?: string; parameters?: Record<string, unknown> }, res: ServerResponse): Promise<void> {
-    try {
-      if (!command.peerId || !command.taskType) {
-        res.writeHead(400);
-        res.end(JSON.stringify({
-          success: false,
-          error: 'Missing required fields: peerId, taskType',
-          code: 'INVALID_REQUEST'
-        }));
-        return;
-      }
-
-      const result = await this.f2a.sendTaskTo(
-        command.peerId,
-        command.taskType,
-        command.description || '',
-        command.parameters
-      );
-
-      res.writeHead(200);
-      res.end(JSON.stringify(result));
-    } catch (error) {
-      res.writeHead(500);
-      res.end(JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-        code: 'DELEGATE_FAILED'
-      }));
-    }
-  }
-
-  /**
-   * 发送自由消息给指定 Peer
-   */
-  private async handleSend(command: { peerId?: string; content?: string; metadata?: Record<string, unknown> }, res: ServerResponse): Promise<void> {
-    try {
-      if (!command.peerId || !command.content) {
-        res.writeHead(400);
-        res.end(JSON.stringify({
-          success: false,
-          error: 'Missing required fields: peerId, content',
-          code: 'INVALID_REQUEST'
-        }));
-        return;
-      }
-
-      this.logger.info('[ControlServer] Sending message', { 
-        peerId: command.peerId.slice(0, 16), 
-        contentLength: command.content.length 
-      });
-
-      const result = await this.f2a.sendMessageToPeer(command.peerId, command.content);
-      
-      this.logger.info('[ControlServer] Message send result', { 
-        success: result.success, 
-        error: result.success ? undefined : result.error 
-      });
-
-      res.writeHead(200);
-      res.end(JSON.stringify(result));
-    } catch (error) {
-      this.logger.error('Message send failed', { error: error instanceof Error ? error.message : String(error) });
-      res.writeHead(500);
-      res.end(JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-        code: 'SEND_FAILED'
-      }));
-    }
-  }
-
-  /**
-   * 注册能力
-   */
-  private handleRegisterCapability(command: { capability?: { name: string; description: string; tools: string[]; parameters?: Record<string, { type: 'string' | 'number' | 'boolean' | 'object' | 'array'; required?: boolean; description?: string }> } }, res: ServerResponse): void {
-    try {
-      if (!command.capability || !command.capability.name) {
-        res.writeHead(400);
-        res.end(JSON.stringify({
-          success: false,
-          error: 'Missing required field: capability.name',
-          code: 'INVALID_REQUEST'
-        }));
-        return;
-      }
-
-      this.f2a.registerCapability(command.capability, async () => {
-        return { registered: true };
-      });
-
-      this.logger.info('Capability registered', { name: command.capability.name });
-
-      res.writeHead(200);
-      res.end(JSON.stringify({
-        success: true,
-        capability: command.capability.name
-      }));
-    } catch (error) {
-      res.writeHead(500);
-      res.end(JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-        code: 'REGISTER_CAPABILITY_FAILED'
-      }));
-    }
-  }
-
-  // ========== Phase 1: Agent 注册接口处理器 ==========
-
-  /**
-   * 列出所有注册的 Agent
-   */
-  private handleListAgents(res: ServerResponse): void {
-    const agents = this.agentRegistry.list();
-    res.writeHead(200);
-    res.end(JSON.stringify({
-      success: true,
-      agents: agents.map(a => ({
-        agentId: a.agentId,
-        name: a.name,
-        capabilities: a.capabilities,
-        registeredAt: a.registeredAt,
-        lastActiveAt: a.lastActiveAt,
-        webhookUrl: a.webhookUrl,
-      })),
-      stats: this.agentRegistry.getStats(),
-    }));
-  }
-
-  /**
-   * 注册 Agent
-   */
-  private handleRegisterAgent(req: IncomingMessage, res: ServerResponse): void {
-    let body = '';
-    req.on('data', chunk => { body += chunk; });
-    req.on('end', () => {
-      try {
-        const data = JSON.parse(body);
-        
-        if (!data.agentId || !data.name) {
-          res.writeHead(400);
-          res.end(JSON.stringify({
-            success: false,
-            error: 'Missing required fields: agentId, name',
-            code: 'INVALID_REQUEST',
-          }));
-          return;
-        }
-
-        // 检查是否已存在
-        const existing = this.agentRegistry.get(data.agentId);
-        if (existing) {
-          // 更新最后活跃时间
-          this.agentRegistry.updateLastActive(data.agentId);
-          res.writeHead(200);
-          res.end(JSON.stringify({
-            success: true,
-            agent: existing,
-            message: 'Agent already registered, updated lastActiveAt',
-          }));
-          return;
-        }
-
-        // 注册新 Agent
-        const registration = this.agentRegistry.register({
-          agentId: data.agentId,
-          name: data.name,
-          capabilities: data.capabilities || [],
-          webhookUrl: data.webhookUrl,
-          metadata: data.metadata,
-        });
-
-        // 创建消息队列
-        this.messageRouter.createQueue(data.agentId);
-
-        // 同步注册表到消息路由器
-        this.syncAgentRegistryToRouter();
-
-        this.logger.info('Agent registered via API', {
-          agentId: data.agentId,
-          name: data.name,
-        });
-
-        res.writeHead(201);
-        res.end(JSON.stringify({
-          success: true,
-          agent: registration,
-        }));
-      } catch (error) {
-        res.writeHead(400);
-        res.end(JSON.stringify({
-          success: false,
-          error: 'Invalid JSON',
-          code: 'INVALID_JSON',
-        }));
-      }
-    });
-  }
-
-  /**
-   * 注销 Agent
-   */
-  private handleUnregisterAgent(agentId: string, res: ServerResponse): void {
-    const removed = this.agentRegistry.unregister(agentId);
-    
-    if (removed) {
-      // 删除消息队列
-      this.messageRouter.deleteQueue(agentId);
-      
-      // 同步注册表到消息路由器
-      this.syncAgentRegistryToRouter();
-      
-      this.logger.info('Agent unregistered via API', { agentId });
-      res.writeHead(200);
-      res.end(JSON.stringify({
-        success: true,
-        message: 'Agent unregistered',
-      }));
-    } else {
-      res.writeHead(404);
-      res.end(JSON.stringify({
-        success: false,
-        error: 'Agent not found',
-        code: 'AGENT_NOT_FOUND',
-      }));
-    }
-  }
-
-  /**
-   * 获取 Agent 信息
-   */
-  private handleGetAgent(agentId: string, res: ServerResponse): void {
-    const agent = this.agentRegistry.get(agentId);
-    
-    if (!agent) {
-      res.writeHead(404);
-      res.end(JSON.stringify({
-        success: false,
-        error: 'Agent not found',
-        code: 'AGENT_NOT_FOUND',
-      }));
-      return;
-    }
-
-    // 获取消息队列统计
-    const queue = this.messageRouter.getQueue(agentId);
-    
-    res.writeHead(200);
-    res.end(JSON.stringify({
-      success: true,
-      agent: {
-        agentId: agent.agentId,
-        name: agent.name,
-        capabilities: agent.capabilities,
-        registeredAt: agent.registeredAt,
-        lastActiveAt: agent.lastActiveAt,
-        webhookUrl: agent.webhookUrl,
-        metadata: agent.metadata,
-      },
-      queue: queue ? {
-        size: queue.messages.length,
-        maxSize: queue.maxSize,
-      } : null,
-    }));
-  }
-
-  // ========== Phase 1: 消息接口处理器 ==========
-
-  /**
-   * 发送消息
-   */
-  private handleSendMessage(req: IncomingMessage, res: ServerResponse): void {
-    let body = '';
-    req.on('data', chunk => { body += chunk; });
-    req.on('end', () => {
-      try {
-        const data = JSON.parse(body);
-        
-        if (!data.fromAgentId || !data.content) {
-          res.writeHead(400);
-          res.end(JSON.stringify({
-            success: false,
-            error: 'Missing required fields: fromAgentId, content',
-            code: 'INVALID_REQUEST',
-          }));
-          return;
-        }
-
-        // 验证发送方已注册
-        if (!this.agentRegistry.get(data.fromAgentId)) {
-          res.writeHead(400);
-          res.end(JSON.stringify({
-            success: false,
-            error: 'Sender agent not registered',
-            code: 'AGENT_NOT_REGISTERED',
-          }));
-          return;
-        }
-
-        // 创建消息
-        const message: RoutableMessage = {
-          messageId: randomUUID(),
-          fromAgentId: data.fromAgentId,
-          toAgentId: data.toAgentId,
-          content: data.content,
-          metadata: data.metadata,
-          type: data.type || 'message',
-          createdAt: new Date(),
-        };
-
-        // 路由消息
-        if (data.toAgentId) {
-          // 验证接收方已注册
-          if (!this.agentRegistry.get(data.toAgentId)) {
-            res.writeHead(400);
-            res.end(JSON.stringify({
-              success: false,
-              error: 'Target agent not registered',
-              code: 'AGENT_NOT_REGISTERED',
-            }));
-            return;
-          }
-
-          const routed = this.messageRouter.route(message);
-          if (routed) {
-            this.logger.debug('Message routed', {
-              messageId: message.messageId,
-              fromAgentId: data.fromAgentId,
-              toAgentId: data.toAgentId,
-            });
-            res.writeHead(200);
-            res.end(JSON.stringify({
-              success: true,
-              messageId: message.messageId,
-            }));
-          } else {
-            res.writeHead(500);
-            res.end(JSON.stringify({
-              success: false,
-              error: 'Failed to route message',
-              code: 'ROUTE_FAILED',
-            }));
-          }
-        } else {
-          // 广播消息
-          const broadcasted = this.messageRouter.broadcast(message);
-          res.writeHead(200);
-          res.end(JSON.stringify({
-            success: true,
-            messageId: message.messageId,
-            broadcasted,
-          }));
-        }
-      } catch (error) {
-        res.writeHead(400);
-        res.end(JSON.stringify({
-          success: false,
-          error: 'Invalid JSON',
-          code: 'INVALID_JSON',
-        }));
-      }
-    });
-  }
-
-  /**
-   * 获取 Agent 的消息队列
-   */
-  private handleGetMessages(agentId: string, req: IncomingMessage, res: ServerResponse): void {
-    // 验证 Agent 已注册
-    if (!this.agentRegistry.get(agentId)) {
-      res.writeHead(404);
-      res.end(JSON.stringify({
-        success: false,
-        error: 'Agent not found',
-        code: 'AGENT_NOT_FOUND',
-      }));
-      return;
-    }
-
-    // 更新活跃时间
-    this.agentRegistry.updateLastActive(agentId);
-
-    // 解析查询参数
-    const url = new URL(req.url || '', `http://localhost`);
-    const limit = parseInt(url.searchParams.get('limit') || '50', 10);
-
-    // 获取消息
-    const messages = this.messageRouter.getMessages(agentId, limit);
-    
-    res.writeHead(200);
-    res.end(JSON.stringify({
-      success: true,
-      agentId,
-      messages,
-      count: messages.length,
-    }));
-  }
-
-  /**
-   * 清除消息
-   */
-  private handleClearMessages(agentId: string, req: IncomingMessage, res: ServerResponse): void {
-    // 验证 Agent 已注册
-    if (!this.agentRegistry.get(agentId)) {
-      res.writeHead(404);
-      res.end(JSON.stringify({
-        success: false,
-        error: 'Agent not found',
-        code: 'AGENT_NOT_FOUND',
-      }));
-      return;
-    }
-
-    let body = '';
-    req.on('data', chunk => { body += chunk; });
-    req.on('end', () => {
-      try {
-        const data = body ? JSON.parse(body) : {};
-        const cleared = this.messageRouter.clearMessages(agentId, data.messageIds);
-        
-        res.writeHead(200);
-        res.end(JSON.stringify({
-          success: true,
-          cleared,
-        }));
-      } catch {
-        // 如果没有 body，清除所有消息
-        const cleared = this.messageRouter.clearMessages(agentId);
-        res.writeHead(200);
-        res.end(JSON.stringify({
-          success: true,
-          cleared,
-        }));
-      }
-    });
-  }
-
-  // ========== 辅助方法 ==========
-
-  /**
-   * 同步 Agent 注册表到消息路由器
-   * 消息路由器需要知道哪些 Agent 已注册
-   */
-  private syncAgentRegistryToRouter(): void {
-    // 获取所有注册的 Agent
-    const agents = this.agentRegistry.list();
-    
-    // 使用公开方法更新路由器的注册表
-    this.messageRouter.updateRegistry(new Map(
-      agents.map(a => [a.agentId, a])
-    ));
   }
 }

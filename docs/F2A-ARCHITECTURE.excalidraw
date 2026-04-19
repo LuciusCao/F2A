@@ -1,0 +1,83 @@
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "hermes-agent",
+  "elements": [
+    {"type": "rectangle", "id": "title_bg", "x": 180, "y": 20, "width": 600, "height": 40, "roundness": {"type": 3}, "backgroundColor": "#1971c2", "fillStyle": "solid", "strokeColor": "#1971c2"},
+    {"type": "text", "id": "title", "x": 230, "y": 30, "width": 500, "height": 30, "text": "F2A 架构图 - Friend-to-Agent P2P 网络", "fontSize": 24, "fontFamily": 1, "strokeColor": "#ffffff", "textAlign": "center", "originalText": "F2A 架构图 - Friend-to-Agent P2P 网络", "autoResize": true, "containerId": "title_bg"},
+    
+    {"type": "rectangle", "id": "layer_app_bg", "x": 80, "y": 80, "width": 820, "height": 100, "roundness": {"type": 3}, "backgroundColor": "#a5d8ff", "fillStyle": "solid", "strokeColor": "#1e1e1e"},
+    {"type": "text", "id": "layer_app_label", "x": 90, "y": 90, "width": 150, "height": 25, "text": "应用层 (Application)", "fontSize": 16, "fontFamily": 1, "strokeColor": "#1971c2", "originalText": "应用层 (Application)", "autoResize": true},
+    
+    {"type": "rectangle", "id": "app_openclaw", "x": 120, "y": 115, "width": 180, "height": 50, "roundness": {"type": 3}, "backgroundColor": "#ffffff", "fillStyle": "solid", "strokeColor": "#1e1e1e", "boundElements": [{"id": "t_openclaw", "type": "text"}]},
+    {"type": "text", "id": "t_openclaw", "x": 130, "y": 125, "width": 160, "height": 35, "text": "OpenClaw UI\n(TUI / Web)", "fontSize": 16, "fontFamily": 1, "strokeColor": "#1e1e1e", "textAlign": "center", "verticalAlign": "middle", "containerId": "app_openclaw", "originalText": "OpenClaw UI\n(TUI / Web)", "autoResize": true},
+    
+    {"type": "rectangle", "id": "app_cli", "x": 380, "y": 115, "width": 180, "height": 50, "roundness": {"type": 3}, "backgroundColor": "#ffffff", "fillStyle": "solid", "strokeColor": "#1e1e1e", "boundElements": [{"id": "t_cli", "type": "text"}]},
+    {"type": "text", "id": "t_cli", "x": 390, "y": 125, "width": 160, "height": 35, "text": "CLI Client\n(f2a command)", "fontSize": 16, "fontFamily": 1, "strokeColor": "#1e1e1e", "textAlign": "center", "verticalAlign": "middle", "containerId": "app_cli", "originalText": "CLI Client\n(f2a command)", "autoResize": true},
+    
+    {"type": "rectangle", "id": "app_third", "x": 640, "y": 115, "width": 180, "height": 50, "roundness": {"type": 3}, "backgroundColor": "#ffffff", "fillStyle": "solid", "strokeColor": "#1e1e1e", "boundElements": [{"id": "t_third", "type": "text"}]},
+    {"type": "text", "id": "t_third", "x": 650, "y": 125, "width": 160, "height": 35, "text": "Third-party\nApplications", "fontSize": 16, "fontFamily": 1, "strokeColor": "#1e1e1e", "textAlign": "center", "verticalAlign": "middle", "containerId": "app_third", "originalText": "Third-party\nApplications", "autoResize": true},
+    
+    {"type": "arrow", "id": "arrow_app_down", "x": 480, "y": 180, "width": 0, "height": 40, "points": [[0,0],[0,40]], "endArrowhead": "arrow", "strokeColor": "#1e1e1e", "startBinding": {"elementId": "layer_app_bg", "fixedPoint": [0.5, 1]}, "endBinding": {"elementId": "layer_agent_bg", "fixedPoint": [0.5, 0]}},
+    {"type": "text", "id": "arrow_app_label", "x": 490, "y": 195, "width": 100, "height": 20, "text": "Agent API / Tools", "fontSize": 14, "fontFamily": 1, "strokeColor": "#495057", "originalText": "Agent API / Tools", "autoResize": true},
+    
+    {"type": "rectangle", "id": "layer_agent_bg", "x": 80, "y": 220, "width": 820, "height": 180, "roundness": {"type": 3}, "backgroundColor": "#b2f2bb", "fillStyle": "solid", "strokeColor": "#1e1e1e"},
+    {"type": "text", "id": "layer_agent_label", "x": 90, "y": 230, "width": 150, "height": 25, "text": "Agent 层 (Agent Layer)", "fontSize": 16, "fontFamily": 1, "strokeColor": "#2f9e44", "originalText": "Agent 层 (Agent Layer)", "autoResize": true},
+    
+    {"type": "rectangle", "id": "agent_registry", "x": 120, "y": 260, "width": 740, "height": 120, "roundness": {"type": 3}, "backgroundColor": "#ffffff", "fillStyle": "solid", "strokeColor": "#2f9e44", "boundElements": [{"id": "t_agent_registry", "type": "text"}]},
+    {"type": "text", "id": "t_agent_registry", "x": 130, "y": 270, "width": 720, "height": 25, "text": "Agent Registry - 管理注册到 Daemon 的 Agent 实例", "fontSize": 16, "fontFamily": 1, "strokeColor": "#2f9e44", "textAlign": "left", "originalText": "Agent Registry - 管理注册到 Daemon 的 Agent 实例", "autoResize": true},
+    
+    {"type": "rectangle", "id": "agent_a", "x": 150, "y": 300, "width": 160, "height": 70, "roundness": {"type": 3}, "backgroundColor": "#d0bfff", "fillStyle": "solid", "strokeColor": "#1e1e1e", "boundElements": [{"id": "t_agent_a", "type": "text"}]},
+    {"type": "text", "id": "t_agent_a", "x": 160, "y": 305, "width": 140, "height": 60, "text": "Agent A\nID: agent:aaa\nRep: 85 ⭐", "fontSize": 14, "fontFamily": 1, "strokeColor": "#1e1e1e", "textAlign": "center", "verticalAlign": "middle", "containerId": "agent_a", "originalText": "Agent A\nID: agent:aaa\nRep: 85 ⭐", "autoResize": true},
+    
+    {"type": "rectangle", "id": "agent_b", "x": 340, "y": 300, "width": 160, "height": 70, "roundness": {"type": 3}, "backgroundColor": "#d0bfff", "fillStyle": "solid", "strokeColor": "#1e1e1e", "boundElements": [{"id": "t_agent_b", "type": "text"}]},
+    {"type": "text", "id": "t_agent_b", "x": 350, "y": 305, "width": 140, "height": 60, "text": "Agent B\nID: agent:bbb\nRep: 72 ⭐", "fontSize": 14, "fontFamily": 1, "strokeColor": "#1e1e1e", "textAlign": "center", "verticalAlign": "middle", "containerId": "agent_b", "originalText": "Agent B\nID: agent:bbb\nRep: 72 ⭐", "autoResize": true},
+    
+    {"type": "rectangle", "id": "agent_c", "x": 530, "y": 300, "width": 160, "height": 70, "roundness": {"type": 3}, "backgroundColor": "#d0bfff", "fillStyle": "solid", "strokeColor": "#1e1e1e", "boundElements": [{"id": "t_agent_c", "type": "text"}]},
+    {"type": "text", "id": "t_agent_c", "x": 540, "y": 305, "width": 140, "height": 60, "text": "Agent C\nID: agent:ccc\nRep: 45 ⭐", "fontSize": 14, "fontFamily": 1, "strokeColor": "#1e1e1e", "textAlign": "center", "verticalAlign": "middle", "containerId": "agent_c", "originalText": "Agent C\nID: agent:ccc\nRep: 45 ⭐", "autoResize": true},
+    
+    {"type": "rectangle", "id": "agent_msg_router", "x": 720, "y": 300, "width": 120, "height": 70, "roundness": {"type": 3}, "backgroundColor": "#ffd8a8", "fillStyle": "solid", "strokeColor": "#1e1e1e", "boundElements": [{"id": "t_msg_router", "type": "text"}]},
+    {"type": "text", "id": "t_msg_router", "x": 725, "y": 305, "width": 110, "height": 60, "text": "Message\nRouter", "fontSize": 14, "fontFamily": 1, "strokeColor": "#1e1e1e", "textAlign": "center", "verticalAlign": "middle", "containerId": "agent_msg_router", "originalText": "Message\nRouter", "autoResize": true},
+    
+    {"type": "arrow", "id": "arrow_agent_down", "x": 480, "y": 400, "width": 0, "height": 40, "points": [[0,0],[0,40]], "endArrowhead": "arrow", "strokeColor": "#1e1e1e", "startBinding": {"elementId": "layer_agent_bg", "fixedPoint": [0.5, 1]}, "endBinding": {"elementId": "layer_node_bg", "fixedPoint": [0.5, 0]}},
+    {"type": "text", "id": "arrow_agent_label", "x": 490, "y": 415, "width": 140, "height": 20, "text": "Agent ↔ Node Protocol", "fontSize": 14, "fontFamily": 1, "strokeColor": "#495057", "originalText": "Agent ↔ Node Protocol", "autoResize": true},
+    
+    {"type": "rectangle", "id": "layer_node_bg", "x": 80, "y": 440, "width": 820, "height": 200, "roundness": {"type": 3}, "backgroundColor": "#ffd8a8", "fillStyle": "solid", "strokeColor": "#1e1e1e"},
+    {"type": "text", "id": "layer_node_label", "x": 90, "y": 450, "width": 150, "height": 25, "text": "Node 层 (Daemon)", "fontSize": 16, "fontFamily": 1, "strokeColor": "#e8590c", "originalText": "Node 层 (Daemon)", "autoResize": true},
+    
+    {"type": "rectangle", "id": "node_daemon", "x": 120, "y": 480, "width": 740, "height": 140, "roundness": {"type": 3}, "backgroundColor": "#ffffff", "fillStyle": "solid", "strokeColor": "#e8590c", "boundElements": [{"id": "t_daemon", "type": "text"}]},
+    {"type": "text", "id": "t_daemon", "x": 130, "y": 490, "width": 720, "height": 25, "text": "F2A Node (Daemon) - PeerID: 12D3KooW... (libp2p 身份)", "fontSize": 16, "fontFamily": 1, "strokeColor": "#e8590c", "textAlign": "left", "originalText": "F2A Node (Daemon) - PeerID: 12D3KooW... (libp2p 身份)", "autoResize": true},
+    
+    {"type": "rectangle", "id": "p2p_layer", "x": 150, "y": 520, "width": 360, "height": 90, "roundness": {"type": 3}, "backgroundColor": "#c3fae8", "fillStyle": "solid", "strokeColor": "#1e1e1e", "boundElements": [{"id": "t_p2p", "type": "text"}]},
+    {"type": "text", "id": "t_p2p", "x": 160, "y": 525, "width": 340, "height": 80, "text": "P2P Network Layer\n• libp2p Transport\n• mDNS Discovery\n• DHT Routing\n• Gossip Protocol", "fontSize": 14, "fontFamily": 1, "strokeColor": "#1e1e1e", "textAlign": "left", "verticalAlign": "top", "containerId": "p2p_layer", "originalText": "P2P Network Layer\n• libp2p Transport\n• mDNS Discovery\n• DHT Routing\n• Gossip Protocol", "autoResize": true},
+    
+    {"type": "rectangle", "id": "control_server", "x": 540, "y": 520, "width": 300, "height": 90, "roundness": {"type": 3}, "backgroundColor": "#fff3bf", "fillStyle": "solid", "strokeColor": "#1e1e1e", "boundElements": [{"id": "t_control", "type": "text"}]},
+    {"type": "text", "id": "t_control", "x": 550, "y": 525, "width": 280, "height": 80, "text": "ControlServer (HTTP API)\n• Port 9001\n• /api/agents\n• /api/messages\n• /health, /status, /peers", "fontSize": 14, "fontFamily": 1, "strokeColor": "#1e1e1e", "textAlign": "left", "verticalAlign": "top", "containerId": "control_server", "originalText": "ControlServer (HTTP API)\n• Port 9001\n• /api/agents\n• /api/messages\n• /health, /status, /peers", "autoResize": true},
+    
+    {"type": "arrow", "id": "arrow_node_down", "x": 480, "y": 640, "width": 0, "height": 40, "points": [[0,0],[0,40]], "endArrowhead": "arrow", "strokeColor": "#1e1e1e", "startBinding": {"elementId": "layer_node_bg", "fixedPoint": [0.5, 1]}, "endBinding": {"elementId": "layer_network_bg", "fixedPoint": [0.5, 0]}},
+    {"type": "text", "id": "arrow_node_label", "x": 490, "y": 655, "width": 100, "height": 20, "text": "P2P Protocol", "fontSize": 14, "fontFamily": 1, "strokeColor": "#495057", "originalText": "P2P Protocol", "autoResize": true},
+    
+    {"type": "rectangle", "id": "layer_network_bg", "x": 80, "y": 680, "width": 820, "height": 120, "roundness": {"type": 3}, "backgroundColor": "#c3fae8", "fillStyle": "solid", "strokeColor": "#1e1e1e"},
+    {"type": "text", "id": "layer_network_label", "x": 90, "y": 690, "width": 150, "height": 25, "text": "网络层 (P2P Mesh)", "fontSize": 16, "fontFamily": 1, "strokeColor": "#0ca678", "originalText": "网络层 (P2P Mesh)", "autoResize": true},
+    
+    {"type": "ellipse", "id": "node1", "x": 180, "y": 720, "width": 120, "height": 60, "backgroundColor": "#ffffff", "fillStyle": "solid", "strokeColor": "#0ca678", "boundElements": [{"id": "t_node1", "type": "text"}]},
+    {"type": "text", "id": "t_node1", "x": 185, "y": 725, "width": 110, "height": 50, "text": "Node 1\nPeerID: aaa", "fontSize": 14, "fontFamily": 1, "strokeColor": "#1e1e1e", "textAlign": "center", "verticalAlign": "middle", "containerId": "node1", "originalText": "Node 1\nPeerID: aaa", "autoResize": true},
+    
+    {"type": "ellipse", "id": "node2", "x": 420, "y": 720, "width": 120, "height": 60, "backgroundColor": "#ffffff", "fillStyle": "solid", "strokeColor": "#0ca678", "boundElements": [{"id": "t_node2", "type": "text"}]},
+    {"type": "text", "id": "t_node2", "x": 425, "y": 725, "width": 110, "height": 50, "text": "Node 2\nPeerID: bbb", "fontSize": 14, "fontFamily": 1, "strokeColor": "#1e1e1e", "textAlign": "center", "verticalAlign": "middle", "containerId": "node2", "originalText": "Node 2\nPeerID: bbb", "autoResize": true},
+    
+    {"type": "ellipse", "id": "node3", "x": 660, "y": 720, "width": 120, "height": 60, "backgroundColor": "#ffffff", "fillStyle": "solid", "strokeColor": "#0ca678", "boundElements": [{"id": "t_node3", "type": "text"}]},
+    {"type": "text", "id": "t_node3", "x": 665, "y": 725, "width": 110, "height": 50, "text": "Node 3\nPeerID: ccc", "fontSize": 14, "fontFamily": 1, "strokeColor": "#1e1e1e", "textAlign": "center", "verticalAlign": "middle", "containerId": "node3", "originalText": "Node 3\nPeerID: ccc", "autoResize": true},
+    
+    {"type": "arrow", "id": "net_arrow1", "x": 300, "y": 750, "width": 120, "height": 0, "points": [[0,0],[120,0]], "endArrowhead": "arrow", "startArrowhead": "arrow", "strokeColor": "#0ca678", "startBinding": {"elementId": "node1", "fixedPoint": [1, 0.5]}, "endBinding": {"elementId": "node2", "fixedPoint": [0, 0.5]}},
+    {"type": "arrow", "id": "net_arrow2", "x": 540, "y": 750, "width": 120, "height": 0, "points": [[0,0],[120,0]], "endArrowhead": "arrow", "startArrowhead": "arrow", "strokeColor": "#0ca678", "startBinding": {"elementId": "node2", "fixedPoint": [1, 0.5]}, "endBinding": {"elementId": "node3", "fixedPoint": [0, 0.5]}},
+    
+    {"type": "text", "id": "note_key", "x": 80, "y": 820, "width": 400, "height": 80, "text": "关键原则:\n• Node = 网络层 (连接、传递消息、节点发现)\n• Agent = 业务层 (执行任务、管理能力、积累信誉)\n• AgentId 由节点签发: agent:<PeerId前16位>:<随机8位>", "fontSize": 14, "fontFamily": 1, "strokeColor": "#495057", "originalText": "关键原则:\n• Node = 网络层 (连接、传递消息、节点发现)\n• Agent = 业务层 (执行任务、管理能力、积累信誉)\n• AgentId 由节点签发: agent:<PeerId前16位>:<随机8位>", "autoResize": true},
+    
+    {"type": "rectangle", "id": "packages_note", "x": 520, "y": 820, "width": 380, "height": 80, "roundness": {"type": 3}, "backgroundColor": "#fff3bf", "fillStyle": "solid", "strokeColor": "#1e1e1e", "boundElements": [{"id": "t_packages", "type": "text"}]},
+    {"type": "text", "id": "t_packages", "x": 530, "y": 830, "width": 360, "height": 60, "text": "Monorepo 结构:\npackages/network | daemon | cli | openclaw-f2a | dashboard", "fontSize": 14, "fontFamily": 1, "strokeColor": "#1e1e1e", "textAlign": "left", "verticalAlign": "top", "containerId": "packages_note", "originalText": "Monorepo 结构:\npackages/network | daemon | cli | openclaw-f2a | dashboard", "autoResize": true}
+  ],
+  "appState": {
+    "viewBackgroundColor": "#ffffff"
+  }
+}

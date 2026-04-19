@@ -189,6 +189,49 @@ export interface StructuredMessagePayload {
   replyTo?: string;
 }
 
+// ============================================================================
+// RFC 003: Agent 消息协议（带签名）
+// ============================================================================
+
+/**
+ * Agent 消息载荷（RFC 003: 带签名验证）
+ * 
+ * 用于 Agent 之间的通信，携带 AgentId 签名防止冒充攻击
+ * 
+ * RFC 003 签名升级：使用 Ed25519 非对称签名
+ */
+export interface AgentMessagePayload {
+  /** 发送方 Agent ID（节点签发） */
+  fromAgentId: string;
+  
+  /** AgentId 签名（Base64，Ed25519 签名） */
+  fromSignature: string;
+  
+  /** Ed25519 公钥（Base64，用于验证签名） */
+  fromEd25519PublicKey: string;
+  
+  /** 发送方 PeerId（用于交叉验证） */
+  fromPeerId: string;
+  
+  /** 目标 Agent ID（可选） */
+  toAgentId?: string;
+  
+  /** 消息内容 */
+  content: string | Record<string, unknown>;
+  
+  /** 消息主题 */
+  topic?: string;
+  
+  /** 时间戳 */
+  timestamp: number;
+  
+  /** 消息 ID */
+  messageId?: string;
+  
+  /** 元数据（可选） */
+  metadata?: Record<string, unknown>;
+}
+
 // 类型别名：保留兼容性的结构化消息类型
 /** @deprecated 使用 MESSAGE + StructuredMessagePayload 替代 */
 export interface TaskRequestPayload extends StructuredMessagePayload {

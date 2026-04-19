@@ -142,6 +142,10 @@ tmp/
 temp/
 *.tmp
 
+# Temporary test scripts
+test-*.mjs
+test-*.js
+
 # Test temporary directories
 test-tmp-persistence-*
 

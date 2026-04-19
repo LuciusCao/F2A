@@ -5,7 +5,7 @@
  * Phase 1 扩展：支持 Agent 注册和消息路由
  */
 
-import { F2A } from '../core/f2a.js';
+import { F2A, F2AFactory } from '../core/f2a.js';
 import { ControlServer } from './control-server.js';
 import { F2AOptions, WebhookConfig } from '../types/index.js';
 import { join } from 'path';
@@ -50,7 +50,12 @@ export class F2ADaemon {
     });
 
     // 创建并启动 F2A
-    this.f2a = await F2A.create(this.options);
+    const createResult = await F2AFactory.create(this.options);
+    if (!createResult.success) {
+      const errorMsg = createResult.error.message;
+      throw new Error(`Failed to create F2A: ${errorMsg}`);
+    }
+    this.f2a = createResult.data;
     const result = await this.f2a.start();
     
     if (!result.success) {

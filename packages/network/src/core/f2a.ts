@@ -5,10 +5,12 @@
  * Phase 1: 集成 Node/Agent Identity 系统
  * - 使用 NodeIdentityManager 替代旧的 IdentityManager
  * - 使用 IdentityDelegator 创建和管理 Agent 身份
+ *
+ * Phase 4a: 工厂方法已提取到 f2a-factory.ts
+ * - 使用 F2AFactory.create() 创建实例
  */
 
 import { EventEmitter } from 'eventemitter3';
-import { randomUUID } from 'crypto';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
@@ -22,10 +24,12 @@ import { CapabilityManager } from './capability-manager.js';
 import { SkillExchangeManager } from './skill-exchange-manager.js';
 import { AgentRegistry } from './agent-registry.js';
 import { MessageRouter } from './message-router.js';
+import { MessageService } from './message-service.js';
 import { Ed25519Signer } from './identity/ed25519-signer.js';
+import { IdentityService } from './identity-service.js';
+import { CapabilityService } from './capability-service.js';
 import { Logger } from '../utils/logger.js';
 import { Middleware } from '../utils/middleware.js';
-import { validateAgentCapability } from '../utils/validation.js';
 import { getErrorMessage } from '../utils/error-utils.js';
 import {
   F2AOptions,
@@ -39,12 +43,15 @@ import {
   PeerDiscoveredEvent,
   PeerConnectedEvent,
   PeerDisconnectedEvent,
-  RegisteredCapability,
   NetworkStartedEvent,
   success,
   failureFromError
 } from '../types/index.js';
 import type { ExportedAgentIdentity, AgentIdentity } from './identity/types.js';
+import { F2AFactory } from './f2a-factory.js';
+
+// 重导出 F2AFactory 便于使用
+export { F2AFactory };
 
 // P1-1 修复:从 package.json 读取版本号
 const __filename = fileURLToPath(import.meta.url);
@@ -92,26 +99,36 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   private p2pNetwork: P2PNetwork;
   private options: Required<F2AOptions>;
   private running: boolean = false;
-  private registeredCapabilities: Map<string, RegisteredCapability> = new Map();
-  private logger: Logger;
+  readonly logger: Logger;  // Phase 4a: 改为 readonly public 供 F2AFactory 使用
+  private capabilityService: CapabilityService;
 
   // Phase 1: 新的身份系统
   /** @deprecated 使用 nodeIdentityManager 替代 */
   private identityManager?: IdentityManager;
-  private nodeIdentityManager?: NodeIdentityManager;
-  private agentIdentityManager?: AgentIdentityManager;
-  private identityDelegator?: IdentityDelegator;
+  // Phase 4a: 改为 public 供 F2AFactory 设置 (internal 使用)
+  public nodeIdentityManager?: NodeIdentityManager;
+  public agentIdentityManager?: AgentIdentityManager;
+  public identityDelegator?: IdentityDelegator;
   /** RFC 003: Ed25519 签名器，用于签名 AgentId */
-  private ed25519Signer?: Ed25519Signer;
+  public ed25519Signer?: Ed25519Signer;
+  /** Phase 2a: 身份服务 */
+  public identityService?: IdentityService;
 
   private capabilityManager?: CapabilityManager;
   private skillExchangeManager?: SkillExchangeManager;
 
   // Phase 1: Agent Registry 和 Message Router
-  private agentRegistry?: AgentRegistry;
-  private messageRouter?: MessageRouter;
+  // Phase 4a: 改为 public 供 F2AFactory 设置 (internal 使用)
+  public agentRegistry?: AgentRegistry;
+  public messageRouter?: MessageRouter;
+  public messageService?: MessageService;
 
-  private constructor(
+  /**
+   * Phase 4a: 构造函数改为 public 供 F2AFactory 使用
+   * 
+   * @internal 请使用 F2AFactory.create() 创建实例，不要直接调用构造函数
+   */
+  constructor(
     agentInfo: AgentInfo,
     p2pNetwork: P2PNetwork,
     options: Required<F2AOptions>,
@@ -135,6 +152,14 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       filePath: join(dataDir, 'f2a.log')
     });
 
+    // Phase 3a: 初始化 CapabilityService
+    this.capabilityService = new CapabilityService({
+      logger: this.logger,
+      onCapabilitiesUpdate: (capabilities) => {
+        this._agentInfo.capabilities = capabilities;
+      }
+    });
+
     this.bindEvents();
   }
 
@@ -151,177 +176,20 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   }
 
   /**
-   * 工厂方法:创建 F2A 实例
+   * 工厂方法:创建 F2A 实例 (向后兼容)
    *
-   * Phase 1: 使用 Node/Agent Identity 系统
-   * - NodeIdentityManager 管理物理节点身份
-   * - IdentityDelegator 创建和管理 Agent 身份
+   * Phase 4a: 委托给 F2AFactory.create()
+   *
+   * @param options F2A 配置选项
+   * @returns Promise<F2A> F2A 实例 (失败时抛出异常)
+   * @deprecated 推荐使用 F2AFactory.create() 获取 Result 类型
    */
   static async create(options: F2AOptions = {}): Promise<F2A> {
-    // 默认配置
-    const mergedOptions: Required<F2AOptions> = {
-      displayName: options.displayName || 'F2A Agent',
-      agentType: options.agentType || 'openclaw',
-      network: {
-        listenPort: 0,
-        enableMDNS: true,
-        enableDHT: false,
-        ...options.network
-      },
-      security: {
-        level: 'medium',
-        requireConfirmation: true,
-        verifySignatures: true,
-        ...options.security
-      },
-      logLevel: options.logLevel || 'INFO',
-      dataDir: options.dataDir || './f2a-data',
-      messageHandlerUrl: options.messageHandlerUrl || ''
-    };
-
-    // Phase 1: 创建 NodeIdentityManager 并加载节点身份
-    const dataDir = mergedOptions.dataDir;
-    const nodeIdentityManager = new NodeIdentityManager({ dataDir });
-    const nodeIdentityResult = await nodeIdentityManager.loadOrCreate();
-
-    if (!nodeIdentityResult.success) {
-      throw new Error(`Failed to load or create node identity: ${JSON.stringify(nodeIdentityResult.error)}`);
+    const result = await F2AFactory.create(options);
+    if (!result.success) {
+      throw new Error(result.error.message);
     }
-
-    const nodeId = nodeIdentityManager.getNodeId();
-    const nodePeerId = nodeIdentityManager.getPeerIdString();
-
-    if (!nodeId || !nodePeerId) {
-      throw new Error('Failed to get node ID or peer ID');
-    }
-
-    // Phase 1: 创建 IdentityDelegator(传入 dataDir)
-    const identityDelegator = new IdentityDelegator(nodeIdentityManager, dataDir);
-
-    // Phase 1: 创建或加载 Agent 身份
-    const agentIdentityManager = new AgentIdentityManager(dataDir);
-    let agentIdentity: ExportedAgentIdentity;
-
-    // 尝试加载已有的 Agent 身份
-    const loadResult = await agentIdentityManager.loadAgentIdentity();
-
-    if (loadResult.success) {
-      agentIdentity = loadResult.data;
-    } else {
-      // 创建新的 Agent 身份
-      // Agent 名称只能包含字母、数字、下划线、连字符和冒号
-      // 将 displayName 转换为有效的 Agent 名称
-      let agentName = mergedOptions.displayName
-        .replace(/[^a-zA-Z0-9_\-:]/g, '-')  // 替换无效字符为连字符
-        .replace(/-+/g, '-')                 // 合并连续连字符
-        .replace(/^-|-$/g, '')               // 移除首尾连字符
-        .slice(0, 64);                       // 限制长度
-
-      // 如果名称为空,使用默认名称
-      if (!agentName) {
-        agentName = `Agent-${nodeId.slice(0, 8)}`;
-      }
-
-      const createResult = await identityDelegator.createAgent({
-        name: agentName,
-        capabilities: []
-      });
-
-      if (!createResult.success) {
-        throw new Error(`Failed to create agent identity: ${JSON.stringify(createResult.error)}`);
-      }
-
-      agentIdentity = {
-        id: createResult.data.agentIdentity.id,
-        name: createResult.data.agentIdentity.name,
-        capabilities: createResult.data.agentIdentity.capabilities,
-        nodeId: createResult.data.agentIdentity.nodeId,
-        publicKey: createResult.data.agentIdentity.publicKey,
-        signature: createResult.data.agentIdentity.signature,
-        createdAt: createResult.data.agentIdentity.createdAt,
-        expiresAt: createResult.data.agentIdentity.expiresAt,
-        privateKey: createResult.data.agentPrivateKey
-      };
-
-      // IdentityDelegator.createAgent 会保存到文件,我们需要重新加载
-      // 确保 agentIdentityManager 实例持有正确的身份
-      const reloadResult = await agentIdentityManager.loadAgentIdentity();
-      if (!reloadResult.success) {
-        // 如果重新加载失败,记录警告但继续
-        console.warn('Warning: Failed to reload agent identity after creation');
-      }
-    }
-
-    // 创建 AgentInfo
-    const agentInfo: AgentInfo = {
-      peerId: '', // 启动后由 P2P 网络填充
-      displayName: mergedOptions.displayName,  // 保留原始 displayName
-      agentType: mergedOptions.agentType as AgentInfo['agentType'],
-      version: F2A_VERSION,
-      capabilities: [],
-      protocolVersion: PROTOCOL_VERSION,
-      lastSeen: Date.now(),
-      multiaddrs: [],
-      // Phase 1: 添加 Agent ID
-      agentId: agentIdentity.id,
-      // Phase 1 修复:添加加密公钥用于 E2EE
-      encryptionPublicKey: agentIdentity.publicKey
-    };
-
-    // 创建 P2P 网络
-    const p2pNetwork = new P2PNetwork(agentInfo, mergedOptions.network);
-
-    // 注入 IdentityManager(使用 NodeIdentityManager 作为基础身份管理器)
-    // NodeIdentityManager 继承自 IdentityManager,可以直接使用
-    p2pNetwork.setIdentityManager(nodeIdentityManager);
-
-    // 创建 CapabilityManager(智能调度)
-    const capabilityManager = new CapabilityManager({
-      peerId: nodePeerId,
-      baseCapabilities: [],
-    });
-
-    // 创建实例
-    const f2a = new F2A(agentInfo, p2pNetwork, mergedOptions, nodeIdentityManager, capabilityManager);
-
-    // Phase 1: 设置新的身份管理组件
-    f2a.nodeIdentityManager = nodeIdentityManager;
-    f2a.agentIdentityManager = agentIdentityManager;
-    f2a.identityDelegator = identityDelegator;
-
-    // RFC 003 P0 修复: 从 NodeIdentityManager 获取私钥，初始化 Ed25519Signer
-    const privateKey = nodeIdentityManager.getPrivateKey();
-    if (privateKey) {
-      // libp2p Ed25519 PrivateKey.raw 是 64 字节扩展私钥 (scalar + prefix)
-      // @noble/curves/ed25519 需要的是 32 字节 seed (前 32 字节)
-      const rawBytes = Buffer.from(privateKey.raw);
-      const seedBytes = rawBytes.slice(0, 32);  // 取前 32 字节作为 seed
-      const seedBase64 = seedBytes.toString('base64');
-      f2a.ed25519Signer = new Ed25519Signer(seedBase64);
-      f2a.logger.info('Ed25519Signer initialized from node identity', { 
-        rawLength: rawBytes.length,
-        seedLength: seedBytes.length 
-      });
-    } else {
-      // 如果无法获取私钥，生成新的密钥对（不推荐，但保证向后兼容）
-      f2a.ed25519Signer = new Ed25519Signer();
-      f2a.logger.warn('Ed25519Signer initialized with new key pair (node private key not available)');
-    }
-
-    // Phase 1: 初始化 AgentRegistry 和 MessageRouter
-    // 使用 nodePeerId 和 F2A 实例的 signData 方法
-    // Phase 3: 传递 dataDir 以支持持久化
-    // P0 修复:使用异步工厂方法避免同步 I/O 阻塞
-    f2a.agentRegistry = await AgentRegistry.create(nodePeerId, f2a.signData.bind(f2a), { dataDir });
-
-    // RFC 005: MessageRouter 接收 AgentRegistry 的内部 Map
-    // 通过 getAgentRegistryMap() 获取(需在 AgentRegistry 中添加)
-    f2a.messageRouter = new MessageRouter(f2a.agentRegistry.getAgentsMap(), p2pNetwork);
-
-    // RFC 003: 设置 AgentRegistry 到 P2P 网络,启用签名携带
-    p2pNetwork.setAgentRegistry(f2a.agentRegistry);
-
-    return f2a;
+    return result.data;
   }
 
   /**
@@ -381,47 +249,21 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
 
   /**
    * 注册能力
-   * P3.3 修复:返回 Result 类型,统一错误处理
+   * Phase 3a: 委托给 CapabilityService
    */
   registerCapability(
     capability: AgentCapability,
     handler: (params: Record<string, unknown>) => Promise<unknown>
   ): Result<void> {
-    // 验证能力定义
-    const validation = validateAgentCapability(capability);
-    if (!validation.success) {
-      this.logger.error('Invalid capability definition', {
-        errors: validation.error.errors
-      });
-      return failureFromError(
-        'INVALID_PARAMS',
-        `Invalid capability: ${validation.error.errors.map(e => e.message).join(', ')}`
-      );
-    }
-
-    this.registeredCapabilities.set(capability.name, {
-      ...capability,
-      handler
-    });
-
-    // 更新 agentInfo
-    this.updateAgentCapabilities();
-
-    this.logger.info('Registered capability', { name: capability.name });
-
-    return success(undefined);
+    return this.capabilityService.registerCapability(capability, handler);
   }
 
   /**
    * 获取已注册的能力
+   * Phase 3a: 委托给 CapabilityService
    */
   getCapabilities(): AgentCapability[] {
-    return Array.from(this.registeredCapabilities.values()).map(c => ({
-      name: c.name,
-      description: c.description,
-      tools: c.tools,
-      parameters: c.parameters
-    }));
+    return this.capabilityService.getCapabilities();
   }
 
   /**
@@ -572,79 +414,6 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     });
   }
 
-  /**
-   * 处理收到的自由消息(MESSAGE + topic='chat' 或其他)
-   * 如果配置了 messageHandlerUrl,调用该 URL 并发送响应
-   */
-  private async handleFreeMessage(
-    fromPeerId: string,
-    messageId: string,
-    content: string | Record<string, unknown>,
-    topic?: string
-  ): Promise<void> {
-    this.logger.info('Received free message', {
-      from: fromPeerId.slice(0, 16),
-      topic,
-      contentLength: typeof content === 'string' ? content.length : 'object'
-    });
-
-    // 发出事件供上层监听
-    this.emit('peer:message', {
-      messageId,
-      from: fromPeerId,
-      content,
-      topic
-    });
-
-    // 如果配置了 messageHandlerUrl,调用它
-    const handlerUrl = this.options.messageHandlerUrl;
-    if (handlerUrl) {
-      try {
-        const response = await fetch(handlerUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            from: fromPeerId,
-            content,
-            topic,
-            messageId
-          })
-        });
-
-        if (response.ok) {
-          const result = await response.json() as { response?: string; reply?: string };
-          const replyContent = result.response || result.reply;
-
-          if (replyContent) {
-            // 发送响应回发送者
-            await this.p2pNetwork.sendFreeMessage(fromPeerId, replyContent, topic);
-            this.logger.info('Sent message response', {
-              to: fromPeerId.slice(0, 16),
-              content: replyContent.slice(0, 50)
-            });
-          }
-        } else {
-          this.logger.warn('Message handler returned error', {
-            status: response.status,
-            url: handlerUrl
-          });
-        }
-      } catch (error) {
-        this.logger.error('Failed to call message handler', {
-          error: getErrorMessage(error),
-          url: handlerUrl
-        });
-      }
-    }
-  }
-
-  /**
-   * 更新 AgentInfo 中的能力列表
-   */
-  private updateAgentCapabilities(): void {
-    this._agentInfo.capabilities = this.getCapabilities();
-  }
-
   // ========================================================================
   // Phase 1: Node/Agent Identity 方法
   // ========================================================================
@@ -738,20 +507,10 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
    * WARNING: 返回敏感的私钥材料
    */
   async exportNodeIdentity(): Promise<Result<{ nodeId: string; peerId: string; privateKey: string }>> {
-    if (!this.nodeIdentityManager) {
-      return failureFromError('IDENTITY_NOT_INITIALIZED', 'Node identity manager not initialized');
+    if (!this.identityService) {
+      return failureFromError('IDENTITY_NOT_INITIALIZED', 'Identity service not initialized');
     }
-
-    try {
-      const identity = this.nodeIdentityManager.exportIdentity();
-      return success({
-        nodeId: this.nodeIdentityManager.getNodeId() || '',
-        peerId: identity.peerId,
-        privateKey: identity.privateKey
-      });
-    } catch (error) {
-      return failureFromError('EXPORT_FAILED', 'Failed to export node identity', error as Error);
-    }
+    return this.identityService.exportNodeIdentity();
   }
 
   /**
@@ -760,19 +519,10 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
    * WARNING: 返回敏感的私钥材料
    */
   async exportAgentIdentity(): Promise<Result<ExportedAgentIdentity>> {
-    if (!this.agentIdentityManager) {
-      return failureFromError('IDENTITY_NOT_INITIALIZED', 'Agent identity manager not initialized');
+    if (!this.identityService) {
+      return failureFromError('IDENTITY_NOT_INITIALIZED', 'Identity service not initialized');
     }
-
-    try {
-      const identity = this.agentIdentityManager.exportAgentIdentity();
-      if (!identity) {
-        return failureFromError('IDENTITY_NOT_FOUND', 'No agent identity found');
-      }
-      return success(identity);
-    } catch (error) {
-      return failureFromError('EXPORT_FAILED', 'Failed to export agent identity', error as Error);
-    }
+    return this.identityService.exportAgentIdentity();
   }
 
   /**
@@ -788,30 +538,25 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
    * @param newExpiresAt 新的过期时间
    */
   async renewAgentIdentity(newExpiresAt: Date): Promise<Result<AgentIdentity>> {
-    if (!this.identityDelegator || !this.agentIdentityManager) {
-      return failureFromError('IDENTITY_NOT_INITIALIZED', 'Identity system not initialized');
+    if (!this.identityService) {
+      return failureFromError('IDENTITY_NOT_INITIALIZED', 'Identity service not initialized');
     }
-
-    const currentIdentity = this.agentIdentityManager.getAgentIdentity();
-    if (!currentIdentity) {
-      return failureFromError('IDENTITY_NOT_FOUND', 'No current agent identity found');
-    }
-
-    const privateKey = this.nodeIdentityManager?.getPrivateKey();
-    if (!privateKey) {
-      return failureFromError('NODE_KEY_NOT_AVAILABLE', 'Node private key not available');
-    }
-
-    const signWithNodeKey = async (data: Uint8Array): Promise<Uint8Array> => {
-      return await privateKey.sign(data);
-    };
-
-    return this.identityDelegator.renewAgent(currentIdentity, newExpiresAt, signWithNodeKey);
+    return this.identityService.renewAgentIdentity(newExpiresAt);
   }
 
   // ========================================================================
   // Phase 1: Agent Registry 和 Message Router getter 方法
   // ========================================================================
+
+  /**
+   * 获取 IdentityService
+   */
+  getIdentityService(): IdentityService {
+    if (!this.identityService) {
+      throw new Error('IdentityService not initialized');
+    }
+    return this.identityService;
+  }
 
   /**
    * 获取 Agent Registry
@@ -833,6 +578,24 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
     return this.messageRouter;
   }
 
+  /**
+   * 获取 Message Service
+   */
+  getMessageService(): MessageService {
+    if (!this.messageService) {
+      throw new Error('MessageService not initialized');
+    }
+    return this.messageService;
+  }
+
+  /**
+   * 获取 Capability Service
+   * Phase 3a: 新增 getter
+   */
+  getCapabilityService(): CapabilityService {
+    return this.capabilityService;
+  }
+
   // ========================================================================
   // 统一消息发送入口
   // ========================================================================
@@ -841,6 +604,7 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
    * 统一消息发送入口
    *
    * 支持 Agent 间通信,自动判断本地路由或远程 P2P 发送
+   * 委托给 MessageService 处理
    *
    * @param fromAgentId 发送方 Agent ID
    * @param toAgentId 目标 Agent ID
@@ -857,68 +621,11 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
       metadata?: Record<string, unknown>;
     }
   ): Promise<Result<void>> {
-    // 验证 MessageRouter 已初始化
-    if (!this.messageRouter) {
-      return failureFromError('INTERNAL_ERROR', 'MessageRouter not initialized');
+    // 委托给 MessageService
+    if (!this.messageService) {
+      return failureFromError('INTERNAL_ERROR', 'MessageService not initialized');
     }
-
-    // 构造路由消息
-    const messageId = `msg-${randomUUID()}`;
-    const message = {
-      messageId,
-      fromAgentId,
-      toAgentId,
-      content: typeof content === 'string' ? content : JSON.stringify(content),
-      metadata: options?.metadata,
-      type: options?.type || 'message',
-      createdAt: new Date(),
-    };
-
-    this.logger.info('Sending message', {
-      messageId,
-      fromAgentId,
-      toAgentId,
-      type: message.type,
-    });
-
-    // 判断目标 Agent 是否本地
-    const agentRegistry = this.agentRegistry;
-    if (!agentRegistry) {
-      return failureFromError('INTERNAL_ERROR', 'AgentRegistry not initialized');
-    }
-
-    const targetAgent = agentRegistry.get(toAgentId);
-
-    if (targetAgent) {
-      // 目标 Agent 在本地,使用本地路由
-      const routed = this.messageRouter.route(message);
-      if (routed) {
-        this.logger.info('Message routed locally', { messageId, toAgentId });
-        return success(undefined);
-      } else {
-        return failureFromError('TASK_FAILED', 'Local message routing failed');
-      }
-    }
-
-    // 目标 Agent 不在本地,尝试远程路由
-    // 需要先确保 MessageRouter 有 P2PNetwork 引用
-    if (!this.messageRouter) {
-      return failureFromError('NETWORK_NOT_STARTED', 'MessageRouter not configured for remote routing');
-    }
-
-    const result = await this.messageRouter.routeRemote(message);
-
-    if (result.success) {
-      this.logger.info('Message sent remotely', { messageId, toAgentId });
-    } else {
-      this.logger.error('Failed to send message remotely', {
-        messageId,
-        toAgentId,
-        error: result.error,
-      });
-    }
-
-    return result;
+    return this.messageService.sendMessage(fromAgentId, toAgentId, content, options);
   }
 
   /**

@@ -159,25 +159,6 @@ export const MESSAGE_TOPICS_SCHEMA = z.enum([
   'chat',
 ]);
 
-// 兼容性 Schema（已废弃）
-/** @deprecated 使用 StructuredMessagePayloadSchema 替代 */
-export const TaskRequestPayloadSchema = z.object({
-  taskId: z.string().uuid(),
-  taskType: z.string().min(1).max(64),
-  description: z.string().min(1).max(1024),
-  parameters: z.record(z.unknown()).optional(),
-  timeout: z.number().int().min(1).max(300).optional()
-}).passthrough();
-
-/** @deprecated 使用 StructuredMessagePayloadSchema 替代 */
-export const TaskResponsePayloadSchema = z.object({
-  taskId: z.string().uuid(),
-  status: z.enum(['success', 'error', 'rejected', 'delegated']),
-  result: z.unknown().optional(),
-  error: z.string().max(1024).optional(),
-  delegatedTo: z.string().optional()
-}).passthrough();
-
 // ============================================================================
 // Webhook Schema
 // ============================================================================
@@ -227,22 +208,6 @@ export function validateF2AMessage(message: unknown) {
  */
 export function validateStructuredMessagePayload(payload: unknown) {
   return StructuredMessagePayloadSchema.safeParse(payload);
-}
-
-/**
- * 验证任务请求载荷（兼容）
- * @deprecated 使用 validateStructuredMessagePayload 替代
- */
-export function validateTaskRequestPayload(payload: unknown) {
-  return TaskRequestPayloadSchema.safeParse(payload);
-}
-
-/**
- * 验证任务响应载荷（兼容）
- * @deprecated 使用 validateStructuredMessagePayload 替代
- */
-export function validateTaskResponsePayload(payload: unknown) {
-  return TaskResponsePayloadSchema.safeParse(payload);
 }
 
 /**

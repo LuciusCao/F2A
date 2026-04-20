@@ -1,19 +1,19 @@
 {
   "version": "1.0",
-  "exportedAt": "2026-04-20T11:37:44.999Z",
+  "exportedAt": "2026-04-20T12:55:34.980Z",
   "node": {
-    "nodeId": "12D3KooWFSBJHWRwbELmu6zy1FwcngZHh15xfWFpXu86c7pLaYBy",
-    "peerId": "12D3KooWFSBJHWRwbELmu6zy1FwcngZHh15xfWFpXu86c7pLaYBy",
-    "privateKey": "CAESQFvzCtOTd5/otsgQmHhFlR/9VVRb00UG1BBQ8h18unVNU3cNk1SsmjwSR17jb6WtuT+enzdH+nXHBYXMGw9+KZA="
+    "nodeId": "12D3KooWHSinUhxiRWnwx1zcnXTE4jnKH6qvXnpR2UXDUKbtEYWL",
+    "peerId": "12D3KooWHSinUhxiRWnwx1zcnXTE4jnKH6qvXnpR2UXDUKbtEYWL",
+    "privateKey": "CAESQITbdMD6z3jllNrTleDbLZ/FNkYgDK+s2dSpbosEdV70cVIHP6QK94PctNhRN+sxgmHlBWdSzlum7nNX8b9PA3k="
   },
   "agent": {
-    "id": "76d66733-5fd9-4ff8-ae22-0a9f67bf7d0f",
+    "id": "805b79be-23d1-47ff-b5d3-37319efd198d",
     "name": "my-agent",
     "capabilities": [],
-    "nodeId": "12D3KooWFSBJHWRwbELmu6zy1FwcngZHh15xfWFpXu86c7pLaYBy",
-    "publicKey": "E0UonUlgYtdzW93Uj7LyblAN9zwY9iqncdKBUvE/HJQ=",
-    "signature": "5SlR4ZjqKvh7LXKawSVTwFg1s4doMAljMzl9nNsDf1Z9RPOk6LB0tPHk2S+2MkimOUEvpFtyVAVl8CWPpEuIAg==",
-    "createdAt": "2026-04-20T11:37:44.501Z",
-    "privateKey": "GF4W4TpjO+2xiaKGepWI4g7eHt6VeM3Q7075c0DPr7gTRSidSWBi13Nb3dSPsvJuUA33PBj2Kqdx0oFS8T8clA=="
+    "nodeId": "12D3KooWHSinUhxiRWnwx1zcnXTE4jnKH6qvXnpR2UXDUKbtEYWL",
+    "publicKey": "1WwT4+S+k2L9J3K/rm/+oAwlRAF13qKtHJ7sUsCXIDM=",
+    "signature": "j6fUzTeZ6AG7X3aJqwjxoTkYEYd/sg3FCxwbPxGZjfnKhYcYJpEeVqlKYMXZL5kWJA85KaQbcdmQxm3SwHNnBg==",
+    "createdAt": "2026-04-20T12:55:34.500Z",
+    "privateKey": "VJ8+WgBH1jVmEoZRKs2tCC+xK+5O7Xvjm5i564htkInVbBPj5L6TYv0ncr+ub/6gDCVEAXXeoq0cnuxSwJcgMw=="
   }
 }

@@ -64,9 +64,15 @@ export class Logger {
   private currentFileSize: number = 0;
 
   constructor(options: LoggerOptions = {}) {
-    this.level = options.level || 'INFO';
+    // 支持环境变量控制：F2A_LOG_LEVEL 和 F2A_DEBUG
+    const envLevel = process.env.F2A_LOG_LEVEL as LogLevel | undefined;
+    const isDebug = process.env.F2A_DEBUG === '1';
+    const envConsole = process.env.F2A_CONSOLE !== 'false';
+    
+    this.level = envLevel || (isDebug ? 'DEBUG' : options.level || 'INFO');
     this.component = options.component || 'F2A';
-    this.enableConsole = options.enableConsole !== false;
+    // 环境变量 F2A_CONSOLE=false 可禁用控制台输出
+    this.enableConsole = options.enableConsole !== false && envConsole;
     this.enableFile = options.enableFile ?? false;
     this.filePath = options.filePath;
     // 自动检测：生产环境默认使用 JSON 格式

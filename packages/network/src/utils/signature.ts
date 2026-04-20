@@ -93,14 +93,6 @@ export class RequestSigner implements Disposable {
   }
 
   /**
-   * P3-1 修复：保留 stop() 作为 dispose() 的别名，保持向后兼容
-   * @deprecated 使用 dispose() 代替
-   */
-  stop(): void {
-    this.dispose();
-  }
-
-  /**
    * 生成签名
    * @param payload - 消息体（JSON 字符串）
    * @returns 签名后的消息

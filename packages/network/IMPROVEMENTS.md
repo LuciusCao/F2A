@@ -163,18 +163,21 @@ export interface IMessageRouter {
 | agent-registry.ts | 2 处 | 删除未使用导入 |
 | 其他文件 | ~20 处 | 删除未使用导入、参数加 `_` |
 
-验证：`npx tsc --noEmit --noUnusedLocals --noUnusedParameters` → 0 errors
+### P1 - 已完成
 
-**17 处 @deprecated 标记** - 需决定是否清理
+**17 处 @deprecated 标记** - ✅ 2026-04-20 已清理
 
-| 文件 | 数量 | 说明 |
-|------|------|------|
-| types/index.ts | 5 | 废弃的消息类型 |
-| utils/validation.ts | 4 | 废弃的验证函数 |
-| utils/message-dispatcher.ts | 3 | 废弃的消息处理器 |
-| utils/signature.ts | 1 | 废弃的方法 |
-| core/agent-registry.ts | 1 | 废弃的注册方法 |
-| core/f2a.ts | 3 | 废弃的属性/方法 |
+删除的废弃 API：
+- types/index.ts: TaskRequestPayload, TaskResponsePayload, CapabilityQueryPayload, CapabilityResponsePayload 等类型
+- utils/validation.ts: 对应的验证 schema 和函数
+- utils/signature.ts: RequestSigner.stop() 方法
+- utils/message-dispatcher.ts: 废弃的回调类型
+- agent-registry.ts: register() 的 deprecated 注释
+
+保留：
+- F2A.start() 的 @deprecated 注释（方法本身还在使用）
+
+验证：无外部依赖，lint 通过，1146 tests passed
 
 ### P2 - 可以稍后
 

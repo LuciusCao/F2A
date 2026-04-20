@@ -291,8 +291,6 @@ export class AgentRegistry {
    * 
    * 用户只提供 name 和 capabilities
    * 节点生成并签名 AgentId
-   * 
-   * @deprecated 建议使用 registerRFC008 代替
    */
   register(request: AgentRegistrationRequest): AgentRegistration {
     // 生成 AgentId (旧格式)

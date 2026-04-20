@@ -232,48 +232,6 @@ export interface AgentMessagePayload {
   metadata?: Record<string, unknown>;
 }
 
-// 类型别名：保留兼容性的结构化消息类型
-/** @deprecated 使用 MESSAGE + StructuredMessagePayload 替代 */
-export interface TaskRequestPayload extends StructuredMessagePayload {
-  topic: typeof MESSAGE_TOPICS.TASK_REQUEST;
-  content: {
-    taskId: string;
-    taskType: string;
-    description: string;
-    parameters?: Record<string, unknown>;
-    timeout?: number;
-  };
-}
-
-/** @deprecated 使用 MESSAGE + StructuredMessagePayload 替代 */
-export interface TaskResponsePayload extends StructuredMessagePayload {
-  topic: typeof MESSAGE_TOPICS.TASK_RESPONSE;
-  content: {
-    taskId: string;
-    status: 'success' | 'error' | 'rejected' | 'delegated';
-    result?: unknown;
-    error?: string;
-    delegatedTo?: string;
-  };
-}
-
-/** @deprecated 使用 MESSAGE + StructuredMessagePayload 替代 */
-export interface CapabilityQueryPayload extends StructuredMessagePayload {
-  topic: typeof MESSAGE_TOPICS.CAPABILITY_QUERY;
-  content: {
-    capabilityName?: string;
-    toolName?: string;
-  };
-}
-
-/** @deprecated 使用 MESSAGE + StructuredMessagePayload 替代 */
-export interface CapabilityResponsePayload extends StructuredMessagePayload {
-  topic: typeof MESSAGE_TOPICS.CAPABILITY_RESPONSE;
-  content: {
-    agentInfo: AgentInfo;
-  };
-}
-
 // 自由消息（Agent 之间的自然语言通信）
 export interface MessagePayload {
   /** 消息内容（自然语言） */
@@ -330,26 +288,6 @@ export interface MessageEvent {
   topic?: string;
   /** 引用的消息 ID */
   replyTo?: string;
-}
-
-// 兼容性类型别名（已废弃）
-/** @deprecated 使用 MessageEvent 替代 */
-export interface TaskRequestEvent {
-  taskId: string;
-  from: string;
-  taskType: string;
-  description: string;
-  parameters?: Record<string, unknown>;
-  timeout?: number;
-}
-
-/** @deprecated 使用 MessageEvent 替代 */
-export interface TaskResponseEvent {
-  taskId: string;
-  from: string;
-  status: 'success' | 'error' | 'rejected' | 'delegated';
-  result?: unknown;
-  error?: string;
 }
 
 export interface F2AEvents {

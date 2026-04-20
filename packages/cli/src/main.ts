@@ -16,10 +16,9 @@
 
 // CLI 静默模式：禁用内部日志输出到终端
 // 用户可通过 F2A_DEBUG=1 启用调试日志
-import { defaultLogger } from '@f2a/network';
 if (process.env.F2A_DEBUG !== '1') {
-  defaultLogger.setLevel('ERROR');
-  defaultLogger.setConsoleEnabled(false);
+  process.env.F2A_LOG_LEVEL = 'ERROR';
+  process.env.F2A_CONSOLE = 'false';
 }
 
 import { readFileSync } from 'fs';

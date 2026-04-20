@@ -9,8 +9,6 @@ import { randomUUID } from 'crypto';
 import type { 
   F2AMessage,
   DiscoverPayload,
-  CapabilityQueryPayload,
-  TaskResponsePayload,
   MessagePayload,
   AgentInfo
 } from '../types/index.js';
@@ -60,12 +58,6 @@ export interface MessageDispatcherConfig {
 export interface MessageDispatcherCallbacks {
   /** 发现消息回调 */
   onDiscover?: (agentInfo: AgentInfo, peerId: string, shouldRespond: boolean) => Promise<void>;
-  /** 能力查询回调 */
-  onCapabilityQuery?: (query: CapabilityQueryPayload, peerId: string) => Promise<void>;
-  /** 能力响应回调 */
-  onCapabilityResponse?: (agentInfo: AgentInfo, peerId: string) => Promise<void>;
-  /** 任务响应回调 */
-  onTaskResponse?: (payload: TaskResponsePayload) => void;
   /** 解密失败回调 */
   onDecryptFailed?: (message: F2AMessage, peerId: string) => Promise<void>;
   /** 自由消息回调 */

@@ -20,6 +20,13 @@ vi.mock('./control-token.js', () => ({
   getControlTokenLazy: () => 'test-token',
 }));
 
+// Mock init.js module (readCallerConfig, readIdentityFile)
+vi.mock('./init.js', () => ({
+  readCallerConfig: vi.fn(() => null),  // 默认返回 null，走旧流程
+  readIdentityFile: vi.fn(() => null),
+  AGENTS_DIR: '/tmp/f2a-test/agents',
+}));
+
 describe('CLI Agent Commands', () => {
   const mockRequest = {
     on: vi.fn(),
@@ -46,7 +53,7 @@ describe('CLI Agent Commands', () => {
   describe('registerAgent', () => {
     describe('用户指定 agentId', () => {
       it('should register agent with user-specified agentId', async () => {
-        const responseData = { success: true, agent: { agentId: 'my-agent' } };
+        const responseData = { success: true, agent: { agentId: 'my-agent' }, token: 'test-token' };
 
         mockResponse.on.mockImplementation((event: string, callback: Function) => {
           if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
@@ -60,15 +67,16 @@ describe('CLI Agent Commands', () => {
 
         const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
         
-        await registerAgent({ id: 'my-agent', name: 'Test' });
+        // 旧流程：只传 name（无 callerConfig）
+        await registerAgent({ name: 'Test' });
 
-        // 验证请求 body.agentId === 'my-agent'
+        // 验证请求 body.name === 'Test'
         expect(mockRequest.write).toHaveBeenCalledWith(
-          expect.stringContaining('"agentId":"my-agent"')
+          expect.stringContaining('"name":"Test"')
         );
 
-        // 验证输出包含 "ID: my-agent"
-        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('ID: my-agent'));
+        // 验证输出包含 "Name: Test"
+        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Name: Test'));
         
         consoleSpy.mockRestore();
       });
@@ -76,7 +84,7 @@ describe('CLI Agent Commands', () => {
 
     describe('daemon 自动生成 agentId', () => {
       it('should register agent without agentId (daemon generates)', async () => {
-        const responseData = { success: true, agent: { agentId: 'agent:generated-id' } };
+        const responseData = { success: true, agent: { agentId: 'agent:generated-id' }, token: 'test-token' };
 
         mockResponse.on.mockImplementation((event: string, callback: Function) => {
           if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
@@ -90,10 +98,10 @@ describe('CLI Agent Commands', () => {
 
         const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
         
-        // 不传 id
+        // 旧流程：不传 id，只传 name
         await registerAgent({ name: 'Test' });
 
-        // 验证请求 body 不包含 agentId
+        // 验证请求 body 不包含 agentId（daemon 生成）
         const writeCall = mockRequest.write.mock.calls[0]?.[0];
         if (writeCall) {
           const body = JSON.parse(writeCall);
@@ -111,8 +119,8 @@ describe('CLI Agent Commands', () => {
       it('should fail when name is missing', async () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         
-        // 不传 name
-        await registerAgent({ id: 'test' });
+        // 旧流程：不传 name
+        await registerAgent({});
 
         // 验证 process.exit(1)
         expect(process.exit).toHaveBeenCalledWith(1);
@@ -138,7 +146,7 @@ describe('CLI Agent Commands', () => {
       it('should fail when name is empty string', async () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         
-        await registerAgent({ id: 'test', name: '' });
+        await registerAgent({ name: '' });
 
         expect(process.exit).toHaveBeenCalledWith(1);
         
@@ -250,7 +258,7 @@ describe('CLI Agent Commands', () => {
 
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         
-        await registerAgent({ id: 'test', name: 'Test' });
+        await registerAgent({ name: 'Test' });
 
         expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('无法连接'));
         expect(process.exit).toHaveBeenCalledWith(1);

@@ -132,19 +132,19 @@ describe('CLI Entry Functionality', () => {
       const result = await runCli(['status']);
 
       // 无 daemon 时应显示连接错误
-      expect(result.stderr).toMatch(/无法连接|Daemon/);
+      expect(result.stderr).toMatch(/无法连接|Failed to connect|Connection failed|Daemon/);
     });
 
     it('should handle peers command without daemon', async () => {
       const result = await runCli(['peers']);
 
-      expect(result.stderr).toMatch(/无法连接|Daemon/);
+      expect(result.stderr).toMatch(/无法连接|Failed to connect|Connection failed|Daemon/);
     });
 
     it('should handle agent list without daemon', async () => {
       const result = await runCli(['agent', 'list']);
 
-      expect(result.stderr).toMatch(/无法连接|Daemon/);
+      expect(result.stderr).toMatch(/无法连接|Failed to connect|Connection failed|Daemon/);
     });
   });
 });

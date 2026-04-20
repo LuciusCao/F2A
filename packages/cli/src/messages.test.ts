@@ -24,11 +24,20 @@ vi.mock('./control-token.js', () => ({
 vi.mock('fs', () => ({
   existsSync: vi.fn(),
   readFileSync: vi.fn(),
+  mkdirSync: vi.fn(),
+  writeFileSync: vi.fn(),
 }));
 
 // Mock os module
 vi.mock('os', () => ({
   homedir: () => '/home/test',
+}));
+
+// Mock init.js module
+vi.mock('./init.js', () => ({
+  readCallerConfig: vi.fn(() => null),
+  readIdentityFile: vi.fn(() => null),
+  AGENTS_DIR: '/tmp/f2a-test/agents',
 }));
 
 import { existsSync, readFileSync } from 'fs';

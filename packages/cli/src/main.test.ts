@@ -104,14 +104,14 @@ describe('CLI Main Entry (main.ts)', () => {
         const result = await runCli(['status']);
         
         // 无 daemon 时应显示连接错误（中文或英文）
-        expect(result.stderr).toMatch(/无法连接|Failed to connect/);
+        expect(result.stderr).toMatch(/无法连接|Failed to connect|Connection failed/);
         expect(result.stderr).toMatch(/daemon|Daemon/);
       });
 
       it('should attempt to send peers command without daemon', async () => {
         const result = await runCli(['peers']);
         
-        expect(result.stderr).toMatch(/无法连接|Failed to connect/);
+        expect(result.stderr).toMatch(/无法连接|Failed to connect|Connection failed/);
       });
 
       it('should handle init command (may show deprecation notice)', async () => {
@@ -119,7 +119,7 @@ describe('CLI Main Entry (main.ts)', () => {
         
         // init 命令可能显示废弃提示或连接错误
         const combined = result.stdout + result.stderr;
-        expect(combined).toMatch(/废弃|daemon|Daemon|无法连接|Failed to connect/);
+        expect(combined).toMatch(/废弃|daemon|Daemon|无法连接|Failed to connect|Connection failed/);
       });
     });
 

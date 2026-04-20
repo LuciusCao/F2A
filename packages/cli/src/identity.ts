@@ -30,8 +30,11 @@ interface IdentityExport {
   exportedAt: string;
   node?: {
     nodeId: string;
-    peerId: string;
     privateKey: string;
+  e2eePublicKey?: string;
+    createdAt?: string;
+  // peerId 字段：旧格式向后兼容，导入时忽略
+    peerId?: string;
   };
   agent?: ExportedAgentIdentity;
 }
@@ -115,9 +118,10 @@ export async function initIdentity(options?: { force?: boolean }): Promise<void>
     const nodeManager = new NodeIdentityManager({ dataDir });
     const result = await nodeManager.loadOrCreate();
     
-    if (result.success) {
-      console.log(`   Peer ID: ${nodeManager.getPeerIdString()?.slice(0, 20)}...`);
-      console.log(`   Node ID: ${nodeManager.getNodeId()}`);
+    // 问题 4 修复：从 loadOrCreate() 返回值直接获取 nodeId/peerId
+    if (result.success && result.data) {
+      console.log(`   Peer ID: ${result.data.peerId.slice(0, 20)}...`);
+      console.log(`   Node ID: ${result.data.nodeId}`);
     } else {
       console.log(`   ⚠️ Could not load existing identity: ${result.error?.message}`);
     }
@@ -127,10 +131,11 @@ export async function initIdentity(options?: { force?: boolean }): Promise<void>
     const nodeManager = new NodeIdentityManager({ dataDir });
     const result = await nodeManager.loadOrCreate();
     
-    if (result.success) {
+    // 问题 4 修复：从 loadOrCreate() 返回值直接获取 nodeId/peerId
+    if (result.success && result.data) {
       console.log('   ✅ Node Identity created');
-      console.log(`   Peer ID: ${nodeManager.getPeerIdString()?.slice(0, 20)}...`);
-      console.log(`   Node ID: ${nodeManager.getNodeId()}`);
+      console.log(`   Peer ID: ${result.data.peerId.slice(0, 20)}...`);
+      console.log(`   Node ID: ${result.data.nodeId}`);
     } else {
       console.log(`   ❌ Failed：${result.error?.message || 'Unknown error'}`);
       process.exit(1);
@@ -209,10 +214,11 @@ export async function showIdentityStatus(): Promise<void> {
     const nodeManager = new NodeIdentityManager({ dataDir });
     const result = await nodeManager.loadOrCreate();
     
-    if (result.success) {
+    // 问题 4 修复：从 loadOrCreate() 返回值直接获取 nodeId/peerId
+    if (result.success && result.data) {
       console.log('📦 Node Identity: ✅ Loaded');
-      console.log(`   Node ID: ${nodeManager.getNodeId()}`);
-      console.log(`   Peer ID: ${nodeManager.getPeerIdString()?.slice(0, 16)}...`);
+      console.log(`   Node ID: ${result.data.nodeId}`);
+      console.log(`   Peer ID: ${result.data.peerId.slice(0, 16)}...`);
     } else {
       console.log('📦 Node Identity: ❌ Failed to load');
       console.log(`   Error: ${result.error?.message || 'Unknown error'}`);
@@ -283,12 +289,12 @@ export async function exportIdentity(outputPath?: string): Promise<void> {
     const nodeManager = new NodeIdentityManager({ dataDir });
     const nodeResult = await nodeManager.loadOrCreate();
     
-    if (nodeResult.success) {
-      const identity = nodeManager.exportIdentity();
+    if (nodeResult.success && nodeResult.data) {
+      // 问题 1 修复：移除 peerId 字段，只保留 privateKey
+      // 问题 4 修复：从 loadOrCreate() 返回值直接获取 nodeId/privateKey
       exportData.node = {
-        nodeId: nodeManager.getNodeId() || '',
-        peerId: identity.peerId,
-        privateKey: identity.privateKey
+        nodeId: nodeResult.data.nodeId,
+        privateKey: nodeResult.data.privateKey
       };
       console.log('📦 Node Identity: ✅ Exported');
     } else {
@@ -520,7 +526,7 @@ export async function importIdentityInternal(
  * P2-8 修复：添加安全审计日志
  */
 async function importNodeIdentity(
-  nodeData: { nodeId: string; peerId: string; privateKey: string },
+  nodeData: { nodeId: string; privateKey: string },
   dataDir: string
 ): Promise<Result<void>> {
   try {
@@ -569,11 +575,10 @@ async function importNodeIdentity(
     const newE2eePublicKey = x25519.getPublicKey(newE2eePrivateKey);
     
     // 写入 Node Identity 文件
-    // P2-5: 使用正确的字段名 privateKey 而非 peerId
+    // Phase 3: 使用 privateKey 字段名，移除冗余的 peerId 字段
     const nodeIdentityContent = {
       nodeId: nodeData.nodeId,
-      peerId: nodeData.privateKey, // 注意：保持向后兼容，字段名仍为 peerId
-      privateKey: nodeData.privateKey, // P2-5: 添加正确的字段名
+      privateKey: nodeData.privateKey, // Phase 3: privateKey 字段名
       e2eePrivateKey: Buffer.from(newE2eePrivateKey).toString('base64'),
       e2eePublicKey: Buffer.from(newE2eePublicKey).toString('base64'),
       createdAt: new Date().toISOString(),

@@ -23,7 +23,6 @@ import type {
   PersistedIdentity
 } from './types.js';
 import { DEFAULT_DATA_DIR, NODE_IDENTITY_FILE, isEncryptedIdentity } from './types.js';
-import type { EncryptedIdentity } from './types.js';
 
 /** Node ID 格式验证正则表达式 (P1-4) */
 const NODE_ID_PATTERN = /^[a-zA-Z0-9-]+$/;
@@ -333,6 +332,9 @@ export class NodeIdentityManager extends IdentityManager {
             nodeId: this.nodeId?.slice(0, 16)
           });
           
+          // 问题 2 修复：删除旧的 identity.json 文件
+          await fs.unlink(legacyFile);
+          
           return success(this.exportNodeIdentityInternal());
         }
         
@@ -357,6 +359,9 @@ export class NodeIdentityManager extends IdentityManager {
         this.nodeLogger.info('Migrated plaintext legacy identity to node identity', {
           nodeId: this.nodeId?.slice(0, 16)
         });
+        
+        // 问题 2 修复：删除旧的 identity.json 文件
+        await fs.unlink(legacyFile);
         
         return success(this.exportNodeIdentityInternal());
       } catch (migrationError) {
@@ -400,6 +405,15 @@ export class NodeIdentityManager extends IdentityManager {
       
       // 保存 Node Identity
       await this.saveNodeIdentity();
+      
+      // Phase 3: 删除父类创建的 identity.json（避免共存）
+      const legacyFile = join(this.nodeDataDir, 'identity.json');
+      try {
+        await fs.unlink(legacyFile);
+        this.nodeLogger.debug('Removed legacy identity.json after creating node-identity.json');
+      } catch {
+        // 文件可能不存在，忽略
+      }
       
       this.nodeLogger.info('Created new node identity', {
         nodeId: this.nodeId,

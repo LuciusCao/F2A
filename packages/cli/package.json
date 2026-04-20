@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src/",
-    "clean": "rm -rf dist .tsbuildinfo"
+    "clean": "rm -rf dist .tsbuildinfo",
+    "postinstall": "node scripts/postinstall.js"
   },
   "dependencies": {
     "@f2a/network": "*",

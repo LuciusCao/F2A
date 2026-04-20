@@ -374,6 +374,13 @@ export class Logger {
   }
 
   /**
+   * 设置控制台输出开关
+   */
+  setConsoleEnabled(enabled: boolean): void {
+    this.enableConsole = enabled;
+  }
+
+  /**
    * 获取当前日志级别
    */
   getLevel(): LogLevel {

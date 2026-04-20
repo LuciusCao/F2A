@@ -9,6 +9,9 @@ import { getControlTokenLazy } from './control-token.js';
 /** ControlServer 默认端口 */
 export const CONTROL_PORT = parseInt(process.env.F2A_CONTROL_PORT || '9001');
 
+/** HTTP 请求超时时间（毫秒） */
+const REQUEST_TIMEOUT_MS = parseInt(process.env.F2A_REQUEST_TIMEOUT || '10000');
+
 /**
  * 发送 HTTP 请求到 ControlServer
  * 
@@ -55,7 +58,15 @@ export async function sendRequest(
       });
     });
 
-    req.on('error', reject);
+    // 设置请求超时
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      req.destroy();
+      resolve({ success: false, error: `Request timeout after ${REQUEST_TIMEOUT_MS}ms. Daemon may not be responding.` });
+    });
+
+    req.on('error', (err) => {
+      resolve({ success: false, error: `Connection failed: ${err.message}. Please ensure daemon is running.` });
+    });
 
     if (payload) {
       req.write(payload);

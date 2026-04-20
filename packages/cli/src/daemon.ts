@@ -407,8 +407,8 @@ export async function startBackground(): Promise<void> {
         const currentPid = readDaemonPid();
         if (currentPid !== null && currentPid !== child.pid && isProcessRunning(currentPid)) {
           // 另一个进程已启动，终止当前进程
+          // 注意：不要删除 PID 文件，它属于另一个进程
           child.kill();
-          removePidFile();
           clearTimeout(timeout);
           reject(new Error('另一个 daemon 实例已启动'));
           return;

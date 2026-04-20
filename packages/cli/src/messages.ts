@@ -254,7 +254,23 @@ export async function getMessages(options: {
   limit?: number;
   agentId?: string;
 }): Promise<void> {
-  const agentId = options.agentId || 'default';
+  // 尝试读取 Caller 配置（RFC008）
+  const callerCfg = readCallerConfig();
+  let agentId = options.agentId;
+
+  if (!agentId && callerCfg) {
+    // 使用 Caller 配置中的 agentId
+    agentId = callerCfg.agentId;
+  }
+
+  if (!agentId) {
+    console.error('❌ 错误：缺少 --agent 参数');
+    console.error('用法：');
+    console.error('  f2a message list --agent <agent_id>');
+    console.error('  或先运行 f2a agent init 创建 Caller 配置');
+    process.exit(1);
+  }
+
   const limit = options.limit || 50;
 
   try {

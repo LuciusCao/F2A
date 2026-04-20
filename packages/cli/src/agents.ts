@@ -47,15 +47,12 @@ function saveIdentityWithNodeSignature(
  */
 function saveIdentityWithToken(agentId: string, token: string): boolean {
   try {
-    const dataDir = join(homedir(), '.f2a');
-    const agentsDir = join(dataDir, 'agents');
-    
     // 确保目录存在
-    if (!existsSync(agentsDir)) {
-      mkdirSync(agentsDir, { recursive: true });
+    if (!existsSync(AGENTS_DIR)) {
+      mkdirSync(AGENTS_DIR, { recursive: true });
     }
     
-    const identityFile = join(agentsDir, `${agentId}.json`);
+    const identityFile = join(AGENTS_DIR, `${agentId}.json`);
     
     // 读取现有 identity（如果存在）
     let identity: Record<string, unknown>;
@@ -293,7 +290,7 @@ export async function listAgents(): Promise<void> {
  */
 function getTokenFromIdentity(agentId: string): string | null {
   try {
-    const identityFile = join(homedir(), '.f2a', 'agents', `${agentId}.json`);
+    const identityFile = join(AGENTS_DIR, `${agentId}.json`);
     if (!existsSync(identityFile)) {
       return null;
     }
@@ -332,7 +329,7 @@ export async function unregisterAgent(agentId: string, token?: string): Promise<
 
     if (result.success) {
       // 删除 identity 文件（如果存在）
-      const identityFile = join(homedir(), '.f2a', 'agents', `${agentId}.json`);
+      const identityFile = join(AGENTS_DIR, `${agentId}.json`);
       if (existsSync(identityFile)) {
         try {
           const { unlinkSync } = await import('fs');

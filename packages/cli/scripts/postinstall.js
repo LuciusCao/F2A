@@ -5,9 +5,9 @@
  * 首次安装时显示引导信息
  */
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
 const f2aDir = path.join(os.homedir(), '.f2a');
 const isFirstInstall = !fs.existsSync(f2aDir);

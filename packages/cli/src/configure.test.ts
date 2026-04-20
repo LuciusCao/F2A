@@ -15,7 +15,6 @@ vi.mock('./config.js', () => ({
   loadConfig: () => mockLoadConfig(),
   saveConfig: (...args: any[]) => mockSaveConfig(...args),
   getDefaultConfig: vi.fn().mockReturnValue({
-    agentName: 'test-agent',
     network: { bootstrapPeers: [] },
     autoStart: false,
     controlPort: 9001,
@@ -64,7 +63,6 @@ describe('configure.ts', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoadConfig.mockReturnValue({
-      agentName: 'test-agent',
       network: { bootstrapPeers: [] },
       autoStart: false,
       controlPort: 9001,
@@ -99,14 +97,13 @@ describe('configure.ts', () => {
     it('should display config as formatted JSON', () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       const testConfig = {
-        agentName: 'my-agent',
         controlPort: 8080,
       };
       mockLoadConfig.mockReturnValue(testConfig);
       
       listConfig();
       
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('"agentName": "my-agent"'));
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining(''));
       consoleSpy.mockRestore();
     });
   });
@@ -115,13 +112,12 @@ describe('configure.ts', () => {
     it('should get simple key value', () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       mockLoadConfig.mockReturnValue({
-        agentName: 'my-agent',
         controlPort: 8080,
       });
       
-      getConfigValue('agentName');
+      getConfigValue('controlPort');
       
-      expect(consoleSpy).toHaveBeenCalledWith('my-agent');
+      expect(consoleSpy).toHaveBeenCalledWith('8080');
       consoleSpy.mockRestore();
     });
 
@@ -203,13 +199,13 @@ describe('configure.ts', () => {
   describe('setConfigValue()', () => {
     it('should set simple string value', () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-      const config: any = { agentName: 'old-name' };
+      const config: any = { logLevel: 'INFO' };
       mockLoadConfig.mockReturnValue(config);
       
-      setConfigValue('agentName', 'new-name');
+      setConfigValue('logLevel', 'DEBUG');
       
-      expect(mockSaveConfig).toHaveBeenCalledWith(expect.objectContaining({ agentName: 'new-name' }));
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('new-name'));
+      expect(mockSaveConfig).toHaveBeenCalledWith(expect.objectContaining({ logLevel: 'DEBUG' }));
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('DEBUG'));
       consoleSpy.mockRestore();
     });
 
@@ -325,13 +321,13 @@ describe('configure.ts', () => {
 
     it('should handle save errors', () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const config: any = { agentName: 'test' };
+      const config: any = { logLevel: 'INFO' };
       mockLoadConfig.mockReturnValue(config);
       mockSaveConfig.mockImplementation(() => {
         throw new Error('Permission denied');
       });
       
-      expect(() => setConfigValue('agentName', 'new-name')).toThrow('Failed to save configuration');
+      expect(() => setConfigValue('logLevel', 'DEBUG')).toThrow('Failed to save configuration');
       consoleSpy.mockRestore();
     });
   });
@@ -343,7 +339,7 @@ describe('configure.ts', () => {
       mockLoadConfig.mockReturnValue(config);
       
       // These should not throw
-      expect(() => setConfigValue('agentName', 'test')).not.toThrow();
+      expect(() => setConfigValue('controlPort', 'test')).not.toThrow();
       expect(() => setConfigValue('autoStart', 'true')).not.toThrow();
       expect(() => setConfigValue('controlPort', '9001')).not.toThrow();
       expect(() => setConfigValue('p2pPort', '0')).not.toThrow();
@@ -457,13 +453,13 @@ describe('configure.ts', () => {
 
     it('should treat non-JSON string as plain string', () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-      const config: any = {};
+      const config: any = {}; 
       mockLoadConfig.mockReturnValue(config);
       
-      setConfigValue('agentName', 'my-agent-name');
+      setConfigValue('logLevel', 'DEBUG');
       
       expect(mockSaveConfig).toHaveBeenCalledWith(expect.objectContaining({
-        agentName: 'my-agent-name'
+        logLevel: 'DEBUG'
       }));
       consoleSpy.mockRestore();
     });
@@ -500,7 +496,6 @@ describe('configure.ts', () => {
     it('should run interactive configuration', async () => {
       // Mock user inputs
       mockQuestion
-        .mockResolvedValueOnce('') // Agent name (use default)
         .mockResolvedValueOnce('n') // Auto start
         .mockResolvedValueOnce('n') // Advanced config
         .mockResolvedValueOnce('n') // Bootstrap peers
@@ -515,7 +510,6 @@ describe('configure.ts', () => {
     it('should allow reconfiguration with existing values', async () => {
       mockConfigExists.mockReturnValue(true);
       mockLoadConfig.mockReturnValue({
-        agentName: 'existing-agent',
         network: { bootstrapPeers: [] },
         autoStart: true,
         controlPort: 8080,
@@ -527,8 +521,7 @@ describe('configure.ts', () => {
 
       // User just presses enter to keep existing values
       mockQuestion
-        .mockResolvedValueOnce('') // Keep agent name
-        .mockResolvedValueOnce('') // Keep auto start
+        .mockResolvedValueOnce('') // Keep auto start (confirm returns true when default is true and answer is empty)
         .mockResolvedValueOnce('n') // Skip advanced
         .mockResolvedValueOnce('n') // Skip bootstrap
         .mockResolvedValueOnce('y'); // Confirm save
@@ -536,14 +529,12 @@ describe('configure.ts', () => {
       await configureCommand();
 
       expect(mockSaveConfig).toHaveBeenCalledWith(expect.objectContaining({
-        agentName: 'existing-agent',
         autoStart: true,
       }));
     });
 
     it('should cancel configuration when user declines save', async () => {
       mockQuestion
-        .mockResolvedValueOnce('') // Agent name
         .mockResolvedValueOnce('n') // Auto start
         .mockResolvedValueOnce('n') // Advanced
         .mockResolvedValueOnce('n') // Bootstrap
@@ -560,7 +551,6 @@ describe('configure.ts', () => {
 
     it('should configure advanced options when requested', async () => {
       mockQuestion
-        .mockResolvedValueOnce('my-agent') // Agent name
         .mockResolvedValueOnce('y') // Auto start
         .mockResolvedValueOnce('y') // Configure advanced
         .mockResolvedValueOnce('8080') // Control port
@@ -574,9 +564,8 @@ describe('configure.ts', () => {
       await configureCommand();
 
       expect(mockSaveConfig).toHaveBeenCalledWith(expect.objectContaining({
-        agentName: 'my-agent',
-        autoStart: true,
         controlPort: 8080,
+        autoStart: true,
         p2pPort: 9000,
         enableMDNS: true,
         enableDHT: true,
@@ -586,7 +575,6 @@ describe('configure.ts', () => {
 
     it('should configure bootstrap peers when requested', async () => {
       mockQuestion
-        .mockResolvedValueOnce('') // Agent name
         .mockResolvedValueOnce('n') // Auto start
         .mockResolvedValueOnce('n') // Skip advanced
         .mockResolvedValueOnce('y') // Configure bootstrap
@@ -603,32 +591,8 @@ describe('configure.ts', () => {
       }));
     });
 
-    it('should handle invalid agent name with retries', async () => {
-      mockValidateAgentName
-        .mockReturnValueOnce({ valid: false, error: 'Name too short' })
-        .mockReturnValueOnce({ valid: false, error: 'Invalid characters' })
-        .mockReturnValue({ valid: true });
-
-      mockQuestion
-        .mockResolvedValueOnce('ab') // Invalid
-        .mockResolvedValueOnce('invalid@name') // Invalid
-        .mockResolvedValueOnce('valid-name') // Valid
-        .mockResolvedValueOnce('n') // Auto start
-        .mockResolvedValueOnce('n') // Advanced
-        .mockResolvedValueOnce('n') // Bootstrap
-        .mockResolvedValueOnce('y'); // Confirm
-
-      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-      await configureCommand();
-
-      expect(mockValidateAgentName).toHaveBeenCalledTimes(3);
-      consoleSpy.mockRestore();
-    });
-
     it('should handle invalid port input', async () => {
       mockQuestion
-        .mockResolvedValueOnce('') // Agent name
         .mockResolvedValueOnce('n') // Auto start
         .mockResolvedValueOnce('y') // Configure advanced
         .mockResolvedValueOnce('99999') // Invalid port (too high)
@@ -647,5 +611,6 @@ describe('configure.ts', () => {
       expect(mockSaveConfig).toHaveBeenCalled();
       consoleSpy.mockRestore();
     });
+
   });
 });

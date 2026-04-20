@@ -27,7 +27,7 @@ import type { EncryptedIdentity } from './types.js';
 
 /** Node ID 格式验证正则表达式 (P1-4) */
 const NODE_ID_PATTERN = /^[a-zA-Z0-9-]+$/;
-const NODE_ID_MAX_LENGTH = 64;
+const NODE_ID_MAX_LENGTH = 128; // P2-1: 放宽长度限制以支持完整 peerId (~100+ chars for RSA)
 const NODE_ID_MIN_LENGTH = 1;
 
 /**
@@ -238,7 +238,7 @@ export class NodeIdentityManager extends IdentityManager {
     const peerIdString = this.getPeerIdString();
     if (peerIdString) {
       // P1-4: 验证生成的 nodeId 格式
-      const generatedNodeId = peerIdString.slice(0, 16);
+      const generatedNodeId = peerIdString; // P2-1: nodeId = peerId 完整值（不截断）
       if (!isValidNodeId(generatedNodeId)) {
         throw new Error(`Generated nodeId has invalid format: ${generatedNodeId}`);
       }
@@ -337,7 +337,7 @@ export class NodeIdentityManager extends IdentityManager {
         await this.loadPersistedIdentity(legacyPersisted);
         
         // 构造 Node Identity - P1-4: 验证生成的 nodeId
-        const generatedNodeId = legacyPersisted.peerId.slice(0, 16);
+        const generatedNodeId = legacyPersisted.peerId; // P2-1: nodeId = peerId 完整值（不截断）
         if (!isValidNodeId(generatedNodeId)) {
           return failure(createError(
             'NODE_IDENTITY_CORRUPTED',
@@ -383,7 +383,7 @@ export class NodeIdentityManager extends IdentityManager {
       
       // 设置 Node ID (使用 PeerId 的前 16 个字符)
       // P1-4: 验证生成的 nodeId 格式
-      const generatedNodeId = identity.peerId.slice(0, 16);
+      const generatedNodeId = identity.peerId; // P2-1: nodeId = peerId 完整值（不截断）
       if (!isValidNodeId(generatedNodeId)) {
         return failure(createError(
           'NODE_IDENTITY_CREATE_FAILED',
@@ -464,6 +464,14 @@ export class NodeIdentityManager extends IdentityManager {
    */
   getNodeId(): string | null {
     return this.nodeId;
+  }
+
+  /**
+   * 获取短 Node ID（用于日志显示）
+   * P2-3: 返回 nodeId 前 16 个字符
+   */
+  getShortNodeId(): string {
+    return (this.nodeId || '').slice(0, 16);
   }
 
   /**

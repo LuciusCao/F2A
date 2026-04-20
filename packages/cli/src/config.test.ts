@@ -52,7 +52,6 @@ describe('Config', () => {
     it('should return default config', () => {
       const config = getDefaultConfig();
       
-      expect(config.agentName).toBe('my-agent');
       expect(config.network.bootstrapPeers).toEqual([]);
       expect(config.autoStart).toBe(false);
       expect(config.controlPort).toBe(9001);
@@ -79,16 +78,19 @@ describe('Config', () => {
       
       expect(result.valid).toBe(false);
       expect(result.missing.length).toBeGreaterThan(0);
+      // network and autoStart are required
+      expect(result.missing).toContain('network');
+      expect(result.missing).toContain('autoStart');
     });
 
-    it('should validate agentName length', () => {
+    it('should validate network config', () => {
       const config = {
         ...getDefaultConfig(),
-        agentName: '',
       };
       const result = validateConfig(config);
       
-      expect(result.valid).toBe(false);
+      // getDefaultConfig() returns valid config (no agentName required)
+      expect(result.valid).toBe(true);
     });
 
     it('should reject port below 1024 for controlPort', () => {
@@ -155,12 +157,12 @@ describe('Config', () => {
   describe('saveConfig and loadConfig', () => {
     it('should save and load config correctly', () => {
       const config = getDefaultConfig();
-      config.agentName = 'test-agent';
+      config.controlPort = 9999;
       
       saveConfig(config);
       
       const loaded = loadConfig();
-      expect(loaded.agentName).toBe('test-agent');
+      expect(loaded.controlPort).toBe(9999);
     });
 
     it('should use test directory', () => {
@@ -178,12 +180,12 @@ describe('Config', () => {
       saveConfig(getDefaultConfig());
       
       const updated = updateConfig({
-        agentName: 'new-agent',
         controlPort: 9002,
+        enableDHT: false,
       });
       
-      expect(updated.agentName).toBe('new-agent');
       expect(updated.controlPort).toBe(9002);
+      expect(updated.enableDHT).toBe(false);
       expect(updated.enableMDNS).toBe(true);
     });
 

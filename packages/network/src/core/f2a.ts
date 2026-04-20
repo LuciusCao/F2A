@@ -16,12 +16,9 @@ import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { readFileSync } from 'fs';
 import { P2PNetwork } from './p2p-network.js';
-import { IdentityManager } from './identity/index.js';
 import { NodeIdentityManager } from './identity/node-identity.js';
 import { AgentIdentityManager } from './identity/agent-identity.js';
 import { IdentityDelegator } from './identity/delegator.js';
-import { CapabilityManager } from './capability-manager.js';
-import { SkillExchangeManager } from './skill-exchange-manager.js';
 import { AgentRegistry } from './agent-registry.js';
 import { MessageRouter } from './message-router.js';
 import { MessageService } from './message-service.js';
@@ -30,21 +27,14 @@ import { IdentityService } from './identity-service.js';
 import { CapabilityService } from './capability-service.js';
 import { Logger } from '../utils/logger.js';
 import { Middleware } from '../utils/middleware.js';
-import { getErrorMessage } from '../utils/error-utils.js';
+
 import {
   F2AOptions,
   F2AEvents,
   AgentInfo,
   AgentCapability,
   Result,
-  MessageEvent,
   StructuredMessagePayload,
-  MESSAGE_TOPICS,
-  PeerDiscoveredEvent,
-  PeerConnectedEvent,
-  PeerDisconnectedEvent,
-  NetworkStartedEvent,
-  success,
   failureFromError
 } from '../types/index.js';
 import type { ExportedAgentIdentity, AgentIdentity } from './identity/types.js';
@@ -58,14 +48,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const packageJsonPath = join(__dirname, '../../package.json');
 
-let F2A_VERSION = '0.0.0';
+// Note: Version is read for side effect but not exported (can be added later if needed)
 try {
-  const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
-  F2A_VERSION = packageJson.version || '0.0.0';
+  JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
 } catch {
-  // 如果无法读取 package.json,使用默认值
+  // 如果无法读取 package.json,忽略
 }
-const PROTOCOL_VERSION = 'f2a/1.0';
 
 export interface F2AInstance {
   readonly peerId: string;
@@ -97,14 +85,10 @@ export interface F2AInstance {
 export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   private _agentInfo: AgentInfo;
   private p2pNetwork: P2PNetwork;
-  private options: Required<F2AOptions>;
   private running: boolean = false;
   readonly logger: Logger;  // Phase 4a: 改为 readonly public 供 F2AFactory 使用
   private capabilityService: CapabilityService;
 
-  // Phase 1: 新的身份系统
-  /** @deprecated 使用 nodeIdentityManager 替代 */
-  private identityManager?: IdentityManager;
   // Phase 4a: 改为 public 供 F2AFactory 设置 (internal 使用)
   public nodeIdentityManager?: NodeIdentityManager;
   public agentIdentityManager?: AgentIdentityManager;
@@ -113,9 +97,6 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   public ed25519Signer?: Ed25519Signer;
   /** Phase 2a: 身份服务 */
   public identityService?: IdentityService;
-
-  private capabilityManager?: CapabilityManager;
-  private skillExchangeManager?: SkillExchangeManager;
 
   // Phase 1: Agent Registry 和 Message Router
   // Phase 4a: 改为 public 供 F2AFactory 设置 (internal 使用)
@@ -131,16 +112,11 @@ export class F2A extends EventEmitter<F2AEvents> implements F2AInstance {
   constructor(
     agentInfo: AgentInfo,
     p2pNetwork: P2PNetwork,
-    options: Required<F2AOptions>,
-    identityManager?: IdentityManager,
-    capabilityManager?: CapabilityManager
+    options: Required<F2AOptions>
   ) {
     super();
     this._agentInfo = agentInfo;
     this.p2pNetwork = p2pNetwork;
-    this.options = options;
-    this.identityManager = identityManager;
-    this.capabilityManager = capabilityManager;
 
     // 初始化 logger,默认启用文件日志到 dataDir
     const dataDir = options.dataDir || join(homedir(), '.f2a');

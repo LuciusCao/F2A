@@ -10,7 +10,6 @@ import { Logger } from '../utils/logger.js';
  */
 export class TokenManager {
   private tokenPath: string;
-  private token: string | null = null;
   private logger: Logger;
 
   constructor(dataDir?: string) {
@@ -43,7 +42,6 @@ export class TokenManager {
           'Please set a secure token: export F2A_CONTROL_TOKEN=$(openssl rand -hex 32)'
         );
       }
-      this.token = envToken;
       return envToken;
     }
 
@@ -51,7 +49,6 @@ export class TokenManager {
     if (existsSync(this.tokenPath)) {
       const fileToken = readFileSync(this.tokenPath, 'utf-8').trim();
       if (fileToken) {
-        this.token = fileToken;
         return fileToken;
       }
     }
@@ -59,7 +56,6 @@ export class TokenManager {
     // 3. 生成新的随机 Token
     const newToken = this.generateSecureToken();
     this.saveToken(newToken);
-    this.token = newToken;
 
     this.logger.info('Generated new control token', { path: this.tokenPath });
     this.logger.info('To use a custom token, set F2A_CONTROL_TOKEN environment variable');

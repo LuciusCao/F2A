@@ -167,7 +167,7 @@ export class AgentIdentityVerifier {
     const {
       strictPeerIdMatch = true,
       allowUnknownPeers = false,
-      timeoutMs = 5000
+      timeoutMs: _timeoutMs = 5000
     } = options;
 
     // Step 1: 解析 AgentId

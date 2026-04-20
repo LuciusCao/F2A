@@ -19,11 +19,8 @@ import { circuitRelayTransport, circuitRelayServer } from '@libp2p/circuit-relay
 import { dcutr } from '@libp2p/dcutr';
 import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
-import type { PeerId } from '@libp2p/interface';
-import type { PrivateKey } from '@libp2p/interface';
 import type { Libp2pInit } from 'libp2p';
 import { multiaddr } from '@multiformats/multiaddr';
-import type { Multiaddr } from '@multiformats/multiaddr';
 import { EventEmitter } from 'eventemitter3';
 import { randomUUID } from 'crypto';
 import type { Libp2p } from '@libp2p/interface';
@@ -61,17 +58,6 @@ import { AgentDiscoverer } from './agent-discoverer.js';
 import { EventHandlerSetupService } from './event-handler-setup.js';
 import type { MessageHandlerDeps, KeyExchangeServiceDeps, MessageHandlerEvents } from '../types/p2p-handlers.js';
 
-// DHT 服务类型定义 (保留用于 libp2p services 类型检查)
-interface DHTServiceApi {
-  findPeer(peerId: PeerId): Promise<{ multiaddrs: Multiaddr[] } | null>;
-  routingTable?: { size: number };
-}
-
-interface Libp2pServices {
-  dht?: DHTServiceApi;
-}
-
-// 清理配置
 const PEER_TABLE_CLEANUP_INTERVAL = 5 * 60 * 1000; // 5分钟
 
 export interface P2PNetworkEvents {
@@ -616,7 +602,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
       }
 
       // 清理待处理任务
-      for (const [taskId, { timeout, resolve }] of this.pendingTasks) {
+      for (const [_taskId, { timeout, resolve }] of this.pendingTasks) {
         clearTimeout(timeout);
         resolve({ success: false, error: 'Network stopped' });
       }

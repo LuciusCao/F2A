@@ -5,7 +5,7 @@
 
 import Database from 'better-sqlite3';
 import { mkdir } from 'fs/promises';
-import { dirname, join } from 'path';
+import { dirname } from 'path';
 import { Logger } from '../utils/logger.js';
 
 // ============================================================================

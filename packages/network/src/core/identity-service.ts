@@ -35,14 +35,12 @@ export class IdentityService {
   private agentIdentityManager?: AgentIdentityManager;
   private identityDelegator?: IdentityDelegator;
   private ed25519Signer?: Ed25519Signer;
-  private logger: Logger;
 
   constructor(options: IdentityServiceOptions) {
     this.nodeIdentityManager = options.nodeIdentityManager;
     this.agentIdentityManager = options.agentIdentityManager;
     this.identityDelegator = options.identityDelegator;
     this.ed25519Signer = options.ed25519Signer;
-    this.logger = options.logger;
   }
 
   /**

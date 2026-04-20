@@ -10,7 +10,6 @@ import type { Multiaddr } from '@multiformats/multiaddr';
 import type { AgentInfo, F2AMessage, DiscoverPayload, StructuredMessagePayload } from '../types/index.js';
 import { MESSAGE_TOPICS } from '../types/index.js';
 import type { AgentDiscovererDeps } from '../types/p2p-handlers.js';
-import type { PeerDiscoveredEvent } from '../types/index.js';
 import { getErrorMessage } from '../utils/error-utils.js';
 
 /**

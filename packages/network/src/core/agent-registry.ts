@@ -21,9 +21,7 @@ import {
   parseAgentId,
   isNewFormat,
   isOldFormat,
-  isValidAgentIdFormat,
-  validateAgentId,
-  computeFingerprint
+  validateAgentId
 } from './identity/agent-id.js';
 
 /** Agent Registry 持久化文件名 */

@@ -5,13 +5,11 @@
  * 使用依赖注入模式，便于测试和维护
  */
 
-import type { Libp2p } from '@libp2p/interface';
 import type { Multiaddr } from '@multiformats/multiaddr';
 import type { PeerId } from '@libp2p/interface';
 import type { AgentInfo, F2AMessage } from '../types/index.js';
 import type {
   EventHandlerSetupDeps,
-  MessageHandlerLike,
   BoundEventHandlers
 } from '../types/p2p-handlers.js';
 import { getErrorMessage } from '../utils/error-utils.js';

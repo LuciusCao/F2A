@@ -20,7 +20,6 @@ import type {
   ExportedIdentity
 } from './types.js';
 import { DEFAULT_DATA_DIR, IDENTITY_FILE, isEncryptedIdentity } from './types.js';
-import type { EncryptedIdentity } from './types.js';
 import { isValidBase64, secureWipe } from '../../utils/crypto-utils.js';
 
 /**

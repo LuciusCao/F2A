@@ -12,7 +12,7 @@
 
 import { randomBytes } from 'crypto';
 import { AgentIdentityKeypair } from './agent-keypair.js';
-import { computeFingerprint, validateAgentId } from './agent-id.js';
+import { validateAgentId } from './agent-id.js';
 import { Logger } from '../../utils/logger.js';
 
 const logger = new Logger({ component: 'ChallengeResponse' });

@@ -503,7 +503,7 @@ export class ReputationManager implements Disposable, IReputationManager {
   private applyDecay(): void {
     const decayFactor = 1 - this.config.decayRate;
     
-    for (const [peerId, entry] of this.entries) {
+    for (const [_peerId, entry] of this.entries) {
       // 不衰减初始分数以下的值
       if (entry.score > this.config.initialScore) {
         const newScore = entry.score * decayFactor;

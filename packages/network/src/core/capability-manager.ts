@@ -19,7 +19,6 @@ import type {
   ComputationMetrics,
   StorageMetrics,
   NetworkMetrics,
-  SkillTag,
   ReputationMetrics,
 } from '../types/capability-quant.js';
 import type { AgentCapability } from '../types/index.js';
@@ -27,15 +26,10 @@ import type { AgentCapability } from '../types/index.js';
 import { DEFAULT_CAPABILITY_WEIGHTS, DEFAULT_UPDATE_STRATEGY } from '../types/capability-quant.js';
 
 import {
-  scoreComputation,
-  scoreStorage,
-  scoreNetwork,
   scoreSkills,
   scoreReputation,
   calculateOverallScore,
-  generateCapabilityVector,
   calculateCapabilityScore,
-  applyDecay,
   decaySkillProficiency,
 } from '../utils/capability-scorer.js';
 
@@ -348,7 +342,7 @@ export class CapabilityManager extends EventEmitter<CapabilityManagerEvents> {
    * @param excludePeerIds 排除的节点 ID 列表
    * @returns 最佳节点 ID，如果没有可用节点返回 null
    */
-  selectBestPeer(requiredCapability?: string, excludePeerIds: string[] = []): string | null {
+  selectBestPeer(_requiredCapability?: string, excludePeerIds: string[] = []): string | null {
     const candidates = this.getAllPeerCapabilities()
       .filter(quant => !excludePeerIds.includes(quant.peerId))
       .filter(quant => !this.isOverloaded(quant.peerId));

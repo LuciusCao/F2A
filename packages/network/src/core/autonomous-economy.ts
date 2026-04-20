@@ -104,19 +104,17 @@ const DEFAULT_ECONOMY_CONFIG: EconomyConfig = {
 export class AutonomousEconomy {
   private config: EconomyConfig;
   private reputationManager: ReputationManager;
-  private reviewCommittee: ReviewCommittee;
   private taskQueue: PriorityQueueItem[] = [];
   private pendingTasks: Map<string, PriorityQueueItem> = new Map();
   private logger: Logger;
 
   constructor(
     reputationManager: ReputationManager,
-    reviewCommittee: ReviewCommittee,
+    _reviewCommittee: ReviewCommittee,
     config: Partial<EconomyConfig> = {}
   ) {
     this.config = { ...DEFAULT_ECONOMY_CONFIG, ...config };
     this.reputationManager = reputationManager;
-    this.reviewCommittee = reviewCommittee;
     this.logger = new Logger({ component: 'AutonomousEconomy' });
   }
 
@@ -308,8 +306,8 @@ export class AutonomousEconomy {
    * 从评审结果计算奖励
    */
   calculateRewardFromReview(
-    task: TaskRequest,
-    executorId: string,
+    _task: TaskRequest,
+    _executorId: string,
     reviewResult: ReviewResult
   ): TaskReward {
     const { finalWorkload, finalValue } = reviewResult;

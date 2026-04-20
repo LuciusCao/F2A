@@ -12,7 +12,6 @@
 
 import { EventEmitter } from 'eventemitter3';
 import { AsyncLock } from '../utils/async-lock.js';
-import { Logger } from '../utils/logger.js';
 import type { PeerInfo, AgentInfo } from '../types/index.js';
 
 export interface PeerManagerEvents {
@@ -28,11 +27,9 @@ export class PeerManager extends EventEmitter<PeerManagerEvents> {
   private connectedPeers: Set<string> = new Set();
   private trustedPeers: Set<string> = new Set();
   private lock = new AsyncLock();
-  private logger: Logger;
 
   constructor(trustedPeers?: string[]) {
     super();
-    this.logger = new Logger({ component: 'PeerManager' });
     if (trustedPeers) {
       trustedPeers.forEach(p => this.trustedPeers.add(p));
     }

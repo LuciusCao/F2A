@@ -90,8 +90,6 @@ export class NATTraversalManager extends EventEmitter<NATTraversalEvents> {
   private libp2p: Libp2p;
   private config: NATTraversalConfig;
   private status: NATTraversalStatus;
-  private autonatService: any = null;
-  private relayService: any = null;
   private dcutrService: any = null;
 
   constructor(libp2p: Libp2p, config: Partial<NATTraversalConfig> = {}) {
@@ -145,7 +143,6 @@ export class NATTraversalManager extends EventEmitter<NATTraversalEvents> {
       // 这里我们检查是否可用
       const services = (this.libp2p as any).services;
       if (services?.autonat) {
-        this.autonatService = services.autonat;
         logger.info('AutoNAT service available');
       } else {
         logger.warn('AutoNAT service not configured in libp2p');
@@ -162,7 +159,6 @@ export class NATTraversalManager extends EventEmitter<NATTraversalEvents> {
     try {
       const services = (this.libp2p as any).services;
       if (services?.relay) {
-        this.relayService = services.relay;
         logger.info('Circuit Relay client available');
       } else {
         logger.warn('Circuit Relay service not configured in libp2p');

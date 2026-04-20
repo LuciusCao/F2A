@@ -4,7 +4,7 @@
  */
 
 import { Logger } from '../utils/logger.js';
-import type { IReputationManager, ReputationEntry } from './reputation.js';
+import type { IReputationManager } from './reputation.js';
 
 // ============================================================================
 // 类型定义

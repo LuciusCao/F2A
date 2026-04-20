@@ -18,8 +18,7 @@ import { MESSAGE_TOPICS as MSG_TOPICS } from '../types/index.js';
 import type {
   MessageHandlerDeps,
   DecryptResult,
-  SenderVerificationResult,
-  MessageHandlerEvents
+  SenderVerificationResult
 } from '../types/p2p-handlers.js';
 import type { EncryptedMessage } from './e2ee-crypto.js';
 import { validateF2AMessage, validateStructuredMessagePayload } from '../utils/validation.js';

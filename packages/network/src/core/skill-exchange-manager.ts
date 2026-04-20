@@ -30,20 +30,19 @@ export class SkillExchangeManager extends EventEmitter<SkillExchangeEvents> {
   private localSkills: Map<string, { definition: SkillDefinition; handler: SkillHandler }> = new Map();
   private remoteSkills: Map<string, RemoteSkill[]> = new Map();
   private stats = { totalInvokes: 0, successfulInvokes: 0, failedInvokes: 0, totalExecutionTimeMs: 0 };
-  private sendFn?: (peerId: string, message: F2AMessage) => Promise<void>;
+  // 预留：未来功能 - 消息发送回调
   private broadcastFn?: (message: F2AMessage) => Promise<void>;
   private announceTimer?: ReturnType<typeof setInterval>;
 
   constructor(
     peerId: string,
     config: Partial<SkillExchangeConfig> = {},
-    sendFn?: (peerId: string, message: F2AMessage) => Promise<void>,
+    _sendFn?: (peerId: string, message: F2AMessage) => Promise<void>,
     broadcastFn?: (message: F2AMessage) => Promise<void>
   ) {
     super();
     this.peerId = peerId;
     this.config = { ...DEFAULT_SKILL_EXCHANGE_CONFIG, ...config } as Required<SkillExchangeConfig>;
-    this.sendFn = sendFn;
     this.broadcastFn = broadcastFn;
     this.logger = new Logger({ component: 'SkillExchange' });
   }

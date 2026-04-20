@@ -8,19 +8,15 @@
  * - 支持 Agent 迁移（重新签名）
  */
 
-import { privateKeyFromProtobuf } from '@libp2p/crypto/keys';
-import type { PrivateKey } from '@libp2p/interface';
 import { Logger } from '../../utils/logger.js';
 import { success, failure, failureFromError, Result } from '../../types/index.js';
-import { secureWipe } from '../../utils/crypto-utils.js';
 import { NodeIdentityManager, isValidNodeId } from './node-identity.js';
 import { AgentIdentityManager } from './agent-identity.js';
 import type {
   AgentIdentity,
   DelegationResult,
   MigrationResult,
-  AgentIdentityOptions,
-  AgentSignaturePayload
+  AgentIdentityOptions
 } from './types.js';
 
 /**
@@ -263,7 +259,7 @@ export class IdentityDelegator {
    */
   async migrateAgent(
     agentIdentity: AgentIdentity,
-    agentPrivateKey: string,
+    _agentPrivateKey: string,
     proofOfOwnership: Uint8Array,
     challenge: string,
     newNodeId: string,

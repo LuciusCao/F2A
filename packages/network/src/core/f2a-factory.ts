@@ -8,19 +8,15 @@
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync } from 'fs';
-import { homedir } from 'os';
 import { P2PNetwork } from './p2p-network.js';
 import { NodeIdentityManager } from './identity/node-identity.js';
 import { AgentIdentityManager } from './identity/agent-identity.js';
 import { IdentityDelegator } from './identity/delegator.js';
-import { CapabilityManager } from './capability-manager.js';
 import { AgentRegistry } from './agent-registry.js';
 import { MessageRouter } from './message-router.js';
 import { MessageService } from './message-service.js';
 import { Ed25519Signer } from './identity/ed25519-signer.js';
 import { IdentityService } from './identity-service.js';
-import { CapabilityService } from './capability-service.js';
-import { Logger } from '../utils/logger.js';
 import {
   F2AOptions,
   AgentInfo,
@@ -187,14 +183,8 @@ export class F2AFactory {
       // NodeIdentityManager 继承自 IdentityManager,可以直接使用
       p2pNetwork.setIdentityManager(nodeIdentityManager);
 
-      // 创建 CapabilityManager(智能调度)
-      const capabilityManager = new CapabilityManager({
-        peerId: nodePeerId,
-        baseCapabilities: [],
-      });
-
       // 创建实例
-      const f2a = new F2A(agentInfo, p2pNetwork, mergedOptions, nodeIdentityManager, capabilityManager);
+      const f2a = new F2A(agentInfo, p2pNetwork, mergedOptions);
 
       // Phase 1: 设置新的身份管理组件
       f2a.nodeIdentityManager = nodeIdentityManager;

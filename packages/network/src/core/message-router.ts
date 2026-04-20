@@ -15,10 +15,10 @@ import { EventEmitter } from 'eventemitter3';
 import { Logger } from '../utils/logger.js';
 import type { AgentRegistration } from './agent-registry.js';
 import type { P2PNetwork } from './p2p-network.js';
-import type { Result, StructuredMessagePayload, MESSAGE_TOPICS } from '../types/index.js';
+import type { Result, StructuredMessagePayload } from '../types/index.js';
 import { success, failureFromError } from '../types/result.js';
 import { QueueManager, MessageQueue } from './queue-manager.js';
-import { WebhookPusher, AgentWebhookPayload } from './webhook-pusher.js';
+import { WebhookPusher } from './webhook-pusher.js';
 
 /**
  * MessageRouter 事件类型

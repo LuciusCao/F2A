@@ -6,7 +6,6 @@
  */
 
 import { multiaddr } from '@multiformats/multiaddr';
-import type { Multiaddr } from '@multiformats/multiaddr';
 import type { PeerInfo, AgentInfo } from '../types/index.js';
 import { AsyncLock } from './async-lock.js';
 import { Logger } from './logger.js';

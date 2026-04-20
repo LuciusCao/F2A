@@ -10,19 +10,17 @@ import type {
   F2AMessage,
   DiscoverPayload,
   CapabilityQueryPayload,
-  CapabilityResponsePayload,
   TaskResponsePayload,
   MessagePayload,
   AgentInfo
 } from '../types/index.js';
-import { E2EECrypto, EncryptedMessage } from '../core/e2ee-crypto.js';
+import { E2EECrypto } from '../core/e2ee-crypto.js';
 import { Logger } from './logger.js';
-import { validateF2AMessage, validateTaskResponsePayload } from './validation.js';
+import { validateF2AMessage } from './validation.js';
 import { RateLimiter } from './rate-limiter.js';
-import { MiddlewareManager, Middleware, type MiddlewareContext, type MiddlewareResult } from './middleware.js';
-import { getErrorMessage } from './error-utils.js';
+import { MiddlewareManager, Middleware, type MiddlewareResult } from './middleware.js';
 import type { PeerTableManager } from './peer-table-manager.js';
-import { isEncryptedMessage, EncryptedF2AMessage } from '../common/type-guards.js';
+import { isEncryptedMessage } from '../common/type-guards.js';
 
 // F2A 协议标识
 export const F2A_PROTOCOL = '/f2a/1.0.0';
@@ -36,7 +34,7 @@ export interface DecryptResult {
 /**
  * 消息处理上下文（重导出 middleware 类型以兼容）
  */
-export type { MiddlewareContext, MiddlewareResult } from './middleware.js';
+export type { MiddlewareResult } from './middleware.js';
 
 /**
  * 消息处理器接口
@@ -386,52 +384,6 @@ export class MessageDispatcher {
     
     if (this.callbacks.onDiscover) {
       await this.callbacks.onDiscover(payload.agentInfo, peerId, shouldRespond);
-    }
-  }
-
-  /**
-   * @deprecated 已废弃。CAPABILITY_QUERY/RESPONSE/TASK_RESPONSE 类型已移除
-   * 现在使用 MESSAGE 类型 + topic 字段区分
-   */
-  private async _handleCapabilityQueryMessage(message: F2AMessage, peerId: string): Promise<void> {
-    const payload = message.payload as CapabilityQueryPayload;
-    
-    if (this.callbacks.onCapabilityQuery) {
-      await this.callbacks.onCapabilityQuery(payload, peerId);
-    }
-  }
-
-  /**
-   * @deprecated 已废弃。CAPABILITY_QUERY/RESPONSE/TASK_RESPONSE 类型已移除
-   */
-  private async _handleCapabilityResponseMessage(message: F2AMessage, peerId: string): Promise<void> {
-    // 注意: CapabilityResponsePayload.agentInfo 已不存在
-    // 使用 MESSAGE + MESSAGE_TOPICS.CAPABILITY_RESPONSE 替代
-    const payload = message.payload as { agentInfo?: AgentInfo };
-    
-    if (this.callbacks.onCapabilityResponse && payload.agentInfo) {
-      await this.callbacks.onCapabilityResponse(payload.agentInfo, peerId);
-    } else if (this.peerTableManager && payload.agentInfo) {
-      await this.peerTableManager.upsertPeerFromAgentInfo(payload.agentInfo, peerId);
-    }
-  }
-
-  /**
-   * @deprecated 已废弃。CAPABILITY_QUERY/RESPONSE/TASK_RESPONSE 类型已移除
-   */
-  private async _handleTaskResponseMessage(message: F2AMessage): Promise<void> {
-    const payloadValidation = validateTaskResponsePayload(message.payload);
-    if (!payloadValidation.success) {
-      this.logger.warn('Invalid task response payload', {
-        errors: payloadValidation.error.errors
-      });
-      return;
-    }
-    
-    const payload = message.payload as TaskResponsePayload;
-    
-    if (this.callbacks.onTaskResponse) {
-      this.callbacks.onTaskResponse(payload);
     }
   }
 

@@ -8,10 +8,8 @@ import type {
   AgentRegistration, 
   AgentRegistrationRequest, 
   RFC008AgentRegistrationRequest,
-  AgentWebhook,
-  MessageCallback
+  AgentWebhook
 } from '../core/agent-registry.js';
-import type { AgentCapability } from '../types/index.js';
 import type { Result } from '../types/result.js';
 import type { RoutableMessage, MessageQueue } from '../core/message-router.js';
 
@@ -109,10 +107,8 @@ export type {
   AgentRegistration, 
   AgentRegistrationRequest, 
   RFC008AgentRegistrationRequest,
-  AgentWebhook,
-  MessageCallback
+  AgentWebhook
 } from '../core/agent-registry.js';
 
-export type { AgentCapability } from '../types/index.js';
 export type { RoutableMessage, MessageQueue } from '../core/message-router.js';
 export type { Result } from '../types/result.js';

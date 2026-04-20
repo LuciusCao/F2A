@@ -129,6 +129,64 @@ export interface IMessageRouter {
    - 让 MessageHandler/MessageSender 实现 IAgentRegistry/IMessageRouter
    - 在测试中使用接口 mock
 
-3. **持续监控代码规模**
+### 持续监控代码规模
    - 新模块保持 < 600 行
    - 定期 review 是否需要继续拆分
+
+---
+
+## 2026-04-20 Review 发现的问题
+
+### P0 - 已决定不处理
+
+**e2ee-crypto.ts 1009 行** - 超过 600 行阈值
+
+- 只有一个类 `E2EECrypto`，但包含大量加密逻辑
+- **决定 (2026-04-20)**: 保持现状，不拆分
+- 理由：
+  - 7 个内部状态（keyPair, peerPublicKeys, sharedSecrets, pendingChallenges, keyConfirmed, usedIVs, pendingPublicKeys）紧密耦合
+  - 拆分会导致状态同步复杂、依赖注入链过长
+  - 文件虽然长，但职责清晰（密钥管理、加密解密、挑战确认、签名验证）
+- 后续：观察实际使用情况，如果新增功能导致继续膨胀再考虑拆分
+
+### P1 - 已完成
+
+**40+ 处未使用的导入/变量** - ✅ 2026-04-20 已清理
+
+| 文件 | 清理数量 | 操作 |
+|------|-----------|------|
+| f2a.ts | 12 处 | 删除未使用成员变量、导入 |
+| capability-manager.ts | 7 处 | 删除未使用导入、参数加 `_` |
+| autonomous-economy.ts | 3 处 | 删除未使用成员变量 |
+| discovery-service.ts | 3 处 | 删除未使用导入、参数加 `_` |
+| f2a-factory.ts | 4 处 | 删除未使用导入 |
+| agent-registry.ts | 2 处 | 删除未使用导入 |
+| 其他文件 | ~20 处 | 删除未使用导入、参数加 `_` |
+
+验证：`npx tsc --noEmit --noUnusedLocals --noUnusedParameters` → 0 errors
+
+**17 处 @deprecated 标记** - 需决定是否清理
+
+| 文件 | 数量 | 说明 |
+|------|------|------|
+| types/index.ts | 5 | 废弃的消息类型 |
+| utils/validation.ts | 4 | 废弃的验证函数 |
+| utils/message-dispatcher.ts | 3 | 废弃的消息处理器 |
+| utils/signature.ts | 1 | 废弃的方法 |
+| core/agent-registry.ts | 1 | 废弃的注册方法 |
+| core/f2a.ts | 3 | 废弃的属性/方法 |
+
+### P2 - 可以稍后
+
+**其他大文件 (接近/超过 600 行)**
+
+| 文件 | 行数 | 备注 |
+|------|------|------|
+| agent-registry.ts | 986 | 核心模块，可观察 |
+| reputation.ts | 930 | 信誉系统 (RFC-001 已搁置) |
+| message-router.ts | 835 | 已改进过 |
+| capability-manager.ts | 698 | 能力管理 |
+
+### P3 - 其他
+
+**openclaw-f2a eslint 缺失** - lint 脚本运行失败

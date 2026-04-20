@@ -13,7 +13,7 @@ import { EventEmitter } from 'eventemitter3';
 import { PeerManager } from './peer-manager.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { Logger } from '../utils/logger.js';
-import type { AgentInfo, F2AMessage, DiscoverPayload, PeerInfo } from '../types/index.js';
+import type { AgentInfo, F2AMessage, DiscoverPayload } from '../types/index.js';
 import { randomUUID } from 'crypto';
 
 export interface DiscoveryServiceEvents {
@@ -66,7 +66,7 @@ export class DiscoveryService extends EventEmitter<DiscoveryServiceEvents> {
    */
   stop(): void {
     // 清理所有待处理的发现请求
-    for (const [id, pending] of this.pendingDiscoveries) {
+    for (const [_id, pending] of this.pendingDiscoveries) {
       clearTimeout(pending.timeout);
       pending.resolve([]);
     }
@@ -131,7 +131,7 @@ export class DiscoveryService extends EventEmitter<DiscoveryServiceEvents> {
   /**
    * 创建发现消息
    */
-  private createDiscoverMessage(capability?: string): F2AMessage {
+  private createDiscoverMessage(_capability?: string): F2AMessage {
     return {
       id: randomUUID(),
       type: 'DISCOVER',

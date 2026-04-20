@@ -3,9 +3,9 @@
  * Phase 3: 链式签名、邀请制、挑战机制
  */
 
-import { createHash, createSign, createVerify, randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { Logger } from '../utils/logger.js';
-import { ReputationEntry, ReputationManager } from './reputation.js';
+import { ReputationManager } from './reputation.js';
 
 // ============================================================================
 // 类型定义
@@ -544,7 +544,6 @@ export class ChallengeManager {
 
     // 3. 分数操纵检测
     if (challenge.reason === 'score_manipulation') {
-      const chain = this.chainManager.getEventChain(targetId);
       const calculatedScore = this.chainManager.calculateScoreFromChain(targetId);
       const claimedScore = this.reputationManager.getReputation(targetId).score;
       

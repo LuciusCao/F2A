@@ -247,7 +247,14 @@ export async function listAgents(): Promise<void> {
   try {
     const result = await sendRequest('GET', '/api/v1/agents');
 
-    if (result.success && result.agents) {
+    if (!result.success) {
+      console.error(`❌ 获取 Agent 列表失败：${result.error}`);
+      console.error('请确保 Daemon 正在运行：f2a daemon start');
+      process.exit(1);
+      return;
+    }
+
+    if (result.agents) {
       const agents = result.agents as any[];
 
       if (agents.length === 0) {
@@ -274,8 +281,6 @@ export async function listAgents(): Promise<void> {
         console.log(`   Last Active: ${lastActive}`);
         console.log('');
       }
-    } else {
-      console.log('📭 没有已注册的 Agent');
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

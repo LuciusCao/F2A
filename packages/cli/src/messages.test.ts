@@ -55,6 +55,8 @@ describe('CLI Messages Commands', () => {
     on: vi.fn(),
     write: vi.fn(),
     end: vi.fn(),
+    setTimeout: vi.fn(),
+    destroy: vi.fn(),
   };
 
   const mockResponse = {
@@ -518,28 +520,16 @@ describe('CLI Messages Commands', () => {
         consoleSpy.mockRestore();
       });
 
-      it('should use default agentId when not specified', async () => {
-        const responseData = { success: true, messages: [] };
-
-        mockResponse.on.mockImplementation((event: string, callback: Function) => {
-          if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
-          if (event === 'end') callback();
-        });
-
-        (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
-          callback(mockResponse);
-          return mockRequest;
-        });
-
-        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
+      it('should require agentId when not specified', async () => {
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        
         await getMessages({});
 
-        // 默认使用 'default' agentId
-        const requestCall = (request as any).mock.calls[0][0];
-        expect(requestCall.path).toContain('/api/v1/messages/default');
-
-        consoleSpy.mockRestore();
+        // 修复后：不传 agentId 时报错
+        expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('缺少 --agent'));
+        expect(process.exit).toHaveBeenCalledWith(1);
+        
+        consoleErrorSpy.mockRestore();
       });
 
       it('should display message metadata correctly (type, from, to)', async () => {

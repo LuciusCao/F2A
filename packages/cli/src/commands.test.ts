@@ -20,6 +20,8 @@ describe('CLI Commands', () => {
     on: vi.fn(),
     write: vi.fn(),
     end: vi.fn(),
+    setTimeout: vi.fn(),
+    destroy: vi.fn(),
   };
 
   const mockResponse = {

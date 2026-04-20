@@ -32,6 +32,8 @@ describe('CLI Agent Commands', () => {
     on: vi.fn(),
     write: vi.fn(),
     end: vi.fn(),
+    setTimeout: vi.fn(),
+    destroy: vi.fn(),
   };
 
   const mockResponse = {
@@ -176,14 +178,15 @@ describe('CLI Agent Commands', () => {
           webhook: 'http://example.com/webhook'
         });
 
-        // 验证请求 body 包含 capabilities 和 webhookUrl
+        // 验证请求 body 包含 capabilities 和 webhook
         const writeCall = mockRequest.write.mock.calls[0]?.[0];
         if (writeCall) {
           const body = JSON.parse(writeCall);
           expect(body.capabilities).toBeDefined();
           expect(body.capabilities.length).toBe(2);
           expect(body.capabilities[0].name).toBe('chat');
-          expect(body.webhookUrl).toBe('http://example.com/webhook');
+          expect(body.webhook).toBeDefined();
+          expect(body.webhook.url).toBe('http://example.com/webhook');
         }
 
         // 验证输出显示 capabilities 和 webhook

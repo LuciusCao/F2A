@@ -1,6 +1,6 @@
 {
   "name": "@f2a/cli",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "F2A CLI - Command line tools for Friend-to-Agent P2P networking",
   "type": "module",
   "bin": {

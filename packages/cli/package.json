@@ -1,6 +1,6 @@
 {
   "name": "@f2a/cli",
-  "version": "0.8.5",
+  "version": "0.8.6",
   "description": "F2A CLI - Command line tools for Friend-to-Agent P2P networking",
   "type": "module",
   "bin": {
@@ -11,8 +11,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "lint": "tsc --noEmit",
-    "clean": "rm -rf dist .tsbuildinfo",
-    "postinstall": "node scripts/postinstall.js"
+    "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
     "@f2a/network": "*",

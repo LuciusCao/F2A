@@ -36,9 +36,9 @@
 
 **目标: 100% 测试覆盖率**
 
-**当前状态: 76.3%**
-- 测试文件: 40 passed, 1 skipped
-- 测试用例: 1010 passed, 23 skipped
+**当前状态: 78.5%** (从 76.3% 提升)
+- 测试文件: 42 passed, 1 skipped (增加 2 个新测试文件)
+- 测试用例: 1094 passed, 23 skipped (增加 84 个新测试用例)
 
 ### Phase 1: 0% 覆盖率文件（新建测试）
 
@@ -53,42 +53,47 @@
 | `src/utils/message-dispatcher.ts` | 440 | 0% | ⏸️ 搁置 | - | Mock 复杂度过高，需重新设计测试策略 |
 | `src/utils/benchmark.ts` | 237 | 0% | ⏭️ 可选 | - | 低优先级，非核心功能 |
 
-#### 1.1 message-dispatcher.ts 测试计划
+#### 1.1 middleware.ts 测试（已完成）
 
-**测试重点:**
-- `handleMessage()` - 消息处理主流程
-- `handleEncryptedMessage()` - 加密消息处理
-- `verifySenderIdentity()` - 发送方身份验证
-- `handleDiscoverMessage()` - DISCOVER 消息处理
-- `handleDecryptFailedMessage()` - 解密失败处理
-- 速率限制器测试
+**实际完成: 33 个测试用例**
 
-**测试用例估算: 25-30 个**
+测试覆盖:
+- ✅ `MiddlewareManager.use()` / `remove()` / `list()` / `clear()` - 管理方法
+- ✅ `MiddlewareManager.execute()` - 执行链（essential/optional、顺序、异常）
+- ✅ `createMessageSizeLimitMiddleware()` - 大小限制中间件
+- ✅ `createMessageTypeFilterMiddleware()` - 类型过滤中间件
+- ✅ `createMessageLoggingMiddleware()` - 日志中间件
+- ✅ `createMessageTransformMiddleware()` - 转换中间件
+- ✅ essential 中间件异常处理
+- ✅ 性能统计功能
 
-#### 1.2 peer-table-manager.ts 测试计划
+#### 1.2 peer-table-manager.ts 测试（已完成）
 
-**测试重点:**
-- `upsertPeer()` / `updatePeer()` - 原子操作
-- `cleanupStalePeers()` - 常规清理逻辑
-- `cleanupStalePeersLocked()` - 激进清理逻辑
-- `markConnected()` / `markDisconnected()` - 连接状态管理
-- 信任白名单功能
-- 高水位线检测
+**实际完成: 51 个测试用例**
 
-**测试用例估算: 20-25 个**
+测试覆盖:
+- ✅ `upsertPeer()` / `updatePeer()` - 原子操作
+- ✅ `cleanupStalePeers()` - 常规清理逻辑
+- ✅ `cleanupStalePeersLocked()` - 激进清理逻辑
+- ✅ `markConnected()` / `markDisconnected()` - 连接状态管理
+- ✅ 信任白名单功能
+- ✅ 高水位线检测
+- ✅ 并发安全测试（锁机制）
+- ✅ PeerInfo 查询方法
 
-#### 1.3 middleware.ts 测试计划
+#### 1.3 message-dispatcher.ts 测试（搁置）
 
-**测试重点:**
-- `MiddlewareManager.use()` / `remove()` / `list()` - 管理方法
-- `MiddlewareManager.execute()` - 执行链
-- `createMessageSizeLimitMiddleware()` - 大小限制中间件
-- `createMessageTypeFilterMiddleware()` - 类型过滤中间件
-- `createMessageLoggingMiddleware()` - 日志中间件
-- `createMessageTransformMiddleware()` - 转换中间件
-- essential/optional 中间件异常处理
+**搁置原因:**
+1. **Mock 复杂度过高** - 依赖 E2EECrypto, PeerTableManager, Logger 等多个模块
+2. **类型匹配困难** - `F2AMessageType` 类型定义复杂，加密消息格式需要精确匹配
+3. **测试超时** - 初版测试文件导致测试运行超时
 
-**测试用例估算: 15-20 个**
+**建议的解决方案:**
+- 创建专门的测试工具类封装 mock 设置
+- 使用集成测试方式，而非纯单元测试
+- 或等待其他模块测试稳定后再处理
+
+**估算测试用例: 25-30 个**
 
 ---
 
@@ -191,7 +196,7 @@
 ### 实施顺序
 
 ```
-Phase 1 (P0): message-dispatcher → peer-table-manager → middleware
+Phase 1 (P0): ✅ middleware → ✅ peer-table-manager → ⏸️ message-dispatcher (搁置)
 Phase 2 (P1): webhook → message-router → challenge → agent-registry → queue-manager → webhook-pusher
 Phase 3 (P2): e2ee-crypto → delegator → event-handler-setup → p2p-network → message-handler → logger
 Phase 4 (P3): 维持现有覆盖率
@@ -199,17 +204,17 @@ Phase 4 (P3): 维持现有覆盖率
 
 ### 验收标准
 
-- 所有 Phase 1 文件达到 95%+ 覆盖率
+- 所有 Phase 1 文件达到 95%+ 覆盖率 (当前: 2/3 完成)
 - 所有 Phase 2 文件达到 90%+ 覆盖率
 - 总体覆盖率达到 95%+（Phase 3 完成后达到 100%）
 
 ### 工作量估算
 
-| Phase | 测试文件数 | 测试用例数 | 预估时间 |
-|-------|-----------|-----------|----------|
-| Phase 1 | 3-4 | 60-75 | 2-3 天 |
-| Phase 2 | 6 | 48-66 | 1-2 天 |
-| Phase 3 | 6 | 20-30 | 0.5-1 天 |
+| Phase | 测试文件数 | 测试用例数 | 预估时间 | 实际完成 |
+|-------|-----------|-----------|----------|----------|
+| Phase 1 | 3-4 | 60-75 | 2-3 天 | 84 用例，2 文件完成 |
+| Phase 2 | 6 | 48-66 | 1-2 天 | - |
+| Phase 3 | 6 | 20-30 | 0.5-1 天 | - |
 
 **总计: 4-6 天工作量**
 

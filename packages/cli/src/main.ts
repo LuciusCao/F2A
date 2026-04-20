@@ -530,7 +530,7 @@ async function handleStatus(): Promise<void> {
       console.log('=== F2A 系统状态 ===');
       console.log('');
       const peerId = result.peerId as string | undefined;
-      console.log(`Peer ID: ${peerId?.slice(0, 16) || 'N/A'}...`);
+      console.log(`Node ID: ${peerId?.slice(0, 16) || 'N/A'}...`);
       if (result.multiaddrs) {
         console.log(`Multiaddrs: ${(result.multiaddrs as string[]).join(', ')}`);
       }
@@ -609,7 +609,7 @@ async function handleHealth(): Promise<void> {
     if (result.success) {
       console.log('✅ Daemon 健康');
       const peerId = result.peerId as string | undefined;
-      console.log(`   Peer ID: ${peerId?.slice(0, 16) || 'N/A'}...`);
+      console.log(`   Node ID: ${peerId?.slice(0, 16) || 'N/A'}...`);
     } else {
       console.log('❌ Daemon 不健康');
       process.exit(1);
@@ -651,7 +651,7 @@ async function handleDiscover(capability?: string): Promise<void> {
         
         console.log(`  📦 ${displayName}`);
         console.log(`     Agent ID: ${agent.agentId || 'N/A'}`);
-        console.log(`     Peer ID: ${peerId}...`);
+        console.log(`     Node ID: ${peerId}...`);
         console.log(`     Capabilities: ${capabilities}`);
         console.log(`     Agent Type: ${agent.agentType || 'N/A'}`);
         console.log('');

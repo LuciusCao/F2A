@@ -113,7 +113,7 @@ describe('daemon.ts coverage improvement', () => {
       expect(consoleSpy).toHaveBeenCalledWith('  PID: 12345');
       expect(consoleSpy).toHaveBeenCalledWith(`  日志文件: ${LOG_FILE}`);
       // peerId is sliced to 16 chars: 'test-peer-id-12345678901234567890' → 'test-peer-id-123'
-      expect(consoleSpy).toHaveBeenCalledWith('  Peer ID: test-peer-id-123...');
+      expect(consoleSpy).toHaveBeenCalledWith('  Node ID: test-peer-id-123...');
       
       consoleSpy.mockRestore();
       (process as any).kill = originalKill;
@@ -222,7 +222,7 @@ describe('daemon.ts coverage improvement', () => {
       expect(consoleSpy).toHaveBeenCalledWith('  可能原因: 系统重启或 PID 文件被删除');
       expect(consoleSpy).toHaveBeenCalledWith('  建议: 手动恢复 PID 文件或重启 daemon');
       // peerId is sliced to 16 chars: 'port-only-peer-id-1234567890' → 'port-only-peer-i'
-      expect(consoleSpy).toHaveBeenCalledWith('  Peer ID: port-only-peer-i...');
+      expect(consoleSpy).toHaveBeenCalledWith('  Node ID: port-only-peer-i...');
       
       consoleSpy.mockRestore();
     });

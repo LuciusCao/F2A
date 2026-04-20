@@ -292,7 +292,7 @@ export async function startForeground(): Promise<void> {
 
   try {
     await daemon.start();
-    console.log(`[F2A] Daemon 已启动，Peer ID: ${daemon.getF2A()?.peerId?.slice(0, 16)}...`);
+    console.log(`[F2A] Daemon 已启动，Node ID: ${daemon.getF2A()?.peerId?.slice(0, 16)}...`);
     
     // 保持进程运行
     await new Promise<void>((resolve) => {
@@ -626,7 +626,7 @@ export async function showStatus(): Promise<void> {
     try {
       const info = await fetchDaemonInfo(port);
       if (info) {
-        console.log(`  Peer ID: ${info.peerId?.slice(0, 16)}...`);
+        console.log(`  Node ID: ${info.peerId?.slice(0, 16)}...`);
       }
     } catch {
       // 忽略错误
@@ -642,7 +642,7 @@ export async function showStatus(): Promise<void> {
     try {
       const info = await fetchDaemonInfo(port);
       if (info) {
-        console.log(`  Peer ID: ${info.peerId?.slice(0, 16)}...`);
+        console.log(`  Node ID: ${info.peerId?.slice(0, 16)}...`);
       }
     } catch {
       // 忽略错误

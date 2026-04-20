@@ -7,7 +7,7 @@
  * - status: 查看身份状态
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync, readdirSync } from 'fs';
 import { join, basename, dirname, isAbsolute } from 'path';
 import { homedir, tmpdir, hostname } from 'os';
 import { NodeIdentityManager, isValidNodeId } from '@f2a/network';
@@ -118,10 +118,10 @@ export async function initIdentity(options?: { force?: boolean }): Promise<void>
     const nodeManager = new NodeIdentityManager({ dataDir });
     const result = await nodeManager.loadOrCreate();
     
-    // 问题 4 修复：从 loadOrCreate() 返回值直接获取 nodeId/peerId
+    // 问题 4 修复：从 loadOrCreate() 返回值直接获取 nodeId
     if (result.success && result.data) {
-      console.log(`   Peer ID: ${result.data.peerId.slice(0, 20)}...`);
-      console.log(`   Node ID: ${result.data.nodeId}`);
+      console.log(`   Node ID: ${result.data.nodeId.slice(0, 20)}...`);
+      console.log(`   Full ID: ${result.data.nodeId}`);
     } else {
       console.log(`   ⚠️ Could not load existing identity: ${result.error?.message}`);
     }
@@ -131,10 +131,9 @@ export async function initIdentity(options?: { force?: boolean }): Promise<void>
     const nodeManager = new NodeIdentityManager({ dataDir });
     const result = await nodeManager.loadOrCreate();
     
-    // 问题 4 修复：从 loadOrCreate() 返回值直接获取 nodeId/peerId
     if (result.success && result.data) {
       console.log('   ✅ Node Identity created');
-      console.log(`   Peer ID: ${result.data.peerId.slice(0, 20)}...`);
+      console.log(`   Node ID: ${result.data.nodeId.slice(0, 20)}...`);
       console.log(`   Node ID: ${result.data.nodeId}`);
     } else {
       console.log(`   ❌ Failed：${result.error?.message || 'Unknown error'}`);
@@ -217,8 +216,8 @@ export async function showIdentityStatus(): Promise<void> {
     // 问题 4 修复：从 loadOrCreate() 返回值直接获取 nodeId/peerId
     if (result.success && result.data) {
       console.log('📦 Node Identity: ✅ Loaded');
-      console.log(`   Node ID: ${result.data.nodeId}`);
-      console.log(`   Peer ID: ${result.data.peerId.slice(0, 16)}...`);
+      console.log(`   Node ID: ${result.data.nodeId.slice(0, 16)}...`);
+      console.log(`   Full ID: ${result.data.nodeId}`);
     } else {
       console.log('📦 Node Identity: ❌ Failed to load');
       console.log(`   Error: ${result.error?.message || 'Unknown error'}`);
@@ -230,40 +229,32 @@ export async function showIdentityStatus(): Promise<void> {
   
   console.log('');
   
-  // Agent Identity
-  const agentIdentityPath = join(dataDir, 'agent-identity.json');
+  // Agent Identity - RFC008: 使用 ~/.f2a/agents/ 目录
+  const agentsDir = join(dataDir, 'agents');
   
-  if (existsSync(agentIdentityPath)) {
-    const agentManager = new AgentIdentityManager(dataDir);
-    const result = await agentManager.loadAgentIdentity();
+  if (existsSync(agentsDir)) {
+    // 列出 agents 目录下的文件
+    const agentFiles = readdirSync(agentsDir).filter(f => f.endsWith('.json') && f.startsWith('agent:'));
     
-    if (result.success) {
-      const identity = result.data;
-      const expired = agentManager.isExpired();
-      
-      console.log('🤖 Agent Identity: ✅ Loaded');
-      console.log(`   Agent ID: ${identity.id}`);
-      console.log(`   Name: ${identity.name}`);
-      console.log(`   Node ID: ${identity.nodeId}`);
-      console.log(`   Created: ${identity.createdAt}`);
-      
-      if (identity.expiresAt) {
-        const expiryStatus = expired ? '❌ Expired' : '✅ Valid';
-        console.log(`   Expires: ${identity.expiresAt} (${expiryStatus})`);
-      } else {
-        console.log('   Expires: Never');
-      }
-      
-      if (identity.capabilities && identity.capabilities.length > 0) {
-        console.log(`   Capabilities: ${identity.capabilities.join(', ')}`);
+    if (agentFiles.length > 0) {
+      console.log(`🤖 Agent Identity: ✅ ${agentFiles.length} agent(s) found`);
+      for (const agentFile of agentFiles) {
+        try {
+          const agentData = JSON.parse(readFileSync(join(agentsDir, agentFile), 'utf-8'));
+          console.log(`   - Agent ID: ${agentData.agentId}`);
+          console.log(`     Name: ${agentData.name || 'unnamed'}`);
+          console.log(`     Node ID: ${agentData.nodeId?.slice(0, 16)}...`);
+        } catch {
+          console.log(`   - ${agentFile}: ❌ Failed to read`);
+        }
       }
     } else {
-      console.log('🤖 Agent Identity: ❌ Failed to load');
-      console.log(`   Error: ${result.error?.message || 'Unknown error'}`);
+      console.log('🤖 Agent Identity: ⚪ No agents found in ~/.f2a/agents/');
+      console.log('   Run "f2a agent init --name <name>" to create one');
     }
   } else {
     console.log('🤖 Agent Identity: ⚪ Not found');
-    console.log('   Run "f2a daemon" to create one');
+    console.log('   Run "f2a agent init --name <name>" to create one');
   }
   
   console.log('');

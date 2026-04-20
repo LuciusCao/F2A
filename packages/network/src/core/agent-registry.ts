@@ -778,8 +778,8 @@ export class AgentRegistry {
         path: filePath,
         count: persistedAgents.length,
       });
-    } catch (err: any) {
-      this.logger.error('Failed to save agents', { error: err.message, path: filePath });
+    } catch (err: unknown) {
+      this.logger.error('Failed to save agents', { error: err instanceof Error ? err.message : String(err), path: filePath });
       // 尝试清理临时文件
       try {
         if (existsSync(tempPath)) {
@@ -826,8 +826,8 @@ export class AgentRegistry {
         path: filePath,
         count: persistedAgents.length,
       });
-    } catch (err: any) {
-      this.logger.error('Failed to save agents (async)', { error: err.message, path: filePath });
+    } catch (err: unknown) {
+      this.logger.error('Failed to save agents (async)', { error: err instanceof Error ? err.message : String(err), path: filePath });
     }
   }
 
@@ -875,8 +875,8 @@ export class AgentRegistry {
         count: data.agents.length,
         savedAt: data.savedAt,
       });
-    } catch (err: any) {
-      this.logger.warn('Failed to load persisted agents', { error: err.message });
+    } catch (err: unknown) {
+      this.logger.warn('Failed to load persisted agents', { error: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -927,8 +927,8 @@ export class AgentRegistry {
         count: data.agents.length,
         savedAt: data.savedAt,
       });
-    } catch (err: any) {
-      this.logger.warn('Failed to load persisted agents (async)', { error: err.message });
+    } catch (err: unknown) {
+      this.logger.warn('Failed to load persisted agents (async)', { error: err instanceof Error ? err.message : String(err) });
     }
   }
 

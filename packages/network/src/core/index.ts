@@ -6,7 +6,17 @@
 // 核心类
 export { F2A } from './f2a.js';
 export { P2PNetwork } from './p2p-network.js';
-export { MessageRouter, RoutableMessage, MessageQueue, AgentWebhookPayload, MessageRouterEvents } from './message-router.js';
+
+// P2P 处理器（Phase 2 拆分）
+export { MessageHandler } from './message-handler.js';
+export { KeyExchangeService } from './key-exchange-service.js';
+export { EventHandlerSetupService } from './event-handler-setup.js';
+export { MessageSender } from './message-sender.js';
+export { AgentDiscoverer } from './agent-discoverer.js';
+
+export { MessageRouter, RoutableMessage, MessageRouterEvents } from './message-router.js';
+export { MessageQueue, QueueManager } from './queue-manager.js';
+export { AgentWebhookPayload, WebhookPusher } from './webhook-pusher.js';
 export { AgentRegistry, AgentRegistration, AgentRegistrationRequest, AgentWebhook, MessageCallback, PersistedAgentRegistration, PersistedAgentRegistry } from './agent-registry.js';
 
 // 能力管理

@@ -3,6 +3,7 @@
  * 基于 Token Bucket 算法实现，支持突发流量
  */
 
+import type { IncomingMessage, ServerResponse } from 'http';
 import { Logger } from './logger.js';
 
 export interface RateLimitConfig {
@@ -186,7 +187,7 @@ export class RateLimiter implements Disposable {
 export function createRateLimitMiddleware(config: RateLimitConfig) {
   const limiter = new RateLimiter(config);
 
-  const middleware = (req: any, res: any, next: () => void) => {
+  const middleware = (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     const key = req.socket?.remoteAddress || 'unknown';
 
     if (!limiter.allowRequest(key)) {

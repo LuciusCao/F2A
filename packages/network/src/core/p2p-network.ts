@@ -19,7 +19,6 @@ import { circuitRelayTransport, circuitRelayServer } from '@libp2p/circuit-relay
 import { dcutr } from '@libp2p/dcutr';
 import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
-import { peerIdFromString } from '@libp2p/peer-id';
 import type { PeerId } from '@libp2p/interface';
 import type { PrivateKey } from '@libp2p/interface';
 import type { Libp2pInit } from 'libp2p';
@@ -32,7 +31,6 @@ import type { Libp2p } from '@libp2p/interface';
 import {
   P2PNetworkConfig,
   AgentInfo,
-  AgentCapability,
   F2AMessage,
   PeerInfo,
   PeerDiscoveredEvent,
@@ -41,25 +39,27 @@ import {
   Result,
   StructuredMessagePayload,
   MESSAGE_TOPICS,
-  DiscoverPayload,
   success,
-  failureFromError,
-  createError
+  failureFromError
 } from '../types/index.js';
-import { E2EECrypto, EncryptedMessage } from './e2ee-crypto.js';
+import { E2EECrypto } from './e2ee-crypto.js';
 import { IdentityManager } from './identity/index.js';
 import { AgentIdentityVerifier } from './identity/agent-identity-verifier.js';
 import { NATTraversalManager, NATTraversalStatus } from './nat-traversal.js';
 import { Logger } from '../utils/logger.js';
-import { validateF2AMessage, validateStructuredMessagePayload } from '../utils/validation.js';
 import { MiddlewareManager, Middleware } from '../utils/middleware.js';
 import { RequestSigner, loadSignatureConfig, SignedMessage } from '../utils/signature.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { getErrorMessage } from '../utils/error-utils.js';
-import { isEncryptedMessage, EncryptedF2AMessage } from '../common/type-guards.js';
 import { PeerManager } from './peer-manager.js';
 import { DiscoveryService } from './discovery-service.js';
 import { DHTService } from './dht-service.js';
+import { MessageHandler } from './message-handler.js';
+import { KeyExchangeService } from './key-exchange-service.js';
+import { MessageSender } from './message-sender.js';
+import { AgentDiscoverer } from './agent-discoverer.js';
+import { EventHandlerSetupService } from './event-handler-setup.js';
+import type { MessageHandlerDeps, KeyExchangeServiceDeps, MessageHandlerEvents } from '../types/p2p-handlers.js';
 
 // DHT 服务类型定义 (保留用于 libp2p services 类型检查)
 interface DHTServiceApi {
@@ -71,21 +71,8 @@ interface Libp2pServices {
   dht?: DHTServiceApi;
 }
 
-// 加密消息处理结果
-interface DecryptResult {
-  action: 'continue' | 'return';
-  message: F2AMessage;
-}
-
-// F2A 协议标识
-const F2A_PROTOCOL = '/f2a/1.0.0';
-
 // 清理配置
 const PEER_TABLE_CLEANUP_INTERVAL = 5 * 60 * 1000; // 5分钟
-const PEER_STALE_THRESHOLD = 24 * 60 * 60 * 1000; // 24小时
-const PEER_TABLE_MAX_SIZE = 1000; // 最大peer数
-const PEER_TABLE_HIGH_WATERMARK = 0.9; // 高水位线（90%触发主动清理）
-const PEER_TABLE_AGGRESSIVE_CLEANUP_THRESHOLD = 0.8; // 激进清理后保留的目标比例（80%）
 
 export interface P2PNetworkEvents {
   'peer:discovered': (event: PeerDiscoveredEvent) => void;
@@ -114,6 +101,16 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   private discoveryService: DiscoveryService;
   /** DHTService: 管理 DHT 发现、注册和 Relay 连接 */
   private dhtService: DHTService;
+  /** MessageHandler: P2P 消息处理器（Phase 2 拆分） */
+  private messageHandler?: MessageHandler;
+  /** KeyExchangeService: E2EE 密钥交换服务（Phase 2 拆分） */
+  private keyExchangeService?: KeyExchangeService;
+  /** MessageSender: P2P 消息发送器（Phase 2 拆分） */
+  private messageSender?: MessageSender;
+  /** AgentDiscoverer: Agent 发现服务（Phase 2 拆分） */
+  private agentDiscoverer?: AgentDiscoverer;
+  /** EventHandlerSetupService: libp2p 事件处理器设置（Phase 2 拆分） */
+  private eventHandlerSetup?: EventHandlerSetupService;
   /** P2-4 修复：DISCOVER 消息速率限制器（每个 peer） */
   private discoverRateLimiter = new RateLimiter({
     maxRequests: 10, // 每个 peer 每分钟最多 10 次 DISCOVER 消息
@@ -126,16 +123,6 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     windowMs: 60 * 1000,
     burstMultiplier: 1.0 // 不允许突发，严格限制
   });
-  /** P1 修复：保存事件监听器引用，用于 stop() 中移除 */
-  private boundEventHandlers: {
-    peerDiscovery: ((evt: CustomEvent<{ id: PeerId; multiaddrs: Multiaddr[] }>) => Promise<void>) | undefined;
-    peerConnect: ((evt: CustomEvent<PeerId>) => Promise<void>) | undefined;
-    peerDisconnect: ((evt: CustomEvent<PeerId>) => Promise<void>) | undefined;
-  } = {
-    peerDiscovery: undefined,
-    peerConnect: undefined,
-    peerDisconnect: undefined
-  };
   private agentInfo: AgentInfo;
   private pendingTasks: Map<string, {
     resolve: (result: unknown) => void;
@@ -186,22 +173,26 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     // 初始化 DHTService（管理 DHT 发现、注册和 Relay 连接）
     this.dhtService = new DHTService();
     
-    // 监听 DiscoveryService 事件，转发到实际发送逻辑
+    // 监听 DiscoveryService 事件，转发到 MessageSender
     this.discoveryService.on('broadcast', (message) => {
-      // 广播消息到所有连接的 peers
-      this.broadcast(message).catch(err => {
-        this.logger.warn('Discovery broadcast failed', { error: getErrorMessage(err) });
-      });
+      // 广播消息到所有连接的 peers（使用 MessageSender）
+      if (this.messageSender) {
+        this.messageSender.broadcast(message).catch(err => {
+          this.logger.warn('Discovery broadcast failed', { error: getErrorMessage(err) });
+        });
+      }
     });
     
     this.discoveryService.on('send', ({ peerId, message }) => {
-      // 发送消息到特定 peer
-      this.sendMessage(peerId, message, false).catch(err => {
-        this.logger.warn('Discovery send failed', { 
-          peerId: peerId.slice(0, 16), 
-          error: getErrorMessage(err) 
+      // 发送消息到特定 peer（使用 MessageSender）
+      if (this.messageSender) {
+        this.messageSender.send(peerId, message, false).catch(err => {
+          this.logger.warn('Discovery send failed', { 
+            peerId: peerId.slice(0, 16), 
+            error: getErrorMessage(err) 
+          });
         });
-      });
+      }
     });
     
     // 引导节点自动加入白名单
@@ -417,8 +408,123 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         publicKey: this.agentInfo.encryptionPublicKey?.slice(0, 16)
       });
 
-      // 设置事件监听（E2EE 初始化后）
-      this.setupEventHandlers();
+      // Phase 2: 初始化 MessageHandler 和 KeyExchangeService
+      // 创建 sendMessage 回调（绑定到 MessageSender）
+      const sendMessageCallback = async (peerId: string, message: F2AMessage, encrypt?: boolean) => {
+        if (!this.messageSender) {
+          throw new Error('MessageSender not initialized');
+        }
+        const result = await this.messageSender.send(peerId, message, encrypt ?? false);
+        if (!result.success) {
+          throw new Error(result.error?.message || 'Send message failed');
+        }
+      };
+
+      // 初始化 KeyExchangeService
+      const keyExchangeDeps: KeyExchangeServiceDeps = {
+        e2eeCrypto: this.e2eeCrypto,
+        logger: this.logger,
+        sendMessage: sendMessageCallback,
+      };
+      this.keyExchangeService = new KeyExchangeService(keyExchangeDeps, this.agentInfo);
+
+      // 初始化 MessageHandler
+      const messageHandlerDeps: MessageHandlerDeps = {
+        e2eeCrypto: this.e2eeCrypto,
+        peerManager: this.peerManager,
+        logger: this.logger,
+        middlewareManager: this.middlewareManager,
+        agentRegistry: this.agentRegistry,
+        agentIdentityVerifier: this.agentIdentityVerifier,
+        sendMessage: sendMessageCallback,
+        emitter: this as EventEmitter<MessageHandlerEvents>,
+        agentInfo: this.agentInfo,
+        decryptFailedRateLimiter: this.decryptFailedRateLimiter,
+        discoverRateLimiter: this.discoverRateLimiter,
+        pendingTasks: this.pendingTasks,
+        enableAgentIdVerification: this.enableAgentIdVerification,
+        onKeyExchange: async (message: F2AMessage, peerId: string) => {
+          await this.keyExchangeService!.handleKeyExchange(message, peerId);
+        },
+      };
+      this.messageHandler = new MessageHandler(messageHandlerDeps);
+
+      this.logger.info('MessageHandler and KeyExchangeService initialized');
+
+      // 初始化 MessageSender
+      this.messageSender = new MessageSender({
+        node: this.node,
+        e2eeCrypto: this.e2eeCrypto,
+        logger: this.logger,
+        peerManager: this.peerManager,
+        enableE2EE: this.enableE2EE,
+      });
+
+      // 初始化 AgentDiscoverer
+      this.agentDiscoverer = new AgentDiscoverer({
+        peerManager: this.peerManager,
+        discoveryService: this.discoveryService,
+        dhtService: this.dhtService,
+        logger: this.logger,
+        broadcast: async (message: F2AMessage) => {
+          if (this.messageSender) {
+            await this.messageSender.broadcast(message);
+          }
+        },
+        agentInfo: this.agentInfo,
+        waitForPeerDiscovered: async (capability: string | undefined, timeoutMs: number) => {
+          const discoveredAgents: AgentInfo[] = [];
+          const seenPeerIds = new Set<string>();
+          await new Promise<void>(resolve => {
+            const timeout = setTimeout(() => {
+              this.off('peer:discovered', onPeerDiscovered);
+              resolve();
+            }, timeoutMs);
+            const onPeerDiscovered = (event: { agentInfo: AgentInfo; peerId: string }) => {
+              if (!capability || this.agentDiscoverer?.hasCapability(event.agentInfo, capability)) {
+                if (!seenPeerIds.has(event.agentInfo.peerId)) {
+                  discoveredAgents.push(event.agentInfo);
+                  seenPeerIds.add(event.agentInfo.peerId);
+                }
+              }
+              clearTimeout(timeout);
+              this.off('peer:discovered', onPeerDiscovered);
+              resolve();
+            };
+            this.on('peer:discovered', onPeerDiscovered);
+          });
+          return discoveredAgents;
+        },
+      });
+
+      // 初始化 EventHandlerSetupService
+      this.eventHandlerSetup = new EventHandlerSetupService({
+        node: this.node,
+        peerManager: this.peerManager,
+        logger: this.logger,
+        messageHandler: this.messageHandler,
+        keyExchangeService: this.keyExchangeService,
+        e2eeCrypto: this.e2eeCrypto,
+        agentInfo: this.agentInfo,
+        discoverRateLimiter: this.discoverRateLimiter,
+        onPeerDiscovered: (event) => this.emit('peer:discovered', event),
+        onPeerConnected: (event) => this.emit('peer:connected', { 
+          peerId: event.peerId, 
+          direction: event.direction as 'inbound' | 'outbound'
+        }),
+        onPeerDisconnected: (event) => this.emit('peer:disconnected', event),
+        sendDiscoverMessage: async (peerId, multiaddrs) => {
+          await this.agentDiscoverer!.initiateDiscovery(peerId, multiaddrs, this.node, async (pid, msg) => {
+            if (this.messageSender) {
+              await this.messageSender.send(pid, msg, false);
+            }
+          });
+        },
+        enableE2EE: this.enableE2EE,
+      });
+      this.eventHandlerSetup.setup();
+
+      this.logger.info('MessageSender, AgentDiscoverer, and EventHandlerSetupService initialized');
 
       // 启动节点
       await this.node.start();
@@ -436,7 +542,7 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
 
       // 延迟 2 秒后广播发现消息，等待连接稳定
       setTimeout(() => {
-        this.broadcastDiscovery();
+        this.discoveryService.broadcastDiscovery();
       }, 2000);
 
       // 如果启用 DHT，等待 DHT 就绪
@@ -504,18 +610,9 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     }
 
     if (this.node) {
-      // P1 修复：移除事件监听器，防止内存泄漏
-      // 检查 removeEventListener 是否存在（兼容测试 mock）
-      if (typeof this.node.removeEventListener === 'function') {
-        if (this.boundEventHandlers.peerDiscovery) {
-          this.node.removeEventListener('peer:discovery', this.boundEventHandlers.peerDiscovery);
-        }
-        if (this.boundEventHandlers.peerConnect) {
-          this.node.removeEventListener('peer:connect', this.boundEventHandlers.peerConnect);
-        }
-        if (this.boundEventHandlers.peerDisconnect) {
-          this.node.removeEventListener('peer:disconnect', this.boundEventHandlers.peerDisconnect);
-        }
+      // Phase 2: 使用 EventHandlerSetupService 移除事件监听器
+      if (this.eventHandlerSetup) {
+        this.eventHandlerSetup.teardown();
       }
 
       // 清理待处理任务
@@ -543,90 +640,11 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
    * @param options 发现选项
    */
   async discoverAgents(capability?: string, options?: DiscoverOptions): Promise<AgentInfo[]> {
-    const timeoutMs = options?.timeoutMs ?? 10000;  // 默认 10s 超时
-    const waitForFirst = options?.waitForFirstResponse ?? false;
-
-    // 使用锁保护创建快照，防止并发修改
-    const agents: AgentInfo[] = [];
-    const seenPeerIds = new Set<string>();
-    
-    // No longer needed - PeerManager handles locking internally
-    // Old code used peerTableLock for atomic operations
-    try {
-      for (const peer of this.peerManager.getPeerTable().values()) {
-        if (peer.agentInfo) {
-          if (!capability || this.hasCapability(peer.agentInfo, capability)) {
-            agents.push(peer.agentInfo);
-            seenPeerIds.add(peer.agentInfo.peerId);
-          }
-        }
-      }
-    } finally {
-      // Lock no longer needed
+    if (!this.agentDiscoverer) {
+      this.logger.warn('AgentDiscoverer not initialized');
+      return [];
     }
-
-    // 如果已经有足够的 agents 且不需要等待响应，直接返回
-    if (agents.length > 0 && !waitForFirst) {
-      return agents;
-    }
-
-    // 广播能力查询以发现更多节点（使用 MESSAGE 协议）
-    await this.broadcast({
-      id: randomUUID(),
-      type: 'MESSAGE',
-      from: this.agentInfo.peerId,
-      timestamp: Date.now(),
-      payload: {
-        topic: MESSAGE_TOPICS.CAPABILITY_QUERY,
-        content: { capabilityName: capability }
-      } as StructuredMessagePayload
-    });
-
-    // 使用 Promise.race 等待首个响应或超时
-    if (waitForFirst) {
-      await new Promise<void>(resolve => {
-        const timeout = setTimeout(() => {
-          this.off('peer:discovered', onPeerDiscovered);
-          resolve();
-        }, timeoutMs);
-
-        const onPeerDiscovered = (event: PeerDiscoveredEvent) => {
-          if (!capability || this.hasCapability(event.agentInfo, capability)) {
-            // 使用 Set 原子检查，防止重复添加
-            if (!seenPeerIds.has(event.agentInfo.peerId)) {
-              agents.push(event.agentInfo);
-              seenPeerIds.add(event.agentInfo.peerId);
-            }
-          }
-          clearTimeout(timeout);
-          this.off('peer:discovered', onPeerDiscovered);
-          resolve();
-        };
-
-        this.on('peer:discovered', onPeerDiscovered);
-      });
-    } else {
-      // 等待响应（可配置超时）
-      await new Promise(resolve => setTimeout(resolve, timeoutMs));
-    }
-
-    // 再次收集 - 使用锁保护创建快照
-    // No longer needed - PeerManager handles locking internally
-    // Old code used peerTableLock for atomic operations
-    try {
-      for (const peer of this.peerManager.getPeerTable().values()) {
-        if (peer.agentInfo && !seenPeerIds.has(peer.agentInfo.peerId)) {
-          if (!capability || this.hasCapability(peer.agentInfo, capability)) {
-            agents.push(peer.agentInfo);
-            seenPeerIds.add(peer.agentInfo.peerId);
-          }
-        }
-      }
-    } finally {
-      // Lock no longer needed
-    }
-
-    return agents;
+    return this.agentDiscoverer.discover(capability, options);
   }
 
   /**
@@ -693,7 +711,10 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
     };
 
     // 发送消息（启用 E2EE 加密）
-    const result = await this.sendMessage(peerId, message, true);
+    if (!this.messageSender) {
+      return failureFromError('NETWORK_NOT_STARTED', 'MessageSender not initialized');
+    }
+    const result = await this.messageSender.send(peerId, message, true);
     
     this.logger.debug('sendFreeMessage result', {
       success: result.success,
@@ -704,1060 +725,16 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   }
 
   /**
-   * 广播发现消息
-   * Phase 4: 使用 DiscoveryService 进行广播
+   * 启动定期发现广播
    */
-  private async broadcastDiscovery(): Promise<void> {
-    // DiscoveryService 会发出 'broadcast' 事件，在构造函数中已订阅
+  private startDiscoveryBroadcast(): void {
+    // 立即广播一次
     this.discoveryService.broadcastDiscovery();
-  }
 
-  /**
-   * 广播消息到全网
-   */
-  private async broadcast(message: F2AMessage): Promise<void> {
-    if (!this.node) return;
-
-    // 【关键修复】使用 connectedPeers 而非 node.getPeers()
-    // 问题：node.getPeers() 返回路由表中的所有 peer，包括已断开的
-    // 解决：只向真正已连接的 peer 发送消息
-    const connectedPeerIds = Array.from(this.peerManager.getConnectedPeersSet());
-    
-    if (connectedPeerIds.length === 0) {
-      this.logger.debug('No connected peers to broadcast to');
-      return;
-    }
-    
-    const results = await Promise.allSettled(
-      connectedPeerIds.map(peerId => this.sendMessage(peerId, message))
-    );
-
-    // 记录发送失败的情况（包含详细错误信息）
-    const failures: Array<{ peerId: string; error: string }> = [];
-    results.forEach((result, index) => {
-      if (result.status === 'rejected') {
-        failures.push({
-          peerId: connectedPeerIds[index].toString().slice(0, 16),
-          error: result.reason?.message || String(result.reason)
-        });
-      } else if (!result.value.success) {
-        failures.push({
-          peerId: connectedPeerIds[index].toString().slice(0, 16),
-          error: result.value.error?.message || 'Unknown error'
-        });
-      }
-    });
-
-    if (failures.length > 0) {
-      this.logger.warn('Broadcast failed to some peers', {
-        failed: failures.length,
-        total: connectedPeerIds.length,
-        details: failures
-      });
-    }
-  }
-
-  /**
-   * 向特定 Peer 发送消息
-   * @param peerId 目标 Peer ID
-   * @param message 消息内容
-   * @param encrypt 是否启用 E2EE 加密（默认 false，发现类消息不需要加密）
-   */
-  private async sendMessage(peerId: string, message: F2AMessage, encrypt: boolean = false): Promise<Result<void>> {
-    if (!this.node) {
-      return failureFromError('NETWORK_NOT_STARTED', 'P2P network not started');
-    }
-
-    try {
-      // 【关键修复】优先使用 connectedPeers 索引判断连接状态
-      // 背景：libp2p getConnections() 可能返回已关闭的连接
-      // 原因：peer:disconnect 事件在某些情况下不会触发（网络中断、重启残留）
-      // 解决：维护自己的连接索引，并在失败时清除
-      const isConnected = this.peerManager.getConnectedPeersSet().has(peerId);
-      
-      let connection;
-      if (isConnected) {
-        // 连接索引显示已连接，获取连接对象
-        const connections = this.node.getConnections();
-        connection = connections.find(c => c.remotePeer.toString() === peerId);
-        
-        if (!connection) {
-          // 【防御性代码】索引有记录但 libp2p 没有 = 状态不一致
-          // 清除索引，触发重新连接
-          this.logger.warn('Connection index inconsistent, clearing', {
-            peerId: peerId.slice(0, 16)
-          });
-          this.peerManager.getConnectedPeersSet().delete(peerId);
-        }
-      }
-      
-      if (!connection) {
-        // 未连接，需要 dial
-        const peerInfo = this.peerManager.getPeerTable().get(peerId);
-        if (!peerInfo || peerInfo.multiaddrs.length === 0) {
-          return failureFromError('PEER_NOT_FOUND', `Peer ${peerId} not found`);
-        }
-        
-        // 【关键修复】选择合适的 multiaddr（过滤掉 localhost）
-        // 问题：peerTable 中的 multiaddrs 可能包含 127.0.0.1，导致 dial 到自己
-        // 解决：优先选择非 localhost 地址，除非只有 localhost 可选
-        const localhostPatterns = [/127\.0\.0\.1/, /0\.0\.0\.0/, /::1/, /localhost/];
-        const isLocalhost = (addr: string) => localhostPatterns.some(p => p.test(addr));
-        
-        const nonLocalhostAddrs = peerInfo.multiaddrs.filter(
-          (addr: any) => !isLocalhost(addr.toString())
-        );
-        
-        // 优先使用非 localhost 地址，如果没有则使用 localhost（本地测试场景）
-        const targetAddr = nonLocalhostAddrs.length > 0 
-          ? nonLocalhostAddrs[0] 
-          : peerInfo.multiaddrs[0];
-        
-        this.logger.debug('Dialing peer', {
-          peerId: peerId.slice(0, 16),
-          targetAddr: targetAddr.toString().slice(0, 50),
-          totalAddrs: peerInfo.multiaddrs.length,
-          nonLocalhostAddrs: nonLocalhostAddrs.length
-        });
-        
-        connection = await this.node.dial(targetAddr);
-      }
-
-      // 准备消息数据（根据是否启用 E2EE 加密）
-      let data: Buffer;
-      if (encrypt && this.enableE2EE) {
-        // 检查是否有共享密钥
-        if (!this.e2eeCrypto.canEncryptTo(peerId)) {
-          return failureFromError(
-            'ENCRYPTION_NOT_READY',
-            'No shared secret with peer. Wait for key exchange to complete.'
-          );
-        }
-
-        // 加密消息内容
-        const encrypted = this.e2eeCrypto.encrypt(peerId, JSON.stringify(message));
-        if (!encrypted) {
-          return failureFromError(
-            'ENCRYPTION_FAILED',
-            'Failed to encrypt message. Cannot proceed in secure mode.'
-          );
-        }
-
-        data = Buffer.from(JSON.stringify({
-          ...message,
-          encrypted: true,
-          payload: encrypted
-        }));
-      } else {
-        data = Buffer.from(JSON.stringify(message));
-      }
-
-      // 使用协议流发送消息 (libp2p v3 Stream API)
-      let stream;
-      try {
-        stream = await connection.newStream(F2A_PROTOCOL);
-      } catch (newStreamError) {
-        // newStream 失败可能是连接已关闭，尝试重新 dial
-        this.logger.warn('Failed to create stream, reconnecting', {
-          peerId: peerId.slice(0, 16),
-          error: getErrorMessage(newStreamError)
-        });
-        
-        // 清除连接索引
-        this.peerManager.getConnectedPeersSet().delete(peerId);
-        
-        const peerInfo = this.peerManager.getPeerTable().get(peerId);
-        if (peerInfo && peerInfo.multiaddrs.length > 0) {
-          try {
-            // 【关键修复】选择合适的 multiaddr（过滤掉 localhost）
-            const localhostPatterns = [/127\.0\.0\.1/, /0\.0\.0\.0/, /::1/, /localhost/];
-            const isLocalhost = (addr: string) => localhostPatterns.some(p => p.test(addr));
-            const nonLocalhostAddrs = peerInfo.multiaddrs.filter(
-              (addr: any) => !isLocalhost(addr.toString())
-            );
-            const targetAddr = nonLocalhostAddrs.length > 0 
-              ? nonLocalhostAddrs[0] 
-              : peerInfo.multiaddrs[0];
-            
-            connection = await this.node.dial(targetAddr);
-            stream = await connection.newStream(F2A_PROTOCOL);
-          } catch (dialError) {
-            return failureFromError('CONNECTION_FAILED', `Failed to reconnect: ${getErrorMessage(dialError)}`);
-          }
-        } else {
-          return failureFromError('CONNECTION_FAILED', getErrorMessage(newStreamError));
-        }
-      }
-      
-      try {
-        await stream.send(data);
-        // 【关键修复】发送后关闭写入端，让接收方知道数据发送完毕
-        // 问题：send() 后不关闭写入端，接收方的 for await (chunk of stream) 会一直等待
-        // 解决：sendCloseWrite() 告诉接收方"我发送完了"，但保持读取端打开
-        // 类型断言：libp2p stream 实际有此方法，但类型定义缺失
-        await (stream as any).sendCloseWrite?.();
-      } catch (streamError) {
-        // 发送失败，清除连接索引
-        this.peerManager.getConnectedPeersSet().delete(peerId);
-        // 发送失败时确保 stream 被关闭
-        try { await stream.close(); } catch {}
-        throw streamError;
-      }
-
-      return success(undefined);
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      return failureFromError('CONNECTION_FAILED', err.message, err);
-    }
-  }
-
-  /**
-   * 设置 libp2p 事件处理
-   */
-  private setupEventHandlers(): void {
-    if (!this.node) return;
-
-    // P1 修复：创建绑定的监听器并保存引用，用于 stop() 中移除
-    this.boundEventHandlers.peerDiscovery = async (evt) => {
-      // P1 修复：async 处理器包裹在 try-catch 中，记录错误日志
-      try {
-        const peerId = evt.detail.id.toString();
-        const multiaddrs = evt.detail.multiaddrs.map(ma => ma.toString());
-        
-        this.logger.info('mDNS peer discovered', { 
-          peerId: peerId.slice(0, 16),
-          multiaddrs: multiaddrs.length 
-        });
-
-        // 更新路由表（使用 PeerManager）
-        const now = Date.now();
-        await this.peerManager.upsert(peerId, {
-          multiaddrs: evt.detail.multiaddrs,
-          connected: false,
-          reputation: 25, // mDNS 发现的节点信誉初始化为 25，表示"未验证"状态
-          lastSeen: now
-        });
-
-        // 触发发现事件
-        // P2 修复：mDNS 发现的 AgentInfo 使用占位符标记为"待验证"
-        const pendingAgentInfo: AgentInfo = {
-          peerId,
-          multiaddrs,
-          capabilities: [],
-          // P2 修复：使用占位符标记为待验证
-          displayName: `[Pending] ${peerId.slice(0, 8)}`,
-          agentType: 'custom' as const,
-          version: '0.0.0-pending',
-          protocolVersion: '1.0.0',
-          lastSeen: now
-        };
-
-        this.emit('peer:discovered', {
-          peerId,
-          agentInfo: pendingAgentInfo,
-          multiaddrs: evt.detail.multiaddrs
-        });
-
-        // P1 修复：mDNS 发现后尝试连接并发送 DISCOVER 消息获取真实 AgentInfo
-        // 建议-2 修复：提取为独立方法，减少嵌套深度
-        await this.initiateDiscovery(peerId, evt.detail.multiaddrs);
-      } catch (error) {
-        this.logger.error('Error in peer:discovery handler', {
-          error: getErrorMessage(error)
-        });
-      }
-    };
-
-    // 新连接
-    this.boundEventHandlers.peerConnect = async (evt) => {
-      // P1 修复：async 处理器包裹在 try-catch 中
-      try {
-        const peerId = evt.detail.toString();
-        this.logger.info('Peer connected', { peerId: peerId.slice(0, 16) });
-
-        this.emit('peer:connected', {
-          peerId,
-          direction: 'inbound'
-        });
-
-        // 从连接获取远程 multiaddr
-        let multiaddrs: Multiaddr[] = [];
-        try {
-          if (this.node) {
-            const connections = this.node.getConnections();
-            const conn = connections.find(c => c.remotePeer.toString() === peerId);
-            if (conn && conn.remoteAddr) {
-              multiaddrs = [conn.remoteAddr];
-            }
-          }
-        } catch {
-          // 无法获取 multiaddrs，使用空数组
-        }
-
-        // P2.4 修复：使用 PeerManager 更新路由表和连接索引
-        const now = Date.now();
-        await this.peerManager.upsert(peerId, {
-          multiaddrs,
-          connected: true,
-          connectedAt: now,
-          lastSeen: now
-        });
-        
-        // P2.4 修复：维护连接索引
-        this.peerManager.getConnectedPeersSet().add(peerId);
-        
-        // Phase 1 修复：连接建立后自动交换公钥
-        if (this.enableE2EE && this.e2eeCrypto && this.agentInfo.encryptionPublicKey) {
-          try {
-            await this.sendPublicKey(peerId);
-            this.logger.info('Public key sent', { peerId: peerId.slice(0, 16) });
-          } catch (err) {
-            this.logger.warn('Failed to send public key', { 
-              peerId: peerId.slice(0, 16),
-              error: getErrorMessage(err)
-            });
-          }
-        }
-      } catch (error) {
-        this.logger.error('Error in peer:connect handler', {
-          error: getErrorMessage(error)
-        });
-      }
-    };
-
-    // 断开连接
-    this.boundEventHandlers.peerDisconnect = async (evt) => {
-      // P1 修复：async 处理器包裹在 try-catch 中
-      try {
-        const peerId = evt.detail.toString();
-        this.logger.info('Peer disconnected', { peerId: peerId.slice(0, 16) });
-
-        this.emit('peer:disconnected', { peerId });
-
-        // P2.4 修复：从连接索引中移除
-        this.peerManager.getConnectedPeersSet().delete(peerId);
-
-        // P1-2 修复：清理对等方的加密资源
-        this.e2eeCrypto.unregisterPeer(peerId);
-
-        // 使用 PeerManager 更新路由表（如果存在）
-        const peer = this.peerManager.get(peerId);
-        if (peer) {
-          await this.peerManager.upsert(peerId, {
-            connected: false,
-            lastSeen: Date.now()
-          });
-        } else {
-          // Peer 不在路由表中，记录警告但不创建条目（已断开）
-          this.logger.warn('Peer disconnected but not in routing table', { peerId: peerId.slice(0, 16) });
-        }
-      } catch (error) {
-        this.logger.error('Error in peer:disconnect handler', {
-          error: getErrorMessage(error)
-        });
-      }
-    };
-
-    // 注册事件监听器
-    this.node.addEventListener('peer:discovery', this.boundEventHandlers.peerDiscovery);
-    this.node.addEventListener('peer:connect', this.boundEventHandlers.peerConnect);
-    this.node.addEventListener('peer:disconnect', this.boundEventHandlers.peerDisconnect);
-
-    // 处理传入的协议流 (libp2p v3 Stream API)
-    this.node.handle(F2A_PROTOCOL, async (stream, connection) => {
-      try {
-        // 读取数据 - 使用异步迭代器
-        const chunks: Uint8Array[] = [];
-        for await (const chunk of stream) {
-          // chunk 可能是 Uint8Array 或 Uint8ArrayList
-          const data = chunk instanceof Uint8Array 
-            ? chunk 
-            : new Uint8Array((chunk as { subarray(): Uint8Array }).subarray());
-          chunks.push(data);
-        }
-        
-        const data = Buffer.concat(chunks);
-        
-        // 安全解析 JSON，捕获解析错误
-        let message: F2AMessage;
-        try {
-          message = JSON.parse(data.toString());
-        } catch (parseError) {
-          this.logger.error('Failed to parse message JSON', {
-            error: parseError instanceof Error ? parseError.message : String(parseError),
-            dataSize: data.length,
-            peerId: connection.remotePeer.toString().slice(0, 16)
-          });
-          return;
-        }
-        
-        const peerId = connection.remotePeer.toString();
-
-        // 处理消息
-        await this.handleMessage(message, peerId);
-      } catch (error) {
-        this.logger.error('Error handling message', { error });
-      }
-    });
-  }
-
-  /**
-   * 建议-2 修复：提取 mDNS 发现后的连接和 DISCOVER 发送逻辑
-   * 减少嵌套深度，提高可读性
-   * @param peerId 发现的 Peer ID
-   * @param multiaddrs 发现的 multiaddr 列表
-   */
-  private async initiateDiscovery(peerId: string, multiaddrs: Multiaddr[]): Promise<void> {
-    try {
-      if (!this.node || multiaddrs.length === 0) {
-        return;
-      }
-
-      // 尝试连接到发现的节点
-      await this.node.dial(multiaddrs[0]);
-      this.logger.info('Initiating connection to mDNS peer for discovery', {
-        peerId: peerId.slice(0, 16)
-      });
-
-      // 【关键修复】等待 peer:connect 事件处理完成
-      // dial() 只是发起连接，peer:connect 事件是异步触发的
-      // sendMessage 会检查 connectedPeers，需要等待事件处理器更新
-      let retries = 0;
-      const maxRetries = 10;
-      while (!this.peerManager.getConnectedPeersSet().has(peerId) && retries < maxRetries) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-        retries++;
-      }
-      
-      if (!this.peerManager.getConnectedPeersSet().has(peerId)) {
-        this.logger.warn('Connection established but peer:connect event not received', {
-          peerId: peerId.slice(0, 16),
-          waitMs: retries * 100
-        });
-      }
-
-      // 发送 DISCOVER 消息获取真实 AgentInfo
-      // 低-1 修复：有意不检查返回值 - 发现消息发送失败不影响主流程，
-      // 后续的定期发现广播会重试，不会造成功能缺失
-      const discoverMessage: F2AMessage = {
-        id: randomUUID(),
-        type: 'DISCOVER',
-        from: this.agentInfo.peerId,
-        timestamp: Date.now(),
-        payload: { agentInfo: this.agentInfo } as DiscoverPayload
-      };
-
-      await this.sendMessage(peerId, discoverMessage, false);
-      this.logger.info('Sent DISCOVER to mDNS peer', {
-        peerId: peerId.slice(0, 16)
-      });
-    } catch (connectError) {
-      // 连接失败不应阻止发现流程，记录警告即可
-      this.logger.warn('Failed to connect/send DISCOVER to mDNS peer', {
-        peerId: peerId.slice(0, 16),
-        error: getErrorMessage(connectError)
-      });
-    }
-  }
-
-  /**
-   * 处理收到的消息
-   */
-  private async handleMessage(message: F2AMessage, peerId: string): Promise<void> {
-    // 验证消息格式
-    const validation = validateF2AMessage(message);
-    if (!validation.success) {
-      this.logger.warn('Invalid message format', {
-        errors: validation.error.errors,
-        peerId: peerId.slice(0, 16)
-      });
-      return;
-    }
-
-    this.logger.info('Received message', { type: message.type, peerId: peerId.slice(0, 16) });
-
-    // 更新最后活跃时间
-    const peerInfo = this.peerManager.getPeerTable().get(peerId);
-    if (peerInfo) {
-      peerInfo.lastSeen = Date.now();
-    }
-
-    // 处理加密消息
-    const decryptResult = await this.handleEncryptedMessage(message, peerId);
-    if (decryptResult.action === 'return') {
-      return;
-    }
-    message = decryptResult.message;
-
-    // 执行中间件链
-    const middlewareResult = await this.middlewareManager.execute({
-      message,
-      peerId,
-      agentInfo: peerInfo?.agentInfo,
-      metadata: new Map()
-    });
-
-    if (middlewareResult.action === 'drop') {
-      this.logger.info('Message dropped by middleware', {
-        reason: middlewareResult.reason,
-        peerId: peerId.slice(0, 16)
-      });
-      return;
-    }
-
-    // 使用可能被中间件修改后的消息
-    message = middlewareResult.context.message;
-
-// 根据消息类型分发处理
-    await this.dispatchMessage(message, peerId);
-
-    // 转发给上层处理
-    this.emit('message:received', message, peerId);
-  }
-
-  /**
-   * 处理加密消息
-   * @returns 处理结果，包含是否继续处理和解密后的消息
-   */
-  private async handleEncryptedMessage(message: F2AMessage, peerId: string): Promise<DecryptResult> {
-    if (!isEncryptedMessage(message)) {
-      return { action: 'continue', message };
-    }
-
-    const encryptedPayload = message.payload;
-    const decrypted = this.e2eeCrypto.decrypt(encryptedPayload);
-    
-    if (decrypted) {
-      try {
-        const decryptedMessage = JSON.parse(decrypted);
-        
-        // 安全验证：验证解密后的消息发送方身份
-        if (encryptedPayload.senderPublicKey) {
-          const verificationResult = this.verifySenderIdentity(
-            decryptedMessage, 
-            peerId, 
-            encryptedPayload.senderPublicKey
-          );
-          if (!verificationResult.valid) {
-            return { action: 'return', message };
-          }
-        }
-        
-        return { action: 'continue', message: decryptedMessage };
-      } catch (error) {
-        this.logger.error('Failed to parse decrypted message', { error });
-        return { action: 'return', message };
-      }
-    }
-
-    // 解密失败，通知发送方
-    await this.sendDecryptFailureResponse(message.id, peerId);
-    return { action: 'return', message };
-  }
-
-  /**
-   * 验证发送方身份
-   */
-  private verifySenderIdentity(
-    message: F2AMessage, 
-    peerId: string, 
-    senderPublicKey: string
-  ): { valid: boolean } {
-    // 验证发送方公钥是否已注册且属于该 peerId
-    const registeredKey = this.e2eeCrypto.getPeerPublicKey(peerId);
-    if (registeredKey && registeredKey !== senderPublicKey) {
-      this.logger.error('Sender identity verification failed: public key mismatch', {
-        peerId: peerId.slice(0, 16),
-        claimedKey: senderPublicKey.slice(0, 16),
-        registeredKey: registeredKey.slice(0, 16)
-      });
-      return { valid: false };
-    }
-    
-    // 如果发送方声称的身份与消息来源不匹配，拒绝处理
-    if (message.from && message.from !== peerId) {
-      this.logger.error('Sender identity verification failed: from field mismatch', {
-        claimedFrom: message.from?.slice(0, 16),
-        actualPeerId: peerId.slice(0, 16)
-      });
-      return { valid: false };
-    }
-    
-    return { valid: true };
-  }
-
-  /**
-   * 发送解密失败响应
-   */
-  private async sendDecryptFailureResponse(originalMessageId: string, peerId: string): Promise<void> {
-    this.logger.error('Failed to decrypt message', { peerId: peerId.slice(0, 16) });
-    
-    const decryptFailResponse: F2AMessage = {
-      id: randomUUID(),
-      type: 'DECRYPT_FAILED',
-      from: this.agentInfo.peerId,
-      to: peerId,
-      timestamp: Date.now(),
-      payload: {
-        originalMessageId,
-        error: 'DECRYPTION_FAILED',
-        message: 'Unable to decrypt message. Key exchange may be incomplete or keys mismatched.'
-      }
-    };
-    
-    try {
-      await this.sendMessage(peerId, decryptFailResponse, false);
-    } catch (sendError) {
-      this.logger.error('Failed to send decrypt failure response', { 
-        peerId: peerId.slice(0, 16),
-        error: sendError 
-      });
-    }
-  }
-
-  /**
-   * 根据消息类型分发处理
-   * 网络层消息直接处理，Agent 协议层消息转发给上层
-   */
-  private async dispatchMessage(message: F2AMessage, peerId: string): Promise<void> {
-    // 网络层消息处理
-    switch (message.type) {
-      case 'DISCOVER':
-        await this.handleDiscoverMessage(message, peerId, true);
-        break;
-
-      case 'DISCOVER_RESP':
-        await this.handleDiscoverMessage(message, peerId, false);
-        break;
-
-      case 'DECRYPT_FAILED':
-        await this.handleDecryptFailedMessage(message, peerId);
-        break;
-
-      case 'KEY_EXCHANGE':  // Phase 1: 处理公钥交换
-        await this.handleKeyExchange(message, peerId);
-        break;
-
-      case 'PING':
-      case 'PONG':
-        // 心跳消息由 libp2p 自动处理
-        break;
-
-      // Agent 协议层消息：MESSAGE 类型，根据 topic 分发
-      case 'MESSAGE':
-        await this.handleAgentMessage(message, peerId);
-        break;
-    }
-  }
-
-  /**
-   * 处理 Agent 协议层消息（MESSAGE）
-   * 根据 topic 区分不同类型的消息
-   */
-  private async handleAgentMessage(message: F2AMessage, peerId: string): Promise<void> {
-    // P0 修复：验证 MESSAGE payload 格式
-    const validation = validateStructuredMessagePayload(message.payload);
-    if (!validation.success) {
-      this.logger.warn('Invalid MESSAGE payload format', {
-        errors: validation.error.errors,
-        peerId: peerId.slice(0, 16)
-      });
-      return;
-    }
-    const payload = validation.data;
-    const topic = payload.topic;
-
-    // RFC 003: AgentId 签名验证
-    // 如果 payload 中包含 AgentId 信息，验证签名
-    if (this.enableAgentIdVerification && this.agentIdentityVerifier) {
-      // 检查 payload 是否为 AgentMessagePayload 类型
-      const agentPayload = payload as any;
-      if (agentPayload.fromAgentId && agentPayload.fromSignature) {
-        // RFC 003 P0-1 修复: 传递 Ed25519 公钥作为第3个参数，peerId 作为第4个参数
-        const verifyResult = await this.agentIdentityVerifier.verifyRemoteAgentId(
-          agentPayload.fromAgentId,
-          agentPayload.fromSignature,
-          agentPayload.fromEd25519PublicKey, // Ed25519 公钥 (Base64)
-          peerId // 发送方 PeerId (用于交叉验证)
-        );
-        
-        if (!verifyResult.valid) {
-          this.logger.warn('[P2P] Invalid AgentId signature, message rejected', {
-            fromAgentId: agentPayload.fromAgentId,
-            peerId: peerId.slice(0, 16),
-            error: verifyResult.error
-          });
-          
-          // 发送安全事件
-          this.emit('security:invalid-signature', {
-            agentId: agentPayload.fromAgentId,
-            peerId,
-            error: verifyResult.error
-          });
-          
-          return; // 拒绝处理消息
-        }
-        
-        this.logger.info('[P2P] AgentId signature verified', {
-          fromAgentId: agentPayload.fromAgentId,
-          matchedPeerId: verifyResult.matchedPeerId?.slice(0, 16)
-        });
-      }
-    }
-
-    this.logger.info('Received MESSAGE', {
-      from: peerId.slice(0, 16),
-      topic,
-      contentLength: typeof payload.content === 'string' ? payload.content.length : 'object'
-    });
-
-    // 根据 topic 处理不同类型的消息
-    if (topic === MESSAGE_TOPICS.CAPABILITY_QUERY) {
-      await this.handleCapabilityQuery(payload, peerId);
-    } else if (topic === MESSAGE_TOPICS.CAPABILITY_RESPONSE) {
-      await this.handleCapabilityResponse(payload, peerId);
-    } else if (topic === MESSAGE_TOPICS.TASK_RESPONSE) {
-      this.handleTaskResponse(payload);
-    } else {
-      // 其他消息（包括 task.request 和自由对话）转发给上层
-      this.emit('message:received', message, peerId);
-    }
-  }
-
-  /**
-   * 处理能力查询（MESSAGE + topic='capability.query'）
-   */
-  private async handleCapabilityQuery(
-    payload: StructuredMessagePayload,
-    peerId: string
-  ): Promise<void> {
-    const content = payload.content as { capabilityName?: string; toolName?: string };
-    const matches = !content.capabilityName || 
-      this.hasCapability(this.agentInfo, content.capabilityName);
-
-    if (matches) {
-      // 发送能力响应
-      await this.sendMessage(peerId, {
-        id: randomUUID(),
-        type: 'MESSAGE',
-        from: this.agentInfo.peerId,
-        to: peerId,
-        timestamp: Date.now(),
-        payload: {
-          topic: MESSAGE_TOPICS.CAPABILITY_RESPONSE,
-          content: { agentInfo: this.agentInfo }
-        } as StructuredMessagePayload
-      });
-    }
-  }
-
-  /**
-   * 处理能力响应（MESSAGE + topic='capability.response'）
-   */
-  private async handleCapabilityResponse(
-    payload: StructuredMessagePayload,
-    peerId: string
-  ): Promise<void> {
-    const content = payload.content as { agentInfo: AgentInfo };
-    await this.upsertPeerFromAgentInfo(content.agentInfo, peerId);
-  }
-
-  /**
-   * 处理任务响应（MESSAGE + topic='task.response'）
-   * P0-1 修复：使用原子删除操作避免竞态条件
-   */
-  private handleTaskResponse(payload: StructuredMessagePayload): void {
-    const content = payload.content as {
-      taskId: string;
-      status: 'success' | 'error' | 'rejected' | 'delegated';
-      result?: unknown;
-      error?: string;
-    };
-    
-    // P0-1 修复：先检查 resolved 标志
-    const pending = this.pendingTasks.get(content.taskId);
-    if (!pending) {
-      this.logger.warn('Received response for unknown task', { taskId: content.taskId });
-      return;
-    }
-    
-    if (pending.resolved) {
-      this.logger.warn('Task already resolved, ignoring duplicate response', { taskId: content.taskId });
-      return;
-    }
-    
-    pending.resolved = true;
-    this.pendingTasks.delete(content.taskId);
-    clearTimeout(pending.timeout);
-
-    if (content.status === 'success') {
-      pending.resolve(content.result);
-    } else {
-      pending.reject(content.error || 'Task failed');
-    }
-  }
-
-  /**
-   * 处理发现消息
-   * P2-4 修复：添加速率限制，防止恶意节点大量发送 DISCOVER 消息
-   */
-  private async handleDiscoverMessage(message: F2AMessage, peerId: string, shouldRespond: boolean): Promise<void> {
-    // P2-4 修复：检查 DISCOVER 消息速率限制
-    if (!this.discoverRateLimiter.allowRequest(peerId)) {
-      this.logger.warn('DISCOVER message rate limit exceeded, ignoring', {
-        peerId: peerId.slice(0, 16)
-      });
-      return;
-    }
-    
-    const payload = message.payload as DiscoverPayload;
-    await this.handleDiscover(payload.agentInfo, peerId, shouldRespond);
-  }
-
-  // ============================================================================
-  // Phase 1: 公钥交换
-  // ============================================================================
-
-  /**
-   * 发送公钥给指定 Peer
-   */
-  private async sendPublicKey(peerId: string): Promise<void> {
-    if (!this.agentInfo.encryptionPublicKey) {
-      this.logger.warn('No public key available, skipping key exchange');
-      return;
-    }
-
-    const keyExchangeMessage: F2AMessage = {
-      id: randomUUID(),
-      type: 'KEY_EXCHANGE',
-      from: this.agentInfo.peerId,
-      to: peerId,
-      timestamp: Date.now(),
-      payload: {
-        publicKey: this.agentInfo.encryptionPublicKey
-      }
-    };
-
-    await this.sendMessage(peerId, keyExchangeMessage, false);
-  }
-
-  /**
-   * 处理公钥交换消息
-   */
-  private async handleKeyExchange(message: F2AMessage, peerId: string): Promise<void> {
-    const { publicKey } = message.payload as { publicKey?: string };
-    
-    if (!publicKey) {
-      this.logger.warn('Received KEY_EXCHANGE without public key', {
-        peerId: peerId.slice(0, 16)
-      });
-      return;
-    }
-
-    // 注册对方公钥
-    this.e2eeCrypto.registerPeerPublicKey(peerId, publicKey);
-    this.logger.info('Peer public key registered', {
-      peerId: peerId.slice(0, 16),
-      publicKey: publicKey.slice(0, 16)
-    });
-
-    // 如果还没有发送过公钥，回复自己的公钥
-    if (!this.e2eeCrypto.canEncryptTo(peerId)) {
-      await this.sendPublicKey(peerId);
-    }
-  }
-
-  /**
-   * 处理解密失败通知消息（网络层协议）
-   * P0-2 修复：添加速率限制，防止攻击者触发大量解密失败
-   */
-  private async handleDecryptFailedMessage(message: F2AMessage, peerId: string): Promise<void> {
-    // P0-2 修复：检查 DECRYPT_FAILED 消息速率限制
-    if (!this.decryptFailedRateLimiter.allowRequest(peerId)) {
-      this.logger.warn('DECRYPT_FAILED message rate limit exceeded, ignoring', {
-        peerId: peerId.slice(0, 16)
-      });
-      return;
-    }
-    
-    const { originalMessageId, error, message: errorMsg } = message.payload as {
-      originalMessageId: string;
-      error: string;
-      message: string;
-    };
-    
-    this.logger.error('Received decrypt failure notification', {
-      peerId: peerId.slice(0, 16),
-      originalMessageId,
-      error,
-      message: errorMsg
-    });
-    
-    // 尝试重新注册公钥以重新建立加密通道
-    const peerInfo = this.peerManager.getPeerTable().get(peerId);
-    if (peerInfo?.agentInfo?.encryptionPublicKey) {
-      this.e2eeCrypto.registerPeerPublicKey(peerId, peerInfo.agentInfo.encryptionPublicKey);
-      this.logger.info('Re-registered encryption key after decrypt failure', {
-        peerId: peerId.slice(0, 16)
-      });
-    }
-    
-    // 发出事件通知上层应用
-    this.emit('error', new Error(`Decrypt failed for message ${originalMessageId}: ${errorMsg}`));
-  }
-
-  /**
-   * 处理发现消息
-   */
-/**
-   * 处理发现消息
-   */
-  private async handleDiscover(agentInfo: AgentInfo, peerId: string, shouldRespond: boolean): Promise<void> {
-    // 安全验证：确保 agentInfo.peerId 与发送方一致，防止伪造
-    if (agentInfo.peerId !== peerId) {
-      this.logger.warn('Discovery message rejected: peerId mismatch', {
-        claimedPeerId: agentInfo.peerId?.slice(0, 16),
-        actualPeerId: peerId.slice(0, 16)
-      });
-      return;
-    }
-
-    // P1 修复：记录是否需要清理，在锁外执行
-    let needsAggressiveCleanup = false;
-
-    // 使用锁保护容量检查和创建操作的原子性
-    // No longer needed - PeerManager handles locking internally
-    // Old code used peerTableLock for atomic operations
-    try {
-      // 检查是否需要清理以腾出空间
-      if (!this.peerManager.getPeerTable().has(peerId)) {
-        // 新 peer，需要检查容量
-        const highWatermark = Math.floor(PEER_TABLE_MAX_SIZE * PEER_TABLE_HIGH_WATERMARK);
-        if (this.peerManager.getPeerTable().size >= highWatermark) {
-          // P1 修复：不在锁内执行耗时清理，仅标记需要清理
-          needsAggressiveCleanup = true;
-        }
-        
-        if (this.peerManager.getPeerTable().size >= PEER_TABLE_MAX_SIZE) {
-          // 清理后仍无空间，拒绝新 peer
-          this.logger.warn('Peer table full, rejecting new peer', {
-            peerId: peerId.slice(0, 16),
-            currentSize: this.peerManager.getPeerTable().size,
-            maxSize: PEER_TABLE_MAX_SIZE
-          });
-          return;
-        }
-      }
-
-      // 更新路由表
-      const now = Date.now();
-      const existing = this.peerManager.getPeerTable().get(peerId);
-      if (existing) {
-        this.peerManager.getPeerTable().set(peerId, {
-          ...existing,
-          agentInfo,
-          lastSeen: now,
-          multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma))
-        });
-      } else {
-        this.peerManager.getPeerTable().set(peerId, {
-          peerId,
-          agentInfo,
-          multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma)),
-          connected: false,
-          reputation: 50,
-          lastSeen: now
-        });
-      }
-    } finally {
-      // Lock no longer needed
-    }
-
-    // P1 修复：在锁外异步执行清理，避免阻塞并发操作
-    if (needsAggressiveCleanup) {
-      // 使用 setImmediate 异步执行，不阻塞当前操作
-      setImmediate(() => {
-        this.peerManager.cleanupStale({ aggressive: true }).catch(err => {
-          this.logger.error('Background cleanup failed', { error: err });
-        });
-      });
-    }
-
-    // 注册对等方的加密公钥
-    if (agentInfo.encryptionPublicKey) {
-      this.e2eeCrypto.registerPeerPublicKey(peerId, agentInfo.encryptionPublicKey);
-      this.logger.info('Registered encryption key', { peerId: peerId.slice(0, 16) });
-    }
-
-    // 仅对 DISCOVER 请求响应，避免发现响应循环
-    if (shouldRespond) {
-      this.logger.info('Sending DISCOVER_RESP', { peerId: peerId.slice(0, 16) });
-      
-      try {
-        const responseResult = await this.sendMessage(peerId, {
-          id: randomUUID(),
-          type: 'DISCOVER_RESP',
-          from: this.agentInfo.peerId,
-          to: peerId,
-          timestamp: Date.now(),
-          payload: { agentInfo: this.agentInfo } as DiscoverPayload
-        }, false); // DISCOVER_RESP 不需要加密
-
-        if (!responseResult.success) {
-          this.logger.warn('Failed to send discover response', {
-            peerId: peerId.slice(0, 16),
-            error: responseResult.error
-          });
-        } else {
-          this.logger.info('Sent DISCOVER_RESP successfully', { peerId: peerId.slice(0, 16) });
-        }
-      } catch (err) {
-        this.logger.error('Exception sending DISCOVER_RESP', {
-          peerId: peerId.slice(0, 16),
-          error: err instanceof Error ? err.message : String(err)
-        });
-      }
-    }
-
-    this.emit('peer:discovered', {
-      peerId,
-      agentInfo,
-      multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma))
-    });
-  }
-
-  /**
-   * 将发现到的 Agent 信息更新到 Peer 表
-   * P2-5 修复：改为 async/await 模式，确保锁正确等待
-   */
-  private async upsertPeerFromAgentInfo(agentInfo: AgentInfo, peerId: string): Promise<void> {
-    // P2-5 修复：使用 async/await 确保锁正确等待
-    // No longer needed - PeerManager handles locking internally
-    // Old code used peerTableLock for atomic operations
-    try {
-      // 检查是否需要清理以腾出空间
-      if (this.peerManager.size() >= PEER_TABLE_MAX_SIZE && !this.peerManager.get(peerId)) {
-        this.peerManager.cleanupStale({ aggressive: true }).catch(err => {
-          this.logger.error('Cleanup failed', { error: err });
-        });
-      }
-
-      await this.peerManager.upsert(peerId, {
-        agentInfo,
-        multiaddrs: agentInfo.multiaddrs.map(ma => multiaddr(ma)),
-        connected: false,
-        reputation: 50,
-        lastSeen: Date.now()
-      });
-    } finally {
-      // Lock no longer needed
-    }
-
-    // 注册对等方的加密公钥
-    if (agentInfo.encryptionPublicKey) {
-      this.e2eeCrypto.registerPeerPublicKey(peerId, agentInfo.encryptionPublicKey);
-      this.logger.info('Registered encryption key', { peerId: peerId.slice(0, 16) });
-    }
+    // 每 30 秒广播一次
+    this.discoveryInterval = setInterval(() => {
+      this.discoveryService.broadcastDiscovery();
+    }, 30000);
   }
 
   /**
@@ -1822,19 +799,6 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
   }
 
   /**
-   * 启动定期发现广播
-   */
-  private startDiscoveryBroadcast(): void {
-    // 立即广播一次
-    this.broadcastDiscovery();
-
-    // 每 30 秒广播一次
-    this.discoveryInterval = setInterval(() => {
-      this.broadcastDiscovery();
-    }, 30000);
-  }
-
-  /**
    * 启动定期清理任务
    */
   private startCleanupTask(): void {
@@ -1853,13 +817,6 @@ export class P2PNetwork extends EventEmitter<P2PNetworkEvents> {
         this.logger.error('Cleanup failed', { error: getErrorMessage(err) });
       });
     }, PEER_TABLE_CLEANUP_INTERVAL);
-  }
-
-  /**
-   * 检查 Agent 是否有特定能力
-   */
-  private hasCapability(agentInfo: AgentInfo, capabilityName: string): boolean {
-    return agentInfo.capabilities.some(c => c.name === capabilityName);
   }
 
   /**

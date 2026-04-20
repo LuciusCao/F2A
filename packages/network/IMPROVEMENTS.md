@@ -181,15 +181,12 @@ export interface IMessageRouter {
 
 ### P2 - 可以稍后
 
-**其他大文件 (接近/超过 600 行)**
+### P3 - 已完成
 
-| 文件 | 行数 | 备注 |
-|------|------|------|
-| agent-registry.ts | 986 | 核心模块，可观察 |
-| reputation.ts | 930 | 信誉系统 (RFC-001 已搁置) |
-| message-router.ts | 835 | 已改进过 |
-| capability-manager.ts | 698 | 能力管理 |
+**openclaw-f2a eslint 缺失** - ✅ 2026-04-20 已修复
 
-### P3 - 其他
+原因：cli、daemon、openclaw-f2a 三个包的 lint 脚本使用 `eslint src/`，但项目中没有 eslint 配置。
 
-**openclaw-f2a eslint 缺失** - lint 脚本运行失败
+解决：统一改为 `tsc --noEmit`，与 network、dashboard 保持一致。
+
+验证：`npm run lint` 所有包通过

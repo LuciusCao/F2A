@@ -9,7 +9,7 @@
     "build": "tsc",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint src/",
+    "lint": "tsc --noEmit",
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {

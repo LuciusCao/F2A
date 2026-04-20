@@ -438,8 +438,3 @@ export class Logger {
   }
 }
 
-// 默认日志记录器实例
-export const defaultLogger = new Logger({ component: 'F2A' });
-
-// 便捷导出
-export const logger = defaultLogger;

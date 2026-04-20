@@ -110,7 +110,7 @@ export type {
 } from './core/reputation-security.js';
 
 // 工具模块
-export { Logger, defaultLogger } from './utils/logger.js';
+export { Logger } from './utils/logger.js';
 export { RateLimiter, createRateLimitMiddleware } from './utils/rate-limiter.js';
 export { secureWipe } from './utils/crypto-utils.js';
 export { 

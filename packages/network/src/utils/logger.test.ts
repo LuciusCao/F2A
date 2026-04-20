@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Logger, defaultLogger } from './logger.js';
+import { Logger } from './logger.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { tmpdir } from 'os';
@@ -314,24 +314,6 @@ describe('Logger', () => {
 
       parent.close();
       child.close();
-    });
-  });
-
-  describe('默认日志记录器', () => {
-    it('应该导出默认日志记录器实例', () => {
-      expect(defaultLogger).toBeDefined();
-      expect(defaultLogger).toBeInstanceOf(Logger);
-    });
-
-    it('默认日志记录器应该有正确的组件名', () => {
-      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-      
-      defaultLogger.info('test message');
-
-      const output = consoleSpy.mock.calls[0]?.[0] || '';
-      expect(output).toContain('[F2A]');
-
-      consoleSpy.mockRestore();
     });
   });
 

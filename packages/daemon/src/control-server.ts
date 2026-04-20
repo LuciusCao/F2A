@@ -3,6 +3,7 @@
  * 接收 CLI 命令 - P2P 版本
  * 
  * Phase 1 扩展：支持 Agent 注册和消息路由
+ * RFC008 扩展：支持 Challenge-Response 认证
  * 
  * P0-3 Refactoring: 简化为路由分发
  * - 所有端点处理逻辑已提取到 Handler 类
@@ -26,6 +27,7 @@ import { AgentHandler } from './handlers/agent-handler.js';
 import { MessageHandler } from './handlers/message-handler.js';
 import { SystemHandler } from './handlers/system-handler.js';
 import { P2PHandler, SendCommand } from './handlers/p2p-handler.js';
+import { ChallengeHandler } from './challenge-handler.js';
 
 export interface ControlServerOptions {
   /** 端口，如果不传则使用构造函数传入的 port */
@@ -111,6 +113,8 @@ export class ControlServer {
   private messageHandler: MessageHandler;
   private systemHandler: SystemHandler;
   private p2pHandler: P2PHandler;
+  // RFC008: Challenge-Response 认证处理器
+  private challengeHandler: ChallengeHandler;
 
   constructor(f2a: F2A, port: number, tokenManager?: TokenManager, options?: ControlServerOptions) {
     this.f2a = f2a;
@@ -191,6 +195,15 @@ export class ControlServer {
 
     this.p2pHandler = new P2PHandler({
       f2a: this.f2a,
+      logger: this.logger,
+    });
+
+    // RFC008: 初始化 ChallengeHandler
+    this.challengeHandler = new ChallengeHandler({
+      agentRegistry: this.agentRegistry,
+      identityStore: this.identityStore,
+      agentTokenManager: this.agentTokenManager,
+      messageRouter: this.messageRouter,
       logger: this.logger,
     });
 
@@ -355,6 +368,20 @@ export class ControlServer {
     // POST /api/v1/agents/verify - Challenge-Response 验证（无需认证）
     if (req.method === 'POST' && req.url === '/api/v1/agents/verify') {
       this.agentHandler.handleVerifyAgent(req, res);
+      return;
+    }
+    
+    // ========== RFC008 Challenge-Response 接口 ==========
+    
+    // POST /api/v1/challenge - 生成 Challenge（无需认证）
+    if (req.method === 'POST' && req.url === '/api/v1/challenge') {
+      this.challengeHandler.handleChallengeRequest(req, res);
+      return;
+    }
+    
+    // POST /api/v1/challenge/verify - 验证 Challenge 响应并获取 Token（无需认证）
+    if (req.method === 'POST' && req.url === '/api/v1/challenge/verify') {
+      this.challengeHandler.handleChallengeResponse(req, res);
       return;
     }
     

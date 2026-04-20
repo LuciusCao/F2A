@@ -1,19 +1,19 @@
 {
   "version": "1.0",
-  "exportedAt": "2026-04-19T06:25:45.069Z",
+  "exportedAt": "2026-04-20T04:04:40.228Z",
   "node": {
-    "nodeId": "12D3KooWFusvNkqN",
-    "peerId": "12D3KooWFusvNkqNbKrjJT5VcD43NV2DqWsRpd1CgPJLuMAwS5Y4",
-    "privateKey": "CAESQHHfgp8dgH8d8JtTY8/zeZ/8oLnBwpnuiBkx3NmRjJsgWo+qpjWUC+lP6rZMc8vGbxFQoV8CmP9wJsqpC7TDGYE="
+    "nodeId": "12D3KooWSxWyc5Za",
+    "peerId": "12D3KooWSxWyc5ZaEquHDLUzFtJ7tbsKpmWqVe61ELyFLp5B9im1",
+    "privateKey": "CAESQC9n0HkpInCwBwP8OXfQ8IjecAzqT+SN/l6BOewYwK9q/q1IjRXwWvLVS+zVRnho8TyP0hq3aY5muIPZqaioTlw="
   },
   "agent": {
-    "id": "78e1d7f1-2aa8-4282-9dae-26190f9bbf65",
+    "id": "cb353d3e-8010-460c-ae12-216feee8b6f3",
     "name": "Mac-mini",
     "capabilities": [],
-    "nodeId": "12D3KooWFusvNkqN",
-    "publicKey": "kyUUQHoMLeyo50YVp38XgXhwhuxHI4wyynBL57Kt41c=",
-    "signature": "E9GzMOfStQNaOEAN7k9z8hJGXmYmtcq9RSDlxXlHrmgO7I6ya/8Qqy88IwbeZIwEw41rIT9/P9oHvG8FibTcBQ==",
-    "createdAt": "2026-04-19T06:25:44.152Z",
-    "privateKey": "GCnxIOIThmrfIf8vq+LUnQBZg3qK6U7p9fpoe4W/ttCTJRRAegwt7KjnRhWnfxeBeHCG7EcjjDLKcEvnsq3jVw=="
+    "nodeId": "12D3KooWSxWyc5Za",
+    "publicKey": "93l8i7oYQ052lRkAZEGYtcbhHrWdIhoapx2IY4P6d9k=",
+    "signature": "BJqJLpHC8l7mduXVWsEsWt/0gNcjASVaG51VSyURr9J+A4Qlkoom4FFMX0C6OfqkBI2YkPZ/0r8+P/Dq+/doCQ==",
+    "createdAt": "2026-04-20T04:04:39.751Z",
+    "privateKey": "7Y2hyK55+o95WDJZlE2wtXYk+d4LUiJLg/pShi3lrpn3eXyLuhhDTnaVGQBkQZi1xuEetZ0iGhqnHYhjg/p32Q=="
   }
 }

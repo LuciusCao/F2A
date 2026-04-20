@@ -253,8 +253,8 @@ export class AgentHandler {
         const identity: AgentIdentity = {
           agentId: registration.agentId,
           name: registration.name,
-          peerId: registration.peerId,
-          signature: registration.signature,
+          peerId: registration.peerId || '',
+          signature: registration.signature || '',
           // e2eePublicKey: TODO - 需要从 F2A 获取
           webhook: registration.webhook,
           capabilities: registration.capabilities,
@@ -534,11 +534,16 @@ export class AgentHandler {
         }
         
         // 2️⃣ 检查 nonce 是否过期（60秒有效期）
-        if (Date.now() - pending.timestamp > CHALLENGE_EXPIRY_MS) {
+        const pendingTimestampNum = typeof pending.timestamp === 'number' 
+          ? pending.timestamp 
+          : typeof pending.timestamp === 'string' 
+            ? new Date(pending.timestamp).getTime() 
+            : 0;
+        if (Date.now() - pendingTimestampNum > CHALLENGE_EXPIRY_MS) {
           this.pendingChallenges.delete(data.agentId);
           this.logger.warn('Nonce expired for agent verification', {
             agentId: data.agentId?.slice(0, 16),
-            elapsedMs: Date.now() - pending.timestamp
+            elapsedMs: Date.now() - pendingTimestampNum
           });
           res.writeHead(400);
           res.end(JSON.stringify({ success: false, error: 'Nonce expired', code: 'NONCE_EXPIRED' }));
@@ -694,12 +699,18 @@ export class AgentHandler {
     const now = Date.now();
     let cleaned = 0;
     
-    for (const [agentId, challenge] of this.pendingChallenges.entries()) {
-      if (now - challenge.timestamp > CHALLENGE_EXPIRY_MS) {
+    // 使用 forEach 避免 downlevelIteration 问题
+    this.pendingChallenges.forEach((challenge, agentId) => {
+      const challengeTimestamp = typeof challenge.timestamp === 'number'
+        ? challenge.timestamp
+        : typeof challenge.timestamp === 'string'
+          ? new Date(challenge.timestamp).getTime()
+          : 0;
+      if (now - challengeTimestamp > CHALLENGE_EXPIRY_MS) {
         this.pendingChallenges.delete(agentId);
         cleaned++;
       }
-    }
+    });
     
     if (cleaned > 0) {
       this.logger.info('Cleaned up expired challenges', { count: cleaned });

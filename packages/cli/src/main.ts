@@ -22,6 +22,7 @@ import { listAgents, registerAgent, unregisterAgent } from './agents.js';
 import { sendMessage, getMessages, clearMessages } from './messages.js';
 import { startForeground, startBackground, stopDaemon, getDaemonStatus, isDaemonRunning, restartDaemon, showStatus } from './daemon.js';
 import { showIdentityStatus, exportIdentity, importIdentityInternal, initIdentity } from './identity.js';
+import { cliInitAgent, showAgentStatus } from './init.js';
 
 // ESM 环境下获取 __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -53,14 +54,19 @@ Commands:
   init       初始化 F2A 节点身份 [--force 强制重新创建]
              创建 Node Identity 和基础配置文件
 
-  agent      管理 Agent 注册
+  agent      管理 Agent 身份和注册
+    init              生成 Agent 密钥对和身份文件 [--name <name>] [--caller-config <path>]
+                       RFC008: 生成 Ed25519 密钥对，创建 AgentId（公钥指纹）
+    register          注册 Agent 到 Daemon [--caller-config <path>]
+                       获取 Node 签发的归属证明
     list              列出已注册的 Agent
-    register          注册新 Agent [--name <name>] [--id <id>] [--capability <cap>]... [--webhook <url>]
     unregister <id>   注销 Agent
+    status            查看 Agent 身份状态
     verify <id>       验证 Agent
 
   message    消息管理
-    send              发送消息 --from <agent_id> [--to <agent_id>] "content"
+    send              发送消息 [--from <agent_id>] --to <agent_id> "content"
+                       RFC008: 自动使用 Challenge-Response 认证
     list              查看消息 [--agent <agent_id>] [--unread] [--limit <n>]
     clear             清除消息 --agent <agent_id>
 
@@ -96,28 +102,43 @@ F2A Agent 管理
 Usage: f2a agent <subcommand> [options]
 
 Subcommands:
+  init              生成 Agent 密钥对和身份文件 (RFC008)
+                    f2a agent init --name <name> [--caller-config <path>] [--capability <cap>]... [--webhook <url>] [--force]
+                    --name           Agent 名称（必填）
+                    --caller-config  Caller 配置路径（可选，默认 ~/.f2a/current-agent.json）
+                    --capability     能力标签（可多个）
+                    --webhook        Webhook URL（可选）
+                    --force          强制重新创建
+
+  register          注册 Agent 到 Daemon（获取 Node 签名）
+                    f2a agent register [--caller-config <path>] [--name <name>] [--capability <cap>]... [--webhook <url>] [--force]
+                    RFC008: 使用 init 生成的密钥对，发送 publicKey 到 Daemon
+                    兼容旧格式: --name <name> 生成旧格式 AgentId
+
   list              列出已注册的 Agent
                     f2a agent list
-
-  register          注册新 Agent
-                    f2a agent register --name <name> [--id <id>] [--capability <cap>]... [--webhook <url>]
-                    --name     Agent 名称（必填）
-                    --id       Agent ID（可选，不提供则自动生成）
-                    --capability  能力标签（可多个）
-                    --webhook  Webhook URL（可选）
 
   unregister        注销 Agent
                     f2a agent unregister <agent_id> [--token <token>]
                     注：如果未提供 --token，将尝试从 ~/.f2a/agents/<agent_id>.json 读取
 
+  status            查看 Agent 身份状态 (RFC008)
+                    f2a agent status [--caller-config <path>]
+                    显示 AgentId, 公钥, Node 签名状态
+
   verify            验证 Agent（Challenge-Response）
                     f2a agent verify <agent_id>
 
 Examples:
-  f2a agent list
-  f2a agent register --name "my-agent" --capability "chat" --capability "task"
-  f2a agent unregister agent-123
-  f2a agent unregister agent-123 --token agent-abc123xyz
+  # RFC008 流程（推荐）
+  f2a agent init --name "my-agent" --caller-config ~/.hermes/f2a-identity.json
+  f2a agent register
+  f2a agent status
+  f2a message send --to agent:xxx "hello"
+
+  # 旧格式（兼容）
+  f2a agent register --name "my-agent" --capability "chat"
+  f2a message send --from agent-123 --to agent-456 "hello"
 `);
 }
 
@@ -132,10 +153,12 @@ Usage: f2a message <subcommand> [options]
 
 Subcommands:
   send              发送消息到 Agent
-                    f2a message send --from <agent_id> [--to <agent_id>] [--type <type>] "content"
-                    --from   发送方 Agent ID（必填）
-                    --to     接收方 Agent ID（可选，不提供则广播）
-                    --type   消息类型：message, task_request, task_response, announcement, claim
+                    f2a message send [--from <agent_id>] --to <agent_id> [--type <type>] [--caller-config <path>] "content"
+                    --from          发送方 Agent ID（RFC008 可省略，自动读取 Caller 配置）
+                    --to            接收方 Agent ID（可选，不提供则广播）
+                    --type          消息类型：message, task_request, task_response, announcement, claim
+                    --caller-config Caller 配置路径（可选，默认 ~/.f2a/current-agent.json）
+                    RFC008: 自动使用 Challenge-Response 签名认证
 
   list              查看消息队列
                     f2a message list [--agent <agent_id>] [--unread] [--limit <n>]
@@ -147,8 +170,12 @@ Subcommands:
                     f2a message clear --agent <agent_id>
 
 Examples:
+  # RFC008 流程（推荐）
+  f2a message send --to agent:xxx "Hello"  # 自动使用 Caller 配置中的 AgentId
+  f2a message send --caller-config ~/.hermes/f2a-identity.json --to agent:xxx "Hello"
+
+  # 旧格式（兼容）
   f2a message send --from agent-123 --to agent-456 "Hello"
-  f2a message send --from agent-123 "Broadcast message"
   f2a message list --agent agent-123 --unread
 `);
 }
@@ -268,15 +295,26 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
   const restArgs = subArgs.slice(1);
 
   switch (subcommand) {
-    case 'list':
-      await listAgents();
+    case 'init':
+      const initOpts = parseArgs(restArgs);
+      await cliInitAgent({
+        name: initOpts.name as string,
+        callerConfig: initOpts['caller-config'] as string | undefined,
+        capabilities: Array.isArray(initOpts.capability)
+          ? initOpts.capability as string[]
+          : initOpts.capability
+            ? [initOpts.capability as string]
+            : undefined,
+        webhook: initOpts.webhook as string | undefined,
+        force: initOpts.force as boolean,
+      });
       break;
 
     case 'register':
       const registerOpts = parseArgs(restArgs);
       await registerAgent({
-        id: registerOpts.id as string | undefined,
-        name: registerOpts.name as string,
+        callerConfig: registerOpts['caller-config'] as string | undefined,
+        name: registerOpts.name as string | undefined,
         capabilities: Array.isArray(registerOpts.capability)
           ? registerOpts.capability as string[]
           : registerOpts.capability
@@ -284,6 +322,10 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
             : undefined,
         webhook: registerOpts.webhook as string | undefined,
       });
+      break;
+
+    case 'list':
+      await listAgents();
       break;
 
     case 'unregister':
@@ -301,6 +343,11 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
         : undefined;
       
       await unregisterAgent(unregisterAgentId, unregisterToken);
+      break;
+
+    case 'status':
+      const statusOpts = parseArgs(restArgs);
+      await showAgentStatus(statusOpts['caller-config'] as string | undefined);
       break;
 
     case 'verify':
@@ -332,10 +379,11 @@ async function handleMessageCommand(subArgs: string[]): Promise<void> {
     case 'send':
       const sendOpts = parseArgs(restArgs);
       await sendMessage({
-        fromAgentId: sendOpts.from as string,
+        fromAgentId: sendOpts.from as string | undefined,
         toAgentId: sendOpts.to as string | undefined,
         content: sendOpts.content as string,
         type: sendOpts.type as any,
+        callerConfig: sendOpts['caller-config'] as string | undefined,
       });
       break;
 

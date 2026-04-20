@@ -25,6 +25,34 @@ export type {
   AgentIdentity,
 } from './core/identity/types.js';
 
+// RFC 008: Agent Self-Identity 导出
+export {
+  AgentIdentityKeypair,
+  generateAgentId,
+  computeFingerprint,
+  parseAgentId,
+  validateAgentId,
+  isNewFormat,
+  isOldFormat,
+  isValidAgentIdFormat,
+  extractFingerprint,
+  extractPeerIdPrefix,
+  generateChallenge,
+  signChallenge,
+  verifyChallengeResponse,
+  verifyChallengeResponseWithStore,
+  ChallengeStore
+} from './core/identity/index.js';
+export type {
+  Ed25519Keypair,
+  RFC008IdentityFile,
+  ParsedAgentId,
+  AgentIdValidationResult,
+  Challenge,
+  ChallengeResponse,
+  ChallengeVerificationResult
+} from './core/identity/index.js';
+
 // Daemon 组件在 packages/daemon 中独立提供
 
 // Agent Registry 和 Message Router（RFC 003/005）

@@ -57,3 +57,35 @@ export type {
 // RFC 003: Ed25519Signer 导出
 export { Ed25519Signer } from './ed25519-signer.js';
 export type { Ed25519KeyPair } from './ed25519-signer.js';
+
+// RFC 008: AgentId 格式与验证导出
+export {
+  generateAgentId,
+  computeFingerprint,
+  parseAgentId,
+  validateAgentId,
+  isNewFormat,
+  isOldFormat,
+  isValidAgentIdFormat,
+  extractFingerprint,
+  extractPeerIdPrefix
+} from './agent-id.js';
+export type { ParsedAgentId, AgentIdValidationResult } from './agent-id.js';
+
+// RFC 008: AgentIdentityKeypair 导出
+export { AgentIdentityKeypair } from './agent-keypair.js';
+export type { Ed25519Keypair, RFC008IdentityFile } from './agent-keypair.js';
+
+// RFC 008: Challenge-Response 认证协议导出
+export {
+  generateChallenge,
+  signChallenge,
+  verifyChallengeResponse,
+  verifyChallengeResponseWithStore,
+  ChallengeStore
+} from './challenge.js';
+export type {
+  Challenge,
+  ChallengeResponse,
+  ChallengeVerificationResult
+} from './challenge.js';

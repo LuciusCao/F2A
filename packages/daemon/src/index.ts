@@ -117,3 +117,6 @@ export { AgentTokenManager, AgentTokenData, AgentTokenManagerOptions } from './a
 
 // Phase 1 (P0-3): 导出认证中间件
 export { AuthMiddleware, AuthResult, AuthMiddlewareDeps } from './middleware/auth.js';
+
+// RFC008: 导出 Challenge-Response 认证处理器
+export { ChallengeHandler, ChallengeHandlerConfig } from './challenge-handler.js';

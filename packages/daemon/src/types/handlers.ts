@@ -3,17 +3,20 @@
  * 
  * 从 control-server.ts 提取的 Handler 相关类型定义
  * 用于后续 ControlServer 拆分重构
+ * 
+ * RFC008: 新增 ChallengeHandlerDeps
  */
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { 
-  Logger, 
+  Logger,
   TokenManager,
   AgentRegistry, 
   AgentRegistration, 
   MessageRouter, 
   F2A,
-  E2EECrypto 
+  E2EECrypto,
+  ChallengeStore
 } from '@f2a/network';
 import type { AgentIdentityStore } from '../agent-identity-store.js';
 import type { AgentTokenManager } from '../agent-token-manager.js';
@@ -23,13 +26,19 @@ import type { AgentTokenManager } from '../agent-token-manager.js';
 // ============================================================================
 
 /**
- * Challenge 类型
+ * Challenge 类型（旧格式兼容）
  * 用于 Agent 身份验证的 Challenge-Response 流程
+ * 
+ * RFC003: 使用 nonce
+ * RFC008: 使用 challenge + timestamp + operation
  */
 export interface Challenge {
-  nonce: string;
-  webhook: { url: string };
-  timestamp: number;
+  nonce?: string;  // RFC003 兼容
+  challenge?: string;  // RFC008
+  webhook?: { url: string };
+  timestamp?: number | string;
+  operation?: string;
+  expiresInSeconds?: number;
 }
 
 // ============================================================================
@@ -96,6 +105,21 @@ export interface AgentHandlerDeps extends HandlerDeps {
   agentTokenManager: AgentTokenManager;
   e2eeCrypto: E2EECrypto;
   messageRouter: MessageRouter;
+}
+
+/**
+ * ChallengeHandler 依赖
+ * RFC008 Challenge-Response 认证的依赖
+ */
+export interface ChallengeHandlerDeps extends HandlerDeps {
+  agentRegistry: AgentRegistry;
+  identityStore: AgentIdentityStore;
+  agentTokenManager: AgentTokenManager;
+  messageRouter: MessageRouter;
+  /** Challenge 有效期（秒），默认 30 */
+  challengeExpirySeconds?: number;
+  /** 自动清理间隔（毫秒），默认 60000 */
+  cleanupIntervalMs?: number;
 }
 
 // ============================================================================

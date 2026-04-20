@@ -3,8 +3,10 @@
  * 管理注册到 Daemon 的 Agent 实例
  * 
  * RFC 003: AgentId 由节点签发，不能由用户自定义
+ * RFC 008: AgentId = 公钥指纹，Agent 自有密钥
  * 
- * Phase 3: 添加持久化支持（save/load）
+ * Phase 3: 添加 publicKey 字段，支持 RFC008 新格式
+ * 同时保持对 RFC003 旧格式的兼容
  */
 
 import { Logger } from '../utils/logger.js';
@@ -14,6 +16,15 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
+import {
+  generateAgentId,
+  parseAgentId,
+  isNewFormat,
+  isOldFormat,
+  isValidAgentIdFormat,
+  validateAgentId,
+  computeFingerprint
+} from './identity/agent-id.js';
 
 /** Agent Registry 持久化文件名 */
 export const AGENT_REGISTRY_FILE = 'agent-registry.json';
@@ -46,18 +57,39 @@ export interface AgentWebhook {
 
 /**
  * Agent 注册信息
+ * 
+ * RFC 003 (旧格式): AgentId 由节点签发，signature 为节点签名
+ * RFC 008 (新格式): AgentId = 公钥指纹，publicKey 为 Agent 自有公钥
  */
 export interface AgentRegistration {
-  /** Agent 唯一标识符（节点签发）格式: agent:<PeerId前16位>:<随机8位> */
+  /** Agent 唯一标识符
+   *  旧格式 (RFC003): agent:<PeerId前16位>:<随机8位>
+   *  新格式 (RFC008): agent:<公钥指纹16位>
+   */
   agentId: string;
   /** Agent 显示名称（用户定义，可修改） */
   name: string;
   /** Agent 支持的能力列表 */
   capabilities: AgentCapability[];
-  /** 签发节点的 PeerId */
-  peerId: string;
-  /** AgentId 签名（Base64） */
-  signature: string;
+  /** 签发节点的 PeerId（旧格式必需） */
+  peerId?: string;
+  /** AgentId 签名（Base64）
+   *  旧格式: Node 签名
+   *  新格式: 可选，Node 签发的归属证明
+   */
+  signature?: string;
+  /** RFC 008: Agent 的 Ed25519 公钥 (Base64)
+   *  新格式必需，用于 Challenge-Response 验证
+   */
+  publicKey?: string;
+  /** RFC 008: Node 签发的归属证明 (Base64)
+   *  可选，用于跨节点验证 Agent 归属
+   */
+  nodeSignature?: string;
+  /** RFC 008: Node 的 PeerId（签发归属证明的节点） */
+  nodePeerId?: string;
+  /** AgentId 格式版本: 'old' (RFC003) 或 'new' (RFC008) */
+  idFormat?: 'old' | 'new';
   /** 注册时间 */
   registeredAt: Date;
   /** 最后活跃时间 */
@@ -72,6 +104,9 @@ export interface AgentRegistration {
 
 /**
  * Agent 注册请求（用户提供）
+ * 
+ * RFC 003 (旧格式): 用户提供 name + capabilities，节点签发 AgentId
+ * RFC 008 (新格式): 用户提供 publicKey，AgentId 由公钥指纹派生
  */
 export interface AgentRegistrationRequest {
   /** Agent 显示名称 */
@@ -87,6 +122,29 @@ export interface AgentRegistrationRequest {
 }
 
 /**
+ * RFC 008 Agent 注册请求（新格式）
+ * AgentId 由公钥指纹派生，需要提供 publicKey
+ */
+export interface RFC008AgentRegistrationRequest {
+  /** Agent 的 Ed25519 公钥 (Base64) */
+  publicKey: string;
+  /** Agent 显示名称 */
+  name: string;
+  /** Agent 支持的能力列表 */
+  capabilities: AgentCapability[];
+  /** Webhook 配置 */
+  webhook?: AgentWebhook;
+  /** 本地消息回调（可选） */
+  onMessage?: MessageCallback;
+  /** Agent 元数据（可选） */
+  metadata?: Record<string, unknown>;
+  /** Node 签发的归属证明（可选，注册后由 Daemon 签发） */
+  nodeSignature?: string;
+  /** Node 的 PeerId（可选） */
+  nodePeerId?: string;
+}
+
+/**
  * 持久化的 Agent 注册信息
  * 用于 JSON 序列化，Date 对象转换为 ISO 字符串
  * 注意：不包含 onMessage 回调（无法序列化）
@@ -98,10 +156,18 @@ export interface PersistedAgentRegistration {
   name: string;
   /** Agent 支持的能力列表 */
   capabilities: AgentCapability[];
-  /** 签发节点的 PeerId */
-  peerId: string;
+  /** 签发节点的 PeerId（旧格式） */
+  peerId?: string;
   /** AgentId 签名（Base64） */
-  signature: string;
+  signature?: string;
+  /** RFC 008: Agent 的 Ed25519 公钥 (Base64) */
+  publicKey?: string;
+  /** RFC 008: Node 签发的归属证明 (Base64) */
+  nodeSignature?: string;
+  /** RFC 008: Node 的 PeerId */
+  nodePeerId?: string;
+  /** AgentId 格式版本 */
+  idFormat?: 'old' | 'new';
   /** 注册时间（ISO 字符串） */
   registeredAt: string;
   /** 最后活跃时间（ISO 字符串） */
@@ -223,13 +289,15 @@ export class AgentRegistry {
   }
 
   /**
-   * 注册 Agent（节点签发 AgentId）
+   * 注册 Agent（节点签发 AgentId）- RFC003 旧格式
    * 
    * 用户只提供 name 和 capabilities
    * 节点生成并签名 AgentId
+   * 
+   * @deprecated 建议使用 registerRFC008 代替
    */
   register(request: AgentRegistrationRequest): AgentRegistration {
-    // 生成 AgentId
+    // 生成 AgentId (旧格式)
     const agentId = this.generateAgentId();
     
     // 签名 AgentId
@@ -241,6 +309,7 @@ export class AgentRegistry {
       capabilities: request.capabilities,
       peerId: this.peerId,
       signature,
+      idFormat: 'old',
       registeredAt: new Date(),
       lastActiveAt: new Date(),
       webhook: request.webhook,
@@ -253,15 +322,91 @@ export class AgentRegistry {
     // 自动保存（同步，立即完成）
     this.save();
     
-    this.logger.info('Agent registered (node-issued)', {
+    this.logger.info('Agent registered (RFC003 node-issued)', {
       agentId,
       name: request.name,
       peerId: this.peerId,
       capabilities: request.capabilities.map(c => c.name),
       isLocal: !!request.onMessage,
+      idFormat: 'old',
     });
 
     return registration;
+  }
+
+  /**
+   * 注册 Agent（RFC008 新格式）
+   * 
+   * AgentId 由公钥指纹派生
+   * Agent 拥有自己的 Ed25519 密钥对，用于 Challenge-Response 验证
+   * 
+   * @param request RFC008 注册请求，包含 publicKey
+   * @returns AgentRegistration
+   */
+  registerRFC008(request: RFC008AgentRegistrationRequest): AgentRegistration {
+    // 从公钥计算 AgentId
+    const agentId = generateAgentId(request.publicKey);
+    
+    // 验证 AgentId 格式
+    const parsed = parseAgentId(agentId);
+    if (!parsed.valid || parsed.format !== 'new') {
+      throw new Error(`Invalid AgentId format from publicKey: ${agentId}`);
+    }
+
+    // Node 签发归属证明（可选）
+    const nodeSignature = request.nodeSignature || this.signAgentId(agentId);
+    const nodePeerId = request.nodePeerId || this.peerId;
+
+    const registration: AgentRegistration = {
+      agentId,
+      name: request.name,
+      capabilities: request.capabilities,
+      publicKey: request.publicKey,
+      nodeSignature,
+      nodePeerId,
+      idFormat: 'new',
+      registeredAt: new Date(),
+      lastActiveAt: new Date(),
+      webhook: request.webhook,
+      onMessage: request.onMessage,
+      metadata: request.metadata,
+    };
+
+    this.agents.set(agentId, registration);
+    
+    // 自动保存
+    this.save();
+    
+    this.logger.info('Agent registered (RFC008 self-identity)', {
+      agentId,
+      name: request.name,
+      publicKeyPreview: request.publicKey.slice(0, 16) + '...',
+      capabilities: request.capabilities.map(c => c.name),
+      isLocal: !!request.onMessage,
+      idFormat: 'new',
+    });
+
+    return registration;
+  }
+
+  /**
+   * 根据 AgentId 格式自动选择注册方法
+   * 
+   * 如果 publicKey 存在，使用 RFC008 格式
+   * 否则使用 RFC003 格式
+   */
+  registerAuto(request: AgentRegistrationRequest & { publicKey?: string }): AgentRegistration {
+    if (request.publicKey) {
+      return this.registerRFC008({
+        publicKey: request.publicKey,
+        name: request.name,
+        capabilities: request.capabilities,
+        webhook: request.webhook,
+        onMessage: request.onMessage,
+        metadata: request.metadata,
+      });
+    }
+    return this.register(request);
   }
 
   /**
@@ -286,25 +431,39 @@ export class AgentRegistry {
 
   /**
    * 恢复已有 Agent（从 identity 文件）
+   * 
    * Phase 6: 支持身份恢复
+   * RFC008: 支持新格式 identity（包含 publicKey）
    */
   restore(identity: {
     agentId: string;
     name: string;
-    peerId: string;
-    signature: string;
+    peerId?: string;  // 旧格式必需，新格式可选
+    signature?: string;  // 旧格式必需，新格式可选
+    publicKey?: string;  // RFC008 新格式必需
+    nodeSignature?: string;  // RFC008 Node 归属证明
+    nodePeerId?: string;  // RFC008 Node PeerId
     capabilities: AgentCapability[];
     webhook?: AgentWebhook;
     metadata?: Record<string, unknown>;
     createdAt: string;
     lastActiveAt: string;
+    e2eePublicKey?: string;  // 兼容旧 identity 文件
   }): AgentRegistration {
+    // 自动检测 AgentId 格式
+    const parsed = parseAgentId(identity.agentId);
+    const idFormat = parsed.valid ? parsed.format : 'old';
+    
     const registration: AgentRegistration = {
       agentId: identity.agentId,
       name: identity.name,
       capabilities: identity.capabilities,
       peerId: identity.peerId,
       signature: identity.signature,
+      publicKey: identity.publicKey,
+      nodeSignature: identity.nodeSignature,
+      nodePeerId: identity.nodePeerId,
+      idFormat,
       registeredAt: new Date(identity.createdAt),
       lastActiveAt: new Date(identity.lastActiveAt),
       webhook: identity.webhook,
@@ -318,6 +477,8 @@ export class AgentRegistry {
       agentId: identity.agentId,
       name: identity.name,
       peerId: identity.peerId,
+      idFormat,
+      hasPublicKey: !!identity.publicKey,
     });
     
     return registration;
@@ -378,38 +539,114 @@ export class AgentRegistry {
   /**
    * 验证 AgentId 签名
    * 
-   * 安全限制（当前实现）:
-   * - 仅检查格式和 PeerId 前缀匹配
-   * - 完整签名验证未实现（需要其他节点的公钥）
-   * - 采用 fail-safe 策略：验证失败时拒绝，而非放行
+   * RFC003 (旧格式): 检查格式和 PeerId 前缀匹配
+   * RFC008 (新格式): 验证公钥指纹匹配
    * 
-   * TODO: 实现完整签名验证流程
-   * - 存储其他节点的公钥
-   * - 使用 crypto 验证 Ed25519 签名
+   * @param agentId Agent ID
+   * @param signature Node 签名（旧格式）
+   * @param peerId Node PeerId（旧格式）
+   * @param publicKey Agent 公钥（新格式）
    */
-  verifySignature(agentId: string, signature: string, peerId: string): boolean {
+  verifySignature(
+    agentId: string,
+    signature?: string,
+    peerId?: string,
+    publicKey?: string
+  ): boolean {
     // 检查 AgentId 格式
-    if (!agentId.startsWith('agent:')) {
-      this.logger.warn('Invalid AgentId format', { agentId });
+    const parsed = parseAgentId(agentId);
+    
+    if (!parsed.valid) {
+      this.logger.warn('Invalid AgentId format', { agentId, error: parsed.error });
       return false;
     }
 
-    // 检查 PeerId 前缀匹配
-    const peerIdPrefix = agentId.split(':')[1];
-    if (peerId && !peerId.startsWith(peerIdPrefix)) {
-      this.logger.warn('AgentId PeerId prefix mismatch', { agentId, expectedPrefix: peerId.slice(0, 16) });
+    // RFC008 新格式: 验证公钥指纹匹配
+    if (parsed.format === 'new' && publicKey) {
+      const validation = validateAgentId(agentId, publicKey);
+      if (validation.valid) {
+        this.logger.debug('RFC008 AgentId verified', { agentId, fingerprint: parsed.fingerprint });
+        return true;
+      }
+      this.logger.warn('RFC008 AgentId fingerprint mismatch', {
+        agentId,
+        error: validation.error,
+        fingerprint: parsed.fingerprint,
+      });
       return false;
     }
 
-    // Fail-safe: 签名验证未完全实现，拒绝不可信的 AgentId
-    // 完整签名验证需要其他节点的公钥，目前尚未实现
-    // 安全原则：fail safe, not fail open!
-    this.logger.warn('Signature verification not fully implemented, rejecting untrusted AgentId', {
+    // RFC003 旧格式: 检查 PeerId 前缀匹配
+    if (parsed.format === 'old') {
+      if (!parsed.peerIdPrefix) {
+        this.logger.warn('Old format AgentId missing peerIdPrefix', { agentId });
+        return false;
+      }
+      
+      if (peerId && !peerId.startsWith(parsed.peerIdPrefix)) {
+        this.logger.warn('RFC003 AgentId PeerId prefix mismatch', {
+          agentId,
+          expectedPrefix: peerId.slice(0, 16),
+          actualPrefix: parsed.peerIdPrefix,
+        });
+        return false;
+      }
+
+      // 旧格式签名验证未完全实现，只检查格式
+      this.logger.warn('RFC003 signature verification incomplete, format check passed', {
+        agentId,
+        peerId,
+      });
+      return true;
+    }
+
+    this.logger.warn('Signature verification failed: missing required parameters', {
       agentId,
-      peerId,
-      reason: '完整的签名验证需要其他节点的公钥，当前仅支持格式检查'
+      format: parsed.format,
+      hasSignature: !!signature,
+      hasPeerId: !!peerId,
+      hasPublicKey: !!publicKey,
     });
     return false;
+  }
+
+  /**
+   * 判断 Agent 是否为 RFC008 新格式
+   */
+  isNewFormatAgent(agentId: string): boolean {
+    return isNewFormat(agentId);
+  }
+
+  /**
+   * 判断 Agent 是否为 RFC003 旧格式
+   */
+  isOldFormatAgent(agentId: string): boolean {
+    return isOldFormat(agentId);
+  }
+
+  /**
+   * 获取 Agent 的格式类型
+   */
+  getAgentFormat(agentId: string): 'old' | 'new' | 'invalid' {
+    const parsed = parseAgentId(agentId);
+    if (!parsed.valid) return 'invalid';
+    return parsed.format;
+  }
+
+  /**
+   * 获取 Agent 的公钥（仅新格式）
+   */
+  getPublicKey(agentId: string): string | undefined {
+    const agent = this.agents.get(agentId);
+    return agent?.publicKey;
+  }
+
+  /**
+   * 验证 AgentId 与公钥指纹是否匹配（RFC008）
+   */
+  validatePublicKeyFingerprint(agentId: string, publicKey: string): boolean {
+    const validation = validateAgentId(agentId, publicKey);
+    return validation.valid;
   }
 
   /**
@@ -697,14 +934,23 @@ export class AgentRegistry {
 
   /**
    * 转换为持久化格式（Date → ISO string）
+   * RFC008: 包含 publicKey、nodeSignature、nodePeerId、idFormat
    */
   private toPersistedFormat(agent: AgentRegistration): PersistedAgentRegistration {
+    // 自动检测 idFormat
+    const parsed = parseAgentId(agent.agentId);
+    const idFormat = agent.idFormat || (parsed.valid ? parsed.format : 'old');
+    
     return {
       agentId: agent.agentId,
       name: agent.name,
       capabilities: agent.capabilities,
       peerId: agent.peerId,
       signature: agent.signature,
+      publicKey: agent.publicKey,
+      nodeSignature: agent.nodeSignature,
+      nodePeerId: agent.nodePeerId,
+      idFormat,
       registeredAt: agent.registeredAt.toISOString(),
       lastActiveAt: agent.lastActiveAt.toISOString(),
       webhook: agent.webhook,
@@ -714,14 +960,23 @@ export class AgentRegistry {
 
   /**
    * 从持久化格式转换（ISO string → Date）
+   * RFC008: 包含 publicKey、nodeSignature、nodePeerId、idFormat
    */
   private fromPersistedFormat(persisted: PersistedAgentRegistration): AgentRegistration {
+    // 自动检测 idFormat
+    const parsed = parseAgentId(persisted.agentId);
+    const idFormat = persisted.idFormat || (parsed.valid ? parsed.format : 'old');
+    
     return {
       agentId: persisted.agentId,
       name: persisted.name,
       capabilities: persisted.capabilities,
       peerId: persisted.peerId,
       signature: persisted.signature,
+      publicKey: persisted.publicKey,
+      nodeSignature: persisted.nodeSignature,
+      nodePeerId: persisted.nodePeerId,
+      idFormat,
       registeredAt: new Date(persisted.registeredAt),
       lastActiveAt: new Date(persisted.lastActiveAt),
       webhook: persisted.webhook,

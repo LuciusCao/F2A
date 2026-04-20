@@ -52,6 +52,23 @@ export interface AgentImportConfirmation {
 }
 
 /**
+ * importAgentIdentity 内部函数返回类型
+ * P5 修复：消除 as any 类型断言
+ */
+interface AgentImportInternalResult {
+  /** 是否已确认导入 */
+  confirmed: boolean;
+  /** 是否需要用户确认（当签名无法验证时） */
+  requiresConfirmation?: boolean;
+  /** 警告信息 */
+  warning?: string;
+  /** Agent ID */
+  agentId?: string;
+  /** Node ID */
+  nodeId?: string;
+}
+
+/**
  * 导入身份的结果
  */
 export interface ImportResult {
@@ -471,14 +488,14 @@ export async function importIdentityInternal(
       forceAgentImport
     );
     if (agentImportResult.success) {
-      const agentData = agentImportResult.data as any;
+      const agentData = agentImportResult.data;
       if (agentData.requiresConfirmation && !agentData.confirmed) {
         // P1-2: 需要用户确认
         result.agentConfirmation = {
           required: true,
-          reason: agentData.warning,
-          agentId: agentData.agentId,
-          nodeId: agentData.nodeId
+          reason: agentData.warning!,
+          agentId: agentData.agentId!,
+          nodeId: agentData.nodeId!
         };
       } else {
         result.agentImported = true;
@@ -600,7 +617,7 @@ async function importAgentIdentity(
   dataDir: string,
   importFilePath: string,
   forceImport: boolean = false
-): Promise<Result<void>> {
+): Promise<Result<AgentImportInternalResult>> {
   try {
     // 验证必要字段
     if (!agentData.id || !agentData.name || !agentData.nodeId || 
@@ -705,7 +722,7 @@ async function importAgentIdentity(
         warning: signatureWarning,
         agentId: agentData.id,
         nodeId: agentData.nodeId
-      } as any);
+      });
     }
     
     // P2-8: 安全审计日志
@@ -737,7 +754,7 @@ async function importAgentIdentity(
       console.log(`   ⚠️  Warning: ${signatureWarning}`);
     }
     
-    return success({ confirmed: true } as any);
+    return success({ confirmed: true });
   } catch (error) {
     return failureFromError(
       'AGENT_IDENTITY_LOAD_FAILED',

@@ -44,12 +44,14 @@
 
 **优先级: P0 - 核心功能，必须完成**
 
-| 文件 | 行数 | 当前覆盖率 | 未覆盖功能 | 测试策略 |
-|------|------|-----------|-----------|----------|
-| `src/utils/message-dispatcher.ts` | 440 | 0% | 全部 | 单元测试 + Mock |
-| `src/utils/peer-table-manager.ts` | 460 | 0% | 全部 | 单元测试 + 并发测试 |
-| `src/utils/middleware.ts` | 229 | 0% | 全部 | 单元测试 |
-| `src/utils/benchmark.ts` | 237 | 0% | 全部 | 可选，低优先级 |
+**进度: 2/3 完成**
+
+| 文件 | 行数 | 当前覆盖率 | 状态 | 测试数 | 备注 |
+|------|------|-----------|------|--------|------|
+| `src/utils/middleware.ts` | 229 | ~95% | ✅ 完成 | 33 | 所有测试通过 |
+| `src/utils/peer-table-manager.ts` | 460 | ~95% | ✅ 完成 | 51 | 所有测试通过 |
+| `src/utils/message-dispatcher.ts` | 440 | 0% | ⏸️ 搁置 | - | Mock 复杂度过高，需重新设计测试策略 |
+| `src/utils/benchmark.ts` | 237 | 0% | ⏭️ 可选 | - | 低优先级，非核心功能 |
 
 #### 1.1 message-dispatcher.ts 测试计划
 

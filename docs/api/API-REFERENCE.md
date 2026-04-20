@@ -5,6 +5,8 @@
 ## 目录
 
 - [核心类](#核心类)
+- [模块化组件 (v0.6.0+)](#模块化组件-v060)
+- [服务接口 (v0.6.0+)](#服务接口-v060)
 - [Daemon 模块](#daemon-模块)
 - [ControlServer HTTP API](#controlserver-http-api)
 - [配置类型](#配置类型)
@@ -71,6 +73,193 @@ f2a.on('peer:discovered', (event) => {
 f2a.on('task:request', (event) => {
   console.log('收到任务请求:', event.taskType);
 });
+```
+
+---
+
+### 模块化组件 (v0.6.0+)
+
+P2PNetwork 和 MessageRouter 在 v0.6.0 中进行了模块拆分，提取出独立的可测试组件。
+
+```typescript
+// 导入路径
+import { 
+  MessageHandler, 
+  MessageSender, 
+  EventHandlerSetupService 
+} from '@f2a/network/core';
+```
+
+#### MessageHandler
+
+处理 P2P 消息的核心逻辑，支持依赖注入。
+
+```typescript
+import { MessageHandler } from '@f2a/network/core/message-handler';
+import type { MessageHandlerDeps } from '@f2a/network/types/p2p-handlers';
+
+const handler = new MessageHandler({
+  peerManager,
+  middlewareManager,
+  logger,
+  emitter,
+  // ... 其他依赖
+});
+
+// 处理消息
+await handler.handleMessage(message, peerId);
+```
+
+| 方法 | 描述 |
+|------|------|
+| `handleMessage(message, peerId)` | 处理收到的 P2P 消息 |
+| `handleDiscover(payload, peerId)` | 处理发现消息 |
+| `handleCapabilityQuery(message, peerId)` | 处理能力查询 |
+| `handleTaskRequest(message, peerId)` | 处理任务请求 |
+
+---
+
+#### MessageSender
+
+P2P 消息发送和广播，支持 E2EE 加密。
+
+```typescript
+import { MessageSender } from '@f2a/network/core/message-sender';
+import type { MessageSenderDeps } from '@f2a/network/types/p2p-handlers';
+
+const sender = new MessageSender({
+  node,
+  peerManager,
+  e2eeCrypto,
+  logger,
+  enableE2EE: true,
+});
+
+// 发送消息
+const result = await sender.send(peerId, message, true);
+
+// 广播消息
+await sender.broadcast(message);
+```
+
+| 方法 | 描述 |
+|------|------|
+| `send(peerId, message, encrypt?)` | 发送消息到指定 Peer |
+| `broadcast(message)` | 广播消息到全网 |
+
+---
+
+#### QueueManager
+
+管理 Agent 消息队列，从 MessageRouter 提取。
+
+```typescript
+import { QueueManager } from '@f2a/network/core/queue-manager';
+
+const queueManager = new QueueManager({
+  logger,
+  defaultMaxQueueSize: 100,
+});
+
+// 创建队列
+queueManager.createQueue('agent:xxx:yyy', 50);
+
+// 获取消息
+const messages = queueManager.pollQueue('agent:xxx:yyy', 10);
+
+// 推送消息
+queueManager.pushMessage('agent:xxx:yyy', message);
+```
+
+| 方法 | 描述 |
+|------|------|
+| `createQueue(agentId, maxSize?)` | 创建消息队列 |
+| `deleteQueue(agentId)` | 删除队列 |
+| `getQueue(agentId)` | 获取队列信息 |
+| `pollQueue(agentId, limit?)` | 获取消息（不移除） |
+| `pushMessage(agentId, message)` | 推送消息到队列 |
+| `clearQueue(agentId, ids?)` | 清除指定消息 |
+
+---
+
+#### WebhookPusher
+
+RFC 004 Agent 级 Webhook 转发，从 MessageRouter 提取。
+
+```typescript
+import { WebhookPusher } from '@f2a/network/core/webhook-pusher';
+
+const pusher = new WebhookPusher({ logger });
+
+// 转发消息到 Agent webhook
+const result = await pusher.forwardToAgentWebhook(message, targetAgent);
+```
+
+| 方法 | 描述 |
+|------|------|
+| `forwardToAgentWebhook(message, agent)` | 转发消息到 Agent webhook |
+| `clearCache(agentId)` | 清除 webhook 服务缓存 |
+
+---
+
+### 服务接口 (v0.6.0+)
+
+用于依赖注入和测试 mock 的接口定义。
+
+```typescript
+import { 
+  IAgentRegistry, 
+  IMessageRouter 
+} from '@f2a/network/interfaces';
+```
+
+#### IAgentRegistry
+
+Agent 注册表接口，定义注册、查询、更新等操作契约。
+
+```typescript
+interface IAgentRegistry {
+  // 注册
+  register(request: AgentRegistrationRequest): AgentRegistration;
+  registerRFC008(request: RFC008AgentRegistrationRequest): AgentRegistration;
+  
+  // 查询
+  get(agentId: string): AgentRegistration | undefined;
+  list(): AgentRegistration[];
+  findByCapability(name: string): AgentRegistration[];
+  
+  // 更新
+  updateName(agentId, newName): boolean;
+  updateWebhook(agentId, webhook): boolean;
+  
+  // 验证
+  verifySignature(agentId, signature?, peerId?, publicKey?): boolean;
+  
+  // 持久化
+  saveAsync(): Promise<void>;
+}
+```
+
+#### IMessageRouter
+
+消息路由接口，定义队列管理和路由操作契约。
+
+```typescript
+interface IMessageRouter {
+  // 队列管理
+  createQueue(agentId: string, maxSize?: number): void;
+  deleteQueue(agentId: string): void;
+  getQueue(agentId: string): MessageQueue | undefined;
+  
+  // 路由
+  route(message: RoutableMessage): boolean;
+  routeAsync(message: RoutableMessage): Promise<boolean>;
+  broadcast(message: RoutableMessage): boolean;
+  
+  // 消息管理
+  getMessages(agentId: string, limit?: number): RoutableMessage[];
+  clearMessages(agentId: string, ids?: string[]): number;
+}
 ```
 
 ---

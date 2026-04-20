@@ -2,6 +2,19 @@
 
 > `src/types/` 目录下核心类型的说明
 
+## 导入说明 (v0.6.0+)
+
+所有类型已导出到主包入口，可直接导入：
+
+```typescript
+// 从主包导入（推荐）
+import { AgentInfo, AgentCapability, F2AMessage, F2AMessageType } from '@f2a/network';
+import type { Result, TaskDelegateOptions, F2AEvents } from '@f2a/network';
+
+// Result 相关函数
+import { success, failure, failureFromError } from '@f2a/network';
+```
+
 ## 目录结构
 
 ```
@@ -37,7 +50,8 @@ function failureFromError<T>(error: unknown): Result<T>;
 **使用示例：**
 
 ```typescript
-import { success, failure, Result } from '@f2a/network/types';
+import { success, failureFromError } from '@f2a/network';
+import type { Result } from '@f2a/network';
 
 async function connectToPeer(peerId: string): Result<void> {
   try {
@@ -398,9 +412,10 @@ interface TaskResponseEvent {
 
 ## 配置类型
 
-配置类型从 `src/config/types.ts` 导入：
+配置类型从主包导入：
 
 ```typescript
+// 从主包导入（推荐）
 import type {
   SecurityLevel,
   LogLevel,
@@ -408,16 +423,17 @@ import type {
   SecurityConfig,
   F2AOptions,
   WebhookConfig,
-  TaskRetryOptions,
   TaskDelegateOptions,
   RateLimitConfig,
-} from '@f2a/network/types';
+} from '@f2a/network';
 
-// 或直接从配置中心导入
-import type { ... } from '@f2a/network/config';
+// 导出默认配置值
+import {
+  DEFAULT_P2P_NETWORK_CONFIG,
+  DEFAULT_SECURITY_CONFIG,
+  DEFAULT_F2A_OPTIONS,
+} from '@f2a/network';
 ```
-
-详见 [配置中心文档](../src/config/README.md)。
 
 ---
 

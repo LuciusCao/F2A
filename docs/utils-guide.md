@@ -2,6 +2,23 @@
 
 > `src/utils/` 目录下工具函数的使用说明
 
+## 导入说明 (v0.6.0+)
+
+部分工具模块已导出到主包入口，可直接导入：
+
+```typescript
+// 从主包导入（推荐）
+import { Logger, RateLimiter, Middleware, MiddlewareContext } from '@f2a/network';
+```
+
+未导出的模块需要使用编译后的路径：
+
+```typescript
+// 直接路径导入
+import { AsyncLock } from '@f2a/network/dist/utils/async-lock.js';
+import { PeerTableManager } from '@f2a/network/dist/utils/peer-table-manager.js';
+```
+
 ## 目录
 
 - [AsyncLock](#asynclock)
@@ -29,7 +46,8 @@
 ### 导入
 
 ```typescript
-import { AsyncLock } from '@f2a/network/utils/async-lock';
+// 直接路径导入（未导出到主包）
+import { AsyncLock } from '@f2a/network/dist/utils/async-lock.js';
 ```
 
 ### API
@@ -99,7 +117,11 @@ await lock.acquire(5000);  // 5 秒超时
 ### 导入
 
 ```typescript
-import { Logger } from '@f2a/network/utils/logger';
+// 从主包导入（推荐）
+import { Logger } from '@f2a/network';
+
+// 或直接路径导入
+import { Logger } from '@f2a/network/dist/utils/logger.js';
 ```
 
 ### API
@@ -164,7 +186,8 @@ Peer 路由表管理器。
 ### 导入
 
 ```typescript
-import { PeerTableManager, PeerTableConfig } from '@f2a/network/utils/peer-table-manager';
+// 直接路径导入（未导出到主包）
+import { PeerTableManager, PeerTableConfig } from '@f2a/network/dist/utils/peer-table-manager.js';
 ```
 
 ### 配置
@@ -262,7 +285,8 @@ P2P 消息分发器。
 ### 导入
 
 ```typescript
-import { MessageDispatcher, MessageDispatcherConfig } from '@f2a/network/utils/message-dispatcher';
+// 直接路径导入（未导出到主包）
+import { MessageDispatcher, MessageDispatcherConfig } from '@f2a/network/dist/utils/message-dispatcher.js';
 ```
 
 ### 协议标识
@@ -354,7 +378,11 @@ await dispatcher.handleRawMessage(rawData, peerId);
 ### 导入
 
 ```typescript
-import { RateLimiter, RateLimitConfig } from '@f2a/network/utils/rate-limiter';
+// 从主包导入（推荐）
+import { RateLimiter, createRateLimitMiddleware } from '@f2a/network';
+
+// 或直接路径导入
+import { RateLimiter } from '@f2a/network/dist/utils/rate-limiter.js';
 ```
 
 ### 配置
@@ -418,7 +446,17 @@ if (limiter.check(peerId)) {
 ### 导入
 
 ```typescript
-import { Middleware, MiddlewareManager, MiddlewareContext } from '@f2a/network/utils/middleware';
+// 从主包导入（推荐）
+import { 
+  Middleware, 
+  MiddlewareContext, 
+  MiddlewareResult,
+  createMessageLoggingMiddleware,
+  createMessageTypeFilterMiddleware
+} from '@f2a/network';
+
+// 或直接路径导入
+import { MiddlewareManager } from '@f2a/network/dist/utils/middleware.js';
 ```
 
 ### 类型
@@ -480,11 +518,12 @@ dispatcher.useMiddleware(loggingMiddleware);
 ### 导入
 
 ```typescript
+// 直接路径导入（未导出到主包）
 import {
   validateF2AMessage,
   validateAgentCapability,
   validateTaskDelegateOptions,
-} from '@f2a/network/utils/validation';
+} from '@f2a/network/dist/utils/validation.js';
 ```
 
 ### API
@@ -525,7 +564,11 @@ if (!capResult.valid) {
 ### 导入
 
 ```typescript
-import { getErrorMessage, createError, isError } from '@f2a/network/utils/error-utils';
+// 从主包导入（推荐）
+import { ensureError, getErrorMessage, toF2AError } from '@f2a/network';
+
+// 或直接路径导入
+import { getErrorMessage } from '@f2a/network/dist/utils/error-utils.js';
 ```
 
 ### API
@@ -561,12 +604,11 @@ try {
 ### 导入
 
 ```typescript
-import { 
-  generateKeyPair, 
-  sign, 
-  verify, 
-  Signature 
-} from '@f2a/network/utils/signature';
+// 从主包导入（推荐）
+import { RequestSigner, isSignatureAvailable } from '@f2a/network';
+
+// 或直接路径导入
+import { RequestSigner } from '@f2a/network/dist/utils/signature.js';
 ```
 
 ### API
@@ -604,7 +646,11 @@ if (!isValid) {
 ### 导入
 
 ```typescript
-import { CryptoUtils } from '@f2a/network/utils/crypto-utils';
+// 从主包导入（推荐）
+import { secureWipe } from '@f2a/network';
+
+// 或直接路径导入
+import { secureWipe } from '@f2a/network/dist/utils/crypto-utils.js';
 ```
 
 ### API
@@ -636,7 +682,8 @@ class CryptoUtils {
 ### 导入
 
 ```typescript
-import { CapabilityScorer } from '@f2a/network/utils/capability-scorer';
+// 直接路径导入（未导出到主包）
+import { CapabilityScorer } from '@f2a/network/dist/utils/capability-scorer.js';
 ```
 
 ### API

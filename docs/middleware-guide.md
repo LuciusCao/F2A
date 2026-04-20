@@ -2,6 +2,24 @@
 
 中间件系统允许你在消息处理流程中插入自定义逻辑，实现消息过滤、转换、日志记录等功能。
 
+## 导入说明 (v0.6.0+)
+
+所有中间件相关模块已导出到主包入口：
+
+```typescript
+// 内置中间件工厂函数
+import {
+  createMessageSizeLimitMiddleware,
+  createMessageTypeFilterMiddleware,
+  createMessageLoggingMiddleware,
+  createMessageTransformMiddleware,
+  createRateLimitMiddleware,
+} from '@f2a/network';
+
+// 中间件类型定义
+import type { Middleware, MiddlewareContext, MiddlewareResult } from '@f2a/network';
+```
+
 ## 目录
 
 - [快速开始](#快速开始)

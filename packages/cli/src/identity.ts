@@ -120,8 +120,7 @@ export async function initIdentity(options?: { force?: boolean }): Promise<void>
     
     // 问题 4 修复：从 loadOrCreate() 返回值直接获取 nodeId
     if (result.success && result.data) {
-      console.log(`   Node ID: ${result.data.nodeId.slice(0, 20)}...`);
-      console.log(`   Full ID: ${result.data.nodeId}`);
+      console.log(`   Node ID: ${result.data.nodeId}`);
     } else {
       console.log(`   ⚠️ Could not load existing identity: ${result.error?.message}`);
     }
@@ -133,7 +132,6 @@ export async function initIdentity(options?: { force?: boolean }): Promise<void>
     
     if (result.success && result.data) {
       console.log('   ✅ Node Identity created');
-      console.log(`   Node ID: ${result.data.nodeId.slice(0, 20)}...`);
       console.log(`   Node ID: ${result.data.nodeId}`);
     } else {
       console.log(`   ❌ Failed：${result.error?.message || 'Unknown error'}`);
@@ -216,8 +214,7 @@ export async function showIdentityStatus(): Promise<void> {
     // 问题 4 修复：从 loadOrCreate() 返回值直接获取 nodeId/peerId
     if (result.success && result.data) {
       console.log('📦 Node Identity: ✅ Loaded');
-      console.log(`   Node ID: ${result.data.nodeId.slice(0, 16)}...`);
-      console.log(`   Full ID: ${result.data.nodeId}`);
+      console.log(`   Node ID: ${result.data.nodeId}`);
     } else {
       console.log('📦 Node Identity: ❌ Failed to load');
       console.log(`   Error: ${result.error?.message || 'Unknown error'}`);

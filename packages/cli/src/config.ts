@@ -118,18 +118,13 @@ function cleanupOldBackups(configDir: string, keepCount: number = 5): void {
 // ============================================================================
 
 /**
- * 必需配置（仅 3 项）
+ * 必需配置（网络配置 + 自动启动）
  */
 const RequiredConfigSchema = z.object({
-  /** Agent 名称 */
-  agentName: z.string()
-    .min(1, 'Agent name cannot be empty')
-    .max(50, 'Agent name cannot exceed 50 characters')
-    .regex(AGENT_NAME_REGEX, 'Agent name can only contain letters, numbers, hyphens, and underscores'),
   /** 网络配置 */
   network: z.object({
     /** 引导节点列表 - 必须是有效的 multiaddr 格式 */
-    bootstrapPeers: z.array(z.string()).default([]).refine(
+    bootstrapPeers: z.array(z.string()).refine(
       (peers) => peers.every((peer) => validateMultiaddr(peer).valid),
       { message: 'Invalid bootstrap peer format. Expected multiaddr: /ip4|ip6|dns*/<host>/p2p/<peer-id>' }
     ),
@@ -137,7 +132,7 @@ const RequiredConfigSchema = z.object({
     bootstrapPeerFingerprints: z.record(z.string(), z.string()).optional(),
   }),
   /** 是否自动启动 */
-  autoStart: z.boolean().default(false),
+  autoStart: z.boolean(),
 });
 
 /**
@@ -226,7 +221,6 @@ function ensureConfigDir(): void {
  */
 export function getDefaultConfig(): F2AConfig {
   return {
-    agentName: 'my-agent',
     network: {
       bootstrapPeers: [],
       bootstrapPeerFingerprints: {},
@@ -395,7 +389,7 @@ export function validateConfig(config: F2AConfig): { valid: boolean; missing: st
   if (!requiredResult.success) {
     for (const issue of requiredResult.error.issues) {
       const path = issue.path.join('.');
-      if (issue.code === 'invalid_type' && issue.expected === 'string') {
+      if (issue.code === 'invalid_type') {
         missing.push(path);
       }
       errors.push(`${path}: ${issue.message}`);

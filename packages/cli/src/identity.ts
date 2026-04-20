@@ -93,8 +93,6 @@ export interface ImportResult {
  */
 export async function initIdentity(options?: { force?: boolean }): Promise<void> {
   const dataDir = join(homedir(), DEFAULT_DATA_DIR);
-  const hostnameShort = hostname().split('.')[0];  // 去掉 .local 后缀
-  const defaultAgentName = `${process.env.USER || 'user'}-${hostnameShort}`;
   
   console.log('');
   console.log('=== F2A Initialization ===');
@@ -147,7 +145,6 @@ export async function initIdentity(options?: { force?: boolean }): Promise<void>
     console.log('⚙️  Creating config.json...');
     
     const defaultConfig = {
-      agentName: defaultAgentName,
       network: {
         bootstrapPeers: [],
         bootstrapPeerFingerprints: {}
@@ -158,12 +155,11 @@ export async function initIdentity(options?: { force?: boolean }): Promise<void>
     };
     
     writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
-    console.log(`   ✅ Created with agentName: "${defaultAgentName}"`);
+    console.log('   ✅ Created');
+    console.log('   Note: Run "f2a agent init --name <name>" to create Agent Identity');
   } else {
     console.log('');
     console.log('⚙️  config.json: ✅ Already exists');
-    const existingConfig = JSON.parse(readFileSync(configPath, 'utf-8'));
-    console.log(`   Current agentName: "${existingConfig.agentName || 'not set'}"`);
   }
   
   // 4. 创建 control-token（如果不存在）

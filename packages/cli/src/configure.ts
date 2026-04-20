@@ -37,7 +37,6 @@ const colors = {
 
 // 有效的配置 key 列表（支持嵌套 key）
 const VALID_CONFIG_KEYS = [
-  'agentName',
   'network',
   'network.bootstrapPeers',
   'network.bootstrapPeerFingerprints',
@@ -58,9 +57,6 @@ const VALID_CONFIG_KEYS = [
 
 // 日志级别选项
 const LOG_LEVELS = ['DEBUG', 'INFO', 'WARN', 'ERROR'];
-
-// Agent 名称最大尝试次数
-const MAX_NAME_ATTEMPTS = 3;
 
 // ============================================================================
 // 辅助函数
@@ -166,7 +162,6 @@ function showSummary(config: F2AConfig, isReconfigure: boolean): void {
   console.log(color(isReconfigure ? '修改后的配置' : '配置摘要', 'bold'));
   console.log(color('══════════════════════════════════════════════════', 'blue'));
   console.log('');
-  console.log(`${color('Agent 名称:', 'cyan')}     ${config.agentName}`);
   console.log(`${color('自动启动:', 'cyan')}       ${config.autoStart ? '是' : '否'}`);
   console.log(`${color('控制端口:', 'cyan')}       ${config.controlPort}`);
   console.log(`${color('P2P 端口:', 'cyan')}        ${config.p2pPort === 0 ? '随机分配' : config.p2pPort}`);
@@ -204,7 +199,6 @@ function showNextSteps(): void {
 // ============================================================================
 
 interface BasicConfig {
-  agentName: string;
   autoStart: boolean;
 }
 
@@ -233,41 +227,13 @@ async function configureBasic(
   console.log(color('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'blue'));
   console.log('');
   
-  // Agent 名称
-  const hostnameShort = hostname().split('.')[0];
-  const defaultName = existingConfig.agentName || `${process.env.USER || 'user'}-${hostnameShort}`;
-  let agentName = '';
-  let nameAttempts = 0;
-  
-  while (nameAttempts < MAX_NAME_ATTEMPTS) {
-    const input = await question(rl, 'Agent name (used to identify in network)', defaultName);
-    const validation = validateAgentName(input || defaultName);
-    
-    if (validation.valid) {
-      agentName = input || defaultName;
-      break;
-    } else {
-      console.log(color(`  Invalid: ${validation.error}`, 'red'));
-      nameAttempts++;
-      if (nameAttempts < MAX_NAME_ATTEMPTS) {
-        console.log(color(`  Please try again (${MAX_NAME_ATTEMPTS - nameAttempts} attempts remaining)`, 'yellow'));
-      }
-    }
-  }
-  
-  if (!agentName) {
-    console.log(color('Using default name...', 'yellow'));
-    agentName = defaultName;
-  }
-  
   // 自动启动
-  console.log('');
   console.log('是否在后台自动启动 F2A daemon？');
   console.log('  - 选择"是"会在系统启动时自动运行');
   console.log('  - 选择"否"需要手动运行 f2a daemon');
   const autoStart = await confirm(rl, '自动启动', existingConfig.autoStart);
   
-  return { agentName, autoStart };
+  return { autoStart };
 }
 
 /**
@@ -456,7 +422,6 @@ export async function configureCommand(): Promise<void> {
     
     // 构建最终配置
     const config: F2AConfig = {
-      agentName: basicConfig.agentName,
       network: {
         bootstrapPeers: bootstrapConfig.bootstrapPeers,
         bootstrapPeerFingerprints: Object.keys(bootstrapConfig.bootstrapPeerFingerprints).length > 0 

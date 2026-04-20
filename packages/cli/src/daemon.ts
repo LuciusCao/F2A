@@ -6,7 +6,7 @@
 import { spawn } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, statSync, renameSync, openSync, closeSync, writeSync } from 'fs';
 import { join, dirname } from 'path';
-import { homedir } from 'os';
+import { homedir, hostname } from 'os';
 import { request, RequestOptions } from 'http';
 import { createServer } from 'net';
 import { fileURLToPath } from 'url';
@@ -251,8 +251,11 @@ export async function startForeground(): Promise<void> {
   // 动态导入 daemon 模块并启动
   const { F2ADaemon } = await import('@f2a/daemon');
   
-  // 读取配置获取 agentName 作为 displayName
+  // 读取配置
   const config = loadConfig();
+  
+  // Node displayName: 使用 hostname (去掉 .local 后缀)
+  const hostnameShort = hostname().split('.')[0];
   
   // 解析引导节点
   const bootstrapPeers = process.env.BOOTSTRAP_PEERS 
@@ -267,7 +270,7 @@ export async function startForeground(): Promise<void> {
 
   const daemon = new F2ADaemon({
     controlPort,
-    displayName: config.agentName,
+    displayName: hostnameShort,
     network: {
       listenPort: p2pPort,
       bootstrapPeers,
@@ -356,17 +359,20 @@ export async function startBackground(): Promise<void> {
     process.exit(1);
   }
 
-  // 读取配置获取 agentName
+  // 读取配置
   const config = loadConfig();
+  
+  // Node displayName
+  const hostnameShort = hostname().split('.')[0];
 
   // 构建环境变量
   const env = { ...process.env };
   if (!env.F2A_CONTROL_PORT) {
     env.F2A_CONTROL_PORT = controlPort.toString();
   }
-  // 传递 agentName 作为 displayName
-  if (!env.F2A_AGENT_NAME) {
-    env.F2A_AGENT_NAME = config.agentName;
+  // 传递 displayName
+  if (!env.F2A_NODE_NAME) {
+    env.F2A_NODE_NAME = hostnameShort;
   }
   // 传递引导节点
   if (!env.BOOTSTRAP_PEERS && config.network.bootstrapPeers.length > 0) {

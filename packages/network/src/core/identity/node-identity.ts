@@ -250,11 +250,16 @@ export class NodeIdentityManager extends IdentityManager {
 
   /**
    * 从持久化数据加载 Node Identity
+   * Phase 3: 支持向后兼容旧的 peerId 字段名
    * P1-4: 添加 nodeId 格式验证
    */
   private async loadPersistedNodeIdentity(persisted: PersistedNodeIdentity): Promise<void> {
-    if (!isValidBase64(persisted.peerId)) {
-      throw new Error('Invalid persisted node identity: peerId is not valid base64');
+    // Phase 3: 向后兼容 - 优先使用 privateKey，如果不存在则使用 peerId（旧字段名）
+    const legacyPeerId = 'peerId' in persisted ? (persisted as Record<string, unknown>).peerId as string | undefined : undefined;
+    const privateKeyField = persisted.privateKey ?? legacyPeerId;
+    
+    if (!privateKeyField || !isValidBase64(privateKeyField)) {
+      throw new Error('Invalid persisted node identity: privateKey/peerId is not valid base64');
     }
     if (!isValidBase64(persisted.e2eePrivateKey)) {
       throw new Error('Invalid persisted node identity: e2eePrivateKey is not valid base64');
@@ -265,15 +270,16 @@ export class NodeIdentityManager extends IdentityManager {
     
     // P1-4: 验证 nodeId 格式
     if (!isValidNodeId(persisted.nodeId)) {
-      throw new Error(`Invalid persisted node identity: nodeId format is invalid. Must be 1-64 alphanumeric characters or hyphens.`);
+      throw new Error(`Invalid persisted node identity: nodeId format is invalid. Must be 1-${NODE_ID_MAX_LENGTH} alphanumeric characters or hyphens.`);
     }
     
     // 设置 nodeId
     this.nodeId = persisted.nodeId;
     
     // P1-1 修复: 直接调用 protected 方法，无需 (this as any)
+    // Phase 3: 使用 privateKeyField（支持旧字段名兼容）
     await this.loadPersistedIdentity({
-      peerId: persisted.peerId,
+      peerId: privateKeyField,
       e2eePrivateKey: persisted.e2eePrivateKey,
       e2eePublicKey: persisted.e2eePublicKey,
       createdAt: persisted.createdAt,
@@ -408,6 +414,7 @@ export class NodeIdentityManager extends IdentityManager {
 
   /**
    * 保存 Node Identity 到文件
+   * Phase 3: 使用 privateKey 字段名（更语义化）
    */
   private async saveNodeIdentity(): Promise<void> {
     if (!this.isLoaded() || !this.nodeId) {
@@ -416,9 +423,10 @@ export class NodeIdentityManager extends IdentityManager {
     
     const identity = this.exportIdentity();
     
+    // Phase 3: 使用 privateKey 字段名，移除冗余的 peerId 字段
     const persisted: PersistedNodeIdentity = {
       nodeId: this.nodeId,
-      peerId: identity.privateKey,
+      privateKey: identity.privateKey,
       e2eePrivateKey: identity.e2eeKeyPair.privateKey,
       e2eePublicKey: identity.e2eeKeyPair.publicKey,
       createdAt: identity.createdAt.toISOString(),
@@ -431,8 +439,17 @@ export class NodeIdentityManager extends IdentityManager {
       this.nodeLogger.warn('Saving node identity without encryption. Consider setting a password.');
     }
     
+    // Phase 3: 加密函数需要 PersistedIdentity 格式（peerId 字段名），转换
+    const persistedForEncryption: PersistedIdentity = {
+      peerId: persisted.privateKey,
+      e2eePrivateKey: persisted.e2eePrivateKey,
+      e2eePublicKey: persisted.e2eePublicKey,
+      createdAt: persisted.createdAt,
+      lastUsedAt: persisted.lastUsedAt
+    };
+    
     const data = shouldEncrypt
-      ? JSON.stringify(encryptIdentity(persisted, this.nodePassword!))
+      ? JSON.stringify(encryptIdentity(persistedForEncryption, this.nodePassword!))
       : JSON.stringify(persisted, null, 2);
     
     const identityFile = this.getNodeIdentityFilePath();

@@ -118,18 +118,20 @@ export interface NodeIdentityOptions {
 
 /**
  * 持久化的 Node Identity 数据结构
+ * 
+ * Phase 3 优化：移除冗余的 peerId 字段，保留 privateKey（语义更清晰）
+ * nodeId 字段现在存储完整的 PeerId 值（Phase 2 已修复）
  */
 export interface PersistedNodeIdentity {
-  /** Node ID (PeerId 字符串) */
+  /** Node ID (完整 PeerId 字符串，不截断) */
   nodeId: string;
   /** 
-   * Ed25519 private key (protobuf encoded, base64) - SENSITIVE
+   * libp2p Ed25519 private key (protobuf encoded, base64) - SENSITIVE
    * 
-   * Note: Despite the field name "peerId", this field stores the PRIVATE KEY,
-   * not the public PeerId. The naming is preserved for backward compatibility
-   * with existing identity files.
+   * Phase 3: 字段名从 peerId 改为 privateKey，语义更清晰
+   * 加载旧文件时向后兼容 peerId 字段名
    */
-  peerId: string;
+  privateKey: string;
   /** E2EE 私钥 (X25519, base64) */
   e2eePrivateKey: string;
   /** E2EE 公钥 (X25519, base64) */

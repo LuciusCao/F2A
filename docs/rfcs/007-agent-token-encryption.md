@@ -1,15 +1,88 @@
 # RFC 007: Agent Token 内存管理
 
-> **Status**: Implemented ✅
+> **Status**: Implemented ✅ (Phase 1-2) | 🔄 Phase 3 已废弃，改用 Challenge-Response
 > **Created**: 2026-04-18
-> **Updated**: 2026-04-18
+> **Updated**: 2026-04-22
 > **Priority**: High (安全相关)
+
+---
+
+## ⚠️ 重要更新：Phase 3 已废弃
+
+**RFC007 原设计的 Phase 3 存在逻辑矛盾**：
+- Phase 1-2: Token 只存 daemon 内存，永不写文件 ✅
+- Phase 3: CLI 保存 token 到 identity 文件 ❌ 矛盾！
+
+**问题**：如果 token 只在 daemon 内存中，CLI 如何获取并保存？
+
+**解决方案**：改用 RFC008 Challenge-Response（见下文）
+
+---
+
+## 当前实现架构
+
+### 两层 Token 体系
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Layer 1: Challenge-Response                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  CLI/插件 需要操作时：                                     │   │
+│  │                                                          │   │
+│  │  1. POST /api/v1/challenge → 获取 challenge              │   │
+│  │  2. 用本地私钥签名 challenge                              │   │
+│  │  3. POST /api/v1/challenge/response → 验证后获得 token   │   │
+│  │                                                          │   │
+│  │  ✅ 私钥存在本地文件（~/.f2a/agent-identities/*.json）     │   │
+│  │  ✅ Token 仅在 daemon 内存（短期有效）                     │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              │ Challenge 验证成功后
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     Layer 2: AgentTokenManager                   │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  AgentTokenManager（daemon 内存）                          │   │
+│  │                                                          │   │
+│  │  - generate(agentId) → 短期操作 token                     │   │
+│  │  - verify(token) → 验证 token                            │   │
+│  │  - Token 有效期：操作期间（通常几分钟到几小时）             │   │
+│  │  - 不持久化，重启后清空                                   │   │
+│  │                                                          │   │
+│  │  ⚠️ 这是"操作 token"，不是"身份 token"                    │   │
+│  │     身份验证由 Challenge-Response 完成                    │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### CLI 发送消息流程
+
+```bash
+# CLI 发送消息的实际流程
+f2a agent send --agent-id agent:xxx --target agent:yyy "Hello"
+
+内部流程：
+1. CLI 读取本地私钥（~/.f2a/agent-identities/agent-xxx.json）
+2. POST /api/v1/challenge { agentId, operation: "send_message" }
+3. daemon 返回 challenge（30秒有效期）
+4. CLI 用私钥签名 challenge
+5. POST /api/v1/challenge/response { agentId, challenge, response }
+6. daemon 验证签名 → 返回 agentToken
+7. POST /api/v1/messages { Authorization: agentToken, message }
+```
+
+**关键点**：
+- ✅ 私钥持久化在本地（身份证明）
+- ✅ Token 仅在 daemon 内存（操作凭证）
+- ✅ 每次 API 操作需要重新 Challenge-Response
+- ✅ 无需在 CLI 存储 token
 
 ---
 
 ## 问题背景
 
-### 当前设计的缺陷
+### 旧设计的缺陷（已废弃）
 
 ```
 旧设计问题：
@@ -29,44 +102,42 @@
 
 ### 新设计原则
 
-**简单即安全**：
-- Token 只存在 daemon 内存中，永不写文件
-- daemon 重启后 token 丢失，agent 需重新注册
-- 每次注册都生成新 token，旧 token 自动失效
-- 纯内存存储防止意外误用和恶意攻击
+**身份验证与操作授权分离**：
+- **身份验证**：Challenge-Response（私钥签名）
+- **操作授权**：短期 AgentToken（daemon 内存）
+- daemon 重启后 token 丢失，但私钥仍存在本地
+- 每次 Challenge-Response 都生成新 token
 
 ---
 
 ## 最终实现
 
-### 存储设计
-
-```
-Token 存储：
-- ❌ 不写入任何文件
-- ✅ 仅存在于 AgentTokenManager 内存中
-- ✅ daemon 重启后自动清空
-- ✅ Agent 需重新注册获取新 token
-```
-
 ### AgentTokenManager 设计
 
 **文件**: `packages/daemon/src/agent-token-manager.ts`
 
+**角色变化**：
+- 原 RFC007 设计：持久化身份 token（已废弃）
+- 实际实现：Challenge-Response 后的**短期操作 token**
+
 **核心设计**:
 ```typescript
 /**
- * 全局单例 AgentTokenManager
- * - 支持 multi-agent
- * - 纯内存存储
- * - 无文件持久化
+ * AgentTokenManager - 短期操作 token 管理器
+ * 
+ * 角色：Challenge-Response 验证成功后，生成短期 token
+ * 用于后续 API 操作（如 send_message、update_webhook）
+ * 
+ * ⚠️ 不是身份验证机制！身份验证由 Challenge-Response 完成
  */
 class AgentTokenManager {
   private tokens: Map<string, TokenData> = new Map();
-  // token -> TokenData 的映射
   
   /**
-   * 生成 token 并绑定到指定 agentId
+   * 生成短期操作 token
+   * 
+   * @param agentId Agent ID
+   * @returns 短期 token（格式：agent-{random64hex}）
    */
   generate(agentId: string): string {
     const token = `agent-${randomBytes(32).toString('hex')}`;
@@ -107,49 +178,79 @@ class AgentTokenManager {
 }
 ```
 
-**关键特性**:
-- ✅ 全局单例，所有 agent 共享
-- ✅ 每个 token 绑定到特定 agentId
-- ✅ 支持按 agentId 批量撤销
-- ✅ 自动过期机制（7天）
-- ✅ 无文件持久化，重启后清空
+### ChallengeHandler 设计
+
+**文件**: `packages/daemon/src/challenge-handler.ts`
+
+**核心流程**:
+```typescript
+/**
+ * ChallengeHandler - RFC008 Challenge-Response 认证处理器
+ * 
+ * 流程：
+ * 1. POST /api/v1/challenge → 生成 challenge（30秒有效）
+ * 2. Client 用私钥签名 challenge
+ * 3. POST /api/v1/challenge/response → 验证签名，返回 agentToken
+ */
+class ChallengeHandler {
+  /**
+   * 处理 Challenge 请求
+   */
+  async handleChallengeRequest(req, res) {
+    // 生成 challenge
+    const challenge = generateChallenge(operation, 30);
+    // 存储到 pendingChallenges
+    this.pendingChallenges.set(challenge.challenge, { ... });
+    // 返回 challenge
+    res.end(JSON.stringify({ success: true, challenge }));
+  }
+  
+  /**
+   * 处理 Challenge-Response 提交
+   */
+  async handleChallengeResponse(req, res) {
+    // 验证签名
+    const result = verifyChallengeResponse(agentId, challenge, response);
+    if (!result.valid) {
+      return res.end(JSON.stringify({ success: false, error }));
+    }
+    
+    // 生成短期操作 token
+    const agentToken = this.agentTokenManager.generate(agentId);
+    
+    res.end(JSON.stringify({ 
+      success: true, 
+      verified: true, 
+      agentToken 
+    }));
+  }
+}
+```
 
 ---
 
 ## 安全性分析
 
-### 攻击场景防护
+### 当前架构的攻击防护
 
 | 攻击场景 | 防护措施 | 效果 |
 |---------|---------|------|
-| **文件窃取** | Token 不写入文件 | 🔴🔴🔴 完全防护 |
-| **跨 Agent 访问** | `verifyForAgent()` 绑定检查 | 🔴🔴🔴 完全防护 |
-| **Token 重放** | 每次注册生成新 token | 🔴🔴🔴 完全防护 |
+| **私钥文件窃取** | Ed25519 私钥，无法伪造签名 | 🔴🔴🔴 完全防护 |
+| **Challenge 重放** | 30秒有效期，一次性使用 | 🔴🔴🔴 完全防护 |
+| **Token 窃取** | Token 仅内存，重启清空 | 🔴🔴🔴 完全防护 |
+| **跨 Agent 访问** | Challenge 绑定 agentId | 🔴🔴🔴 完全防护 |
+| **中间人攻击** | P2P E2EE 加密 | 🔴🔴🔴 完全防护 |
 | **进程内存读取** | 攻击者已有代码执行权限 | 🔴 无法防护（已攻破） |
-| **daemon 重启攻击** | Token 丢失，需重新注册 | 🔴🔴 部分防护 |
 
-### 安全保障矩阵
+### 与旧方案对比
 
-| 场景 | 文件权限 | 内存隔离 | 程序逻辑 | 最终效果 |
-|------|---------|---------|---------|------------|
-| **正常使用** | N/A | ✅ 独立进程 | ✅ API 验证 | 🔴🔴🔴 安全 |
-| **文件读取攻击** | N/A | ✅ 无文件 | ✅ 无持久化 | 🔴🔴🔴 最高 |
-| **跨 Agent 攻击** | N/A | ✅ 进程隔离 | ✅ verifyForAgent | 🔴🔴🔴 最高 |
-| **调试/逆向** | N/A | ⚠️ 可读取内存 | ⚠️ 可绕过 | 🔴 基础保护 |
-
-### 与文件加密方案对比
-
-| 维度 | 文件加密方案 | 纯内存方案 |
-|------|-------------|-----------|
-| **实现复杂度** | 🔴🔴🔴 高 | 🔴 低 |
-| **加密密钥管理** | 需要安全存储 | 不需要 |
-| **文件权限** | 需要精心设置 | 不需要 |
-| **跨 Agent 安全** | 依赖文件隔离 | 依赖内存隔离 |
-| **重启持久性** | ✅ 持久 | ❌ 丢失 |
-| **Agent 体验** | 无需重新注册 | 需重新注册 |
-| **安全性** | 🔴🔴 较高 | 🔴🔴🔴 更高 |
-
-**结论**: 纯内存方案更简单、更安全，唯一代价是 daemon 重启后 agent 需重新注册。
+| 维度 | 旧方案（Token 持久化） | 新方案（Challenge-Response） |
+|------|----------------------|------------------------------|
+| **身份验证** | Token（可被盗） | 私钥签名（不可伪造） |
+| **Token 存储** | 文件（有攻击面） | 内存（无攻击面） |
+| **重启后** | Token 仍可用 | 需重新 Challenge |
+| **CLI 需存储** | Token 文件 | 私钥文件 |
+| **安全性** | 🔴🔴 较高 | 🔴🔴🔴 最高 |
 
 ---
 
@@ -160,38 +261,31 @@ class AgentTokenManager {
 - [x] 移除文件持久化逻辑
 - [x] 移除加密相关代码
 - [x] 简化为纯内存 Map 存储
-- [x] 实现 `generate(agentId)` 方法
-- [x] 实现 `verify(token)` 方法
-- [x] 实现 `verifyForAgent(token, agentId)` 方法
-- [x] 实现 `revoke(token)` 方法
-- [x] 实现 `revokeAllForAgent(agentId)` 方法
-- [x] 实现 `cleanExpired()` 方法
+- [x] 实现所有核心方法
 
-### Phase 2: ControlServer 集成 ✅
+### Phase 2: ChallengeHandler 实现 ✅
 
-- [x] 使用全局 AgentTokenManager 单例
-- [x] `handleVerifyAgent`: 生成 token 并绑定 agentId
-- [x] `handleSendMessage`: 验证 token 和 agentId 匹配
-- [x] `handleUpdateAgent`: 验证 token 权限
-- [x] `handleUpdateWebhook`: 验证 token 权限
+- [x] `handleChallengeRequest`: 生成 challenge
+- [x] `handleChallengeResponse`: 验证签名，生成 agentToken
+- [x] Challenge 过期清理机制
+- [x] 集成 AgentTokenManager
 
-### Phase 3: 客户端适配 ✅
+### Phase 3: 客户端适配 ❌ 废弃，改用 Challenge-Response
 
-- [x] CLI (`@f2a/cli`): 保存 token 到 identity 文件
-- [x] 插件 (`@f2a/openclaw-f2a`): 从 identity 读取 token
-- [x] HTTP Header: `Authorization: agent-{token}`
+- [x] ~~CLI 保存 token 到 identity~~ ❌ 废弃
+- [x] CLI 用私钥签名 challenge（RFC008 实现）
+- [x] HTTP Header: `Authorization: agent-{token}`（短期 token）
 
 ### Phase 4: 测试验证 ✅
 
-- [x] 所有现有测试通过 (224 tests)
+- [x] Challenge-Response 单元测试
 - [x] AgentTokenManager 单元测试
-- [x] ControlServer 集成测试
 - [x] CLI 和插件端到端测试
 
 ### Phase 5: 清理工作 ✅
 
 - [x] 删除 `token-encryption.ts` 文件
-- [x] 更新 RFC 007 文档
+- [x] 更新 RFC007 文档
 
 ---
 
@@ -209,67 +303,88 @@ TokenEncryption: ~230 行
 **之后**:
 ```
 AgentTokenManager: ~250 行
-TokenEncryption: 删除
-总计: ~250 行
+ChallengeHandler: ~200 行
+总计: ~450 行
 ```
-
-**减少**: 430 行代码 (63% 代码减少)
 
 ### 安全性提升
 
-- ✅ 无文件攻击面
-- ✅ 无加密密钥管理
-- ✅ 无文件权限配置错误风险
-- ✅ 简化的安全模型更易审计
+- ✅ 身份验证用私钥签名（不可伪造）
+- ✅ Token 无文件攻击面
+- ✅ Challenge 一次性使用（防重放）
+- ✅ Token 短期有效（降低泄露风险）
 
-### 运维影响
+---
 
-- ⚠️ daemon 重启后 agent 需重新注册
-- ✅ 但这符合"重启即重置"的安全原则
-- ✅ Agent 注册是轻量级操作，影响可控
+## 未来扩展：Token 持久化场景
+
+### 何时需要 Token 持久化？
+
+Challenge-Response 当前够用，但以下场景可能需要 token 持久化：
+
+1. **频繁 API 调用**
+   - 当前：每次操作都需要 Challenge-Response（2次 HTTP 请求）
+   - 持久化：Token 可复用，减少开销
+
+2. **离线 Agent**
+   - 当前：daemon 重启后需重新 Challenge
+   - 持久化：Token 可保存，重启后继续使用
+
+3. **自动化脚本**
+   - 当前：脚本每次运行都需要 Challenge
+   - 持久化：脚本可读取预先获取的 token
+
+### Token 持久化安全设计（未来）
+
+如果需要引入 token 持久化，建议：
+
+```
+方案 A：加密存储
+~/.f2a/
+└── agent-tokens/
+    └── agent-{fingerprint}/
+        └── token.json  ← 加密存储（AES-256-GCM）
+        
+加密密钥来源：
+- 用户密码派生（PBKDF2）
+- 或系统密钥环（macOS Keychain / Linux keyutils）
+
+方案 B：时间限制 + 自动刷新
+- Token 有效期缩短（如 1 小时）
+- CLI 自动刷新机制
+- 减少泄露风险
+
+方案 C：Token 分级
+- 短期 token（内存）：高权限操作
+- 长期 token（加密文件）：低权限操作（如查询）
+```
+
+**当前决策**：暂不实现 token 持久化，Challenge-Response 已满足需求。
 
 ---
 
 ## 决策记录
 
-### 为什么选择纯内存方案？
+### 为什么用 Challenge-Response 而非 Token 持久化？
 
-1. **简单性**: 无文件操作，无加密，无密钥管理
-2. **安全性**: 无文件攻击面，无持久化风险
-3. **正确性**: 更少的代码意味着更少的 bug
-4. **可维护性**: 更容易理解和维护
+1. **安全性更高**：私钥签名验证，不可伪造
+2. **实现更简单**：无加密、无密钥管理、无文件权限
+3. **符合 RFC008**：Agent Self-Identity 的认证机制
+4. **当前够用**：API 操作频率不高，Challenge 开销可接受
 
-### 为什么放弃文件加密？
+### 为什么保留 AgentTokenManager？
 
-1. **复杂度高**: 需要管理加密密钥、文件权限、目录结构
-2. **安全增益有限**: 攻击者获取进程内存权限后加密无意义
-3. **文件持久化的风险**: 文件可能被备份、复制、意外共享
-4. **跨 Agent 隔离复杂**: 需要为每个 agent 维护独立密钥和目录
-
----
-
-## 后续优化
-
-### 可选增强
-
-1. **Token 过期时间可配置**
-   - 当前固定 7 天
-   - 可添加 `expiresInSeconds` 参数
-
-2. **Token 撤销日志**
-   - 记录 token 创建和撤销事件
-   - 用于安全审计
-
-3. **Token 使用统计**
-   - 记录每个 token 的使用频率
-   - 用于异常检测
+1. **短期缓存**：Challenge 后生成 token，避免每次操作都 Challenge
+2. **操作授权**：区分"身份验证"（Challenge）和"操作授权"（Token）
+3. **批量撤销**：支持 revokeAllForAgent 等管理功能
+4. **扩展基础**：未来 token 持久化的基础组件
 
 ---
 
 ## 参考
 
+- **RFC008**: [Agent Self-Identity](./008-agent-self-identity.md) - Challenge-Response 详细设计
 - **实现文件**: `packages/daemon/src/agent-token-manager.ts`
-- **测试文件**: `packages/daemon/src/__tests__/agent-token-manager.test.ts`
-- **ControlServer 集成**: `packages/daemon/src/control-server.ts`
-- **CLI 集成**: `packages/cli/src/commands/`
-- **插件集成**: `packages/openclaw-f2a/src/`
+- **实现文件**: `packages/daemon/src/challenge-handler.ts`
+- **CLI 实现**: `packages/cli/src/messages.ts` - Challenge-Response 流程
+- **测试文件**: `packages/daemon/tests/agent-token-manager.test.ts`

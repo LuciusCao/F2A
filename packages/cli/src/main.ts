@@ -127,7 +127,7 @@ Subcommands:
 
   unregister        注销 Agent
                     f2a agent unregister <agent_id> [--token <token>]
-                    注：如果未提供 --token，将尝试从 ~/.f2a/agents/<agent_id>.json 读取
+                    注：如果未提供 --token，将尝试从 ~/.f2a/agent-identities/<agent_id>.json 读取
 
   status            查看 Agent 身份状态 (RFC008)
                     f2a agent status [--caller-config <path>]

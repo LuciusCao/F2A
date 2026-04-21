@@ -227,7 +227,7 @@ export async function showIdentityStatus(): Promise<void> {
   console.log('');
   
   // Agent Identity - RFC008: 使用 ~/.f2a/agents/ 目录
-  const agentsDir = join(dataDir, 'agents');
+  const agentsDir = join(dataDir, 'agent-identities');
   
   if (existsSync(agentsDir)) {
     // 列出 agents 目录下的文件

@@ -19,15 +19,15 @@ import { createHmac } from 'crypto';
  * Phase 6: 支持身份恢复
  */
 function readSavedAgentId(): string | null {
-  const agentsDir = join(homedir(), '.f2a', 'agents');
+  const agentIdentitiesDir = join(homedir(), '.f2a', 'agent-identities');
   
-  if (!existsSync(agentsDir)) {
+  if (!existsSync(agentIdentitiesDir)) {
     return null;
   }
   
   // 查找第一个有效的 Agent Identity 文件
   // 每个节点通常只有一个 agent，所以直接查找第一个即可
-  const files = readdirSync(agentsDir)
+  const files = readdirSync(agentIdentitiesDir)
     .filter(f => f.endsWith('.json') && f.startsWith('agent:'));
   
   if (files.length === 0) {
@@ -39,7 +39,7 @@ function readSavedAgentId(): string | null {
   
   for (const file of files) {
     try {
-      const content = readFileSync(join(agentsDir, file), 'utf-8');
+      const content = readFileSync(join(agentIdentitiesDir, file), 'utf-8');
       const identity = JSON.parse(content);
       
       if (identity && identity.agentId) {
@@ -467,7 +467,7 @@ interface AgentIdentityFile {
 function readIdentityFile(agentId: string): AgentIdentityFile | null {
   try {
     const dataDir = join(homedir(), '.f2a');
-    const identityFile = join(dataDir, 'agents', `${agentId}.json`);
+    const identityFile = join(dataDir, 'agent-identities', `${agentId}.json`);
     if (existsSync(identityFile)) {
       return JSON.parse(readFileSync(identityFile, 'utf-8')) as AgentIdentityFile;
     }
@@ -484,14 +484,14 @@ function readIdentityFile(agentId: string): AgentIdentityFile | null {
 function saveIdentityWithToken(agentId: string, token: string): boolean {
   try {
     const dataDir = join(homedir(), '.f2a');
-    const agentsDir = join(dataDir, 'agents');
+    const agentIdentitiesDir = join(dataDir, 'agent-identities');
     
     // 确保目录存在
-    if (!existsSync(agentsDir)) {
-      mkdirSync(agentsDir, { recursive: true });
+    if (!existsSync(agentIdentitiesDir)) {
+      mkdirSync(agentIdentitiesDir, { recursive: true });
     }
     
-    const identityFile = join(agentsDir, `${agentId}.json`);
+    const identityFile = join(agentIdentitiesDir, `${agentId}.json`);
     
     // 读取现有 identity（如果存在）
     let identity: AgentIdentityFile;

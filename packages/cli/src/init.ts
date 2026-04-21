@@ -39,7 +39,7 @@ export const DEFAULT_CALLER_CONFIG = join(F2A_DATA_DIR, 'current-agent.json');
 /**
  * 身份文件存储目录
  */
-export const AGENTS_DIR = join(F2A_DATA_DIR, 'agents');
+export const AGENT_IDENTITIES_DIR = join(F2A_DATA_DIR, 'agent-identities');
 
 /**
  * 初始化 Agent 身份
@@ -47,7 +47,7 @@ export const AGENTS_DIR = join(F2A_DATA_DIR, 'agents');
  * 按照 RFC008 规范：
  * 1. 生成 Ed25519 密钥对
  * 2. 计算公钥指纹作为 AgentId
- * 3. 保存身份文件到 ~/.f2a/agents/agent:{fingerprint}.json
+ * 3. 保存身份文件到 ~/.f2a/agent-identities/agent:{fingerprint}.json
  * 4. 可选保存 Caller 配置到指定路径
  * 
  * @param options 初始化选项
@@ -87,12 +87,12 @@ export async function initAgentIdentity(options: {
     const agentId = keypairManager.computeAgentId(keypair.publicKey);
 
     // 3. 确保目录存在
-    if (!existsSync(AGENTS_DIR)) {
-      mkdirSync(AGENTS_DIR, { recursive: true });
+    if (!existsSync(AGENT_IDENTITIES_DIR)) {
+      mkdirSync(AGENT_IDENTITIES_DIR, { recursive: true });
     }
 
     // 身份文件路径
-    const identityFilePath = join(AGENTS_DIR, `${agentId}.json`);
+    const identityFilePath = join(AGENT_IDENTITIES_DIR, `${agentId}.json`);
 
     // 检查是否已存在
     if (existsSync(identityFilePath) && !force) {
@@ -196,7 +196,7 @@ export function readCallerConfig(callerConfigPath?: string): CallerConfig | null
  * @returns 身份文件内容或 null
  */
 export function readIdentityFile(agentId: string): RFC008IdentityFile | null {
-  const identityFilePath = join(AGENTS_DIR, `${agentId}.json`);
+  const identityFilePath = join(AGENT_IDENTITIES_DIR, `${agentId}.json`);
 
   if (!existsSync(identityFilePath)) {
     return null;
@@ -278,7 +278,7 @@ export async function showAgentStatus(callerConfigPath?: string): Promise<void> 
   if (!identity) {
     console.log('❌ 未找到身份文件');
     console.log(`   AgentId: ${callerConfig.agentId}`);
-    console.log(`   Expected: ${join(AGENTS_DIR, `${callerConfig.agentId}.json`)}`);
+    console.log(`   Expected: ${join(AGENT_IDENTITIES_DIR, `${callerConfig.agentId}.json`)}`);
     return;
   }
 

@@ -27,7 +27,7 @@ export interface AgentWebhook {
 
 /**
  * Agent Identity 文件结构
- * 存储在 ~/.f2a/agents/<agentId>.json
+ * 存储在 ~/.f2a/agent-identities/<agentId>.json
  */
 export interface AgentIdentity {
   /** Agent 唯一标识符 格式: agent:<PeerId前16位>:<随机8位> */
@@ -57,7 +57,7 @@ export interface AgentIdentity {
  * 负责 Agent Identity 文件的读写和验证
  */
 export class AgentIdentityStore {
-  private agentsDir: string;
+  private agentIdentitiesDir: string;
   private identities: Map<string, AgentIdentity> = new Map();
   private logger: Logger;
   /** 用于验证签名的函数（可选） */
@@ -67,7 +67,7 @@ export class AgentIdentityStore {
     dataDir: string,
     verifySignatureFn?: (data: string, signature: string, peerId: string) => boolean
   ) {
-    this.agentsDir = join(dataDir, 'agents');
+    this.agentIdentitiesDir = join(dataDir, 'agent-identities');
     this.logger = new Logger({ component: 'AgentIdentityStore' });
     this.verifySignatureFn = verifySignatureFn;
   }
@@ -76,9 +76,9 @@ export class AgentIdentityStore {
    * 初始化：确保目录存在
    */
   private ensureDir(): void {
-    if (!existsSync(this.agentsDir)) {
-      mkdirSync(this.agentsDir, { recursive: true });
-      this.logger.info('Created agents directory', { path: this.agentsDir });
+    if (!existsSync(this.agentIdentitiesDir)) {
+      mkdirSync(this.agentIdentitiesDir, { recursive: true });
+      this.logger.info('Created agents directory', { path: this.agentIdentitiesDir });
     }
   }
 
@@ -88,14 +88,14 @@ export class AgentIdentityStore {
   loadAll(): void {
     this.ensureDir();
     
-    const files = readdirSync(this.agentsDir)
+    const files = readdirSync(this.agentIdentitiesDir)
       .filter(f => f.endsWith('.json') && f.startsWith('agent:'));
     
     this.identities.clear();
     
     for (const file of files) {
       try {
-        const filePath = join(this.agentsDir, file);
+        const filePath = join(this.agentIdentitiesDir, file);
         const content = readFileSync(filePath, 'utf-8');
         
         // 安全 JSON.parse：过滤危险 key
@@ -162,7 +162,7 @@ export class AgentIdentityStore {
       throw new Error('Invalid AgentIdentity structure');
     }
     
-    const filePath = join(this.agentsDir, `${identity.agentId}.json`);
+    const filePath = join(this.agentIdentitiesDir, `${identity.agentId}.json`);
     
     // 更新内存中的 identity
     this.identities.set(identity.agentId, identity);
@@ -240,7 +240,7 @@ export class AgentIdentityStore {
     this.identities.delete(agentId);
     
     // 删除文件
-    const filePath = join(this.agentsDir, `${agentId}.json`);
+    const filePath = join(this.agentIdentitiesDir, `${agentId}.json`);
     if (existsSync(filePath)) {
       await fs.rm(filePath);
       this.logger.info('Agent identity file deleted', { agentId, path: filePath });
@@ -291,11 +291,11 @@ export class AgentIdentityStore {
    */
   async clear(): Promise<void> {
     this.identities.clear();
-    if (existsSync(this.agentsDir)) {
-      const files = readdirSync(this.agentsDir)
+    if (existsSync(this.agentIdentitiesDir)) {
+      const files = readdirSync(this.agentIdentitiesDir)
         .filter(f => f.endsWith('.json') && f.startsWith('agent:'));
       for (const file of files) {
-        await fs.rm(join(this.agentsDir, file));
+        await fs.rm(join(this.agentIdentitiesDir, file));
       }
     }
   }

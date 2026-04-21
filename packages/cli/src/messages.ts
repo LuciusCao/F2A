@@ -13,7 +13,7 @@ import { sendRequest } from './http-client.js';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { readCallerConfig, readIdentityFile, AGENTS_DIR } from './init.js';
+import { readCallerConfig, readIdentityFile, AGENT_IDENTITIES_DIR } from './init.js';
 import { RFC008IdentityFile, Challenge, ChallengeResponse, signChallenge, isNewFormat } from '@f2a/network';
 
 /**
@@ -22,7 +22,7 @@ import { RFC008IdentityFile, Challenge, ChallengeResponse, signChallenge, isNewF
  */
 function getAgentToken(agentId: string): string | undefined {
   const dataDir = join(homedir(), '.f2a');
-  const identityFile = join(dataDir, 'agents', `${agentId}.json`);
+  const identityFile = join(dataDir, 'agent-identities', `${agentId}.json`);
   
   if (!existsSync(identityFile)) {
     return undefined;
@@ -41,7 +41,7 @@ function getAgentToken(agentId: string): string | undefined {
  */
 function updateLastActiveAt(agentId: string): void {
   try {
-    const identityFile = join(AGENTS_DIR, `${agentId}.json`);
+    const identityFile = join(AGENT_IDENTITIES_DIR, `${agentId}.json`);
     if (existsSync(identityFile)) {
       const identity = JSON.parse(readFileSync(identityFile, 'utf-8'));
       identity.lastActiveAt = new Date().toISOString();

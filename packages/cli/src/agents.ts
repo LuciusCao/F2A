@@ -13,7 +13,7 @@ import { sendRequest } from './http-client.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
-import { readCallerConfig, readIdentityFile, AGENTS_DIR, DEFAULT_CALLER_CONFIG } from './init.js';
+import { readCallerConfig, readIdentityFile, AGENT_IDENTITIES_DIR, DEFAULT_CALLER_CONFIG } from './init.js';
 import { RFC008IdentityFile } from '@f2a/network';
 
 /**
@@ -26,7 +26,7 @@ function saveIdentityWithNodeSignature(
   nodePeerId: string
 ): boolean {
   try {
-    const identityFile = join(AGENTS_DIR, `${identity.agentId}.json`);
+    const identityFile = join(AGENT_IDENTITIES_DIR, `${identity.agentId}.json`);
     
     // 更新 nodeSignature 和 nodePeerId
     identity.nodeSignature = nodeSignature;
@@ -48,11 +48,11 @@ function saveIdentityWithNodeSignature(
 function saveIdentityWithToken(agentId: string, token: string): boolean {
   try {
     // 确保目录存在
-    if (!existsSync(AGENTS_DIR)) {
-      mkdirSync(AGENTS_DIR, { recursive: true });
+    if (!existsSync(AGENT_IDENTITIES_DIR)) {
+      mkdirSync(AGENT_IDENTITIES_DIR, { recursive: true });
     }
     
-    const identityFile = join(AGENTS_DIR, `${agentId}.json`);
+    const identityFile = join(AGENT_IDENTITIES_DIR, `${agentId}.json`);
     
     // 读取现有 identity（如果存在）
     let identity: Record<string, unknown>;
@@ -295,7 +295,7 @@ export async function listAgents(): Promise<void> {
  */
 function getTokenFromIdentity(agentId: string): string | null {
   try {
-    const identityFile = join(AGENTS_DIR, `${agentId}.json`);
+    const identityFile = join(AGENT_IDENTITIES_DIR, `${agentId}.json`);
     if (!existsSync(identityFile)) {
       return null;
     }
@@ -334,7 +334,7 @@ export async function unregisterAgent(agentId: string, token?: string): Promise<
 
     if (result.success) {
       // 删除 identity 文件（如果存在）
-      const identityFile = join(AGENTS_DIR, `${agentId}.json`);
+      const identityFile = join(AGENT_IDENTITIES_DIR, `${agentId}.json`);
       if (existsSync(identityFile)) {
         try {
           const { unlinkSync } = await import('fs');

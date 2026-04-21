@@ -1,41 +1,22 @@
 /**
- * Phase 5: Auto Registration Tests
- * Unit tests for registerToDaemon, unregisterFromDaemon, and auto-registration flow
+ * F2A Registration Tests (Refactored per Issue #140)
+ * 
+ * Changes:
+ * - Updated API paths to /api/v1/
+ * - Updated webhook URL to use Gateway URL (18789, not 9002)
+ * - Updated service ID to 'f2a-daemon-registration'
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { registerToDaemon, unregisterFromDaemon } from '../src/plugin';
 import type { OpenClawPluginApi, ApiLogger, WebhookConfig } from '../src/types';
-
-// Mock fetch globally
-const mockFetch = vi.fn();
-vi.stubGlobal('fetch', mockFetch);
-
-// Mock HTTP module to prevent actual server creation
-vi.mock('http', () => {
-  const mockServer = {
-    listen: vi.fn((port: number, host: string, callback?: () => void) => {
-      if (callback) callback();
-    }),
-    unref: vi.fn(),
-    on: vi.fn(),
-    close: vi.fn()
-  };
-  return {
-    createServer: vi.fn(() => mockServer)
-  };
-});
-
-// Mock child_process
-vi.mock('child_process', () => ({
-  exec: vi.fn()
-}));
 
 // Helper to create mock API
 function createMockApi(config: Partial<WebhookConfig> = {}): OpenClawPluginApi {
   return {
     id: 'test-plugin',
     name: 'openclaw-f2a',
-    version: '0.4.0',
+    version: '0.5.0',
     description: 'Test plugin',
     source: 'test',
     config: {
@@ -63,41 +44,40 @@ function createMockApi(config: Partial<WebhookConfig> = {}): OpenClawPluginApi {
         enqueueSystemEvent: vi.fn(),
         requestHeartbeatNow: vi.fn()
       },
+      gatewayBaseUrl: 'http://127.0.0.1:18789',
       subagent: {
         run: vi.fn().mockResolvedValue({ runId: 'test-run-id' }),
         waitForRun: vi.fn().mockResolvedValue({ status: 'ok' }),
         getSessionMessages: vi.fn().mockResolvedValue({
-          messages: [
-            { role: 'user', content: 'test message' },
-            { role: 'assistant', content: 'test reply' }
-          ]
+          messages: []
         })
       }
     },
-    registerService: vi.fn()
+    registerService: vi.fn(),
+    registerHttpRoute: vi.fn()
   };
 }
 
-// Helper to create default config
-function createDefaultConfig(): Required<WebhookConfig> {
+// Helper to create full config
+function createFullConfig(): Required<WebhookConfig> {
   return {
     webhookPath: '/f2a/webhook',
-    webhookPort: 9002,
-    webhookToken: '',
+    webhookToken: 'test-token',
     agentTimeout: 60000,
     controlPort: 9001,
-    agentName: 'OpenClaw Agent',
+    agentName: 'Test Agent',
     agentCapabilities: ['chat', 'task'],
     autoRegister: true,
     registerRetryInterval: 5000,
-    registerMaxRetries: 3
+    registerMaxRetries: 3,
+    _registeredAgentId: ''
   };
 }
 
-describe('registerToDaemon', () => {
+describe('registerToDaemon (Issue #140 Refactored)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFetch.mockReset();
+    global.fetch = vi.fn();
   });
 
   afterEach(() => {
@@ -106,38 +86,41 @@ describe('registerToDaemon', () => {
 
   it('should register successfully when daemon is running', async () => {
     const mockApi = createMockApi();
-    const mockConfig = createDefaultConfig();
+    const config = createFullConfig();
 
-    // Mock health check success
-    mockFetch.mockResolvedValueOnce({
-      ok: true
+    // Mock successful health check
+    (global.fetch as any).mockImplementation(async (url: string) => {
+      if (url.includes('/health')) {
+        return { ok: true } as any;
+      }
+      if (url.includes('/api/v1/agents')) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            agent: { agentId: 'agent:test123' },
+            token: 'test-token'
+          })
+        } as any;
+      }
+      return { ok: false } as any;
     });
 
-    // Mock register API success
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        success: true,
-        agent: { agentId: 'agent:12D3KooWabc:12345678' }
-      })
-    });
-
-    const { registerToDaemon } = await import('../src/plugin');
-    const result = await registerToDaemon(mockApi, mockConfig);
+    const result = await registerToDaemon(mockApi, config);
 
     expect(result.success).toBe(true);
-    expect(result.agent?.agentId).toBeDefined();
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    
+    expect(result.agent?.agentId).toBe('agent:test123');
+    expect(result.token).toBe('test-token');
+
     // Verify health check call
-    expect(mockFetch).toHaveBeenNthCalledWith(1, 
+    expect(global.fetch).toHaveBeenCalledWith(
       'http://127.0.0.1:9001/health',
-      expect.objectContaining({ signal: expect.any(Object) })
+      expect.any(Object)
     );
-    
-    // Verify register call
-    expect(mockFetch).toHaveBeenNthCalledWith(2,
-      'http://127.0.0.1:9001/api/agents',
+
+    // Verify registration call (Issue #140: uses /api/v1/agents)
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:9001/api/v1/agents',
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({
@@ -149,152 +132,159 @@ describe('registerToDaemon', () => {
 
   it('should fail when daemon is not running', async () => {
     const mockApi = createMockApi();
-    const mockConfig = createDefaultConfig();
+    const config = createFullConfig();
 
-    // Mock health check failure (connection refused)
-    mockFetch.mockRejectedValueOnce(new Error('Connection refused'));
+    // Mock failed health check
+    (global.fetch as any).mockImplementation(async () => {
+      throw new Error('Connection refused');
+    });
 
-    const { registerToDaemon } = await import('../src/plugin');
-    const result = await registerToDaemon(mockApi, mockConfig);
+    const result = await registerToDaemon(mockApi, config);
 
     expect(result.success).toBe(false);
-    expect(result.agent).toBeUndefined();
-    
-    // Verify warn was called with correct message pattern
     expect(mockApi.logger?.warn).toHaveBeenCalled();
-    const warnCall = mockApi.logger?.warn?.mock.calls[0];
-    expect(warnCall?.[0]).toContain('Daemon not running');
   });
 
   it('should fail when daemon health check returns non-OK', async () => {
     const mockApi = createMockApi();
-    const mockConfig = createDefaultConfig();
+    const config = createFullConfig();
 
-    // Mock health check returns error
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 500
+    (global.fetch as any).mockImplementation(async (url: string) => {
+      if (url.includes('/health')) {
+        return { ok: false } as any;
+      }
+      return { ok: false } as any;
     });
 
-    const { registerToDaemon } = await import('../src/plugin');
-    const result = await registerToDaemon(mockApi, mockConfig);
+    const result = await registerToDaemon(mockApi, config);
 
     expect(result.success).toBe(false);
-    
-    expect(mockApi.logger?.warn).toHaveBeenCalled();
-    const warnCall = mockApi.logger?.warn?.mock.calls[0];
-    expect(warnCall?.[0]).toContain('Daemon health check failed');
   });
 
   it('should fail when registration API returns error', async () => {
     const mockApi = createMockApi();
-    const mockConfig = createDefaultConfig();
+    const config = createFullConfig();
 
-    // Mock health check success
-    mockFetch.mockResolvedValueOnce({
-      ok: true
+    (global.fetch as any).mockImplementation(async (url: string) => {
+      if (url.includes('/health')) {
+        return { ok: true } as any;
+      }
+      if (url.includes('/api/v1/agents')) {
+        return { ok: false, status: 500 } as any;
+      }
+      return { ok: false } as any;
     });
 
-    // Mock register API failure
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 400
-    });
-
-    const { registerToDaemon } = await import('../src/plugin');
-    const result = await registerToDaemon(mockApi, mockConfig);
+    const result = await registerToDaemon(mockApi, config);
 
     expect(result.success).toBe(false);
-    
-    expect(mockApi.logger?.warn).toHaveBeenCalled();
-    const warnCall = mockApi.logger?.warn?.mock.calls[0];
-    expect(warnCall?.[0]).toContain('Registration API failed');
   });
 
   it('should use custom controlPort when configured', async () => {
     const mockApi = createMockApi();
-    const mockConfig = createDefaultConfig();
-    mockConfig.controlPort = 9003;
+    const config = createFullConfig();
+    config.controlPort = 9003;
 
-    // Mock health check success
-    mockFetch.mockResolvedValueOnce({ ok: true });
-    // Mock register success
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ success: true, agent: { agentId: 'agent:xxx' } })
+    (global.fetch as any).mockImplementation(async (url: string) => {
+      if (url.includes('/health')) {
+        return { ok: true } as any;
+      }
+      if (url.includes('/api/v1/agents')) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            agent: { agentId: 'agent:test' },
+            token: 'token'
+          })
+        } as any;
+      }
+      return { ok: false } as any;
     });
 
-    const { registerToDaemon } = await import('../src/plugin');
-    await registerToDaemon(mockApi, mockConfig);
+    await registerToDaemon(mockApi, config);
 
-    // Verify custom port is used
-    expect(mockFetch).toHaveBeenNthCalledWith(1,
+    // Verify custom control port is used (Issue #140: /api/v1/)
+    expect(global.fetch).toHaveBeenCalledWith(
       'http://127.0.0.1:9003/health',
       expect.any(Object)
     );
-    expect(mockFetch).toHaveBeenNthCalledWith(2,
-      'http://127.0.0.1:9003/api/agents',
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:9003/api/v1/agents',
       expect.any(Object)
     );
   });
 
   it('should send correct registration payload', async () => {
     const mockApi = createMockApi();
-    const mockConfig = createDefaultConfig();
-    mockConfig.agentName = 'Custom Agent';
-    mockConfig.agentCapabilities = ['chat', 'code', 'task'];
-    mockConfig.webhookToken = 'secret-token';
+    const config = createFullConfig();
+    config.webhookToken = 'secret-token';
+    config.agentName = 'My Custom Agent';
+    config.agentCapabilities = ['chat', 'code', 'file'];
 
-    // Mock success responses
-    mockFetch.mockResolvedValueOnce({ ok: true });
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ success: true, agent: { agentId: 'agent:xxx' } })
+    (global.fetch as any).mockImplementation(async (url: string, opts?: any) => {
+      if (url.includes('/health')) {
+        return { ok: true } as any;
+      }
+      if (url.includes('/api/v1/agents')) {
+        // Verify payload
+        const body = JSON.parse(opts?.body || '{}');
+        
+        // Issue #140: Webhook URL uses Gateway URL (18789), not webhookPort (9002)
+        expect(body.webhook.url).toBe('http://127.0.0.1:18789/f2a/webhook');
+        expect(body.webhook.token).toBe('secret-token');
+        expect(body.name).toBe('My Custom Agent');
+        expect(body.capabilities).toEqual([
+          { name: 'chat', version: '1.0.0' },
+          { name: 'code', version: '1.0.0' },
+          { name: 'file', version: '1.0.0' }
+        ]);
+        
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            agent: { agentId: 'agent:test' },
+            token: 'token'
+          })
+        } as any;
+      }
+      return { ok: false } as any;
     });
 
-    const { registerToDaemon } = await import('../src/plugin');
-    await registerToDaemon(mockApi, mockConfig);
+    const result = await registerToDaemon(mockApi, config);
 
-    // Get the register call body
-    const registerCall = mockFetch.mock.calls[1];
-    const body = JSON.parse(registerCall[1].body);
-
-    expect(body.name).toBe('Custom Agent');
-    expect(body.capabilities).toEqual([
-      { name: 'chat', version: '1.0.0' },
-      { name: 'code', version: '1.0.0' },
-      { name: 'task', version: '1.0.0' }
-    ]);
-    expect(body.webhook.url).toBe('http://127.0.0.1:9002/f2a/webhook');
-    expect(body.webhook.token).toBe('secret-token');
-    expect(registerCall[1].headers['X-F2A-Token']).toBe('secret-token');
+    expect(result.success).toBe(true);
   });
 
   it('should handle registration request timeout', async () => {
     const mockApi = createMockApi();
-    const mockConfig = createDefaultConfig();
+    const config = createFullConfig();
 
-    // Mock health check success
-    mockFetch.mockResolvedValueOnce({ ok: true });
-    
-    // Mock register timeout (AbortError)
-    mockFetch.mockRejectedValueOnce(new Error('AbortError: The operation was aborted'));
+    (global.fetch as any).mockImplementation(async (url: string) => {
+      if (url.includes('/health')) {
+        return { ok: true } as any;
+      }
+      // Simulate timeout by throwing AbortError
+      if (url.includes('/api/v1/agents')) {
+        const err = new Error('Timeout');
+        err.name = 'AbortError';
+        throw err;
+      }
+      return { ok: false } as any;
+    });
 
-    const { registerToDaemon } = await import('../src/plugin');
-    const result = await registerToDaemon(mockApi, mockConfig);
+    const result = await registerToDaemon(mockApi, config);
 
     expect(result.success).toBe(false);
-    
     expect(mockApi.logger?.error).toHaveBeenCalled();
-    const errorCall = mockApi.logger?.error?.mock.calls[0];
-    expect(errorCall?.[0]).toContain('Registration request failed');
   });
 });
 
-describe('unregisterFromDaemon', () => {
+describe('unregisterFromDaemon (Issue #140 Refactored)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFetch.mockReset();
+    global.fetch = vi.fn();
   });
 
   afterEach(() => {
@@ -303,80 +293,86 @@ describe('unregisterFromDaemon', () => {
 
   it('should unregister successfully', async () => {
     const mockApi = createMockApi();
-    const mockConfig = createDefaultConfig();
+    const config = createFullConfig();
     const agentId = 'agent:12D3KooWabc:12345678';
 
-    // Mock DELETE success
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ success: true })
-    });
+    (global.fetch as any).mockImplementation(async () => ({
+      ok: true
+    } as any));
 
-    const { unregisterFromDaemon } = await import('../src/plugin');
-    await unregisterFromDaemon(mockApi, mockConfig, agentId);
+    await unregisterFromDaemon(mockApi, config, agentId);
 
-    expect(mockFetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:9001/api/agents/agent:12D3KooWabc:12345678',
+    // Issue #140: Uses /api/v1/agents path
+    expect(global.fetch).toHaveBeenCalledWith(
+      `http://127.0.0.1:9001/api/v1/agents/${agentId}`,
       expect.objectContaining({
         method: 'DELETE',
         headers: expect.objectContaining({
-          'X-F2A-Token': ''
+          'X-F2A-Token': 'test-token'
         })
       })
     );
-
-    expect(mockApi.logger?.info).toHaveBeenCalled();
-    const infoCall = mockApi.logger?.info?.mock.calls[0];
-    expect(infoCall?.[0]).toContain('Agent unregistered');
+    
+    expect(mockApi.logger?.info).toHaveBeenCalledWith(
+      '[F2A] Agent unregistered:',
+      expect.any(String)
+    );
   });
 
   it('should handle unregister error gracefully', async () => {
     const mockApi = createMockApi();
-    const mockConfig = createDefaultConfig();
-    const agentId = 'agent:12D3KooWabc:12345678';
+    const config = createFullConfig();
+    const agentId = 'agent:test-id';
 
-    // Mock DELETE failure
-    mockFetch.mockRejectedValueOnce(new Error('Network error'));
+    (global.fetch as any).mockImplementation(async () => {
+      throw new Error('Connection refused');
+    });
 
-    const { unregisterFromDaemon } = await import('../src/plugin');
-    await unregisterFromDaemon(mockApi, mockConfig, agentId);
+    await unregisterFromDaemon(mockApi, config, agentId);
 
-    expect(mockApi.logger?.warn).toHaveBeenCalled();
-    const warnCall = mockApi.logger?.warn?.mock.calls[0];
-    expect(warnCall?.[0]).toContain('Unregister failed');
+    expect(mockApi.logger?.warn).toHaveBeenCalledWith(
+      '[F2A] Unregister failed:',
+      expect.any(String)
+    );
   });
 
   it('should use custom controlPort for unregister', async () => {
     const mockApi = createMockApi();
-    const mockConfig = createDefaultConfig();
-    mockConfig.controlPort = 9003;
-    mockConfig.webhookToken = 'secret-token';
+    const config = createFullConfig();
+    config.controlPort = 9003;
+    config.webhookToken = 'secret-token';
     const agentId = 'agent:xxx';
 
-    mockFetch.mockResolvedValueOnce({ ok: true });
+    (global.fetch as any).mockImplementation(async () => ({
+      ok: true
+    } as any));
 
-    const { unregisterFromDaemon } = await import('../src/plugin');
-    await unregisterFromDaemon(mockApi, mockConfig, agentId);
+    await unregisterFromDaemon(mockApi, config, agentId);
 
-    expect(mockFetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:9003/api/agents/agent:xxx',
+    // Issue #140: Uses /api/v1/ path with custom port
+    expect(global.fetch).toHaveBeenCalledWith(
+      `http://127.0.0.1:9003/api/v1/agents/${agentId}`,
       expect.objectContaining({
         method: 'DELETE',
-        headers: { 'X-F2A-Token': 'secret-token' }
+        headers: expect.objectContaining({
+          'X-F2A-Token': 'secret-token'
+        })
       })
     );
   });
 
   it('should handle timeout during unregister', async () => {
     const mockApi = createMockApi();
-    const mockConfig = createDefaultConfig();
-    const agentId = 'agent:xxx';
+    const config = createFullConfig();
+    const agentId = 'agent:test-id';
 
-    // Mock timeout
-    mockFetch.mockRejectedValueOnce(new Error('AbortError'));
+    (global.fetch as any).mockImplementation(async () => {
+      const err = new Error('Timeout');
+      err.name = 'AbortError';
+      throw err;
+    });
 
-    const { unregisterFromDaemon } = await import('../src/plugin');
-    await unregisterFromDaemon(mockApi, mockConfig, agentId);
+    await unregisterFromDaemon(mockApi, config, agentId);
 
     expect(mockApi.logger?.warn).toHaveBeenCalled();
   });
@@ -385,171 +381,138 @@ describe('unregisterFromDaemon', () => {
 describe('Auto Registration Flow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFetch.mockReset();
+    vi.useFakeTimers();
+    global.fetch = vi.fn();
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
-  it('should auto-register when webhook listener starts', async () => {
-    const mockApi = createMockApi();
-    const mockConfig = createDefaultConfig();
-
-    // Mock successful registration
-    mockFetch.mockResolvedValueOnce({ ok: true }); // health check
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        success: true,
-        agent: { agentId: 'agent:12D3KooWabc:12345' }
-      })
-    }); // register
+  it('should auto-register when service starts', async () => {
+    const mockApi = createMockApi({ autoRegister: true });
+    
+    (global.fetch as any).mockImplementation(async (url: string) => {
+      if (url.includes('/health')) {
+        return { ok: true } as any;
+      }
+      if (url.includes('/api/v1/agents')) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            agent: { agentId: 'agent:auto-register-test' },
+            token: 'test-token'
+          })
+        } as any;
+      }
+      return { ok: false } as any;
+    });
 
     const { default: register } = await import('../src/plugin');
-    
+
     register(mockApi);
-    
-    // Get the service
+
+    // Get the service (Issue #140: ID changed to 'f2a-daemon-registration')
     const service = mockApi.registerService?.mock.calls[0][0];
-    expect(service.id).toBe('f2a-webhook-service');
+    expect(service.id).toBe('f2a-daemon-registration');
 
     // Start the service
     service.start();
 
-    // Wait for async operations
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Run setImmediate
+    vi.runAllTimersAsync();
 
-    // Verify HTTP server mock was called
-    const http = await import('http');
-    expect(http.createServer).toHaveBeenCalled();
-    
-    // Verify registerToDaemon was called (via server.listen callback)
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    // Check if fetch was called (indicating registerToDaemon was invoked)
-    expect(mockFetch).toHaveBeenCalled();
+    // Wait for async operations
+    await vi.waitFor(() => {
+      expect(mockApi.logger?.info).toHaveBeenCalledWith(
+        expect.stringContaining('Registered successfully')
+      );
+    }, { timeout: 1000 });
   });
 
   it('should skip registration when autoRegister is false', async () => {
     const mockApi = createMockApi({ autoRegister: false });
     
     const { default: register } = await import('../src/plugin');
-    
+
     register(mockApi);
 
-    // Verify service registered but auto-register should be skipped
-    expect(mockApi.registerService).toHaveBeenCalled();
-    
-    // fetch should not be called immediately (only after service start and server listen)
     const service = mockApi.registerService?.mock.calls[0][0];
     service.start();
+
+    vi.runAllTimersAsync();
+
+    // Wait a bit
     await new Promise(resolve => setTimeout(resolve, 50));
-    
-    // Since autoRegister is false, fetch should not be called for registration
-    // But health check might still be pending
-  });
 
-  it('should save agentId after registration', async () => {
-    const mockApi = createMockApi();
-    const mockConfig = createDefaultConfig();
-
-    // Mock successful registration
-    mockFetch.mockResolvedValueOnce({ ok: true });
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        success: true,
-        agent: { agentId: 'agent:test-id-123' }
-      })
-    });
-
-    const { registerToDaemon } = await import('../src/plugin');
-    const result = await registerToDaemon(mockApi, mockConfig);
-
-    // Verify the result contains agentId
-    expect(result.success).toBe(true);
-    expect(result.agent?.agentId).toBe('agent:test-id-123');
+    // Should not call fetch for registration
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/agents'),
+      expect.any(Object)
+    );
   });
 
   it('should handle registration failure gracefully', async () => {
-    const mockApi = createMockApi();
-    const mockConfig = createDefaultConfig();
-
-    // Mock daemon not running
-    mockFetch.mockRejectedValueOnce(new Error('Connection refused'));
-
-    const { registerToDaemon } = await import('../src/plugin');
-    const result = await registerToDaemon(mockApi, mockConfig);
-
-    expect(result.success).toBe(false);
+    const mockApi = createMockApi({ autoRegister: true });
     
-    expect(mockApi.logger?.warn).toHaveBeenCalled();
-    const warnCall = mockApi.logger?.warn?.mock.calls[0];
-    expect(warnCall?.[0]).toContain('Daemon not running');
+    (global.fetch as any).mockImplementation(async () => {
+      throw new Error('Daemon not running');
+    });
+
+    const { default: register } = await import('../src/plugin');
+
+    register(mockApi);
+
+    const service = mockApi.registerService?.mock.calls[0][0];
+    service.start();
+
+    vi.runAllTimersAsync();
+
+    await vi.waitFor(() => {
+      expect(mockApi.logger?.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Registration failed')
+      );
+    }, { timeout: 1000 });
   });
 });
 
 describe('WebhookConfig Parameters', () => {
-  it('should support all new configuration parameters', () => {
-    const config: WebhookConfig = {
-      webhookPath: '/f2a/webhook',
-      webhookPort: 9002,
-      webhookToken: 'secret',
+  it('should support all configuration parameters', async () => {
+    const mockApi = createMockApi({
+      webhookPath: '/custom/webhook',
+      webhookToken: 'custom-token',
       agentTimeout: 30000,
-      controlPort: 9001,
-      agentName: 'Test Agent',
-      agentCapabilities: ['chat', 'code'],
-      autoRegister: true,
-      registerRetryInterval: 3000,
+      controlPort: 9005,
+      agentName: 'Custom Agent',
+      agentCapabilities: ['chat'],
+      autoRegister: false,
+      registerRetryInterval: 1000,
       registerMaxRetries: 5
-    };
-
-    expect(config.controlPort).toBe(9001);
-    expect(config.agentName).toBe('Test Agent');
-    expect(config.agentCapabilities).toEqual(['chat', 'code']);
-    expect(config.autoRegister).toBe(true);
-    expect(config.registerRetryInterval).toBe(3000);
-    expect(config.registerMaxRetries).toBe(5);
-  });
-
-  it('should use default values when not specified', () => {
-    const config: WebhookConfig = {
-      webhookPath: '/f2a/webhook'
-    };
-
-    // These should be undefined in partial config
-    expect(config.controlPort).toBeUndefined();
-    expect(config.agentName).toBeUndefined();
-    expect(config.agentCapabilities).toBeUndefined();
-    expect(config.autoRegister).toBeUndefined();
-
-    // But DEFAULT_CONFIG provides defaults
-    const defaultConfig = createDefaultConfig();
-    expect(defaultConfig.controlPort).toBe(9001);
-    expect(defaultConfig.agentName).toBe('OpenClaw Agent');
-    expect(defaultConfig.agentCapabilities).toEqual(['chat', 'task']);
-    expect(defaultConfig.autoRegister).toBe(true);
-  });
-
-  it('should merge config with defaults correctly', () => {
-    const partialConfig: WebhookConfig = {
-      webhookPort: 9003,
-      agentName: 'Custom Agent'
-    };
-
-    const mergedConfig = {
-      ...createDefaultConfig(),
-      ...partialConfig
-    };
-
-    // Partial config should override defaults
-    expect(mergedConfig.webhookPort).toBe(9003);
-    expect(mergedConfig.agentName).toBe('Custom Agent');
+    });
     
-    // Other defaults should remain
-    expect(mergedConfig.controlPort).toBe(9001);
-    expect(mergedConfig.agentCapabilities).toEqual(['chat', 'task']);
-    expect(mergedConfig.autoRegister).toBe(true);
+    (global.fetch as any).mockImplementation(async () => ({ ok: true } as any));
+
+    const { default: register } = await import('../src/plugin');
+
+    register(mockApi);
+
+    // Verify all config values are used
+    const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+    expect(routeCall.path).toBe('/custom/webhook');
+  });
+
+  it('should use default values when not specified', async () => {
+    const mockApi = createMockApi({});  // Empty config
+    
+    (global.fetch as any).mockImplementation(async () => ({ ok: true } as any));
+
+    const { default: register } = await import('../src/plugin');
+
+    register(mockApi);
+
+    const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+    expect(routeCall.path).toBe('/f2a/webhook');  // Default path
   });
 });

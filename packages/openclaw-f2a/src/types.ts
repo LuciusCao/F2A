@@ -74,10 +74,19 @@ export interface OpenClawPluginApi {
       waitForRun: (params: { runId: string; timeoutMs?: number }) => Promise<{ status: 'ok' | 'error' | 'timeout'; error?: string }>;
       getSessionMessages: (params: { sessionKey: string; limit?: number }) => Promise<{ messages: unknown[] }>;
     };
+    /** Gateway base URL for constructing webhook URLs */
+    gatewayBaseUrl?: string;
   };
   logger?: ApiLogger;
   registerTool?: (tool: unknown, opts?: { optional?: boolean }) => void;
   registerService?: (service: { id: string; start: () => void | Promise<void>; stop?: () => void | Promise<void> }) => void;
+  /** Register HTTP route handled by OpenClaw Gateway */
+  registerHttpRoute?: (params: {
+    path: string;
+    handler: (req: import('http').IncomingMessage, res: import('http').ServerResponse) => Promise<boolean | void> | boolean | void;
+    auth: 'gateway' | 'plugin';
+    replaceExisting?: boolean;
+  }) => void;
 }
 
 // ============================================================================
@@ -90,8 +99,6 @@ export interface OpenClawPluginApi {
 export interface WebhookConfig {
   /** Webhook endpoint path */
   webhookPath?: string;
-  /** Webhook listener port */
-  webhookPort?: number;
   /** Auth token for webhook requests */
   webhookToken?: string;
 

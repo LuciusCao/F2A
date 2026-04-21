@@ -1,20 +1,16 @@
 {
   "id": "openclaw-f2a",
   "name": "F2A P2A Network Plugin",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "OpenClaw plugin for F2A P2P Agent network",
+  "skills": ["./skills"],
   "configSchema": {
     "type": "object",
     "properties": {
       "webhookPath": {
         "type": "string",
         "default": "/f2a/webhook",
-        "description": "Webhook 接收路径"
-      },
-      "webhookPort": {
-        "type": "number",
-        "default": 9002,
-        "description": "Webhook 监听端口"
+        "description": "Webhook 接收路径 (由 OpenClaw Gateway 处理)"
       },
       "webhookToken": {
         "type": "string",

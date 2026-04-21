@@ -1,14 +1,20 @@
 /**
- * F2A Webhook Plugin (Simplified)
- * Minimal OpenClaw plugin for F2A webhook handling
+ * F2A Webhook Plugin (Refactored per Issue #140)
+ * 
+ * Changes:
+ * - Removed self-built HTTP server (9002 port)
+ * - Use OpenClaw Gateway's registerHttpRoute API
+ * - Removed webhookPort config
+ * - Gateway handles rate limiting, auth, deduplication
  *
- * Architecture per RFC004:
- * - register() saves config, does not start services
- * - registerService() starts webhook listener in background
- * - handleWebhook() processes incoming messages and forwards to Agent
+ * Architecture per RFC004 + Issue #140:
+ * - register() saves config, registers HTTP route with Gateway
+ * - registerService() starts daemon registration in background
+ * - handleWebhookRequest() processes incoming messages and forwards to Agent
  */
 
 import type { OpenClawPluginApi, WebhookConfig, ApiLogger } from './types.js';
+import type { IncomingMessage, ServerResponse } from 'http';
 import { join } from 'path';
 import { homedir } from 'os';
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
@@ -58,7 +64,6 @@ function readSavedAgentId(): string | null {
 /** Default configuration */
 const DEFAULT_CONFIG: Required<WebhookConfig> = {
   webhookPath: '/f2a/webhook',
-  webhookPort: 9002,
   webhookToken: '',
   agentTimeout: 60000,
   controlPort: 9001,
@@ -75,6 +80,8 @@ const DEFAULT_CONFIG: Required<WebhookConfig> = {
  * This is called by OpenClaw Gateway when loading the plugin
  *
  * ⚠️ Important: Must be synchronous, Gateway doesn't support async register()
+ * 
+ * Issue #140: Use registerHttpRoute instead of self-built HTTP server
  */
 export default function register(api: OpenClawPluginApi) {
   // Get plugin config from OpenClaw
@@ -87,26 +94,43 @@ export default function register(api: OpenClawPluginApi) {
     ...rawConfig
   };
 
-  api.logger?.info(`[F2A Webhook] Initializing... webhookPath=${config.webhookPath} webhookPort=${config.webhookPort}`);
+  api.logger?.info(`[F2A Webhook] Initializing... webhookPath=${config.webhookPath}`);
 
-  // Register service for webhook handling
+  // Issue #140: Register HTTP route with OpenClaw Gateway
+  // Gateway handles rate limiting, auth validation, deduplication
+  if (api.registerHttpRoute) {
+    api.registerHttpRoute({
+      path: config.webhookPath,
+      auth: 'plugin',  // Plugin handles its own auth (token check)
+      handler: (req, res) => handleWebhookRequest(api, config, req, res)
+    });
+    api.logger?.info(`[F2A Webhook] HTTP route registered: ${config.webhookPath}`);
+  } else {
+    api.logger?.warn('[F2A Webhook] registerHttpRoute not available, webhook will not work');
+  }
+
+  // Register service for daemon registration
   api.registerService?.({
-    id: 'f2a-webhook-service',
+    id: 'f2a-daemon-registration',
     start: () => {
       api.logger?.info('[F2A Webhook] Service started');
 
-      // Start webhook listener asynchronously
+      // Start daemon registration asynchronously
       setImmediate(async () => {
-        try {
-          await startWebhookListener(api, config);
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          api.logger?.warn(`[F2A Webhook] Webhook listener failed to start: ${msg}`);
+        if (config.autoRegister) {
+          const result = await registerToDaemon(api, config);
+          if (result.success && result.agent?.agentId) {
+            api.logger?.info('[F2A] Registered successfully:', result.agent.agentId);
+            // @ts-ignore - store agentId for cleanup
+            config._registeredAgentId = result.agent.agentId;
+          } else {
+            api.logger?.warn('[F2A] Registration failed, will retry later');
+          }
         }
       });
     },
     stop: async () => {
-      // 🔑 注销 Agent（新增）
+      // 🔑 注销 Agent
       // @ts-ignore
       if (config._registeredAgentId) {
         await unregisterFromDaemon(api, config, config._registeredAgentId);
@@ -119,16 +143,127 @@ export default function register(api: OpenClawPluginApi) {
 }
 
 /**
+ * Handle webhook request from OpenClaw Gateway
+ * Issue #140: Replaces startWebhookListener (self-built HTTP server)
+ */
+async function handleWebhookRequest(
+  api: OpenClawPluginApi,
+  config: Required<WebhookConfig>,
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<boolean> {
+  const { exec } = await import('child_process');
+
+  // Parse URL path - support both global webhook and agent-specific webhook
+  // Global: /f2a/webhook
+  // Agent-specific: /f2a/webhook/agent:<id_prefix>
+  const urlPath = req.url || '';
+  
+  // Check for agent-specific webhook path
+  // Agent ID prefix can include lowercase letters, numbers, and uppercase
+  const agentMatch = urlPath.match(/^\/f2a\/webhook\/agent:([a-zA-Z0-9]+)(?:\/|$)/);
+  const isAgentWebhook = agentMatch !== null;
+  const isGlobalWebhook = urlPath === config.webhookPath || urlPath === '/f2a/webhook';
+  
+  // Only handle POST to webhook paths
+  if (req.method !== 'POST' || (!isGlobalWebhook && !isAgentWebhook)) {
+    res.statusCode = 404;
+    res.end('Not found');
+    return true;
+  }
+  
+  // Extract agent ID prefix if present
+  const agentIdPrefix = isAgentWebhook ? agentMatch![1] : null;
+
+  // Validate token (plugin handles its own auth)
+  const authHeader = req.headers['authorization'] || req.headers['x-f2a-token'];
+  const token = typeof authHeader === 'string' ? authHeader.replace('Bearer ', '') : '';
+  if (config.webhookToken && token !== config.webhookToken) {
+    res.statusCode = 401;
+    res.end('Unauthorized');
+    return true;
+  }
+
+  // Parse body
+  let body = '';
+  for await (const chunk of req) body += chunk;
+  
+  let payload: { 
+    from?: string | { agentId?: string; name?: string }; 
+    fromAgentId?: string; 
+    content?: string; 
+    message?: string;
+    topic?: string;
+    type?: string;
+    to?: { agentId?: string; name?: string };
+    messageId?: string;
+  };
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    res.statusCode = 400;
+    res.end('Invalid JSON');
+    return true;
+  }
+
+  // 兼容 MessageRouter 的 payload 格式：
+  // - from 可以是字符串或 { agentId, name } 对象
+  // - content 或 message 字段
+  const fromAgentId = typeof payload.from === 'string' 
+    ? payload.from 
+    : payload.from?.agentId || payload.fromAgentId || '';
+  const message = payload.content || payload.message || '';
+  
+  if (!fromAgentId || !message) {
+    res.statusCode = 400;
+    res.end('Missing from or content');
+    return true;
+  }
+
+  // Log with webhook type info
+  const webhookType = isAgentWebhook ? `agent:${agentIdPrefix}` : 'global';
+  api.logger?.info(`[F2A Webhook] Received message (${webhookType}) from ${fromAgentId.slice(0, 16)}, length=${message.length}`);
+
+  // Invoke Agent to generate reply
+  // Use agentIdPrefix as session key if available, otherwise use fromAgentId prefix
+  const sessionKeyPrefix = agentIdPrefix || fromAgentId.slice(0, 16);
+  const reply = await invokeAgent(api, sessionKeyPrefix, message, config.agentTimeout);
+
+  // Send reply via f2a CLI
+  if (reply) {
+    try {
+      exec(`f2a send --to "${fromAgentId}" --message "${reply.replace(/"/g, '\\"')}"`, {
+        timeout: 10000
+      });
+      api.logger?.info(`[F2A Webhook] Reply sent to ${fromAgentId.slice(0, 16)}`);
+    } catch (err) {
+      api.logger?.error(`[F2A Webhook] Failed to send reply: ${String(err)}`);
+    }
+  }
+
+  res.statusCode = 200;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify({ success: true }));
+  return true;
+}
+
+/**
  * 自动注册到 F2A Daemon
  * Phase 6: 支持恢复已有身份
  * Phase 7: 使用 Challenge-Response 验证身份
  * Phase 4: 保存 token 到 identity 文件
+ * 
+ * Issue #140: Webhook URL now uses Gateway's base URL
  */
 export async function registerToDaemon(
   api: OpenClawPluginApi,
   config: Required<WebhookConfig>
 ): Promise<{ success: boolean; restored?: boolean; verified?: boolean; agent?: { agentId: string }; token?: string }> {
   const controlPort = config.controlPort || 9001;
+  
+  // Issue #140: Construct webhook URL using Gateway's base URL
+  const gatewayBaseUrl = api.runtime?.gatewayBaseUrl || 'http://127.0.0.1:18789';
+  const webhookUrl = `${gatewayBaseUrl}${config.webhookPath}`;
   
   // 检测 Daemon 是否运行
   try {
@@ -153,7 +288,7 @@ export async function registerToDaemon(
     if (identity && identity.e2eePublicKey) {
       api.logger?.info('[F2A] Found saved agentId with e2eePublicKey, attempting Challenge-Response...', savedAgentId.slice(0, 16));
       
-      const result = await verifyIdentity(api, config, identity);
+      const result = await verifyIdentity(api, config, identity, webhookUrl);
       if (result.success && result.agent?.agentId) {
         api.logger?.info('[F2A] Identity verified via Challenge-Response:', result.agent.agentId.slice(0, 16));
         // Phase 4: token 已在 verifyIdentity 中保存
@@ -174,13 +309,13 @@ export async function registerToDaemon(
       },
       body: JSON.stringify({
         name: config.agentName || 'OpenClaw Agent',
-        agentId: savedAgentId,  // 🔑 如果有已保存的，传给 daemon（可能只是恢复而不需要 Challenge-Response）
+        agentId: savedAgentId,  // 🔑 如果有已保存的，传给 daemon
         capabilities: (config.agentCapabilities || ['chat', 'task']).map(name => ({
           name,
           version: '1.0.0'
         })),
         webhook: {
-          url: `http://127.0.0.1:${config.webhookPort}${config.webhookPath}`,
+          url: webhookUrl,  // Issue #140: Use Gateway URL
           token: config.webhookToken
         }
       }),
@@ -243,130 +378,6 @@ export async function unregisterFromDaemon(
 }
 
 /**
- * Start webhook listener
- * Creates a simple HTTP server to receive F2A webhook requests
- */
-async function startWebhookListener(
-  api: OpenClawPluginApi,
-  config: Required<WebhookConfig>
-): Promise<void> {
-  const http = await import('http');
-  const { exec } = await import('child_process');
-
-  const server = http.createServer(async (req, res) => {
-    // Parse URL path - support both global webhook and agent-specific webhook
-    // Global: /f2a/webhook
-    // Agent-specific: /f2a/webhook/agent:<id_prefix>
-    const urlPath = req.url || '';
-    
-    // Check for agent-specific webhook path
-    // Agent ID prefix can include lowercase letters, numbers, and uppercase
-    const agentMatch = urlPath.match(/^\/f2a\/webhook\/agent:([a-zA-Z0-9]+)(?:\/|$)/);
-    const isAgentWebhook = agentMatch !== null;
-    const isGlobalWebhook = urlPath === config.webhookPath || urlPath === '/f2a/webhook';
-    
-    // Only handle POST to webhook paths
-    if (req.method !== 'POST' || (!isGlobalWebhook && !isAgentWebhook)) {
-      res.writeHead(404);
-      res.end('Not found');
-      return;
-    }
-    
-    // Extract agent ID prefix if present
-    const agentIdPrefix = isAgentWebhook ? agentMatch![1] : null;
-
-    // Validate token
-    const authHeader = req.headers['authorization'] || req.headers['x-f2a-token'];
-    const token = typeof authHeader === 'string' ? authHeader.replace('Bearer ', '') : '';
-    if (config.webhookToken && token !== config.webhookToken) {
-      res.writeHead(401);
-      res.end('Unauthorized');
-      return;
-    }
-
-    // Parse body
-    let body = '';
-    for await (const chunk of req) body += chunk;
-    
-    let payload: { 
-      from?: string | { agentId?: string; name?: string }; 
-      fromAgentId?: string; 
-      content?: string; 
-      message?: string;
-      topic?: string;
-      type?: string;
-      to?: { agentId?: string; name?: string };
-      messageId?: string;
-    };
-    try {
-      payload = JSON.parse(body);
-    } catch {
-      res.writeHead(400);
-      res.end('Invalid JSON');
-      return;
-    }
-
-    // 兼容 MessageRouter 的 payload 格式：
-    // - from 可以是字符串或 { agentId, name } 对象
-    // - content 或 message 字段
-    const fromAgentId = typeof payload.from === 'string' 
-      ? payload.from 
-      : payload.from?.agentId || payload.fromAgentId || '';
-    const message = payload.content || payload.message || '';
-    
-    if (!fromAgentId || !message) {
-      res.writeHead(400);
-      res.end('Missing from or content');
-      return;
-    }
-
-// Log with webhook type info
-    const webhookType = isAgentWebhook ? `agent:${agentIdPrefix}` : 'global';
-    api.logger?.info(`[F2A Webhook] Received message (${webhookType}) from ${fromAgentId.slice(0, 16)}, length=${message.length}`);
-
-    // Invoke Agent to generate reply
-    // Use agentIdPrefix as session key if available, otherwise use fromAgentId prefix
-    const sessionKeyPrefix = agentIdPrefix || fromAgentId.slice(0, 16);
-    const reply = await invokeAgent(api, sessionKeyPrefix, message, config.agentTimeout);
-
-    // Send reply via f2a CLI
-    if (reply) {
-      try {
-        exec(`f2a send --to "${fromAgentId}" --message "${reply.replace(/"/g, '\\\\"')}"`, {
-          timeout: 10000
-        });
-        api.logger?.info(`[F2A Webhook] Reply sent to ${fromAgentId.slice(0, 16)}`);
-      } catch (err) {
-        api.logger?.error(`[F2A Webhook] Failed to send reply: ${String(err)}`);
-      }
-    }
-
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ success: true }));
-  });
-
-  // Use unref() to allow Gateway to exit cleanly
-  server.listen(config.webhookPort, '127.0.0.1', () => {
-    api.logger?.info(`[F2A Webhook] Listening on http://127.0.0.1:${config.webhookPort}${config.webhookPath}`);
-    server.unref();
-    
-    // 🔑 自动注册（新增）
-    if (config.autoRegister) {
-      setImmediate(async () => {
-        const result = await registerToDaemon(api, config);
-        if (result.success && result.agent?.agentId) {
-          api.logger?.info('[F2A] Registered successfully:', result.agent.agentId);
-          // @ts-ignore - store agentId for cleanup
-          config._registeredAgentId = result.agent.agentId;
-        } else {
-          api.logger?.warn('[F2A] Registration failed, will retry later');
-        }
-      });
-    }
-  });
-}
-
-/**
  * Invoke Agent to generate reply
  * Uses OpenClaw subagent API if available
  * 
@@ -389,7 +400,7 @@ async function invokeAgent(
       const sessionKey = `f2a-webhook-${sessionKeyPrefix}`;
       const idempotencyKey = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-const { runId } = await api.runtime.subagent.run({
+      const { runId } = await api.runtime.subagent.run({
         sessionKey,
         message,
         deliver: true,
@@ -555,11 +566,13 @@ function signNonce(nonce: string, privateKeyBase64: string): string {
 
 /**
  * Challenge-Response 验证
+ * Issue #140: Added webhookUrl parameter (using Gateway URL)
  */
 async function verifyIdentity(
   api: OpenClawPluginApi,
   config: Required<WebhookConfig>,
-  identity: AgentIdentityFile
+  identity: AgentIdentityFile,
+  webhookUrl: string
 ): Promise<{ success: boolean; agent?: { agentId: string }; sessionToken?: string }> {
   const controlPort = config.controlPort || 9001;
   
@@ -570,7 +583,7 @@ async function verifyIdentity(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         agentId: identity.agentId,
-        webhook: { url: `http://127.0.0.1:${config.webhookPort}${config.webhookPath}`, token: config.webhookToken },
+        webhook: { url: webhookUrl, token: config.webhookToken },  // Issue #140: Use Gateway URL
         requestChallenge: true
       }),
       signal: AbortSignal.timeout(5000)

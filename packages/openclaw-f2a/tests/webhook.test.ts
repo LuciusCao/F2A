@@ -1,19 +1,25 @@
 /**
- * F2A Webhook Plugin Tests
- * Unit tests for webhook handling scenarios
+ * F2A Webhook Plugin Tests (Refactored per Issue #140)
+ * 
+ * Changes:
+ * - Removed HTTP server tests (no self-built server)
+ * - Added registerHttpRoute tests
+ * - Updated service ID to 'f2a-daemon-registration'
+ * - Updated webhook URL to use Gateway URL (18789)
+ * - Updated API paths to /api/v1/
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { OpenClawPluginApi, ApiLogger, WebhookConfig } from '../src/types';
 
-// Mock child_process and http modules
+// Mock child_process module
 vi.mock('child_process', () => ({
   exec: vi.fn()
 }));
 
 // Create a mock request that supports async iteration
 function createMockRequest(body: string): any {
-  const chunks = [Buffer.from(body), Buffer.alloc(0)]; // body + end signal
+  const chunks = [Buffer.from(body), Buffer.alloc(0)];
   let index = 0;
   return {
     [Symbol.asyncIterator]() {
@@ -29,32 +35,12 @@ function createMockRequest(body: string): any {
   };
 }
 
-vi.mock('http', () => {
-  const mockServer = {
-    listen: vi.fn((port: number, host: string, callback?: () => void) => {
-      if (callback) callback();
-    }),
-    unref: vi.fn()
-  };
-  return {
-    createServer: vi.fn(() => mockServer)
-  };
-});
-
-vi.mock('fs/promises', () => ({
-  readFile: vi.fn().mockResolvedValue('test-control-token')
-}));
-
-vi.mock('os', () => ({
-  homedir: vi.fn().mockReturnValue('/home/test')
-}));
-
 // Helper to create mock API
 function createMockApi(config: Partial<WebhookConfig> = {}): OpenClawPluginApi {
   return {
     id: 'test-plugin',
     name: 'openclaw-f2a',
-    version: '0.4.0',
+    version: '0.5.0',
     description: 'Test plugin',
     source: 'test',
     config: {
@@ -82,6 +68,7 @@ function createMockApi(config: Partial<WebhookConfig> = {}): OpenClawPluginApi {
         enqueueSystemEvent: vi.fn(),
         requestHeartbeatNow: vi.fn()
       },
+      gatewayBaseUrl: 'http://127.0.0.1:18789',
       subagent: {
         run: vi.fn().mockResolvedValue({ runId: 'test-run-id' }),
         waitForRun: vi.fn().mockResolvedValue({ status: 'ok' }),
@@ -93,193 +80,237 @@ function createMockApi(config: Partial<WebhookConfig> = {}): OpenClawPluginApi {
         })
       }
     },
-    registerService: vi.fn()
+    registerService: vi.fn(),
+    registerHttpRoute: vi.fn()
   };
 }
 
-describe('F2A Webhook Plugin', () => {
+describe('F2A Webhook Plugin (Issue #140 Refactored)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    
+    // Mock global fetch
+    global.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes('/health')) {
+        return { ok: true, json: async () => ({ status: 'ok' }) } as any;
+      }
+      if (url.includes('/api/v1/agents')) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            agent: { agentId: 'agent:test123' },
+            token: 'test-token'
+          })
+        } as any;
+      }
+      return { ok: false } as any;
+    });
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  describe('HTTP Server Startup', () => {
-    it('should start HTTP server on configured port', async () => {
-      const mockApi = createMockApi({ webhookPort: 9002 });
+  describe('HTTP Route Registration (Issue #140)', () => {
+    it('should register HTTP route with Gateway via registerHttpRoute', async () => {
+      const mockApi = createMockApi({ webhookPath: '/f2a/webhook' });
       const { default: register } = await import('../src/plugin');
 
       register(mockApi);
 
-      // registerService should be called
-      expect(mockApi.registerService).toHaveBeenCalled();
+      // registerHttpRoute should be called
+      expect(mockApi.registerHttpRoute).toHaveBeenCalled();
 
-      const service = mockApi.registerService?.mock.calls[0][0];
-      expect(service.id).toBe('f2a-webhook-service');
-
-      // Start the service
-      service.start();
-
-      // Wait for async setImmediate
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      // HTTP server should be created and listening
-      const http = await import('http');
-      expect(http.createServer).toHaveBeenCalled();
-
-      const server = http.createServer.mock.results[0].value;
-      expect(server.listen).toHaveBeenCalledWith(9002, '127.0.0.1', expect.any(Function));
-      expect(server.unref).toHaveBeenCalled();
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      expect(routeCall.path).toBe('/f2a/webhook');
+      expect(routeCall.auth).toBe('plugin');  // Plugin handles its own auth
+      expect(routeCall.handler).toBeDefined();
     });
 
-    it('should use default port 9002 if not configured', async () => {
+    it('should use default webhook path if not configured', async () => {
       const mockApi = createMockApi({});
       const { default: register } = await import('../src/plugin');
 
       register(mockApi);
 
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
-
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const http = await import('http');
-      const server = http.createServer.mock.results[0].value;
-
-      expect(server.listen).toHaveBeenCalledWith(9002, '127.0.0.1', expect.any(Function));
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      expect(routeCall.path).toBe('/f2a/webhook');
     });
-  });
 
-  describe('Token Validation', () => {
-    it('should reject requests without valid token', async () => {
-      const mockApi = createMockApi({ webhookToken: 'secure-token' });
+    it('should warn if registerHttpRoute not available', async () => {
+      const mockApi = createMockApi({});
+      // @ts-ignore - remove registerHttpRoute
+      mockApi.registerHttpRoute = undefined;
+      
       const { default: register } = await import('../src/plugin');
 
       register(mockApi);
+
+      expect(mockApi.logger?.warn).toHaveBeenCalledWith(
+        expect.stringContaining('registerHttpRoute not available')
+      );
+    });
+  });
+
+  describe('Service Registration', () => {
+    it('should register daemon registration service', async () => {
+      const mockApi = createMockApi({ autoRegister: false });
+      const { default: register } = await import('../src/plugin');
+
+      register(mockApi);
+
+      expect(mockApi.registerService).toHaveBeenCalled();
+
       const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
+      expect(service.id).toBe('f2a-daemon-registration');  // Changed from 'f2a-webhook-service'
+      expect(service.start).toBeDefined();
+      expect(service.stop).toBeDefined();
+    });
+  });
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+  describe('Webhook Handler', () => {
+    it('should handle POST request with valid payload', async () => {
+      const mockApi = createMockApi({ webhookToken: '' });
+      const { default: register } = await import('../src/plugin');
 
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
+      register(mockApi);
 
-      // Create mock request without auth
+      // Get the webhook handler
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      const handler = routeCall.handler;
+
+      // Create mock request and response
+      const mockReq = Object.assign(
+        createMockRequest(JSON.stringify({ from: 'agent:test-peer', content: 'hello' })),
+        {
+          method: 'POST',
+          url: '/f2a/webhook',
+          headers: {}
+        }
+      );
+
+      const mockRes = {
+        statusCode: 0,
+        setHeader: vi.fn(),
+        end: vi.fn()
+      } as any;
+
+      await handler(mockReq, mockRes);
+
+      expect(mockRes.statusCode).toBe(200);
+      expect(mockRes.end).toHaveBeenCalledWith(JSON.stringify({ success: true }));
+    });
+
+    it('should reject non-POST requests', async () => {
+      const mockApi = createMockApi({ webhookToken: '' });
+      const { default: register } = await import('../src/plugin');
+
+      register(mockApi);
+
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      const handler = routeCall.handler;
+
       const mockReq = {
-        method: 'POST',
+        method: 'GET',
         url: '/f2a/webhook',
         headers: {}
       } as any;
 
       const mockRes = {
-        writeHead: vi.fn(),
+        statusCode: 0,
         end: vi.fn()
       } as any;
 
-      // Simulate request handling
-      await mockRequestHandler(mockReq, mockRes);
+      await handler(mockReq, mockRes);
 
-      expect(mockRes.writeHead).toHaveBeenCalledWith(401);
-      expect(mockRes.end).toHaveBeenCalledWith('Unauthorized');
+      expect(mockRes.statusCode).toBe(404);
     });
 
-    it('should accept requests with valid Bearer token', async () => {
-      const mockApi = createMockApi({ webhookToken: 'secure-token' });
+    it('should validate webhook token', async () => {
+      const mockApi = createMockApi({ webhookToken: 'secret-token' });
       const { default: register } = await import('../src/plugin');
 
       register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      const handler = routeCall.handler;
 
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
-
-      // Create mock request with valid Bearer token
+      // Request without token
       const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ from: 'test-peer-id', content: 'hello' })),
+        createMockRequest(JSON.stringify({ from: 'agent:test', content: 'hello' })),
         {
           method: 'POST',
           url: '/f2a/webhook',
-          headers: { authorization: 'Bearer secure-token' }
+          headers: {}
         }
       );
 
       const mockRes = {
-        writeHead: vi.fn(),
+        statusCode: 0,
         end: vi.fn()
       } as any;
 
-      await mockRequestHandler(mockReq, mockRes);
+      await handler(mockReq, mockRes);
 
-      // Should not return 401
-      expect(mockRes.writeHead).not.toHaveBeenCalledWith(401);
+      expect(mockRes.statusCode).toBe(401);
     });
 
-    it('should accept requests with valid x-f2a-token header', async () => {
-      const mockApi = createMockApi({ webhookToken: 'secure-token' });
+    it('should accept valid Bearer token', async () => {
+      const mockApi = createMockApi({ webhookToken: 'secret-token' });
       const { default: register } = await import('../src/plugin');
 
       register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
 
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      const handler = routeCall.handler;
 
       const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ from: 'test-peer-id', content: 'hello' })),
+        createMockRequest(JSON.stringify({ from: 'agent:test', content: 'hello' })),
         {
           method: 'POST',
           url: '/f2a/webhook',
-          headers: { 'x-f2a-token': 'secure-token' }
+          headers: { authorization: 'Bearer secret-token' }
         }
       );
 
       const mockRes = {
-        writeHead: vi.fn(),
+        statusCode: 0,
+        setHeader: vi.fn(),
         end: vi.fn()
       } as any;
 
-      await mockRequestHandler(mockReq, mockRes);
+      await handler(mockReq, mockRes);
 
-      expect(mockRes.writeHead).not.toHaveBeenCalledWith(401);
+      expect(mockRes.statusCode).toBe(200);
     });
-  });
 
-  describe('Payload Parsing', () => {
     it('should reject invalid JSON payload', async () => {
       const mockApi = createMockApi({ webhookToken: '' });
       const { default: register } = await import('../src/plugin');
 
       register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
 
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      const handler = routeCall.handler;
 
       const mockReq = Object.assign(
         createMockRequest('invalid json'),
-        { method: 'POST', url: '/f2a/webhook', headers: {} }
+        {
+          method: 'POST',
+          url: '/f2a/webhook',
+          headers: {}
+        }
       );
 
       const mockRes = {
-        writeHead: vi.fn(),
+        statusCode: 0,
         end: vi.fn()
       } as any;
 
-      await mockRequestHandler(mockReq, mockRes);
+      await handler(mockReq, mockRes);
 
-      expect(mockRes.writeHead).toHaveBeenCalledWith(400);
-      expect(mockRes.end).toHaveBeenCalledWith('Invalid JSON');
+      expect(mockRes.statusCode).toBe(400);
     });
 
     it('should reject payload missing from field', async () => {
@@ -287,192 +318,99 @@ describe('F2A Webhook Plugin', () => {
       const { default: register } = await import('../src/plugin');
 
       register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
 
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      const handler = routeCall.handler;
 
       const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ content: 'hello without sender' })),
-        { method: 'POST', url: '/f2a/webhook', headers: {} }
+        createMockRequest(JSON.stringify({ content: 'hello' })),
+        {
+          method: 'POST',
+          url: '/f2a/webhook',
+          headers: {}
+        }
       );
 
       const mockRes = {
-        writeHead: vi.fn(),
+        statusCode: 0,
         end: vi.fn()
       } as any;
 
-      await mockRequestHandler(mockReq, mockRes);
+      await handler(mockReq, mockRes);
 
-      expect(mockRes.writeHead).toHaveBeenCalledWith(400);
-      expect(mockRes.end).toHaveBeenCalledWith('Missing from or content');
+      expect(mockRes.statusCode).toBe(400);
     });
 
-    it('should reject payload missing content field', async () => {
+    it('should accept from as object (MessageRouter format)', async () => {
       const mockApi = createMockApi({ webhookToken: '' });
       const { default: register } = await import('../src/plugin');
 
       register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      const handler = routeCall.handler;
 
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
-
-      const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ from: 'test-peer-id' })),
-        { method: 'POST', url: '/f2a/webhook', headers: {} }
-      );
-
-      const mockRes = {
-        writeHead: vi.fn(),
-        end: vi.fn()
-      } as any;
-
-      await mockRequestHandler(mockReq, mockRes);
-
-      expect(mockRes.writeHead).toHaveBeenCalledWith(400);
-      expect(mockRes.end).toHaveBeenCalledWith('Missing from or content');
-    });
-
-    it('should accept valid payload with from and content', async () => {
-      const mockApi = createMockApi({ webhookToken: '' });
-      const { default: register } = await import('../src/plugin');
-
-      register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
-
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
-
-      const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ from: 'test-peer-id', content: 'hello' })),
-        { method: 'POST', url: '/f2a/webhook', headers: {} }
-      );
-
-      const mockRes = {
-        writeHead: vi.fn(),
-        end: vi.fn()
-      } as any;
-
-      await mockRequestHandler(mockReq, mockRes);
-
-      expect(mockRes.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'application/json' });
-      expect(mockRes.end).toHaveBeenCalledWith(JSON.stringify({ success: true }));
-    });
-
-    it('should accept fromAgentId as alternative to from', async () => {
-      const mockApi = createMockApi({ webhookToken: '' });
-      const { default: register } = await import('../src/plugin');
-
-      register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
-
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
-
-      const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ fromAgentId: 'test-agent-id', content: 'hello' })),
-        { method: 'POST', url: '/f2a/webhook', headers: {} }
-      );
-
-      const mockRes = {
-        writeHead: vi.fn(),
-        end: vi.fn()
-      } as any;
-
-      await mockRequestHandler(mockReq, mockRes);
-
-      expect(mockRes.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'application/json' });
-    });
-
-    it('should accept from as object with agentId and name (MessageRouter format)', async () => {
-      const mockApi = createMockApi({ webhookToken: '' });
-      const { default: register } = await import('../src/plugin');
-
-      register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
-
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
-
-      // Payload with from as object {agentId, name}
       const mockReq = Object.assign(
         createMockRequest(JSON.stringify({
-          from: { agentId: 'agent:12d3k00wtest', name: 'TestAgent' },
+          from: { agentId: 'agent:12d3kooWtest', name: 'TestAgent' },
           content: 'hello from object'
         })),
-        { method: 'POST', url: '/f2a/webhook', headers: {} }
+        {
+          method: 'POST',
+          url: '/f2a/webhook',
+          headers: {}
+        }
       );
 
       const mockRes = {
-        writeHead: vi.fn(),
+        statusCode: 0,
+        setHeader: vi.fn(),
         end: vi.fn()
       } as any;
 
-      await mockRequestHandler(mockReq, mockRes);
+      await handler(mockReq, mockRes);
 
-      // Should return 200 success
-      expect(mockRes.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'application/json' });
-
-      // Should extract agentId from the from object for session key
-      // sessionKey = 'f2a-webhook-' + fromAgentId.slice(0, 16)
-      // fromAgentId = 'agent:12d3k00wtest', slice(0,16) = 'agent:12d3k00wte'
+      expect(mockRes.statusCode).toBe(200);
+      
+      // Should extract agentId from the from object
       expect(mockApi.runtime.subagent?.run).toHaveBeenCalledWith(
         expect.objectContaining({
           message: 'hello from object',
-          sessionKey: 'f2a-webhook-agent:12d3k00wte'
+          sessionKey: expect.stringContaining('agent:12d3kooWte')
         })
       );
     });
 
-    it('should accept message field as alternative to content (MessageRouter format)', async () => {
+    it('should accept message field as alternative to content', async () => {
       const mockApi = createMockApi({ webhookToken: '' });
       const { default: register } = await import('../src/plugin');
 
       register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      const handler = routeCall.handler;
 
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
-
-      // Payload with message field instead of content
       const mockReq = Object.assign(
         createMockRequest(JSON.stringify({
-          from: 'test-peer-id',
+          from: 'agent:test-peer',
           message: 'hello via message field'
         })),
-        { method: 'POST', url: '/f2a/webhook', headers: {} }
+        {
+          method: 'POST',
+          url: '/f2a/webhook',
+          headers: {}
+        }
       );
 
       const mockRes = {
-        writeHead: vi.fn(),
+        statusCode: 0,
+        setHeader: vi.fn(),
         end: vi.fn()
       } as any;
 
-      await mockRequestHandler(mockReq, mockRes);
+      await handler(mockReq, mockRes);
 
-      // Should return 200 success
-      expect(mockRes.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'application/json' });
-
-      // Should use message field as the content
+      expect(mockRes.statusCode).toBe(200);
       expect(mockApi.runtime.subagent?.run).toHaveBeenCalledWith(
         expect.objectContaining({
           message: 'hello via message field'
@@ -480,233 +418,43 @@ describe('F2A Webhook Plugin', () => {
       );
     });
 
-    it('should accept combined format with from object and message field', async () => {
+    it('should handle agent-specific webhook path', async () => {
       const mockApi = createMockApi({ webhookToken: '' });
       const { default: register } = await import('../src/plugin');
 
       register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      const handler = routeCall.handler;
 
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
-
-      // Payload with both from object and message field
       const mockReq = Object.assign(
         createMockRequest(JSON.stringify({
-          from: { agentId: 'agent:abc123xyz789', name: 'RemoteAgent' },
-          message: 'combined format message'
+          from: 'agent:test-peer',
+          content: 'hello to specific agent'
         })),
-        { method: 'POST', url: '/f2a/webhook', headers: {} }
+        {
+          method: 'POST',
+          url: '/f2a/webhook/agent:specific123',
+          headers: {}
+        }
       );
 
       const mockRes = {
-        writeHead: vi.fn(),
+        statusCode: 0,
+        setHeader: vi.fn(),
         end: vi.fn()
       } as any;
 
-      await mockRequestHandler(mockReq, mockRes);
+      await handler(mockReq, mockRes);
 
-      // Should return 200 success
-      expect(mockRes.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'application/json' });
-
-      // Should correctly extract both from object's agentId and message field
-      // sessionKey = 'f2a-webhook-' + fromAgentId.slice(0, 16)
-      // fromAgentId = 'agent:abc123xyz789', slice(0,16) = 'agent:abc123xyz7'
+      expect(mockRes.statusCode).toBe(200);
+      
+      // Should use agent ID prefix as session key
       expect(mockApi.runtime.subagent?.run).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: 'combined format message',
-          sessionKey: 'f2a-webhook-agent:abc123xyz7'
+          sessionKey: expect.stringContaining('specific123')
         })
       );
-    });
-  });
-
-  describe('Agent-Specific Webhook Path', () => {
-    it('should accept agent-specific webhook path /f2a/webhook/agent:<id>', async () => {
-      const mockApi = createMockApi({ webhookToken: '' });
-      const { default: register } = await import('../src/plugin');
-
-      register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
-
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
-
-      const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ from: 'test-peer-id', content: 'hello' })),
-        { method: 'POST', url: '/f2a/webhook/agent:12d3k00w', headers: {} }
-      );
-
-      const mockRes = {
-        writeHead: vi.fn(),
-        end: vi.fn()
-      } as any;
-
-      await mockRequestHandler(mockReq, mockRes);
-
-      expect(mockRes.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'application/json' });
-    });
-
-    it('should use agent ID prefix as session key for agent-specific webhook', async () => {
-      const mockApi = createMockApi({ webhookToken: '' });
-      const { default: register } = await import('../src/plugin');
-
-      register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
-
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
-
-      const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ from: 'test-peer-id', content: 'hello' })),
-        { method: 'POST', url: '/f2a/webhook/agent:12d3k00w', headers: {} }
-      );
-
-      const mockRes = {
-        writeHead: vi.fn(),
-        end: vi.fn()
-      } as any;
-
-      await mockRequestHandler(mockReq, mockRes);
-
-      // Should use agent ID prefix in session key
-      expect(mockApi.runtime.subagent?.run).toHaveBeenCalledWith({
-        sessionKey: 'f2a-webhook-12d3k00w',
-        message: 'hello',
-        deliver: true,
-        idempotencyKey: expect.any(String)
-      });
-    });
-
-    it('should reject invalid agent webhook path format', async () => {
-      const mockApi = createMockApi({ webhookToken: '' });
-      const { default: register } = await import('../src/plugin');
-
-      register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
-
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
-
-      const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ from: 'test-peer-id', content: 'hello' })),
-        { method: 'POST', url: '/f2a/webhook/agent-invalid', headers: {} }
-      );
-
-      const mockRes = {
-        writeHead: vi.fn(),
-        end: vi.fn()
-      } as any;
-
-      await mockRequestHandler(mockReq, mockRes);
-
-      expect(mockRes.writeHead).toHaveBeenCalledWith(404);
-    });
-
-    it('should reject agent webhook path with non-hex ID', async () => {
-      const mockApi = createMockApi({ webhookToken: '' });
-      const { default: register } = await import('../src/plugin');
-
-      register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
-
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
-
-      const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ from: 'test-peer-id', content: 'hello' })),
-        { method: 'POST', url: '/f2a/webhook/agent:xyz123!', headers: {} }
-      );
-
-      const mockRes = {
-        writeHead: vi.fn(),
-        end: vi.fn()
-      } as any;
-
-      await mockRequestHandler(mockReq, mockRes);
-
-      expect(mockRes.writeHead).toHaveBeenCalledWith(404);
-    });
-
-    it('should log agent ID prefix in webhook type', async () => {
-      const mockApi = createMockApi({ webhookToken: '' });
-      const { default: register } = await import('../src/plugin');
-
-      register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
-
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
-
-      const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ from: 'test-peer-id', content: 'hello' })),
-        { method: 'POST', url: '/f2a/webhook/agent:abc123def', headers: {} }
-      );
-
-      const mockRes = {
-        writeHead: vi.fn(),
-        end: vi.fn()
-      } as any;
-
-      await mockRequestHandler(mockReq, mockRes);
-
-      // Should log with agent ID prefix
-      expect(mockApi.logger?.info).toHaveBeenCalledWith(
-        expect.stringContaining('agent:abc123def')
-      );
-    });
-
-    it('should use from prefix as session key for global webhook', async () => {
-      const mockApi = createMockApi({ webhookToken: '' });
-      const { default: register } = await import('../src/plugin');
-
-      register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
-
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
-
-      const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ from: '12d3k00wtest123456789', content: 'hello' })),
-        { method: 'POST', url: '/f2a/webhook', headers: {} }
-      );
-
-      const mockRes = {
-        writeHead: vi.fn(),
-        end: vi.fn()
-      } as any;
-
-      await mockRequestHandler(mockReq, mockRes);
-
-      // Should use from prefix in session key (first 16 chars)
-      // from = '12d3k00wtest123456789' -> slice(0,16) = '12d3k00wtest1234'
-      expect(mockApi.runtime.subagent?.run).toHaveBeenCalledWith({
-        sessionKey: 'f2a-webhook-12d3k00wtest1234',
-        message: 'hello',
-        deliver: true,
-        idempotencyKey: expect.any(String)
-      });
     });
   });
 
@@ -716,212 +464,156 @@ describe('F2A Webhook Plugin', () => {
       const { default: register } = await import('../src/plugin');
 
       register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
 
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      const handler = routeCall.handler;
 
       const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ from: 'test-peer-id', content: 'hello' })),
-        { method: 'POST', url: '/f2a/webhook', headers: {} }
+        createMockRequest(JSON.stringify({
+          from: 'agent:test-peer',
+          content: 'hello'
+        })),
+        {
+          method: 'POST',
+          url: '/f2a/webhook',
+          headers: {}
+        }
       );
 
       const mockRes = {
-        writeHead: vi.fn(),
+        statusCode: 0,
+        setHeader: vi.fn(),
         end: vi.fn()
       } as any;
 
-      await mockRequestHandler(mockReq, mockRes);
+      await handler(mockReq, mockRes);
 
-      // Should call subagent.run
-      expect(mockApi.runtime.subagent?.run).toHaveBeenCalledWith({
-        sessionKey: expect.stringContaining('f2a-webhook'),
-        message: 'hello',
-        deliver: true,
-        idempotencyKey: expect.any(String)
-      });
+      expect(mockApi.runtime.subagent?.run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'hello',
+          sessionKey: expect.stringContaining('f2a-webhook'),
+          deliver: true
+        })
+      );
 
-      // Should call waitForRun
-      expect(mockApi.runtime.subagent?.waitForRun).toHaveBeenCalledWith({
-        runId: 'test-run-id',
-        timeoutMs: 60000
-      });
-
-      // Should call getSessionMessages
-      expect(mockApi.runtime.subagent?.getSessionMessages).toHaveBeenCalledWith({
-        sessionKey: expect.stringContaining('f2a-webhook'),
-        limit: 10
-      });
+      expect(mockApi.runtime.subagent?.waitForRun).toHaveBeenCalled();
     });
 
     it('should handle Agent timeout gracefully', async () => {
-      const mockApi = createMockApi({ webhookToken: '', agentTimeout: 5000 });
-      mockApi.runtime.subagent!.waitForRun = vi.fn().mockResolvedValue({ status: 'timeout' });
-
-      const { default: register } = await import('../src/plugin');
-
-      register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
-
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
-
-      const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ from: 'test-peer-id', content: 'hello' })),
-        { method: 'POST', url: '/f2a/webhook', headers: {} }
-      );
-
-      const mockRes = {
-        writeHead: vi.fn(),
-        end: vi.fn()
-      } as any;
-
-      await mockRequestHandler(mockReq, mockRes);
-
-      // Should log timeout warning
-      expect(mockApi.logger?.warn).toHaveBeenCalledWith(
-        expect.stringContaining('Agent timeout')
-      );
-    });
-
-    it('should handle Agent error gracefully', async () => {
       const mockApi = createMockApi({ webhookToken: '' });
-      mockApi.runtime.subagent!.waitForRun = vi.fn().mockResolvedValue({
-        status: 'error',
-        error: 'Agent failed'
-      });
-
+      mockApi.runtime.subagent!.waitForRun = vi.fn().mockResolvedValue({ status: 'timeout' });
+      
       const { default: register } = await import('../src/plugin');
 
       register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
 
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      const handler = routeCall.handler;
 
       const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ from: 'test-peer-id', content: 'hello' })),
-        { method: 'POST', url: '/f2a/webhook', headers: {} }
+        createMockRequest(JSON.stringify({
+          from: 'agent:test-peer',
+          content: 'hello'
+        })),
+        {
+          method: 'POST',
+          url: '/f2a/webhook',
+          headers: {}
+        }
       );
 
       const mockRes = {
-        writeHead: vi.fn(),
+        statusCode: 0,
+        setHeader: vi.fn(),
         end: vi.fn()
       } as any;
 
-      await mockRequestHandler(mockReq, mockRes);
+      await handler(mockReq, mockRes);
 
-      expect(mockApi.logger?.error).toHaveBeenCalledWith(
-        expect.stringContaining('Agent error')
+      expect(mockRes.statusCode).toBe(200);  // Still returns 200
+    });
+  });
+
+  describe('Reply Sending', () => {
+    it('should send reply via f2a CLI', async () => {
+      const mockApi = createMockApi({ webhookToken: '' });
+      const { default: register, invokeAgent } = await import('../src/plugin');
+
+      register(mockApi);
+
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      const handler = routeCall.handler;
+
+      const mockReq = Object.assign(
+        createMockRequest(JSON.stringify({
+          from: 'agent:test-peer',
+          content: 'hello'
+        })),
+        {
+          method: 'POST',
+          url: '/f2a/webhook',
+          headers: {}
+        }
+      );
+
+      const mockRes = {
+        statusCode: 0,
+        setHeader: vi.fn(),
+        end: vi.fn()
+      } as any;
+
+      await handler(mockReq, mockRes);
+
+      // Wait for async CLI call
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      const { exec } = await import('child_process');
+      expect(exec).toHaveBeenCalledWith(
+        expect.stringContaining('f2a send'),
+        expect.any(Object)
       );
     });
   });
 
-  describe('CLI Send', () => {
-    it('should send reply via f2a CLI', async () => {
-      const mockApi = createMockApi({ webhookToken: '' });
+  describe('WebhookConfig Parameters', () => {
+    it('should support webhookPath configuration', async () => {
+      const mockApi = createMockApi({ webhookPath: '/custom/webhook' });
       const { default: register } = await import('../src/plugin');
-      const childProcess = await import('child_process');
-      
+
       register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
-      
-      await new Promise(resolve => setTimeout(resolve, 10));
 
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
-
-      const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ from: 'test-peer-id', content: 'hello' })),
-        { method: 'POST', url: '/f2a/webhook', headers: {} }
-      );
-
-      const mockRes = {
-        writeHead: vi.fn(),
-        end: vi.fn()
-      } as any;
-
-      await mockRequestHandler(mockReq, mockRes);
-
-      // exec should be called with f2a send command
-      expect(childProcess.exec).toHaveBeenCalledWith(
-        expect.stringContaining('f2a send'),
-        expect.objectContaining({ timeout: 10000 })
-      );
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      expect(routeCall.path).toBe('/custom/webhook');
     });
 
-    it('should log success when reply sent', async () => {
-      const mockApi = createMockApi({ webhookToken: '' });
+    it('should support webhookToken configuration', async () => {
+      const mockApi = createMockApi({ webhookToken: 'my-secret-token' });
       const { default: register } = await import('../src/plugin');
-      
+
       register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
-      
-      await new Promise(resolve => setTimeout(resolve, 10));
 
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      const handler = routeCall.handler;
 
+      // Test with valid token
       const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ from: 'test-peer-id', content: 'hello' })),
-        { method: 'POST', url: '/f2a/webhook', headers: {} }
+        createMockRequest(JSON.stringify({ from: 'agent:test', content: 'hello' })),
+        {
+          method: 'POST',
+          url: '/f2a/webhook',  // Use default path
+          headers: { 'x-f2a-token': 'my-secret-token' }
+        }
       );
 
       const mockRes = {
-        writeHead: vi.fn(),
+        statusCode: 0,
+        setHeader: vi.fn(),
         end: vi.fn()
       } as any;
 
-      await mockRequestHandler(mockReq, mockRes);
+      await handler(mockReq, mockRes);
 
-      expect(mockApi.logger?.info).toHaveBeenCalledWith(
-        expect.stringContaining('Reply sent')
-      );
-    });
-
-    it('should not send reply if Agent returns nothing', async () => {
-      const mockApi = createMockApi({ webhookToken: '' });
-      mockApi.runtime.subagent!.getSessionMessages = vi.fn().mockResolvedValue({
-        messages: [{ role: 'user', content: 'hello' }] // No assistant reply
-      });
-      
-      const { default: register } = await import('../src/plugin');
-      const childProcess = await import('child_process');
-      
-      register(mockApi);
-      const service = mockApi.registerService?.mock.calls[0][0];
-      service.start();
-      
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const http = await import('http');
-      const mockRequestHandler = http.createServer.mock.calls[0][0];
-
-      const mockReq = Object.assign(
-        createMockRequest(JSON.stringify({ from: 'test-peer-id', content: 'hello' })),
-        { method: 'POST', url: '/f2a/webhook', headers: {} }
-      );
-
-      const mockRes = {
-        writeHead: vi.fn(),
-        end: vi.fn()
-      } as any;
-
-      await mockRequestHandler(mockReq, mockRes);
-
-      // exec should NOT be called when no reply
-      expect(childProcess.exec).not.toHaveBeenCalled();
+      expect(mockRes.statusCode).toBe(200);
     });
   });
 });

@@ -1,6 +1,6 @@
 {
   "name": "@f2a/openclaw-f2a",
-  "version": "0.4.4",
+  "version": "0.5.0",
   "description": "OpenClaw plugin for F2A P2P Agent network",
   "type": "module",
   "main": "./dist/index.js",
@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "lint": "tsc --noEmit",
-    "clean": "rm -rf dist .tsbuildinfo"
+    "clean": "rm -rf dist .tsbuildinfo",
+    "prepack": "cp -r ../../skills ./skills"
   },
   "dependencies": {
     "@f2a/network": "^0.5.0",
@@ -40,6 +41,7 @@
   "license": "MIT",
   "files": [
     "dist",
+    "skills",
     "openclaw.plugin.json",
     "README.md"
   ],

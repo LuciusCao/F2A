@@ -248,18 +248,17 @@ describe('AgentHandler - Error Response Code Field', () => {
     });
   });
 
-  describe('DELETE /api/v1/agents/:agentId - 注销 Agent', () => {
+  describe('DELETE /api/v1/agents/:agentId - 注销 Agent (Challenge-Response)', () => {
     it('Agent 不存在应返回 404 + code: AGENT_NOT_FOUND', async () => {
-      // Mock token verification 成功
-      (mockTokenManager.verifyForAgent as any).mockReturnValue({ valid: true });
-      (mockRegistry.unregister as any).mockReturnValue(false);
+      (mockRegistry.get as any).mockReturnValue(undefined);  // Agent 不存在
       
       const req = createMockReq({
-        headers: { 'authorization': 'agent-test-token' }  // 小写 key
+        body: {}  // 无 challengeResponse
       });
       const res = createMockRes();
 
       await handler.handleUnregisterAgent('agent:nonexistent', req as IncomingMessage, res as ServerResponse);
+      await new Promise(resolve => setTimeout(resolve, 10));
 
       expect(res.writeHead).toHaveBeenCalledWith(404);
       const data = getResponseData(res);
@@ -268,55 +267,110 @@ describe('AgentHandler - Error Response Code Field', () => {
       expect(data.code).toBe('AGENT_NOT_FOUND');
     });
 
-    it('Agent 存在应成功注销', async () => {
-      // Mock token verification 成功
-      (mockTokenManager.verifyForAgent as any).mockReturnValue({ valid: true });
-      (mockRegistry.unregister as any).mockReturnValue(true);
+    it('第一次请求应返回 Challenge', async () => {
+      (mockRegistry.get as any).mockReturnValue({
+        agentId: 'agent:test-peer:abc123',
+        name: 'TestAgent',
+        peerId: 'test-peer-id',
+      });
+      (mockIdentityStore.get as any).mockReturnValue({
+        agentId: 'agent:test-peer:abc123',
+        e2eePublicKey: 'test-public-key',
+      });
       
       const req = createMockReq({
-        headers: { 'authorization': 'agent-test-token' }  // 小写 key
+        body: {}  // 无 challengeResponse
       });
       const res = createMockRes();
 
       await handler.handleUnregisterAgent('agent:test-peer:abc123', req as IncomingMessage, res as ServerResponse);
+      await new Promise(resolve => setTimeout(resolve, 10));
 
       expect(res.writeHead).toHaveBeenCalledWith(200);
       const data = getResponseData(res);
+      expect(data.success).toBe(false);
+      expect(data.requiresChallenge).toBe(true);
+      expect(data.challenge).toBeDefined();
+      expect(data.challenge.operation).toBe('unregister');
+    });
+
+    it('签名验证失败应返回 401 + code: CHALLENGE_FAILED', async () => {
+      (mockRegistry.get as any).mockReturnValue({
+        agentId: 'agent:test-peer:abc123',
+        name: 'TestAgent',
+        peerId: 'test-peer-id',
+      });
+      (mockIdentityStore.get as any).mockReturnValue({
+        agentId: 'agent:test-peer:abc123',
+        e2eePublicKey: 'test-public-key',
+      });
+      (mockE2EECrypto.verifySignature as any).mockReturnValue(false);  // 签名验证失败
+      
+      // 第一步：获取 nonce（需要先调用一次以获取 pending challenge）
+      const req1 = createMockReq({ body: {} });
+      const res1 = createMockRes();
+      await handler.handleUnregisterAgent('agent:test-peer:abc123', req1 as IncomingMessage, res1 as ServerResponse);
+      await new Promise(resolve => setTimeout(resolve, 10));
+      const challengeData = getResponseData(res1);
+      const nonce = challengeData.challenge?.nonce;
+      
+      // 第二步：提交错误签名
+      const req2 = createMockReq({
+        body: {
+          challengeResponse: {
+            nonce,
+            nonceSignature: 'invalid-signature',
+          }
+        }
+      });
+      const res2 = createMockRes();
+      await handler.handleUnregisterAgent('agent:test-peer:abc123', req2 as IncomingMessage, res2 as ServerResponse);
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      expect(res2.writeHead).toHaveBeenCalledWith(401);
+      const data = getResponseData(res2);
+      expect(data.success).toBe(false);
+      expect(data.code).toBe('CHALLENGE_FAILED');
+    });
+
+    it('签名验证成功应成功注销', async () => {
+      (mockRegistry.get as any).mockReturnValue({
+        agentId: 'agent:test-peer:abc123',
+        name: 'TestAgent',
+        peerId: 'test-peer-id',
+      });
+      (mockIdentityStore.get as any).mockReturnValue({
+        agentId: 'agent:test-peer:abc123',
+        e2eePublicKey: 'test-public-key',
+      });
+      (mockE2EECrypto.verifySignature as any).mockReturnValue(true);  // 签名验证成功
+      (mockRegistry.unregister as any).mockReturnValue(true);
+      
+      // 第一步：获取 nonce
+      const req1 = createMockReq({ body: {} });
+      const res1 = createMockRes();
+      await handler.handleUnregisterAgent('agent:test-peer:abc123', req1 as IncomingMessage, res1 as ServerResponse);
+      await new Promise(resolve => setTimeout(resolve, 10));
+      const challengeData = getResponseData(res1);
+      const nonce = challengeData.challenge?.nonce;
+      
+      // 第二步：提交正确签名
+      const req2 = createMockReq({
+        body: {
+          challengeResponse: {
+            nonce,
+            nonceSignature: 'valid-signature',
+          }
+        }
+      });
+      const res2 = createMockRes();
+      await handler.handleUnregisterAgent('agent:test-peer:abc123', req2 as IncomingMessage, res2 as ServerResponse);
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      expect(res2.writeHead).toHaveBeenCalledWith(200);
+      const data = getResponseData(res2);
       expect(data.success).toBe(true);
       expect(data.message).toBe('Agent unregistered');
-    });
-
-    it('缺少 Authorization header 应返回 401 + code: MISSING_TOKEN', async () => {
-      const req = createMockReq({
-        headers: {} // 没有 authorization
-      });
-      const res = createMockRes();
-
-      await handler.handleUnregisterAgent('agent:test-peer:abc123', req as IncomingMessage, res as ServerResponse);
-
-      expect(res.writeHead).toHaveBeenCalledWith(401);
-      const data = getResponseData(res);
-      expect(data.success).toBe(false);
-      expect(data.code).toBe('MISSING_TOKEN');
-    });
-
-    it('Token 验证失败应返回 401 + code: TOKEN_INVALID', async () => {
-      (mockTokenManager.verifyForAgent as any).mockReturnValue({ 
-        valid: false, 
-        error: 'Token does not belong to this agent' 
-      });
-      
-      const req = createMockReq({
-        headers: { 'authorization': 'agent-wrong-token' }  // 小写 key
-      });
-      const res = createMockRes();
-
-      await handler.handleUnregisterAgent('agent:test-peer:abc123', req as IncomingMessage, res as ServerResponse);
-
-      expect(res.writeHead).toHaveBeenCalledWith(401);
-      const data = getResponseData(res);
-      expect(data.success).toBe(false);
-      expect(data.code).toBe('TOKEN_INVALID');
     });
   });
 

@@ -179,8 +179,8 @@ export async function cliInitAgent(options: {
     console.log(`   Webhook: ${options.webhook}`);
     console.log('');
     console.log('📝 请记录以下信息到记忆：');
-    console.log('   F2A-AgentId: ' + result.agentId);
-    console.log('   F2A-Identity: ' + result.identityFile);
+    console.log('   AgentId: ' + result.agentId);
+    console.log('   Identity: ' + result.identityFile);
     console.log('');
     console.log('💡 使用 F2A CLI 时传入 F2A-AgentId：');
     console.log('   f2a agent register --agent-id <F2A-AgentId>');

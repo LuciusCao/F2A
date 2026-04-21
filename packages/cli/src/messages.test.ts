@@ -37,7 +37,17 @@ vi.mock('os', () => ({
 vi.mock('./init.js', () => ({
   readCallerConfig: vi.fn(() => null),
   readIdentityFile: vi.fn(() => null),
+  readIdentityByAgentId: vi.fn((agentId: string) => ({
+    agentId,
+    name: 'Test Agent',
+    publicKey: 'test-public-key',
+    privateKey: 'test-private-key',
+    capabilities: [{ name: 'chat', version: '1.0.0' }],
+    webhook: { url: 'http://test' },
+    createdAt: '2026-04-21T00:00:00Z',
+  })),
   AGENTS_DIR: '/tmp/f2a-test/agents',
+  AGENT_IDENTITIES_DIR: '/tmp/f2a-test/agent-identities',
 }));
 
 import { existsSync, readFileSync } from 'fs';

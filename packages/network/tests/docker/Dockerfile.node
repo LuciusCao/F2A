@@ -11,15 +11,20 @@ WORKDIR /app
 # 先复制 package.json 文件以利用 Docker 缓存
 COPY package*.json ./
 COPY packages/network/package*.json ./packages/network/
+COPY packages/daemon/package*.json ./packages/daemon/
 
 # 复制源代码
 COPY packages/network ./packages/network
+COPY packages/daemon ./packages/daemon
 
 # 安装所有依赖
 RUN npm install
 
-# 切换到 packages/network 目录并构建
+# 构建核心包
 WORKDIR /app/packages/network
+RUN npm run build
+
+WORKDIR /app/packages/daemon
 RUN npm run build
 
 # 切换回主目录
@@ -33,5 +38,5 @@ ENV F2A_CONTROL_PORT=9001
 HEALTHCHECK --interval=5s --timeout=3s --retries=10 \
   CMD wget -q --spider http://localhost:9001/health || exit 1
 
-# 启动命令
-CMD ["node", "packages/network/dist/daemon/main.js"]
+# 启动命令（daemon 在 packages/daemon 包中）
+CMD ["node", "packages/daemon/dist/main.js"]

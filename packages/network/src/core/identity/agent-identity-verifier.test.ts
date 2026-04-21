@@ -208,4 +208,273 @@ describe('AgentIdentityVerifier', () => {
       expect(result).toBeNull();
     });
   });
+
+  describe('verifyBatch', () => {
+    it('should verify multiple AgentIds', async () => {
+      const agentIds = [
+        'agent:12D3KooWTestPeer:a1b2c3d4',
+        'agent:UnknownPeer12345:a1b2c3d5'
+      ];
+      const signatures = ['sig1', 'sig2'];
+      
+      const results = await verifier.verifyBatch(agentIds, signatures);
+      
+      expect(results.length).toBe(2);
+      expect(results[0].peerIdPrefix).toBe('12D3KooWTestPeer');
+      expect(results[1].valid).toBe(false); // Unknown peer
+      expect(results[1].error).toContain('Unknown peer');
+    });
+
+    it('should return error for mismatched array lengths', async () => {
+      const agentIds = ['agent:12D3KooWTestPeer:a1b2c3d4', 'agent:OtherPeer12345:a1b2c3d5'];
+      const signatures = ['sig1']; // 长度不匹配
+      
+      const results = await verifier.verifyBatch(agentIds, signatures);
+      
+      expect(results.length).toBe(2);
+      expect(results[0].valid).toBe(false);
+      expect(results[0].error).toBe('Mismatched input arrays');
+      expect(results[1].valid).toBe(false);
+      expect(results[1].error).toBe('Mismatched input arrays');
+    });
+
+    it('should verify batch with peerIds', async () => {
+      const agentIds = ['agent:12D3KooWTestPeer:a1b2c3d4'];
+      const signatures = ['sig1'];
+      const peerIds = ['12D3KooWTestPeer12345']; // 匹配前缀
+      
+      const results = await verifier.verifyBatch(agentIds, signatures, peerIds);
+      
+      expect(results.length).toBe(1);
+      expect(results[0].peerIdPrefix).toBe('12D3KooWTestPeer');
+    });
+  });
+
+  describe('quickVerify - format only', () => {
+    it('should pass format-only verification without peerId', () => {
+      // 不提供 peerId，只检查格式
+      const agentId = 'agent:SomePeerPrefix12:a1b2c3d4';
+      const result = verifier.quickVerify(agentId);
+      
+      expect(result).toBe(true);
+    });
+
+    it('should fail for invalid format in quickVerify', () => {
+      const invalidId = 'invalid-format';
+      const result = verifier.quickVerify(invalidId);
+      
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('findPeerByPrefix - priority', () => {
+    it('should prioritize connectedPeers over peerTable', async () => {
+      // 创建一个新的 verifier 实例，避免受之前测试的影响
+      const e2eeCrypto2 = new E2EECrypto();
+      await e2eeCrypto2.initialize();
+      
+      const newPeerTable = new Map<string, PeerInfo>();
+      const newConnectedPeers = new Set<string>();
+      
+      // Add peer to both peerTable and connectedPeers
+      const testPeerId = '12D3KooWTestPeer12345';
+      newPeerTable.set(testPeerId, {
+        peerId: testPeerId,
+        multiaddrs: [],
+        connected: true,
+        reputation: 50,
+        lastSeen: Date.now()
+      });
+      newConnectedPeers.add(testPeerId);
+      
+      // Add another peer to peerTable only (not connected)
+      const tableOnlyPeerId = '12D3KooWTestPeerX';
+      newPeerTable.set(tableOnlyPeerId, {
+        peerId: tableOnlyPeerId,
+        multiaddrs: [],
+        connected: false,
+        reputation: 50,
+        lastSeen: Date.now()
+      });
+      
+      const localVerifier = new AgentIdentityVerifier(e2eeCrypto2, newPeerTable, newConnectedPeers);
+      
+      const prefix = '12D3KooWTestPeer';
+      const result = localVerifier.findPeerByPrefix(prefix);
+      
+      // Should return the connected peer, not the table-only peer
+      expect(result).toBe('12D3KooWTestPeer12345');
+      
+      e2eeCrypto2.stop();
+    });
+  });
+
+  describe('verifyRemoteAgentId - E2EE fallback', () => {
+    it('should verify with E2EE public key from peerInfo', async () => {
+      // 创建新的 E2EE 实例用于验证
+      const e2eeCrypto2 = new E2EECrypto();
+      await e2eeCrypto2.initialize();
+      
+      const newPeerTable = new Map<string, PeerInfo>();
+      const newConnectedPeers = new Set<string>();
+      
+      const peerId = '12D3KooWE2EETest';
+      const publicKey = e2eeCrypto2.getPublicKey()!;
+      
+      // 创建签名
+      const agentId = `agent:${peerId.slice(0, 16)}:a1b2c3d4`;
+      const signature = e2eeCrypto2.signData(agentId)!;
+      
+      // 设置 peerInfo 包含 encryptionPublicKey
+      newPeerTable.set(peerId, {
+        peerId,
+        multiaddrs: [],
+        connected: true,
+        reputation: 50,
+        lastSeen: Date.now(),
+        agentInfo: {
+          peerId,
+          displayName: 'E2EE Test',
+          agentType: 'custom',
+          version: '1.0',
+          capabilities: [],
+          protocolVersion: '1.0',
+          lastSeen: Date.now(),
+          multiaddrs: [],
+          encryptionPublicKey: publicKey
+        }
+      });
+      newConnectedPeers.add(peerId);
+      
+      const localVerifier = new AgentIdentityVerifier(e2eeCrypto2, newPeerTable, newConnectedPeers);
+      
+      // 不提供 ed25519PublicKey，让它使用 E2EE fallback
+      const result = await localVerifier.verifyRemoteAgentId(
+        agentId,
+        signature,
+        undefined,
+        peerId
+      );
+      
+      expect(result.valid).toBe(true);
+      expect(result.peerIdPrefix).toBe(peerId.slice(0, 16));
+      
+      e2eeCrypto2.stop();
+    });
+
+    it('should fail when peer not in table', async () => {
+      const e2eeCrypto2 = new E2EECrypto();
+      await e2eeCrypto2.initialize();
+      
+      const newPeerTable = new Map<string, PeerInfo>();
+      const newConnectedPeers = new Set<string>();
+      
+      // Add to connectedPeers but NOT to peerTable
+      const peerId = '12D3KooWNotInTbl';
+      newConnectedPeers.add(peerId);
+      
+      const localVerifier = new AgentIdentityVerifier(e2eeCrypto2, newPeerTable, newConnectedPeers);
+      
+      const agentId = `agent:${peerId.slice(0, 16)}:a1b2c3d4`;
+      
+      const result = await localVerifier.verifyRemoteAgentId(
+        agentId,
+        'sig',
+        undefined,
+        peerId
+      );
+      
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('Peer not found in peer table');
+      
+      e2eeCrypto2.stop();
+    });
+
+    it('should fail when no E2EE public key available', async () => {
+      const e2eeCrypto2 = new E2EECrypto();
+      await e2eeCrypto2.initialize();
+      
+      const newPeerTable = new Map<string, PeerInfo>();
+      const newConnectedPeers = new Set<string>();
+      
+      const peerId = '12D3KooWNoPubKey';
+      
+      // Add peer without encryptionPublicKey
+      newPeerTable.set(peerId, {
+        peerId,
+        multiaddrs: [],
+        connected: true,
+        reputation: 50,
+        lastSeen: Date.now(),
+        agentInfo: {
+          peerId,
+          displayName: 'No Key',
+          agentType: 'custom',
+          version: '1.0',
+          capabilities: [],
+          protocolVersion: '1.0',
+          lastSeen: Date.now(),
+          multiaddrs: []
+          // no encryptionPublicKey
+        }
+      });
+      newConnectedPeers.add(peerId);
+      
+      const localVerifier = new AgentIdentityVerifier(e2eeCrypto2, newPeerTable, newConnectedPeers);
+      
+      const agentId = `agent:${peerId.slice(0, 16)}:a1b2c3d4`;
+      
+      const result = await localVerifier.verifyRemoteAgentId(
+        agentId,
+        'sig',
+        undefined,
+        peerId
+      );
+      
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('No E2EE public key available');
+      
+      e2eeCrypto2.stop();
+    });
+
+    it('should fail with invalid E2EE signature', async () => {
+      const e2eeCrypto2 = new E2EECrypto();
+      await e2eeCrypto2.initialize();
+      
+      const newPeerTable = new Map<string, PeerInfo>();
+      const newConnectedPeers = new Set<string>();
+      
+      const peerId = '12D3KooWBadSig';
+      const publicKey = e2eeCrypto2.getPublicKey()!;
+      
+      // Register peer's public key
+      e2eeCrypto2.registerPeerPublicKey(peerId, publicKey);
+      
+      newPeerTable.set(peerId, {
+        peerId,
+        multiaddrs: [],
+        connected: true,
+        reputation: 50,
+        lastSeen: Date.now()
+      });
+      newConnectedPeers.add(peerId);
+      
+      const localVerifier = new AgentIdentityVerifier(e2eeCrypto2, newPeerTable, newConnectedPeers);
+      
+      const agentId = `agent:${peerId.slice(0, 16)}:a1b2c3d4`;
+      
+      // Wrong signature
+      const result = await localVerifier.verifyRemoteAgentId(
+        agentId,
+        'invalid-signature',
+        undefined,
+        peerId
+      );
+      
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('Signature verification failed');
+      
+      e2eeCrypto2.stop();
+    });
+  });
 });

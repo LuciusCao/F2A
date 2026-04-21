@@ -1,13 +1,47 @@
 # RFC 003: AgentId 签发与验证机制
 
-> **Status**: Implementation in Progress (签名已完成，验证待修复)
+> **Status**: ⚠️ **DEPRECATED** - 已被 [RFC 008: Agent Self-Identity](./008-agent-self-identity.md) 取代
 > **Created**: 2026-04-14
-> **Updated**: 2026-04-18 (添加密钥分离架构说明)
+> **Updated**: 2026-04-21 (标记废弃)
 > **Author**: Discussion with user
+> **Superseded By**: RFC 008 (Agent Self-Identity)
 
 ---
 
-## 问题背景
+## ⚠️ 废弃说明
+
+**RFC 003 已废弃，请使用 RFC 008。**
+
+### 为什么废弃？
+
+RFC 003 设计存在以下安全问题：
+
+1. ❌ **Agent 没有自己的密钥** - 无法自证身份
+2. ❌ **Token 存文件** - 任何能读文件的人都能冒充
+3. ❌ **按 name 匹配不可靠** - name 可冲突、可修改
+4. ❌ **同一用户的多进程都能使用同一 token** - 无法区分来源
+
+### RFC 008 的改进
+
+| RFC 003 (旧) | RFC 008 (新) |
+|--------------|--------------|
+| `agent:<PeerId前16位>:<随机8位>` | `agent:<公钥指纹16位>` |
+| Node 签发 AgentId | Agent 自己有密钥 |
+| Token 验证（可被盗） | Challenge-Response（每次签名） |
+| 无身份自证 | Ed25519 签名自证身份 |
+
+### 迁移指南
+
+请参考 [RFC 008: Agent Self-Identity](./008-agent-self-identity.md) 进行迁移。
+
+代码中标记 `@deprecated` 的方法将逐步移除：
+- `AgentRegistry.register()` → 使用 `registerRFC008()`
+- `AgentRegistry.generateAgentId()` → 使用 `generateAgentId(publicKey)` from `identity/agent-id.js`
+- 旧格式 AgentId (`agent:<PeerId>:xxx`) → 新格式 (`agent:<fingerprint>`)
+
+---
+
+## 问题背景（历史记录）
 
 ### 当前实现的问题
 

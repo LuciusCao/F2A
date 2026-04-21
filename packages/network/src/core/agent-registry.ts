@@ -2,11 +2,11 @@
  * Agent Registry
  * 管理注册到 Daemon 的 Agent 实例
  * 
- * RFC 003: AgentId 由节点签发，不能由用户自定义
- * RFC 008: AgentId = 公钥指纹，Agent 自有密钥
+ * RFC 008: AgentId = 公钥指纹，Agent 自有密钥（推荐）
+ * RFC 003: AgentId 由节点签发（⚠️ 已废弃）
  * 
- * Phase 3: 添加 publicKey 字段，支持 RFC008 新格式
- * 同时保持对 RFC003 旧格式的兼容
+ * **重要**: 请使用 registerRFC008() 注册新 Agent
+ * RFC003 的 register() 方法已标记 @deprecated，将在未来版本移除
  */
 
 import { Logger } from '../utils/logger.js';
@@ -268,8 +268,11 @@ export class AgentRegistry {
   }
 
   /**
-   * 生成签发的 AgentId
+   * 生成签发的 AgentId（旧格式）
    * 格式: agent:<PeerId前16位>:<随机8位>
+   * 
+   * @deprecated RFC003 已废弃。请使用 `identity/agent-id.js` 中的 `generateAgentId(publicKey)` 生成新格式 AgentId
+   * @private
    */
   private generateAgentId(): string {
     const peerIdPrefix = this.peerId.slice(0, 16);
@@ -289,8 +292,15 @@ export class AgentRegistry {
   /**
    * 注册 Agent（节点签发 AgentId）- RFC003 旧格式
    * 
-   * 用户只提供 name 和 capabilities
-   * 节点生成并签名 AgentId
+   * ⚠️ **已废弃**: 请使用 `registerRFC008()` 注册新 Agent
+   * 
+   * RFC003 存在以下安全问题：
+   * - Agent 没有自己的密钥，无法自证身份
+   * - Token 存文件可被盗用
+   * 
+   * @deprecated 使用 `registerRFC008()` 替代
+   * @param request 注册请求
+   * @returns AgentRegistration
    */
   register(request: AgentRegistrationRequest): AgentRegistration {
     // 生成 AgentId (旧格式)
@@ -388,8 +398,12 @@ export class AgentRegistry {
   /**
    * 根据 AgentId 格式自动选择注册方法
    * 
+   * ⚠️ **已废弃**: 请显式使用 `registerRFC008()` 注册
+   * 
    * 如果 publicKey 存在，使用 RFC008 格式
-   * 否则使用 RFC003 格式
+   * 否则使用已废弃的 RFC003 格式
+   * 
+   * @deprecated 请显式调用 `registerRFC008()` 替代
    */
   registerAuto(request: AgentRegistrationRequest & { publicKey?: string }): AgentRegistration {
     if (request.publicKey) {
@@ -573,6 +587,7 @@ export class AgentRegistry {
     }
 
     // RFC003 旧格式: 检查 PeerId 前缀匹配
+    // ⚠️ RFC003 已废弃，此验证不完整（只检查格式）
     if (parsed.format === 'old') {
       if (!parsed.peerIdPrefix) {
         this.logger.warn('Old format AgentId missing peerIdPrefix', { agentId });

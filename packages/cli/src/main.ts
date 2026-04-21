@@ -63,21 +63,23 @@ Commands:
 
   agent      管理 Agent 身份和注册
     init              生成 Agent 密钥对和身份文件
-                       --name <name> --agent-identity <path> [--capability <cap>]... --webhook <url> [--force]
-                       生成密钥对，创建 Agent Identity
+                       --name <name> --webhook <url> [--capability <cap>]... [--force]
+                       自动保存到 ~/.f2a/agent-identities/
     register          注册 Agent 到 Daemon
-                       --agent-identity <path> [--force]
+                       --agent-id <agentId> [--force]
                        获取 Node 签发的归属证明
     list              列出已注册的 Agent
-    unregister <id>   注销 Agent --agent-identity <path>
-    status            查看 Agent 身份状态 --agent-identity <path>
+    unregister        注销 Agent
+                       --agent-id <agentId>
+    status            查看 Agent 身份状态
+                       --agent-id <agentId>
 
   message    消息管理
     send              发送消息
-                       --agent-identity <path> --to <agent_id> [--type <type>] "content"
+                       --agent-id <agentId> [--to <agentId>] [--type <type>] "content"
                        使用签名认证
-    list              查看消息 --agent-identity <path> [--unread] [--limit <n>]
-    clear             清除消息 --agent-identity <path>
+    list              查看消息 --agent-id <agentId> [--unread] [--limit <n>]
+    clear             清除消息 --agent-id <agentId>
 
   daemon     Daemon 管理
     start             启动 Daemon (后台)
@@ -112,41 +114,41 @@ Usage: f2a agent <subcommand> [options]
 
 Subcommands:
   init              生成 Agent 密钥对和身份文件
-                    f2a agent init --name <name> --agent-identity <path> [--capability <cap>]... --webhook <url> [--force]
+                    f2a agent init --name <name> --webhook <url> [--capability <cap>]... [--force]
                     --name            Agent 名称（必填）
-                    --agent-identity  身份文件路径（必填）
-                    --capability      能力标签（可多个）
                     --webhook         Webhook URL（必填，用于接收消息）
+                    --capability      能力标签（可多个）
                     --force           强制重新创建
+                    身份文件自动保存到 ~/.f2a/agent-identities/
 
   register          注册 Agent 到 Daemon（获取 Node 签名）
-                    f2a agent register --agent-identity <path> [--force]
+                    f2a agent register --agent-id <agentId> [--force]
                     发送公钥到 Daemon，获取 Node 签名
 
   list              列出已注册的 Agent
                     f2a agent list
 
   unregister        注销 Agent
-                    f2a agent unregister <agent_id> --agent-identity <path>
+                    f2a agent unregister <agent_id> --agent-id <agentId>
 
   status            查看 Agent 身份状态
-                    f2a agent status --agent-identity <path>
+                    f2a agent status --agent-id <agentId>
 
   verify            验证 Agent（Challenge-Response）
                     f2a agent verify <agent_id>
 
 Examples:
   # 创建身份
-  f2a agent init --name "my-agent" --agent-identity ~/.f2a/agent-identities/my-agent.json --webhook http://localhost:3000/f2a/webhook
+  f2a agent init --name "my-agent" --webhook http://localhost:3000/f2a/webhook
   
-  # 注册到 Daemon
-  f2a agent register --agent-identity ~/.f2a/agent-identities/my-agent.json
+  # 注册到 Daemon（使用生成的 agentId）
+  f2a agent register --agent-id agent:abc123...
   
   # 查看状态
-  f2a agent status --agent-identity ~/.f2a/agent-identities/my-agent.json
+  f2a agent status --agent-id agent:abc123...
   
   # 发送消息
-  f2a message send --agent-identity ~/.f2a/agent-identities/my-agent.json --to agent:xxx "hello"
+  f2a message send --agent-id agent:abc123... --to agent:xyz789... "hello"
 `);
 }
 
@@ -161,23 +163,23 @@ Usage: f2a message <subcommand> [options]
 
 Subcommands:
   send              发送消息到 Agent
-                    f2a message send --agent-identity <path> --to <agent_id> [--type <type>] "content"
-                    --agent-identity  身份文件路径（必填）
+                    f2a message send --agent-id <agentId> --to <agent_id> [--type <type>] "content"
+                    --agent-id        Agent ID（必填）
                     --to              接收方 Agent ID（可选，不提供则广播）
                     --type            消息类型：message, task_request, task_response, announcement, claim
 
   list              查看消息队列
-                    f2a message list --agent-identity <path> [--unread] [--limit <n>]
+                    f2a message list --agent-id <agentId> [--unread] [--limit <n>]
                     --unread  只显示未读消息
                     --limit   限制数量
 
   clear             清除消息
-                    f2a message clear --agent-identity <path>
+                    f2a message clear --agent-id <agentId>
 
 Examples:
-  f2a message send --agent-identity ~/.f2a/agent-identities/my-agent.json --to agent:xxx "Hello"
-  f2a message send --agent-identity ~/.f2a/agent-identities/my-agent.json "Broadcast message"
-  f2a message list --agent-identity ~/.f2a/agent-identities/my-agent.json --unread
+  f2a message send --agent-id agent:abc123... --to agent:xyz789... "Hello"
+  f2a message send --agent-id agent:abc123... "Broadcast message"
+  f2a message list --agent-id agent:abc123... --unread
 `);
 }
 
@@ -300,20 +302,19 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
       const initOpts = parseArgs(restArgs);
       const initWebhook = initOpts.webhook as string | undefined;
       if (!initWebhook) {
-        console.error('❌ 错误：缺少 --webhook 参数');
+        console.error('❌ 缺少 --webhook 参数');
         console.error('Agent 需要 webhook URL 来接收消息');
-        console.error('用法: f2a agent init --name <name> --agent-identity <path> --webhook <url>');
+        console.error('用法: f2a agent init --name <name> --webhook <url>');
         process.exit(1);
       }
       await cliInitAgent({
         name: initOpts.name as string,
-        agentIdentity: initOpts['agent-identity'] as string,
+        webhook: initWebhook,
         capabilities: Array.isArray(initOpts.capability)
           ? initOpts.capability as string[]
           : initOpts.capability
             ? [initOpts.capability as string]
             : undefined,
-        webhook: initWebhook,
         force: initOpts.force as boolean,
       });
       break;
@@ -321,7 +322,7 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
     case 'register':
       const registerOpts = parseArgs(restArgs);
       await registerAgent({
-        agentIdentity: registerOpts['agent-identity'] as string,
+        agentId: registerOpts['agent-id'] as string,
         force: registerOpts.force as boolean,
       });
       break;
@@ -331,26 +332,19 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
       break;
 
     case 'unregister':
-      const unregisterAgentId = restArgs[0];
-      if (!unregisterAgentId || unregisterAgentId.startsWith('--')) {
-        console.error('❌ 错误：缺少 Agent ID');
-        console.error('用法：f2a agent unregister <agent_id> --agent-identity <path>');
+      const unregisterOpts = parseArgs(restArgs);
+      const unregisterAgentId = unregisterOpts['agent-id'] as string;
+      if (!unregisterAgentId) {
+        console.error('❌ 缺少 --agent-id 参数');
+        console.error('用法: f2a agent unregister --agent-id <agentId>');
         process.exit(1);
       }
-      
-      const unregisterOpts = parseArgs(restArgs.slice(1));
-      await unregisterAgent(unregisterAgentId, unregisterOpts['agent-identity'] as string | undefined);
+      await unregisterAgent(unregisterAgentId);
       break;
 
     case 'status':
       const statusOpts = parseArgs(restArgs);
-      await showAgentStatus(statusOpts['agent-identity'] as string);
-      break;
-
-    case 'verify':
-      // TODO: 实现 verify 命令
-      console.error('❌ agent verify 命令尚未实现');
-      process.exit(1);
+      await showAgentStatus(statusOpts['agent-id'] as string);
       break;
 
     default:
@@ -376,7 +370,7 @@ async function handleMessageCommand(subArgs: string[]): Promise<void> {
     case 'send':
       const sendOpts = parseArgs(restArgs);
       await sendMessage({
-        agentIdentity: sendOpts['agent-identity'] as string,
+        agentId: sendOpts['agent-id'] as string,
         toAgentId: sendOpts.to as string | undefined,
         content: sendOpts.content as string,
         type: sendOpts.type as 'message' | 'task_request' | 'task_response' | 'announcement' | 'claim' | undefined,
@@ -386,7 +380,7 @@ async function handleMessageCommand(subArgs: string[]): Promise<void> {
     case 'list':
       const listOpts = parseArgs(restArgs);
       await getMessages({
-        agentIdentity: listOpts['agent-identity'] as string,
+        agentId: listOpts['agent-id'] as string,
         unread: listOpts.unread as boolean,
         limit: listOpts.limit ? parseInt(listOpts.limit as string, 10) : undefined,
       });
@@ -395,7 +389,7 @@ async function handleMessageCommand(subArgs: string[]): Promise<void> {
     case 'clear':
       const clearOpts = parseArgs(restArgs);
       await clearMessages({
-        agentIdentity: clearOpts['agent-identity'] as string,
+        agentId: clearOpts['agent-id'] as string,
       });
       break;
 
@@ -731,7 +725,7 @@ async function main(): Promise<void> {
       case 'send':
         // f2a send --to <peer_id> "content" -> P2P send (deprecated)
         console.error('⚠️  f2a send 命令已废弃，请使用:');
-        console.error('   f2a message send --agent-identity <path> --to <agent_id> "content"');
+        console.error('   f2a message send --agent-id <agentId> --to <agent_id> "content"');
         process.exit(1);
         break;
 

@@ -3,22 +3,22 @@
  * f2a agent register / list / unregister
  * 
  * Challenge-Response 注册流程
- * - 读取已生成的身份文件（必须指定 --agent-identity）
+ * - 按 agentId 查找本地身份文件
  * - 发送 publicKey 到 Daemon
- * - 接收 nodeSignature
- * - 保存 nodeSignature 到身份文件
+ * - 接收 nodeSignature 并保存
  */
 
 import { sendRequest } from './http-client.js';
 import { writeFileSync } from 'fs';
-import { readIdentityFile } from './init.js';
+import { join } from 'path';
+import { readIdentityByAgentId, AGENT_IDENTITIES_DIR } from './init.js';
 import type { RFC008IdentityFile } from '@f2a/network';
 
 /**
  * 更新身份文件（添加 nodeSignature）
  */
 function updateIdentityWithNodeSignature(
-  identityPath: string,
+  agentId: string,
   identity: RFC008IdentityFile,
   nodeSignature: string,
   nodePeerId: string
@@ -27,6 +27,8 @@ function updateIdentityWithNodeSignature(
     identity.nodeSignature = nodeSignature;
     identity.nodePeerId = nodePeerId;
     identity.lastActiveAt = new Date().toISOString();
+    
+    const identityPath = join(AGENT_IDENTITIES_DIR, `${agentId}.json`);
     writeFileSync(identityPath, JSON.stringify(identity, null, 2), { mode: 0o600 });
     return true;
   } catch {
@@ -36,37 +38,36 @@ function updateIdentityWithNodeSignature(
 
 /**
  * 注册 Agent
- * f2a agent register --agent-identity <path> [--force]
+ * f2a agent register --agent-id <agentId> [--force]
  * 
  * Challenge-Response 注册流程：
- * - 必须指定 --agent-identity 参数
- * - 读取身份文件中的 agentId 和 publicKey
- * - 发送到 Daemon 进行注册
+ * - 按 agentId 查找本地身份文件
+ * - 发送 publicKey 到 Daemon 进行注册
  * - 接收 nodeSignature 并保存
  */
 export async function registerAgent(options: {
-  /** 身份文件路径（必填） */
-  agentIdentity: string;
+  /** Agent ID（必填） */
+  agentId: string;
   force?: boolean;
 }): Promise<void> {
-  if (!options.agentIdentity) {
-    console.error('❌ 缺少 --agent-identity 参数');
-    console.error('用法：f2a agent register --agent-identity <path>');
+  if (!options.agentId) {
+    console.error('❌ 缺少 --agent-id 参数');
+    console.error('用法：f2a agent register --agent-id <agentId>');
     process.exit(1);
   }
 
-  const identity = readIdentityFile(options.agentIdentity);
+  const identity = readIdentityByAgentId(options.agentId);
 
   if (!identity) {
     console.error('❌ 找不到身份文件');
-    console.error(`   Path: ${options.agentIdentity}`);
-    console.error('请先运行: f2a agent init --name <name> --agent-identity <path> --webhook <url>');
+    console.error(`   AgentId: ${options.agentId}`);
+    console.error('请先运行: f2a agent init --name <name> --webhook <url>');
     process.exit(1);
   }
 
   // 检查是否已注册
   if (identity.nodeSignature && !options.force) {
-    console.log(`✅ Agent 已注册`);
+    console.log('✅ Agent 已注册');
     console.log(`   AgentId: ${identity.agentId}`);
     console.log(`   Node PeerId: ${identity.nodePeerId || 'N/A'}`);
     console.log('   使用 --force 强制重新注册');
@@ -95,7 +96,7 @@ export async function registerAgent(options: {
       const nodePeerId = result.nodePeerId as string | undefined;
 
       if (nodeSignature && nodePeerId) {
-        updateIdentityWithNodeSignature(options.agentIdentity, identity, nodeSignature, nodePeerId);
+        updateIdentityWithNodeSignature(options.agentId, identity, nodeSignature, nodePeerId);
       }
 
       console.log('✅ Agent 已注册');
@@ -123,7 +124,7 @@ export async function registerAgent(options: {
 }
 
 /**
- * 列出已注册的 Agent
+ * 列出已注册的 Agent（从 Daemon）
  * f2a agent list
  */
 export async function listAgents(): Promise<void> {
@@ -134,7 +135,6 @@ export async function listAgents(): Promise<void> {
       console.error(`❌ 获取 Agent 列表失败: ${result.error}`);
       console.error('请确保 Daemon 正在运行: f2a daemon start');
       process.exit(1);
-      return;
     }
 
     if (result.agents) {
@@ -160,7 +160,7 @@ export async function listAgents(): Promise<void> {
           : 'never';
 
         console.log(`🔹 ${agent.name}`);
-        console.log(`   ID: ${agent.agentId.slice(0, 24)}...`);
+        console.log(`   ID: ${agent.agentId}`);
         if (agent.capabilities && agent.capabilities.length > 0) {
           console.log(`   Capabilities: ${agent.capabilities.map(c => c.name).join(', ')}`);
         }
@@ -181,12 +181,12 @@ export async function listAgents(): Promise<void> {
 
 /**
  * 注销 Agent
- * f2a agent unregister <agent_id> [--agent-identity <path>]
+ * f2a agent unregister --agent-id <agentId>
  */
-export async function unregisterAgent(agentId: string, agentIdentity?: string): Promise<void> {
+export async function unregisterAgent(agentId: string): Promise<void> {
   if (!agentId || agentId.startsWith('--')) {
-    console.error('❌ 缺少 Agent ID');
-    console.error('用法: f2a agent unregister <agent_id>');
+    console.error('❌ 缺少 --agent-id 参数');
+    console.error('用法: f2a agent unregister --agent-id <agentId>');
     process.exit(1);
   }
 
@@ -194,10 +194,9 @@ export async function unregisterAgent(agentId: string, agentIdentity?: string): 
     const result = await sendRequest('DELETE', `/api/v1/agents/${agentId}`);
 
     if (result.success) {
-      console.log(`✅ Agent 已注销: ${agentId.slice(0, 24)}...`);
-      if (agentIdentity) {
-        console.log(`   身份文件已保留: ${agentIdentity}`);
-      }
+      console.log('✅ Agent 已注销');
+      console.log(`   AgentId: ${agentId}`);
+      console.log('   身份文件已保留，可重新注册');
     } else {
       console.error(`❌ 注销失败: ${result.error}`);
       process.exit(1);

@@ -178,10 +178,13 @@ export async function cliInitAgent(options: {
     console.log(`   Name: ${options.name}`);
     console.log(`   Webhook: ${options.webhook}`);
     console.log('');
-    console.log('⚠️  重要：请妥善保管身份文件（含私钥）');
-    console.log(`   Identity: ${result.identityFile}`);
+    console.log('📝 请记录以下信息到记忆：');
+    console.log('   F2A-AgentId: ' + result.agentId);
+    console.log('   F2A-Identity: ' + result.identityFile);
     console.log('');
-    console.log('下一步: f2a agent register --agent-id <agentId>');
+    console.log('💡 使用 F2A CLI 时传入 F2A-AgentId：');
+    console.log('   f2a agent register --agent-id <F2A-AgentId>');
+    console.log('   f2a message send --agent-id <F2A-AgentId> --to <目标> "内容"');
   } else {
     console.error(`❌ 初始化失败: ${result.error}`);
     console.error('');

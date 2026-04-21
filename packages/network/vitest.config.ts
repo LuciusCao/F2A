@@ -5,14 +5,16 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    // E2E 测试配置
-    testTimeout: 120000,  // E2E 测试需要更长超时时间
-    hookTimeout: 60000,   // beforeAll/afterAll 超时时间
-    // E2E 测试需要串行运行（避免端口冲突）
-    pool: 'forks',
+    // 单元测试超时配置（E2E 测试用 test:integration 命令）
+    testTimeout: 30000,   // 单元测试 30s
+    hookTimeout: 10000,   // beforeAll/afterAll 10s
+    // 使用 threads 模式并行运行（更快）
+    pool: 'threads',
     poolOptions: {
-      forks: {
-        singleFork: true  // 串行运行
+      threads: {
+        singleThread: false,  // 并行运行
+        minThreads: 2,
+        maxThreads: 4
       }
     },
     // 跳过的测试不应导致失败
@@ -38,8 +40,9 @@ export default defineConfig({
       }
     },
     // 项目引用配置
-    include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
-    exclude: ['node_modules', 'dist']
+    // 默认只跑单元测试（排除 E2E/integration）
+    include: ['src/**/*.test.ts'],
+    exclude: ['node_modules', 'dist', 'tests/**']
   },
   resolve: {
     alias: {

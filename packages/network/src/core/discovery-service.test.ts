@@ -282,7 +282,7 @@ describe('DiscoveryService', () => {
       const agentInfo = createAgentInfo('peer1', ['file-operation']);
       await peerManager.upsert('peer1', createPeerInfo('peer1', agentInfo));
 
-      const agents = await discoveryService.discoverAgents('task-execution');
+      const agents = await discoveryService.discoverAgents('task-execution', { timeoutMs: 100 });
 
       expect(agents).toHaveLength(0);
     });
@@ -291,7 +291,7 @@ describe('DiscoveryService', () => {
       const agentInfo = createAgentInfo('peer1', []);
       await peerManager.upsert('peer1', createPeerInfo('peer1', agentInfo));
 
-      const agents = await discoveryService.discoverAgents('any-capability');
+      const agents = await discoveryService.discoverAgents('any-capability', { timeoutMs: 100 });
 
       expect(agents).toHaveLength(0);
     });

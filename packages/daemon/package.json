@@ -1,6 +1,6 @@
 {
   "name": "@f2a/daemon",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "F2A Daemon - Background service for Friend-to-Agent P2P networking",
   "type": "module",
   "main": "./dist/index.js",

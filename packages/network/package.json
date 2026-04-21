@@ -1,6 +1,6 @@
 {
   "name": "@f2a/network",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "description": "Friend-to-Agent P2P networking protocol for OpenClaw Agents",
   "type": "module",
   "main": "dist/index.js",

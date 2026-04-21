@@ -24,10 +24,10 @@ if (process.env.F2A_DEBUG !== '1') {
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { sendRequest, CONTROL_PORT } from './http-client.js';
+import { sendRequest } from './http-client.js';
 import { listAgents, registerAgent, unregisterAgent } from './agents.js';
 import { sendMessage, getMessages, clearMessages } from './messages.js';
-import { startForeground, startBackground, stopDaemon, getDaemonStatus, isDaemonRunning, restartDaemon, showStatus } from './daemon.js';
+import { startForeground, startBackground, stopDaemon, restartDaemon, showStatus } from './daemon.js';
 import { showIdentityStatus, exportIdentity, importIdentityInternal, initIdentity } from './identity.js';
 import { cliInitAgent, showAgentStatus } from './init.js';
 
@@ -42,9 +42,9 @@ function getVersion(): string {
   try {
     const pkgPath = join(__dirname, '..', 'package.json');
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-    return pkg.version || '0.5.0';
+    return pkg.version || '0.9.0';
   } catch {
-    return '0.5.0';
+    return '0.9.0';
   }
 }
 
@@ -62,20 +62,22 @@ Commands:
              创建 Node Identity 和基础配置文件
 
   agent      管理 Agent 身份和注册
-    init              生成 Agent 密钥对和身份文件 [--name <name>] [--caller-config <path>]
+    init              生成 Agent 密钥对和身份文件
+                       --name <name> --agent-identity <path> [--capability <cap>]... [--webhook <url>] [--force]
                        RFC008: 生成 Ed25519 密钥对，创建 AgentId（公钥指纹）
-    register          注册 Agent 到 Daemon [--caller-config <path>]
+    register          注册 Agent 到 Daemon
+                       --agent-identity <path> [--force]
                        获取 Node 签发的归属证明
     list              列出已注册的 Agent
-    unregister <id>   注销 Agent
-    status            查看 Agent 身份状态
-    verify <id>       验证 Agent
+    unregister <id>   注销 Agent --agent-identity <path>
+    status            查看 Agent 身份状态 --agent-identity <path>
 
   message    消息管理
-    send              发送消息 [--from <agent_id>] --to <agent_id> "content"
-                       RFC008: 自动使用 Challenge-Response 认证
-    list              查看消息 [--agent <agent_id>] [--unread] [--limit <n>]
-    clear             清除消息 --agent <agent_id>
+    send              发送消息
+                       --agent-identity <path> --to <agent_id> [--type <type>] "content"
+                       RFC008: 使用 Challenge-Response 认证
+    list              查看消息 --agent-identity <path> [--unread] [--limit <n>]
+    clear             清除消息 --agent-identity <path>
 
   daemon     Daemon 管理
     start             启动 Daemon (后台)
@@ -110,42 +112,41 @@ Usage: f2a agent <subcommand> [options]
 
 Subcommands:
   init              生成 Agent 密钥对和身份文件 (RFC008)
-                    f2a agent init --name <name> [--caller-config <path>] [--capability <cap>]... [--webhook <url>] [--force]
-                    --name           Agent 名称（必填）
-                    --caller-config  Caller 配置路径（可选，默认 ~/.f2a/current-agent.json）
-                    --capability     能力标签（可多个）
-                    --webhook        Webhook URL（可选）
-                    --force          强制重新创建
+                    f2a agent init --name <name> --agent-identity <path> [--capability <cap>]... [--webhook <url>] [--force]
+                    --name            Agent 名称（必填）
+                    --agent-identity  身份文件路径（必填）
+                    --capability      能力标签（可多个）
+                    --webhook         Webhook URL（可选）
+                    --force           强制重新创建
 
   register          注册 Agent 到 Daemon（获取 Node 签名）
-                    f2a agent register [--caller-config <path>] [--name <name>] [--capability <cap>]... [--webhook <url>] [--force]
+                    f2a agent register --agent-identity <path> [--force]
                     RFC008: 使用 init 生成的密钥对，发送 publicKey 到 Daemon
-                    兼容旧格式: --name <name> 生成旧格式 AgentId
 
   list              列出已注册的 Agent
                     f2a agent list
 
   unregister        注销 Agent
-                    f2a agent unregister <agent_id> [--token <token>]
-                    注：如果未提供 --token，将尝试从 ~/.f2a/agent-identities/<agent_id>.json 读取
+                    f2a agent unregister <agent_id> --agent-identity <path>
 
   status            查看 Agent 身份状态 (RFC008)
-                    f2a agent status [--caller-config <path>]
-                    显示 AgentId, 公钥, Node 签名状态
+                    f2a agent status --agent-identity <path>
 
   verify            验证 Agent（Challenge-Response）
                     f2a agent verify <agent_id>
 
 Examples:
-  # RFC008 流程（推荐）
-  f2a agent init --name "my-agent" --caller-config ~/.hermes/f2a-identity.json
-  f2a agent register
-  f2a agent status
-  f2a message send --to agent:xxx "hello"
-
-  # 旧格式（兼容）
-  f2a agent register --name "my-agent" --capability "chat"
-  f2a message send --from agent-123 --to agent-456 "hello"
+  # 创建身份
+  f2a agent init --name "my-agent" --agent-identity ~/.f2a/agent-identities/my-agent.json
+  
+  # 注册到 Daemon
+  f2a agent register --agent-identity ~/.f2a/agent-identities/my-agent.json
+  
+  # 查看状态
+  f2a agent status --agent-identity ~/.f2a/agent-identities/my-agent.json
+  
+  # 发送消息
+  f2a message send --agent-identity ~/.f2a/agent-identities/my-agent.json --to agent:xxx "hello"
 `);
 }
 
@@ -160,30 +161,23 @@ Usage: f2a message <subcommand> [options]
 
 Subcommands:
   send              发送消息到 Agent
-                    f2a message send [--from <agent_id>] --to <agent_id> [--type <type>] [--caller-config <path>] "content"
-                    --from          发送方 Agent ID（RFC008 可省略，自动读取 Caller 配置）
-                    --to            接收方 Agent ID（可选，不提供则广播）
-                    --type          消息类型：message, task_request, task_response, announcement, claim
-                    --caller-config Caller 配置路径（可选，默认 ~/.f2a/current-agent.json）
-                    RFC008: 自动使用 Challenge-Response 签名认证
+                    f2a message send --agent-identity <path> --to <agent_id> [--type <type>] "content"
+                    --agent-identity  身份文件路径（必填）
+                    --to              接收方 Agent ID（可选，不提供则广播）
+                    --type            消息类型：message, task_request, task_response, announcement, claim
 
   list              查看消息队列
-                    f2a message list [--agent <agent_id>] [--unread] [--limit <n>]
-                    --agent  Agent ID（默认 'default'）
+                    f2a message list --agent-identity <path> [--unread] [--limit <n>]
                     --unread  只显示未读消息
-                    --limit  限制数量
+                    --limit   限制数量
 
   clear             清除消息
-                    f2a message clear --agent <agent_id>
+                    f2a message clear --agent-identity <path>
 
 Examples:
-  # RFC008 流程（推荐）
-  f2a message send --to agent:xxx "Hello"  # 自动使用 Caller 配置中的 AgentId
-  f2a message send --caller-config ~/.hermes/f2a-identity.json --to agent:xxx "Hello"
-
-  # 旧格式（兼容）
-  f2a message send --from agent-123 --to agent-456 "Hello"
-  f2a message list --agent agent-123 --unread
+  f2a message send --agent-identity ~/.f2a/agent-identities/my-agent.json --to agent:xxx "Hello"
+  f2a message send --agent-identity ~/.f2a/agent-identities/my-agent.json "Broadcast message"
+  f2a message list --agent-identity ~/.f2a/agent-identities/my-agent.json --unread
 `);
 }
 
@@ -306,7 +300,7 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
       const initOpts = parseArgs(restArgs);
       await cliInitAgent({
         name: initOpts.name as string,
-        callerConfig: initOpts['caller-config'] as string | undefined,
+        agentIdentity: initOpts['agent-identity'] as string,
         capabilities: Array.isArray(initOpts.capability)
           ? initOpts.capability as string[]
           : initOpts.capability
@@ -320,14 +314,8 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
     case 'register':
       const registerOpts = parseArgs(restArgs);
       await registerAgent({
-        callerConfig: registerOpts['caller-config'] as string | undefined,
-        name: registerOpts.name as string | undefined,
-        capabilities: Array.isArray(registerOpts.capability)
-          ? registerOpts.capability as string[]
-          : registerOpts.capability
-            ? [registerOpts.capability as string]
-            : undefined,
-        webhook: registerOpts.webhook as string | undefined,
+        agentIdentity: registerOpts['agent-identity'] as string,
+        force: registerOpts.force as boolean,
       });
       break;
 
@@ -337,24 +325,19 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
 
     case 'unregister':
       const unregisterAgentId = restArgs[0];
-      if (!unregisterAgentId) {
+      if (!unregisterAgentId || unregisterAgentId.startsWith('--')) {
         console.error('❌ 错误：缺少 Agent ID');
-        console.error('用法：f2a agent unregister <agent_id> [--token <token>]');
+        console.error('用法：f2a agent unregister <agent_id> --agent-identity <path>');
         process.exit(1);
       }
       
-      // 解析 --token 参数
-      const tokenIndex = restArgs.indexOf('--token');
-      const unregisterToken = tokenIndex !== -1 && tokenIndex + 1 < restArgs.length
-        ? restArgs[tokenIndex + 1]
-        : undefined;
-      
-      await unregisterAgent(unregisterAgentId, unregisterToken);
+      const unregisterOpts = parseArgs(restArgs.slice(1));
+      await unregisterAgent(unregisterAgentId, unregisterOpts['agent-identity'] as string | undefined);
       break;
 
     case 'status':
       const statusOpts = parseArgs(restArgs);
-      await showAgentStatus(statusOpts['caller-config'] as string | undefined);
+      await showAgentStatus(statusOpts['agent-identity'] as string);
       break;
 
     case 'verify':
@@ -386,18 +369,17 @@ async function handleMessageCommand(subArgs: string[]): Promise<void> {
     case 'send':
       const sendOpts = parseArgs(restArgs);
       await sendMessage({
-        fromAgentId: sendOpts.from as string | undefined,
+        agentIdentity: sendOpts['agent-identity'] as string,
         toAgentId: sendOpts.to as string | undefined,
         content: sendOpts.content as string,
-        type: sendOpts.type as any,
-        callerConfig: sendOpts['caller-config'] as string | undefined,
+        type: sendOpts.type as 'message' | 'task_request' | 'task_response' | 'announcement' | 'claim' | undefined,
       });
       break;
 
     case 'list':
       const listOpts = parseArgs(restArgs);
       await getMessages({
-        agentId: listOpts.agent as string | undefined,
+        agentIdentity: listOpts['agent-identity'] as string,
         unread: listOpts.unread as boolean,
         limit: listOpts.limit ? parseInt(listOpts.limit as string, 10) : undefined,
       });
@@ -406,7 +388,7 @@ async function handleMessageCommand(subArgs: string[]): Promise<void> {
     case 'clear':
       const clearOpts = parseArgs(restArgs);
       await clearMessages({
-        agentId: clearOpts.agent as string,
+        agentIdentity: clearOpts['agent-identity'] as string,
       });
       break;
 
@@ -562,7 +544,7 @@ async function handlePeers(): Promise<void> {
 
     if (Array.isArray(result)) {
       // GET /peers 返回 peer 数组
-      const peers = result as any[];
+      const peers = result as Array<{ peerId?: string; id?: string; connected?: boolean; multiaddrs?: string[] }>;
       if (peers.length === 0) {
         console.log('⚪ 没有连接的 Peers');
       } else {
@@ -570,14 +552,14 @@ async function handlePeers(): Promise<void> {
         console.log('');
         for (const peer of peers) {
           const status = peer.connected ? '🟢 已连接' : '⚪ 已断开';
-          console.log(`${status} ${peer.peerId?.slice(0, 16) || 'N/A'}...`);
+          console.log(`${status} ${peer.peerId?.slice(0, 16) || peer.id?.slice(0, 16) || 'N/A'}...`);
           if (peer.multiaddrs && peer.multiaddrs.length > 0) {
             console.log(`   地址: ${peer.multiaddrs[0]}`);
           }
         }
       }
     } else if (result.success && result.peers) {
-      const peers = result.peers as any[];
+      const peers = result.peers as Array<{ peerId?: string; id?: string }>;
       if (peers.length === 0) {
         console.log('⚪ 没有连接的 Peers');
       } else {
@@ -614,9 +596,8 @@ async function handleHealth(): Promise<void> {
       console.log('❌ Daemon 不健康');
       process.exit(1);
     }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.log(`❌ 无法连接到 F2A Daemon：${message}`);
+  } catch {
+    console.log('❌ 无法连接到 F2A Daemon');
     process.exit(1);
   }
 }
@@ -629,7 +610,13 @@ async function handleDiscover(capability?: string): Promise<void> {
     const result = await sendRequest('POST', '/control', {
       action: 'discover',
       capability
-    }) as { success: boolean; agents?: any[]; error?: string };
+    }) as { success: boolean; agents?: Array<{
+      displayName?: string;
+      agentId?: string;
+      peerId?: string;
+      capabilities?: Array<{ name: string }>;
+      agentType?: string;
+    }>; error?: string };
 
     if (result.success && result.agents) {
       const agents = result.agents;
@@ -645,9 +632,9 @@ async function handleDiscover(capability?: string): Promise<void> {
       console.log('');
       
       for (const agent of agents) {
-        const displayName = agent.displayName || agent.agentId?.slice(0, 16) || 'Unknown';
+        const displayName = agent.displayName || agent.agentId?.slice(0, 24) || 'Unknown';
         const peerId = agent.peerId?.slice(0, 16) || 'N/A';
-        const capabilities = agent.capabilities?.map((c: any) => c.name).join(', ') || 'N/A';
+        const capabilities = agent.capabilities?.map(c => c.name).join(', ') || 'N/A';
         
         console.log(`  📦 ${displayName}`);
         console.log(`     Agent ID: ${agent.agentId || 'N/A'}`);
@@ -727,7 +714,9 @@ async function main(): Promise<void> {
       case 'discover':
         // f2a discover [--capability <cap>]
         const capabilityArg = subArgs.find(arg => arg.startsWith('--capability'));
-        const capability = capabilityArg ? capabilityArg.split('=')[1] || subArgs[subArgs.indexOf('--capability') + 1] : undefined;
+        const capability = capabilityArg 
+          ? (capabilityArg.includes('=') ? capabilityArg.split('=')[1] : subArgs[subArgs.indexOf('--capability') + 1])
+          : undefined;
         await handleDiscover(capability);
         break;
 
@@ -735,7 +724,7 @@ async function main(): Promise<void> {
       case 'send':
         // f2a send --to <peer_id> "content" -> P2P send (deprecated)
         console.error('⚠️  f2a send 命令已废弃，请使用:');
-        console.error('   f2a message send --from <agent_id> [--to <agent_id>] "content"');
+        console.error('   f2a message send --agent-identity <path> --to <agent_id> "content"');
         process.exit(1);
         break;
 

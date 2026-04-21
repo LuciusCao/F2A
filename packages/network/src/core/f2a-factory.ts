@@ -102,78 +102,35 @@ export class F2AFactory {
         return failureFromError('NODE_IDENTITY_LOAD_FAILED', 'Failed to get node ID or peer ID');
       }
 
-      // Phase 1: 创建 IdentityDelegator(传入 dataDir)
+      // RFC008: Agent 身份现在通过 CLI 创建 (f2a agent init/register)
+      // 不再自动创建旧的 agent-identity.json
+      // IdentityDelegator 保留用于 Agent 注册时的签名验证
       const identityDelegator = new IdentityDelegator(nodeIdentityManager, dataDir);
 
-      // Phase 1: 创建或加载 Agent 身份
+      // AgentIdentityManager 用于加载已有的 Agent 身份（可选）
       const agentIdentityManager = new AgentIdentityManager(dataDir);
-      let agentIdentity: ExportedAgentIdentity;
-
-      // 尝试加载已有的 Agent 身份
       const loadResult = await agentIdentityManager.loadAgentIdentity();
 
-      if (loadResult.success) {
-        agentIdentity = loadResult.data;
-      } else {
-        // 创建新的 Agent 身份
-        // Agent 名称只能包含字母、数字、下划线、连字符和冒号
-        // 将 displayName 转换为有效的 Agent 名称
-        let agentName = mergedOptions.displayName
-          .replace(/[^a-zA-Z0-9_\-:]/g, '-')  // 替换无效字符为连字符
-          .replace(/-+/g, '-')                 // 合并连续连字符
-          .replace(/^-|-$/g, '')               // 移除首尾连字符
-          .slice(0, 64);                       // 限制长度
-
-        // 如果名称为空,使用默认名称
-        if (!agentName) {
-          agentName = `Agent-${nodeId.slice(0, 8)}`;
-        }
-
-        const createResult = await identityDelegator.createAgent({
-          name: agentName,
-          capabilities: []
-        });
-
-        if (!createResult.success) {
-          return failureFromError('AGENT_IDENTITY_CREATE_FAILED', 
-            `Failed to create agent identity: ${JSON.stringify(createResult.error)}`);
-        }
-
-        agentIdentity = {
-          id: createResult.data.agentIdentity.id,
-          name: createResult.data.agentIdentity.name,
-          capabilities: createResult.data.agentIdentity.capabilities,
-          nodeId: createResult.data.agentIdentity.nodeId,
-          publicKey: createResult.data.agentIdentity.publicKey,
-          signature: createResult.data.agentIdentity.signature,
-          createdAt: createResult.data.agentIdentity.createdAt,
-          expiresAt: createResult.data.agentIdentity.expiresAt,
-          privateKey: createResult.data.agentPrivateKey
-        };
-
-        // IdentityDelegator.createAgent 会保存到文件,我们需要重新加载
-        // 确保 agentIdentityManager 实例持有正确的身份
-        const reloadResult = await agentIdentityManager.loadAgentIdentity();
-        if (!reloadResult.success) {
-          // 如果重新加载失败,记录警告但继续
-          console.warn('Warning: Failed to reload agent identity after creation');
-        }
-      }
+      // 如果已有 Agent 身份则使用，否则不创建（由 CLI 流程管理）
+      const hasAgentIdentity = loadResult.success;
+      const agentIdentity = hasAgentIdentity ? loadResult.data : undefined;
 
       // 创建 AgentInfo
+      // RFC008: agentId 和 encryptionPublicKey 现在是可选的
+      // 如果没有 Agent Identity，使用 Node PeerId 作为临时标识
       const agentInfo: AgentInfo = {
         peerId: '', // 启动后由 P2P 网络填充
-        displayName: mergedOptions.displayName,  // 保留原始 displayName
+        displayName: mergedOptions.displayName,
         agentType: mergedOptions.agentType as AgentInfo['agentType'],
         version: F2A_VERSION,
         capabilities: [],
         protocolVersion: PROTOCOL_VERSION,
         lastSeen: Date.now(),
         multiaddrs: [],
-        // Phase 1: 添加 Agent ID
-        agentId: agentIdentity.id,
-        // Phase 1 修复:添加加密公钥用于 E2EE
-        encryptionPublicKey: agentIdentity.publicKey
+        // RFC008: Agent ID 可选，由 CLI f2a agent init 创建
+        agentId: agentIdentity?.id,
+        // RFC008: 加密公钥优先使用 Agent 的，如果没有则使用 Node 的 E2EE 公钥
+        encryptionPublicKey: agentIdentity?.publicKey || nodeIdentityManager.getE2EEPublicKeyBase64() || undefined
       };
 
       // 创建 P2P 网络

@@ -12,7 +12,8 @@ import { sendRequest } from './http-client.js';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
 import { readIdentityByAgentId, AGENT_IDENTITIES_DIR } from './init.js';
-import type { RFC008IdentityFile } from '@f2a/network';
+import type { RFC008IdentityFile, Challenge, ChallengeResponse } from '@f2a/network';
+import { signChallenge } from '@f2a/network';
 
 /**
  * 更新身份文件（添加 nodeSignature）
@@ -180,8 +181,14 @@ export async function listAgents(): Promise<void> {
 }
 
 /**
- * 更新 Agent 配置（如 webhook）
+ * 更新 Agent 配置（Challenge-Response 验证）
  * f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]
+ * 
+ * 流程：
+ * 1. 发送 PATCH 请求到 Daemon
+ * 2. 如果返回 challenge，用私钥签名
+ * 3. 发送带签名的请求完成更新
+ * 4. 同时更新本地身份文件
  */
 export async function updateAgent(options: {
   agentId: string;
@@ -203,18 +210,17 @@ export async function updateAgent(options: {
     process.exit(1);
   }
 
-  // 更新本地身份文件
+  if (!identity.privateKey) {
+    console.error('❌ 身份文件缺少私钥，无法签名验证');
+    console.error(`   AgentId: ${options.agentId}`);
+    console.error('请确保身份文件完整，或重新创建');
+    process.exit(1);
+  }
+
+  // 检查是否有要更新的内容
   const updates: string[] = [];
-
-  if (options.webhook) {
-    identity.webhook = { url: options.webhook }; 
-    updates.push(`webhook: ${options.webhook}`);
-  }
-
-  if (options.name) {
-    identity.name = options.name;
-    updates.push(`name: ${options.name}`);
-  }
+  if (options.webhook) updates.push('webhook');
+  if (options.name) updates.push('name');
 
   if (updates.length === 0) {
     console.log('⚠️  没有要更新的内容');
@@ -222,23 +228,84 @@ export async function updateAgent(options: {
     process.exit(1);
   }
 
-  identity.lastActiveAt = new Date().toISOString();
-
   try {
+    // 构造更新 payload
+    const updatePayload: Record<string, unknown> = {
+      publicKey: identity.publicKey,
+    };
+
+    if (options.webhook) {
+      updatePayload.webhook = { url: options.webhook }; 
+    }
+    if (options.name) {
+      updatePayload.name = options.name;
+    }
+
+    // 1. 发送 PATCH 请求
+    const initialResult = await sendRequest('PATCH', `/api/v1/agents/${options.agentId}`, updatePayload);
+
+    // 2. 处理 Challenge-Response
+    if (initialResult.challenge) {
+      const challenge = initialResult.challenge as Challenge;
+      const response: ChallengeResponse = signChallenge(challenge, identity.privateKey);
+      
+      const finalPayload = {
+        ...updatePayload,
+        challengeResponse: response,
+      }; 
+      
+      const finalResult = await sendRequest('PATCH', `/api/v1/agents/${options.agentId}`, finalPayload);
+      handleUpdateResult(finalResult, identity, options);
+    } else {
+      handleUpdateResult(initialResult, identity, options);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`❌ 无法连接到 Daemon: ${message}`);
+    console.error('请确保 Daemon 正在运行: f2a daemon start');
+    process.exit(1);
+  }
+}
+
+/**
+ * 处理更新结果（更新本地文件）
+ */
+function handleUpdateResult(
+  result: Record<string, unknown>,
+  identity: RFC008IdentityFile,
+  options: { agentId: string; webhook?: string; name?: string }
+): void {
+  if (result.success) {
+    // 更新本地身份文件
+    if (options.webhook) {
+      identity.webhook = { url: options.webhook }; 
+    }
+    if (options.name) {
+      identity.name = options.name;
+    }
+    identity.lastActiveAt = new Date().toISOString();
+    
     const identityPath = join(AGENT_IDENTITIES_DIR, `${options.agentId}.json`);
     writeFileSync(identityPath, JSON.stringify(identity, null, 2), { mode: 0o600 });
 
-    console.log('✅ Agent 身份已更新');
+    console.log('✅ Agent 已更新');
     console.log(`   AgentId: ${options.agentId}`);
-    for (const u of updates) {
-      console.log(`   ${u}`);
+    if (options.name) {
+      console.log(`   Name: ${options.name}`);
+    }
+    if (options.webhook) {
+      console.log(`   Webhook: ${options.webhook}`);
     }
     console.log('');
-    console.log('💡 提示: 如果 Agent 已注册，需要重新注册以更新 Daemon 中的 webhook:');
-    console.log(`   f2a agent register --agent-id ${options.agentId} --force`);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 更新失败: ${message}`);
+    console.log('💡 Daemon 和本地身份文件已同步更新');
+  } else {
+    console.error(`❌ 更新失败: ${result.error}`);
+    if (result.code === 'AGENT_NOT_FOUND') {
+      console.error('提示: Agent 未注册，请先注册');
+      console.error('      f2a agent register --agent-id ' + options.agentId);
+    } else if (result.code === 'CHALLENGE_FAILED') {
+      console.error('提示: 身份验证失败，请检查身份文件是否完整');
+    }
     process.exit(1);
   }
 }

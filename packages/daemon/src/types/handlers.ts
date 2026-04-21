@@ -1,19 +1,19 @@
 /**
  * F2A Handler 类型定义
- * 
+ *
  * 从 control-server.ts 提取的 Handler 相关类型定义
  * 用于后续 ControlServer 拆分重构
- * 
+ *
  * RFC008: 新增 ChallengeHandlerDeps
  */
 
 import type { IncomingMessage, ServerResponse } from 'http';
-import type { 
+import type {
   Logger,
   TokenManager,
-  AgentRegistry, 
-  AgentRegistration, 
-  MessageRouter, 
+  AgentRegistry,
+  AgentRegistration,
+  MessageRouter,
   F2A,
   E2EECrypto,
   ChallengeStore
@@ -39,6 +39,11 @@ export interface Challenge {
   timestamp?: number | string;
   operation?: string;
   expiresInSeconds?: number;
+  /** 更新操作的数据（用于 update 操作） */
+  updateData?: {
+    webhook?: { url: string; token?: string }; 
+    name?: string;
+  };
 }
 
 // ============================================================================
@@ -97,7 +102,7 @@ export interface MessageHandlerDeps extends HandlerDeps {
 /**
  * AgentHandler 依赖
  * Agent 管理操作的依赖
- * 注意: pendingChallenges 是有状态的，在 AgentHandler 内部创建
+ * 注意: pendingChallenges 是有状态的,在 AgentHandler 内部创建
  */
 export interface AgentHandlerDeps extends HandlerDeps {
   agentRegistry: AgentRegistry;
@@ -116,9 +121,9 @@ export interface ChallengeHandlerDeps extends HandlerDeps {
   identityStore: AgentIdentityStore;
   agentTokenManager: AgentTokenManager;
   messageRouter: MessageRouter;
-  /** Challenge 有效期（秒），默认 30 */
+  /** Challenge 有效期(秒),默认 30 */
   challengeExpirySeconds?: number;
-  /** 自动清理间隔（毫秒），默认 60000 */
+  /** 自动清理间隔(毫秒),默认 60000 */
   cleanupIntervalMs?: number;
 }
 

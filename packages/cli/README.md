@@ -31,6 +31,141 @@ pnpm add -g @f2a/cli
 yarn global add @f2a/cli
 ```
 
+---
+
+## ⭐ 重要：理解 Webhook
+
+### 什么是 Webhook？
+
+**Webhook 是你的 Agent 接收其他 Agent 消息的"收信地址"**
+
+在 F2A 网络中，Agent 之间可以互相发送 P2P 消息：
+
+```
+┌─────────────┐                    ┌─────────────┐
+│  Agent A    │                    │  Agent B    │
+│  (发送方)    │    P2P Network     │  (接收方)    │
+│             │ ─────────────────► │             │
+│             │                    │    │        │
+│             │                    │    ▼        │
+│             │                    │  Webhook    │
+│             │                    │  (收信地址)  │
+└─────────────┘                    └─────────────┘
+```
+
+**流程：**
+
+1. **Agent A 发消息给 Agent B**
+2. **F2A 网络路由消息** 到 Agent B 所在节点
+3. **Agent B 的 Daemon** 把消息 POST 到 Agent B 配置的 webhook URL
+4. **Agent B 的应用**（OpenClaw/Hermes/自建服务）在 webhook 端点接收并处理消息
+
+---
+
+### Webhook URL 怎么填？
+
+不同 Agent 框架的接入方式不同：
+
+#### OpenClaw Gateway
+
+**方式：安装 F2A 插件**
+
+```bash
+# 1. 安装插件
+npm install @f2a/openclaw-f2a
+
+# 2. 在 openclaw.json 中配置
+{
+  "plugins": {
+    "entries": {
+      "openclaw-f2a": {
+        "enabled": true,
+        "config": {
+          "webhookPath": "/f2a/webhook"
+        }
+      }
+    }
+  }
+}
+```
+
+**Webhook URL:** `http://127.0.0.1:18789/f2a/webhook`
+
+> OpenClaw Gateway 默认端口 18789
+
+#### Hermes Agent
+
+**方式：使用 webhook platform**
+
+在 Hermes 配置中添加 webhook platform：
+
+```yaml
+platforms:
+  webhook:
+    enabled: true
+    path: /f2a/webhook
+    port: 3000
+```
+
+**Webhook URL:** `http://127.0.0.1:3000/f2a/webhook`
+
+> Hermes 默认端口 3000
+
+#### 自建 HTTP 服务
+
+自己实现一个 HTTP 端点接收 POST 请求：
+
+```javascript
+// 示例：Express 服务器
+app.post('/f2a/webhook', (req, res) => {
+  const { from, content } = req.body;
+  
+  // 处理消息
+  console.log(`收到来自 ${from} 的消息: ${content}`);
+  
+  // 回复（使用 f2a CLI）
+  // f2a message send --agent-id <your-agent-id> --to <from> "回复内容"
+  
+  res.json({ success: true });
+});
+```
+
+**Webhook URL:** `http://your-host:port/f2a/webhook`
+
+#### 公网服务器
+
+如果 Agent 在公网服务器上：
+
+**Webhook URL:** `https://your-domain.com/f2a/webhook`
+
+---
+
+### 如何修改 Webhook？
+
+如果需要更改 webhook URL：
+
+```bash
+# 修改 webhook
+f2a agent update --agent-id <agentId> --webhook <new-url>
+
+# 重新注册到 Daemon（使新 webhook 生效）
+f2a agent register --agent-id <agentId> --force
+```
+
+---
+
+### Webhook 不填会怎样？
+
+`f2a agent init` **强制要求 webhook 参数**，因为：
+
+- 没有 webhook，Agent **无法接收消息**
+- 其他 Agent 发的消息无法送达
+- Agent 只能发送，不能接收
+
+如果暂时不知道 webhook URL，可以先填一个占位 URL，稍后用 `update` 命令修改。
+
+---
+
 ## 快速开始
 
 ```bash
@@ -40,15 +175,17 @@ f2a init
 # 2. 启动 Daemon 服务
 f2a daemon start
 
-# 3. 注册 Agent
-f2a agent register --name "my-agent" --capability "chat"
+# 3. 创建 Agent 身份（必须指定 webhook）
+f2a agent init --name "my-agent" --webhook http://127.0.0.1:18789/f2a/webhook
 
-# 4. 发现其他 Agent
-f2a discover
+# 4. 注册 Agent 到 Daemon
+f2a agent register --agent-id <生成的-agentId>
 
 # 5. 发送消息
-f2a message send --from my-agent --to other-agent "Hello!"
+f2a message send --agent-id <agentId> --to <目标-agentId> "Hello!"
 ```
+
+---
 
 ## 命令使用
 
@@ -70,34 +207,52 @@ f2a init --force   # 强制重新创建（覆盖现有身份）
 
 ### agent - Agent 管理
 
-管理 Agent 注册。
+管理 Agent 身份和注册。
 
 ```bash
+# 创建 Agent 身份（必须指定 webhook）
+f2a agent init --name <name> --webhook <url> [options]
+
+选项:
+  --name <name>       Agent 名称（必填）
+  --webhook <url>     Webhook URL（必填，接收消息的 HTTP 端点）
+  --capability <cap>  能力标签（可多次指定）
+  --force             强制重新创建（覆盖现有身份）
+
+# 注册 Agent 到 Daemon
+f2a agent register --agent-id <agentId> [--force]
+
 # 列出已注册的 Agent
 f2a agent list
 
-# 注册新 Agent
-f2a agent register --name <name> [options]
+# 查看 Agent 状态
+f2a agent status --agent-id <agentId>
 
-选项:
-  --name <name>         Agent 名称（必填）
-  --id <id>             Agent ID（可选，不提供则自动生成）
-  --capability <cap>    能力标签（可多次指定）
-  --webhook <url>       Webhook URL（可选）
+# 更新 Agent 配置（修改 webhook 或名称）
+f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]
 
 # 注销 Agent
-f2a agent unregister <agent_id>
-
-# 验证 Agent
-f2a agent verify <agent_id>
+f2a agent unregister --agent-id <agentId>
 ```
 
 **示例:**
 
 ```bash
-f2a agent register --name "assistant" --capability "chat" --capability "task"
-f2a agent register --name "webhook-agent" --capability "notify" --webhook "https://example.com/hook"
-f2a agent unregister agent-123
+# 创建 OpenClaw Agent
+f2a agent init --name "assistant" --webhook http://127.0.0.1:18789/f2a/webhook
+
+# 创建 Hermes Agent
+f2a agent init --name "hermes-bot" --webhook http://127.0.0.1:3000/f2a/webhook --capability chat
+
+# 注册到 Daemon
+f2a agent register --agent-id agent:abc123...
+
+# 修改 webhook
+f2a agent update --agent-id agent:abc123... --webhook http://new-server:8080/f2a/webhook
+f2a agent register --agent-id agent:abc123... --force
+
+# 查看状态
+f2a agent status --agent-id agent:abc123...
 ```
 
 ### message - 消息管理
@@ -106,31 +261,31 @@ Agent 间消息通信。
 
 ```bash
 # 发送消息
-f2a message send --from <agent_id> [options] "content"
+f2a message send --agent-id <agentId> [options] "content"
 
 选项:
-  --from <agent_id>   发送方 Agent ID（必填）
-  --to <agent_id>     接收方 Agent ID（可选，不提供则广播）
-  --type <type>       消息类型: message, task_request, task_response, announcement, claim
+  --agent-id <id>   发送方 Agent ID（必填）
+  --to <id>         接收方 Agent ID（可选，不提供则广播）
+  --type <type>     消息类型: message, task_request, task_response, announcement, claim
 
 # 查看消息队列
-f2a message list [options]
-
-选项:
-  --agent <agent_id>   Agent ID（默认 'default'）
-  --unread              只显示未读消息
-  --limit <n>           限制显示数量
+f2a message list --agent-id <agentId> [--unread] [--limit <n>]
 
 # 清除消息
-f2a message clear --agent <agent_id>
+f2a message clear --agent-id <agentId>
 ```
 
 **示例:**
 
 ```bash
-f2a message send --from agent-123 --to agent-456 "Hello, World!"
-f2a message send --from agent-123 "Broadcast message"
-f2a message list --agent agent-123 --unread --limit 10
+# 发送消息给指定 Agent
+f2a message send --agent-id agent:abc123... --to agent:xyz789... "Hello!"
+
+# 广播消息
+f2a message send --agent-id agent:abc123... "Broadcast message"
+
+# 查看未读消息
+f2a message list --agent-id agent:abc123... --unread --limit 10
 ```
 
 ### daemon - Daemon 管理
@@ -200,36 +355,28 @@ f2a peers
 f2a health
 ```
 
+---
+
 ## 配置
 
-F2A CLI 使用配置文件存储节点身份和设置：
+F2A CLI 使用配置文件存储节点身份和 Agent 身份：
 
-**配置路径:** `~/.f2a/config.json`
-
-**配置结构:**
-
-```json
-{
-  "nodeId": "node-xxx",
-  "privateKey": "...",
-  "agents": [
-    {
-      "id": "agent-xxx",
-      "name": "my-agent",
-      "capabilities": ["chat", "task"]
-    }
-  ]
-}
-```
+**配置路径:** `~/.f2a/`
 
 **目录结构:**
 
 ```
 ~/.f2a/
-├── config.json      # 主配置文件
-├── identity.json    # 身份信息
-└── data/            # 本地数据存储
+├── node-identity.json        # 节点身份（包含 E2EE 密钥）
+├── agent-identities/         # Agent 身份文件目录
+│   ├── agent:xxx.json        # 单个 Agent 身份
+│   ├── agent:yyy.json        # 另一个 Agent 身份
+│   └── ...
+├── agent-registry.json       # Agent 注册表（Daemon 维护）
+└── data/                     # 本地数据存储
 ```
+
+---
 
 ## 相关包
 
@@ -237,6 +384,9 @@ F2A CLI 使用配置文件存储节点身份和设置：
 |------|------|
 | [@f2a/network](../network) | P2P 网络核心，基于 libp2p |
 | [@f2a/daemon](../daemon) | HTTP API 服务 |
+| [@f2a/openclaw-f2a](../openclaw-f2a) | OpenClaw Gateway 插件 |
+
+---
 
 ## 开发
 
@@ -258,15 +408,22 @@ pnpm test
 pnpm test:coverage
 ```
 
+---
+
 ## 要求
 
 - Node.js >= 18.0.0
+
+---
 
 ## 许可证
 
 [MIT](LICENSE)
 
+---
+
 ## 相关链接
 
 - [F2A GitHub Repository](https://github.com/LuciusCao/F2A)
 - [问题反馈](https://github.com/LuciusCao/F2A/issues)
+- [OpenClaw 文档](https://docs.openclaw.ai)

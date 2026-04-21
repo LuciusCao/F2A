@@ -134,6 +134,10 @@ Subcommands:
   status            查看 Agent 身份状态
                     f2a agent status --agent-id <agentId>
 
+  update            更新 Agent 配置
+                    f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]
+                    修改 webhook 或名称后需重新注册
+
   verify            验证 Agent（Challenge-Response）
                     f2a agent verify <agent_id>
 
@@ -345,6 +349,21 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
     case 'status':
       const statusOpts = parseArgs(restArgs);
       await showAgentStatus(statusOpts['agent-id'] as string);
+      break;
+
+    case 'update':
+      const updateOpts = parseArgs(restArgs);
+      const updateAgentId = updateOpts['agent-id'] as string;
+      if (!updateAgentId) {
+        console.error('❌ 缺少 --agent-id 参数');
+        console.error('用法: f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]');
+        process.exit(1);
+      }
+      await updateAgent({
+        agentId: updateAgentId,
+        webhook: updateOpts.webhook as string | undefined,
+        name: updateOpts.name as string | undefined,
+      });
       break;
 
     default:

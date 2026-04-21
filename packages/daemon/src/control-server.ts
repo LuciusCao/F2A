@@ -365,6 +365,13 @@ export class ControlServer {
       return;
     }
     
+    // PATCH /api/v1/agents/:agentId - 更新 Agent（Challenge-Response 验证）
+    const patchAgentMatch = req.url?.match(/^\/api\/v1\/agents\/([^\/]+)$/);
+    if (req.method === 'PATCH' && patchAgentMatch) {
+      this.agentHandler.handleUpdateAgent(decodeURIComponent(patchAgentMatch[1]), req, res);
+      return;
+    }
+    
     // POST /api/v1/agents/verify - Challenge-Response 验证（无需认证）
     if (req.method === 'POST' && req.url === '/api/v1/agents/verify') {
       this.agentHandler.handleVerifyAgent(req, res);

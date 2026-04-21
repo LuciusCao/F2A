@@ -1,15 +1,15 @@
 /**
  * AgentHandler - Agent CRUD + webhook + verify 端点处理器
- * 
+ *
  * 从 control-server.ts 提取的 Agent 相关端点处理逻辑
- * 
+ *
  * P2-4: API 版本化端点:
- * - GET /api/v1/agents - 列出 Agents（无需认证）
- * - POST /api/v1/agents - 注册 Agent（无需认证，但有 webhook 验证）
- * - DELETE /api/v1/agents/:agentId - 注销 Agent（需认证）
- * - GET /api/v1/agents/:agentId - 获取 Agent 详情（无需认证）
- * - PATCH /api/v1/agents/:agentId/webhook - 更新 webhook（需认证）
- * - POST /api/v1/agents/verify - Challenge-Response 验证（无需认证）
+ * - GET /api/v1/agents - 列出 Agents(无需认证)
+ * - POST /api/v1/agents - 注册 Agent(无需认证,但有 webhook 验证)
+ * - DELETE /api/v1/agents/:agentId - 注销 Agent(需认证)
+ * - GET /api/v1/agents/:agentId - 获取 Agent 详情(无需认证)
+ * - PATCH /api/v1/agents/:agentId/webhook - 更新 webhook(需认证)
+ * - POST /api/v1/agents/verify - Challenge-Response 验证(无需认证)
  */
 
 import type { IncomingMessage, ServerResponse } from 'http';
@@ -24,17 +24,17 @@ import type { AgentHandlerDeps, Challenge } from '../types/handlers.js';
  * 注册 Agent 请求体类型
  */
 interface RegisterAgentBody {
-  /** Agent ID（恢复身份时提供） */
+  /** Agent ID(恢复身份时提供) */
   agentId?: string;
-  /** Agent 名称（新注册时必需） */
+  /** Agent 名称(新注册时必需) */
   name?: string;
   /** Agent 能力列表 */
   capabilities?: Array<string | AgentCapability>;
-  /** Webhook 配置（HTTP API 注册时必需） */
+  /** Webhook 配置(HTTP API 注册时必需) */
   webhook?: { url: string; token?: string };
   /** Agent 元数据 */
   metadata?: Record<string, unknown>;
-  /** 是否请求 Challenge（Phase 7） */
+  /** 是否请求 Challenge(Phase 7) */
   requestChallenge?: boolean;
 }
 
@@ -43,11 +43,28 @@ interface RegisterAgentBody {
  */
 interface UpdateWebhookBody {
   /** Webhook 配置 */
-  webhook?: { url: string; token?: string };
+  webhook?: { url: string; token?: string }; 
   /** Webhook URL（旧格式兼容） */
   webhookUrl?: string;
   /** Webhook Token（旧格式兼容） */
   webhookToken?: string;
+}
+
+/**
+ * 更新 Agent 请求体类型（Challenge-Response 验证）
+ */
+interface UpdateAgentBody {
+  /** Agent 公钥（用于验证） */
+  publicKey?: string;
+  /** Webhook 配置 */
+  webhook?: { url: string; token?: string }; 
+  /** Agent 名称 */
+  name?: string;
+  /** Challenge-Response 响应 */
+  challengeResponse?: {
+    nonce: string;
+    nonceSignature: string;
+  };
 }
 
 /**
@@ -58,12 +75,12 @@ interface VerifyAgentBody {
   agentId: string;
   /** Challenge nonce */
   nonce: string;
-  /** nonce 签名（Base64） */
+  /** nonce 签名(Base64) */
   nonceSignature: string;
 }
 
 /**
- * Challenge 有效期（毫秒）
+ * Challenge 有效期(毫秒)
  */
 const CHALLENGE_EXPIRY_MS = 60000; // 60 秒
 
@@ -74,8 +91,8 @@ export class AgentHandler {
   private e2eeCrypto: E2EECrypto;
   private messageRouter: MessageRouter;
   private logger: Logger;
-  
-  // 状态：pendingChallenges 移入此类
+
+  // 状态:pendingChallenges 移入此类
   private pendingChallenges: Map<string, Challenge> = new Map();
   // P2-2: 清理任务的定时器
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
@@ -91,7 +108,7 @@ export class AgentHandler {
 
   /**
    * 列出所有注册的 Agent
-   * GET /api/v1/agents（无需认证）
+   * GET /api/v1/agents(无需认证)
    */
   handleListAgents(res: ServerResponse): void {
     const agents = this.agentRegistry.list();
@@ -111,12 +128,12 @@ export class AgentHandler {
   }
 
   /**
-   * 注册 Agent（RFC 003: AgentId 由节点签发）
+   * 注册 Agent(RFC 003: AgentId 由节点签发)
    * Phase 6: 支持恢复已有身份
-   * POST /api/v1/agents（无需认证，但有 webhook 验证）
-   * 
-   * - 如果提供了 agentId 且存在对应 identity 文件，恢复身份
-   * - 否则注册新 Agent（节点签发 AgentId）
+   * POST /api/v1/agents(无需认证,但有 webhook 验证)
+   *
+   * - 如果提供了 agentId 且存在对应 identity 文件,恢复身份
+   * - 否则注册新 Agent(节点签发 AgentId)
    * - Phase 7: 支持 Challenge-Response 验证
    */
   async handleRegisterAgent(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -125,22 +142,22 @@ export class AgentHandler {
     req.on('end', async () => {
       try {
         const data: RegisterAgentBody = JSON.parse(body);
-        
+
         // 🔑 Phase 7: Challenge-Response - 如果请求挑战
         if (data.requestChallenge) {
           const nonce = this.generateNonce();
-          
+
           this.pendingChallenges.set(data.agentId!, {
             nonce,
             webhook: data.webhook!,
             timestamp: Date.now()
           });
-          
+
           this.logger.info('Challenge requested for agent', {
             agentId: data.agentId?.slice(0, 16),
             noncePrefix: nonce.slice(0, 8)
           });
-          
+
           res.writeHead(200);
           res.end(JSON.stringify({
             challenge: true,
@@ -149,43 +166,43 @@ export class AgentHandler {
           }));
           return;
         }
-        
-        // 🔑 Phase 6: 如果提供了已有 agentId，尝试恢复身份
+
+        // 🔑 Phase 6: 如果提供了已有 agentId,尝试恢复身份
         if (data.agentId) {
           let existingIdentity = this.identityStore.get(data.agentId);
-          
+
           if (existingIdentity) {
-            // 恢复身份：更新 webhook
+            // 恢复身份:更新 webhook
             if (data.webhook) {
               const updated = await this.identityStore.updateWebhook(data.agentId, data.webhook);
               if (!updated) {
                 this.logger.warn('Failed to update webhook in identity file', { agentId: data.agentId });
-                // 可以继续，因为 webhook 不是必需的
+                // 可以继续,因为 webhook 不是必需的
               }
-              
-              // 重新加载 identity（包含新 webhook）
+
+              // 重新加载 identity(包含新 webhook)
               const newIdentity = this.identityStore.get(data.agentId);
               if (newIdentity) {
                 existingIdentity = newIdentity;  // 使用新数据
               }
             }
-            
+
             // 同步到 AgentRegistry
             const restored = this.agentRegistry.restore(existingIdentity);
-            
+
             // 创建消息队列
             this.messageRouter.createQueue(data.agentId);
-            
+
             // Phase 4: 生成 agent token
             const agentToken = this.agentTokenManager.generate(existingIdentity.agentId);
-            
+
             this.logger.info('Agent identity restored', {
               agentId: existingIdentity.agentId,
               name: existingIdentity.name,
               peerId: existingIdentity.peerId,
               tokenPrefix: agentToken.slice(0, 8),
             });
-            
+
             res.writeHead(200);
             res.end(JSON.stringify({
               success: true,
@@ -196,7 +213,7 @@ export class AgentHandler {
             return;
           }
         }
-        
+
         // RFC 003: 新注册必须提供 name
         if (!data.name) {
           res.writeHead(400);
@@ -209,7 +226,7 @@ export class AgentHandler {
         }
 
         // RFC 004: 通过 HTTP API 注册的 Agent 必须提供 webhook
-        // 原因：HTTP API 是跨进程调用，无法传递 onMessage 函数回调
+        // 原因:HTTP API 是跨进程调用,无法传递 onMessage 函数回调
         // 只有 webhook 才能让 daemon 推送消息给 agent
         if (!data.webhook?.url) {
           res.writeHead(400);
@@ -222,17 +239,17 @@ export class AgentHandler {
           return;
         }
 
-        // 转换 capabilities 格式（补充默认值以满足 AgentCapability 类型要求）
+        // 转换 capabilities 格式(补充默认值以满足 AgentCapability 类型要求)
         const capabilities: AgentCapability[] = (data.capabilities || []).map((cap: string | AgentCapability) => {
           if (typeof cap === 'string') {
             // 字符串格式转换为完整 AgentCapability
-            return { 
-              name: cap, 
-              description: `${cap} capability`, 
-              tools: [] 
+            return {
+              name: cap,
+              description: `${cap} capability`,
+              tools: []
             };
           }
-          // 如果已是 AgentCapability 但缺少必需字段，补充默认值
+          // 如果已是 AgentCapability 但缺少必需字段,补充默认值
           return {
             name: cap.name,
             description: cap.description || `${cap.name} capability`,
@@ -241,7 +258,7 @@ export class AgentHandler {
           };
         });
 
-        // 注册新 Agent（节点签发 AgentId）
+        // 注册新 Agent(节点签发 AgentId)
         const registration = this.agentRegistry.register({
           name: data.name,
           capabilities,
@@ -269,7 +286,7 @@ export class AgentHandler {
 
         // Phase 4: 生成 agent token
         const agentToken = this.agentTokenManager.generate(registration.agentId);
-        
+
         this.logger.info('Agent registered via API (node-issued)', {
           agentId: registration.agentId,
           name: registration.name,
@@ -296,14 +313,14 @@ export class AgentHandler {
   }
 
   /**
-   * 注销 Agent（需要删除持久化文件）
-   * DELETE /api/v1/agents/:agentId（需认证）
+   * 注销 Agent(需要删除持久化文件)
+   * DELETE /api/v1/agents/:agentId(需认证)
    */
   async handleUnregisterAgent(agentId: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
     // === RFC 007: Token 验证 ===
     // 从 Authorization header 获取 agent token
     const authHeader = req.headers['authorization'] as string;
-    const agentToken = authHeader?.startsWith('agent-') 
+    const agentToken = authHeader?.startsWith('agent-')
       ? authHeader.slice(6)  // 去掉 'agent-' 前缀
       : undefined;
 
@@ -337,7 +354,7 @@ export class AgentHandler {
     }
 
     const removed = this.agentRegistry.unregister(agentId);
-    
+
     if (removed) {
       // 删除消息队列
       this.messageRouter.deleteQueue(agentId);
@@ -348,8 +365,8 @@ export class AgentHandler {
       // RFC 004 Phase 6: 删除持久化身份文件
       await this.identityStore.delete(agentId);
 
-      // 同步注册表到消息路由器（P1-1: MessageRouter 直接引用 AgentRegistry，无需同步）
-      
+      // 同步注册表到消息路由器(P1-1: MessageRouter 直接引用 AgentRegistry,无需同步)
+
       this.logger.info('Agent unregistered via API', { agentId });
       res.writeHead(200);
       res.end(JSON.stringify({
@@ -368,11 +385,11 @@ export class AgentHandler {
 
   /**
    * 获取 Agent 详情
-   * GET /api/v1/agents/:agentId（无需认证）
+   * GET /api/v1/agents/:agentId(无需认证)
    */
   handleGetAgent(agentId: string, res: ServerResponse): void {
     const agent = this.agentRegistry.get(agentId);
-    
+
     if (!agent) {
       res.writeHead(404);
       res.end(JSON.stringify({
@@ -385,7 +402,7 @@ export class AgentHandler {
 
     // 获取消息队列统计
     const queue = this.messageRouter.getQueue(agentId);
-    
+
     res.writeHead(200);
     res.end(JSON.stringify({
       success: true,
@@ -406,8 +423,8 @@ export class AgentHandler {
   }
 
   /**
-   * 更新 Agent webhook（RFC 004: Agent 级 Webhook）
-   * PATCH /api/v1/agents/:agentId/webhook（需认证）
+   * 更新 Agent webhook(RFC 004: Agent 级 Webhook)
+   * PATCH /api/v1/agents/:agentId/webhook(需认证)
    */
   async handleUpdateWebhook(agentId: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
     let body = '';
@@ -415,11 +432,11 @@ export class AgentHandler {
     req.on('end', async () => {
       try {
         const data: UpdateWebhookBody = JSON.parse(body);
-        
+
         // === RFC 007: Token 验证 ===
         // 从 Authorization header 获取 agent token
         const authHeader = req.headers['authorization'] as string;
-        const agentToken = authHeader?.startsWith('agent-') 
+        const agentToken = authHeader?.startsWith('agent-')
           ? authHeader.slice(6)  // 去掉 'agent-' 前缀
           : undefined;
 
@@ -465,8 +482,8 @@ export class AgentHandler {
 
         // RFC 004: 构建 webhook 对象
         const webhook = data.webhook || (data.webhookUrl ? { url: data.webhookUrl, token: data.webhookToken } : undefined);
-        
-        // 先持久化文件，再更新内存（避免持久化失败导致数据丢失）
+
+        // 先持久化文件,再更新内存(避免持久化失败导致数据丢失)
         const identityUpdated = await this.identityStore.updateWebhook(agentId, webhook);
         if (!identityUpdated) {
           res.writeHead(500);
@@ -478,7 +495,7 @@ export class AgentHandler {
           return;
         }
 
-        // 文件持久化成功后，更新内存
+        // 文件持久化成功后,更新内存
         const registryUpdated = this.agentRegistry.updateWebhook(agentId, webhook);
         if (registryUpdated) {
           this.logger.info('Agent webhook updated via API', { agentId, webhookUrl: webhook?.url });
@@ -489,7 +506,7 @@ export class AgentHandler {
             webhook,
           }));
         } else {
-          // 内存更新失败（罕见），但文件已持久化，可恢复
+          // 内存更新失败(罕见),但文件已持久化,可恢复
           this.logger.warn('Registry update failed after persistence succeeded', { agentId });
           res.writeHead(500);
           res.end(JSON.stringify({
@@ -510,8 +527,194 @@ export class AgentHandler {
   }
 
   /**
-   * Challenge-Response 验证（签名验证）
-   * POST /api/v1/agents/verify（无需认证）
+   * 更新 Agent 配置(Challenge-Response 验证)
+   * PATCH /api/v1/agents/:agentId
+   *
+   * 流程:
+   * 1. 第一次请求:返回 Challenge
+   * 2. 第二次请求(带 challengeResponse):验证签名后更新
+   *
+   * @param agentId Agent ID
+   * @param req HTTP Request
+   * @param res HTTP Response
+   */
+  async handleUpdateAgent(agentId: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const data: UpdateAgentBody = JSON.parse(body);
+
+        // === 检查 Agent 是否存在 ===
+        const agent = this.agentRegistry.get(agentId);
+        if (!agent) {
+          res.writeHead(404);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Agent not registered',
+            code: 'AGENT_NOT_FOUND',
+          }));
+          return;
+        }
+
+        // === 检查是否已注册(有身份文件) ===
+        const identity = this.identityStore.get(agentId);
+        if (!identity) {
+          res.writeHead(404);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Agent identity not found',
+            code: 'IDENTITY_NOT_FOUND',
+          }));
+          return;
+        }
+
+        // === Challenge-Response 流程 ===
+        if (!data.challengeResponse) {
+          // 1️⃣ 第一次请求:生成 Challenge
+          const nonce = randomBytes(32).toString('base64');
+          const expiresAt = Date.now() + CHALLENGE_EXPIRY_MS;
+
+          this.pendingChallenges.set(agentId, {
+            nonce,
+            timestamp: expiresAt,
+            operation: 'update',
+            updateData: { webhook: data.webhook, name: data.name },
+          });
+
+          this.logger.info('Challenge generated for agent update', {
+            agentIdPrefix: agentId.slice(0, 16),
+            noncePrefix: nonce.slice(0, 8),
+          });
+
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            success: false,
+            requiresChallenge: true,
+            challenge: {
+              nonce,
+              expiresAt: new Date(expiresAt).toISOString(),
+              operation: 'update',
+            },
+            message: 'Please sign the challenge and resend with challengeResponse',
+          }));
+          return;
+        }
+
+        // 2️⃣ 第二次请求:验证 Challenge-Response
+        const pending = this.pendingChallenges.get(agentId);
+        if (!pending || pending.nonce !== data.challengeResponse.nonce) {
+          this.logger.warn('Invalid nonce for agent update', {
+            agentIdPrefix: agentId.slice(0, 16),
+          });
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Invalid nonce',
+            code: 'INVALID_NONCE',
+          }));
+          return;
+        }
+
+        // 检查 nonce 是否过期
+        const pendingTimestamp = typeof pending.timestamp === 'number'
+          ? pending.timestamp
+          : typeof pending.timestamp === 'string'
+            ? new Date(pending.timestamp).getTime()
+            : 0;
+        if (Date.now() > pendingTimestamp) {
+          this.pendingChallenges.delete(agentId);
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Nonce expired',
+            code: 'NONCE_EXPIRED',
+          }));
+          return;
+        }
+
+        // 验证签名
+        if (!identity.e2eePublicKey) {
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Identity missing e2eePublicKey',
+            code: 'MISSING_PUBLIC_KEY',
+          }));
+          return;
+        }
+
+        const isValid = this.e2eeCrypto.verifySignature(
+          data.challengeResponse.nonce,
+          data.challengeResponse.nonceSignature,
+          identity.e2eePublicKey
+        );
+
+        if (!isValid) {
+          this.logger.warn('Signature verification failed for agent update', {
+            agentIdPrefix: agentId.slice(0, 16),
+          });
+          res.writeHead(401);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Signature verification failed',
+            code: 'CHALLENGE_FAILED',
+          }));
+          return;
+        }
+
+        // ✅ 签名验证通过,执行更新
+        const updateData = pending.updateData || { webhook: data.webhook, name: data.name };
+
+        // 更新身份文件
+        if (updateData.webhook) {
+          identity.webhook = updateData.webhook;
+        }
+        if (updateData.name) {
+          identity.name = updateData.name;
+        }
+        identity.lastActiveAt = new Date().toISOString();
+        await this.identityStore.save(identity);
+
+        // 更新 Registry
+        if (updateData.webhook) {
+          this.agentRegistry.updateWebhook(agentId, updateData.webhook);
+        }
+        if (updateData.name) {
+          this.agentRegistry.updateName(agentId, updateData.name);
+        }
+
+        // 清理 pending challenge
+        this.pendingChallenges.delete(agentId);
+
+        this.logger.info('Agent updated via Challenge-Response', {
+          agentIdPrefix: agentId.slice(0, 16),
+          updatedFields: Object.keys(updateData).filter(k => updateData[k as keyof typeof updateData]),
+        });
+
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          success: true,
+          agentId,
+          webhook: identity.webhook,
+          name: identity.name,
+        }));
+      } catch (error) {
+        const message = getErrorMessage(error);
+        this.logger.error('Update agent request failed', { error: message });
+        res.writeHead(400);
+        res.end(JSON.stringify({
+          success: false,
+          error: 'Invalid request',
+          code: 'INVALID_REQUEST',
+        }));
+      }
+    });
+  }
+
+  /**
+   * Challenge-Response 验证(签名验证)
+   * POST /api/v1/agents/verify(无需认证)
    * Phase 7: 验证 Challenge-Response
    */
   async handleVerifyAgent(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -520,7 +723,7 @@ export class AgentHandler {
     req.on('end', async () => {
       try {
         const data: VerifyAgentBody = JSON.parse(body);
-        
+
         // 1️⃣ 检查 nonce 是否存在
         const pending = this.pendingChallenges.get(data.agentId);
         if (!pending || pending.nonce !== data.nonce) {
@@ -532,12 +735,12 @@ export class AgentHandler {
           res.end(JSON.stringify({ success: false, error: 'Invalid nonce', code: 'INVALID_NONCE' }));
           return;
         }
-        
-        // 2️⃣ 检查 nonce 是否过期（60秒有效期）
-        const pendingTimestampNum = typeof pending.timestamp === 'number' 
-          ? pending.timestamp 
-          : typeof pending.timestamp === 'string' 
-            ? new Date(pending.timestamp).getTime() 
+
+        // 2️⃣ 检查 nonce 是否过期(60秒有效期)
+        const pendingTimestampNum = typeof pending.timestamp === 'number'
+          ? pending.timestamp
+          : typeof pending.timestamp === 'string'
+            ? new Date(pending.timestamp).getTime()
             : 0;
         if (Date.now() - pendingTimestampNum > CHALLENGE_EXPIRY_MS) {
           this.pendingChallenges.delete(data.agentId);
@@ -549,7 +752,7 @@ export class AgentHandler {
           res.end(JSON.stringify({ success: false, error: 'Nonce expired', code: 'NONCE_EXPIRED' }));
           return;
         }
-        
+
         // 3️⃣ 加载 identity 文件
         const identity = this.identityStore.get(data.agentId);
         if (!identity) {
@@ -560,7 +763,7 @@ export class AgentHandler {
           res.end(JSON.stringify({ success: false, error: 'Identity not found', code: 'IDENTITY_NOT_FOUND' }));
           return;
         }
-        
+
         // 🔑 4️⃣ 验证 nonce 签名
         if (!identity.e2eePublicKey) {
           this.logger.error('Identity missing e2eePublicKey, cannot verify signature', {
@@ -570,13 +773,13 @@ export class AgentHandler {
           res.end(JSON.stringify({ success: false, error: 'Identity missing e2eePublicKey', code: 'MISSING_PUBLIC_KEY' }));
           return;
         }
-        
+
         const isValid = this.e2eeCrypto.verifySignature(
           data.nonce,
           data.nonceSignature,
           identity.e2eePublicKey
         );
-        
+
         if (!isValid) {
           this.logger.error('Signature verification failed - agent identity mismatch', {
             agentId: data.agentId?.slice(0, 16),
@@ -590,35 +793,35 @@ export class AgentHandler {
           }));
           return;
         }
-        
-        // ✅ 5️⃣ 验证通过：生成新 session token
-        // Phase 1: 使用全局 AgentTokenManager 生成 token（纯内存版本）
+
+        // ✅ 5️⃣ 验证通过:生成新 session token
+        // Phase 1: 使用全局 AgentTokenManager 生成 token(纯内存版本)
         try {
           const agentToken = this.agentTokenManager.generate(data.agentId);
-          
+
           this.logger.info('Agent token generated', {
             agentId: data.agentId?.slice(0, 16),
             tokenPrefix: agentToken.slice(0, 8),
           });
-          
+
           // 6️⃣ 更新 identity
           identity.webhook = pending.webhook;
           identity.lastActiveAt = new Date().toISOString();
           await this.identityStore.save(identity);
-          
+
           // 7️⃣ 清理 pending challenge
           this.pendingChallenges.delete(data.agentId);
-          
+
           // 8️⃣ 同步到 AgentRegistry
           const restored = this.agentRegistry.restore(identity);
           this.messageRouter.createQueue(data.agentId);
-          
+
           this.logger.info('Agent identity verified successfully', {
             agentId: identity.agentId?.slice(0, 16),
             name: identity.name,
             agentTokenPrefix: agentToken.slice(0, 8)
           });
-          
+
           // 9️⃣ 返回新 token
           res.writeHead(200);
           res.end(JSON.stringify({
@@ -668,15 +871,15 @@ export class AgentHandler {
 
   /**
    * 启动过期 challenge 清理任务
-   * 每隔 30 秒扫描一次，删除超过 60 秒的 challenge
+   * 每隔 30 秒扫描一次,删除超过 60 秒的 challenge
    */
   startCleanupTask(): void {
     if (this.cleanupInterval) return; // 防止重复启动
-    
+
     this.cleanupInterval = setInterval(() => {
       this.cleanupExpiredChallenges();
     }, 30000); // 每 30 秒
-    
+
     this.logger.info('Challenge cleanup task started', { intervalMs: 30000 });
   }
 
@@ -698,7 +901,7 @@ export class AgentHandler {
   private cleanupExpiredChallenges(): void {
     const now = Date.now();
     let cleaned = 0;
-    
+
     // 使用 forEach 避免 downlevelIteration 问题
     this.pendingChallenges.forEach((challenge, agentId) => {
       const challengeTimestamp = typeof challenge.timestamp === 'number'
@@ -711,7 +914,7 @@ export class AgentHandler {
         cleaned++;
       }
     });
-    
+
     if (cleaned > 0) {
       this.logger.info('Cleaned up expired challenges', { count: cleaned });
     }

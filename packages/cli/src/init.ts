@@ -1,12 +1,12 @@
 /**
  * F2A CLI - Agent Init 命令
- * f2a agent init --name <name> --agent-identity <path>
+ * f2a agent init --name <name> --agent-identity <path> --webhook <url>
  * 
- * RFC008 Phase 2: 生成密钥对、计算 AgentId、保存身份文件
+ * 生成密钥对、计算 AgentId、保存身份文件
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { join, dirname, basename } from 'path';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { AgentIdentityKeypair, RFC008IdentityFile, Ed25519Keypair } from '@f2a/network';
 
@@ -23,7 +23,6 @@ export const AGENT_IDENTITIES_DIR = join(F2A_DATA_DIR, 'agent-identities');
 /**
  * 初始化 Agent 身份
  * 
- * 按照 RFC008 规范：
  * 1. 生成 Ed25519 密钥对
  * 2. 计算公钥指纹作为 AgentId
  * 3. 保存身份文件到指定路径
@@ -35,8 +34,9 @@ export async function initAgentIdentity(options: {
   name: string;
   /** 身份文件保存路径（必填） */
   agentIdentity: string;
+  /** Webhook URL（必填，用于接收消息） */
+  webhook: string;
   capabilities?: Array<{ name: string; version: string }>;
-  webhook?: { url: string };
   force?: boolean;
 }): Promise<{
   success: boolean;
@@ -44,7 +44,7 @@ export async function initAgentIdentity(options: {
   identityFile?: string;
   error?: string;
 }> {
-  const { name, agentIdentity, capabilities, webhook, force } = options;
+  const { name, agentIdentity, webhook, capabilities, force } = options;
 
   // name 必填
   if (!name) {
@@ -59,6 +59,14 @@ export async function initAgentIdentity(options: {
     return {
       success: false,
       error: '缺少 --agent-identity 参数'
+    };
+  }
+
+  // webhook 必填（Agent 需要接收消息）
+  if (!webhook) {
+    return {
+      success: false,
+      error: '缺少 --webhook 参数。Agent 需要 webhook URL 来接收消息'
     };
   }
 
@@ -82,7 +90,7 @@ export async function initAgentIdentity(options: {
     const identityFile: RFC008IdentityFile = keypairManager.createIdentityFile(keypair, {
       name,
       capabilities,
-      webhook,
+      webhook: { url: webhook },
       privateKeyEncrypted: false,
     });
 
@@ -138,13 +146,13 @@ export function readIdentityFile(identityPath: string): RFC008IdentityFile | nul
 /**
  * CLI 入口：init 命令
  * 
- * f2a agent init --name <name> --agent-identity <path> [--capability <cap>]... [--webhook <url>] [--force]
+ * f2a agent init --name <name> --agent-identity <path> --webhook <url> [--capability <cap>]... [--force]
  */
 export async function cliInitAgent(options: {
   name: string;
   agentIdentity: string;
+  webhook: string;
   capabilities?: string[];
-  webhook?: string;
   force?: boolean;
 }): Promise<void> {
   // 解析 capabilities
@@ -153,30 +161,28 @@ export async function cliInitAgent(options: {
     version: '1.0.0'
   }));
 
-  // 解析 webhook
-  const parsedWebhook = options.webhook ? { url: options.webhook } : undefined;
-
   const result = await initAgentIdentity({
     name: options.name,
     agentIdentity: options.agentIdentity,
+    webhook: options.webhook,
     capabilities: parsedCapabilities,
-    webhook: parsedWebhook,
     force: options.force,
   });
 
   if (result.success) {
     console.log('✅ Agent 身份已创建');
     console.log(`   AgentId: ${result.agentId}`);
-    console.log(`   Identity file: ${result.identityFile}`);
+    console.log(`   Identity: ${result.identityFile}`);
+    console.log(`   Webhook: ${options.webhook}`);
     console.log('');
-    console.log('下一步: 使用 f2a agent register --agent-identity <path> 注册到 Daemon');
+    console.log('下一步: f2a agent register --agent-identity <path>');
   } else {
     console.error(`❌ 初始化失败: ${result.error}`);
     if (result.agentId) {
       console.error(`   AgentId: ${result.agentId}`);
     }
     console.error('');
-    console.error('用法: f2a agent init --name <name> --agent-identity <path> [--force]');
+    console.error('用法: f2a agent init --name <name> --agent-identity <path> --webhook <url> [--force]');
     process.exit(1);
   }
 }
@@ -201,24 +207,23 @@ export async function showAgentStatus(identityPath: string): Promise<void> {
     return;
   }
 
-  console.log('=== Agent Identity Status ===');
+  console.log('=== Agent Status ===');
   console.log('');
-  console.log(`Identity file: ${identityPath}`);
+  console.log(`Identity: ${identityPath}`);
   console.log(`AgentId: ${identity.agentId}`);
   console.log(`Name: ${identity.name || 'N/A'}`);
   console.log(`Public Key: ${identity.publicKey.slice(0, 24)}...`);
-  console.log(`Private Key Encrypted: ${identity.privateKeyEncrypted ? 'Yes' : 'No'}`);
   
   if (identity.nodeSignature) {
     console.log(`Node Signature: ✅ 已签发`);
     console.log(`Node PeerId: ${identity.nodePeerId || 'N/A'}`);
   } else {
     console.log(`Node Signature: ⚪ 未签发`);
-    console.log('   使用 f2a agent register 获取 Node 签名');
+    console.log('   使用 f2a agent register 注册到 Daemon');
   }
 
   if (identity.capabilities && identity.capabilities.length > 0) {
-    console.log(`Capabilities: ${identity.capabilities.map((c: { name: string; version: string }) => c.name).join(', ')}`);
+    console.log(`Capabilities: ${identity.capabilities.map((c: { name: string }) => c.name).join(', ')}`);
   }
 
   if (identity.webhook) {

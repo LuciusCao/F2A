@@ -63,8 +63,8 @@ Commands:
 
   agent      管理 Agent 身份和注册
     init              生成 Agent 密钥对和身份文件
-                       --name <name> --agent-identity <path> [--capability <cap>]... [--webhook <url>] [--force]
-                       RFC008: 生成 Ed25519 密钥对，创建 AgentId（公钥指纹）
+                       --name <name> --agent-identity <path> [--capability <cap>]... --webhook <url> [--force]
+                       生成密钥对，创建 Agent Identity
     register          注册 Agent 到 Daemon
                        --agent-identity <path> [--force]
                        获取 Node 签发的归属证明
@@ -75,7 +75,7 @@ Commands:
   message    消息管理
     send              发送消息
                        --agent-identity <path> --to <agent_id> [--type <type>] "content"
-                       RFC008: 使用 Challenge-Response 认证
+                       使用签名认证
     list              查看消息 --agent-identity <path> [--unread] [--limit <n>]
     clear             清除消息 --agent-identity <path>
 
@@ -111,17 +111,17 @@ F2A Agent 管理
 Usage: f2a agent <subcommand> [options]
 
 Subcommands:
-  init              生成 Agent 密钥对和身份文件 (RFC008)
-                    f2a agent init --name <name> --agent-identity <path> [--capability <cap>]... [--webhook <url>] [--force]
+  init              生成 Agent 密钥对和身份文件
+                    f2a agent init --name <name> --agent-identity <path> [--capability <cap>]... --webhook <url> [--force]
                     --name            Agent 名称（必填）
                     --agent-identity  身份文件路径（必填）
                     --capability      能力标签（可多个）
-                    --webhook         Webhook URL（可选）
+                    --webhook         Webhook URL（必填，用于接收消息）
                     --force           强制重新创建
 
   register          注册 Agent 到 Daemon（获取 Node 签名）
                     f2a agent register --agent-identity <path> [--force]
-                    RFC008: 使用 init 生成的密钥对，发送 publicKey 到 Daemon
+                    发送公钥到 Daemon，获取 Node 签名
 
   list              列出已注册的 Agent
                     f2a agent list
@@ -129,7 +129,7 @@ Subcommands:
   unregister        注销 Agent
                     f2a agent unregister <agent_id> --agent-identity <path>
 
-  status            查看 Agent 身份状态 (RFC008)
+  status            查看 Agent 身份状态
                     f2a agent status --agent-identity <path>
 
   verify            验证 Agent（Challenge-Response）
@@ -137,7 +137,7 @@ Subcommands:
 
 Examples:
   # 创建身份
-  f2a agent init --name "my-agent" --agent-identity ~/.f2a/agent-identities/my-agent.json
+  f2a agent init --name "my-agent" --agent-identity ~/.f2a/agent-identities/my-agent.json --webhook http://localhost:3000/f2a/webhook
   
   # 注册到 Daemon
   f2a agent register --agent-identity ~/.f2a/agent-identities/my-agent.json
@@ -298,6 +298,13 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
   switch (subcommand) {
     case 'init':
       const initOpts = parseArgs(restArgs);
+      const initWebhook = initOpts.webhook as string | undefined;
+      if (!initWebhook) {
+        console.error('❌ 错误：缺少 --webhook 参数');
+        console.error('Agent 需要 webhook URL 来接收消息');
+        console.error('用法: f2a agent init --name <name> --agent-identity <path> --webhook <url>');
+        process.exit(1);
+      }
       await cliInitAgent({
         name: initOpts.name as string,
         agentIdentity: initOpts['agent-identity'] as string,
@@ -306,7 +313,7 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
           : initOpts.capability
             ? [initOpts.capability as string]
             : undefined,
-        webhook: initOpts.webhook as string | undefined,
+        webhook: initWebhook,
         force: initOpts.force as boolean,
       });
       break;

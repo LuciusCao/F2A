@@ -31,8 +31,8 @@ jobs:
       - name: Install dependencies
         run: npm install
       
-      - name: Build core package
-        run: npm run build --workspace=@f2a/network
+      - name: Build core packages
+        run: npm run build --workspace=@f2a/network --workspace=@f2a/daemon
       
       - name: Run lint
         run: npm run lint
@@ -65,8 +65,8 @@ jobs:
       - name: Install dependencies
         run: npm install
       
-      - name: Build core package
-        run: npm run build --workspace=@f2a/network
+      - name: Build core packages
+        run: npm run build --workspace=@f2a/network --workspace=@f2a/daemon
       
       - name: Build all
         run: npm run build
@@ -102,8 +102,8 @@ jobs:
       - name: Install dependencies
         run: npm install
       
-      - name: Build core package
-        run: npm run build --workspace=@f2a/network
+      - name: Build core packages
+        run: npm run build --workspace=@f2a/network --workspace=@f2a/daemon
       
       - name: Build all
         run: npm run build
@@ -144,8 +144,8 @@ jobs:
       - name: Install dependencies
         run: npm install
       
-      - name: Build core package
-        run: npm run build --workspace=@f2a/network
+      - name: Build core packages
+        run: npm run build --workspace=@f2a/network --workspace=@f2a/daemon
       
       - name: Build all
         run: npm run build

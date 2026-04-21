@@ -20,11 +20,13 @@ vi.mock('./control-token.js', () => ({
   getControlTokenLazy: () => 'test-token',
 }));
 
-// Mock init.js module (readCallerConfig, readIdentityFile)
+// Mock init.js module (readCallerConfig, readIdentityFile, readIdentityByAgentId)
 vi.mock('./init.js', () => ({
   readCallerConfig: vi.fn(() => null),  // 默认返回 null，走旧流程
   readIdentityFile: vi.fn(() => null),
+  readIdentityByAgentId: vi.fn(() => null),  // RFC008 identity lookup
   AGENTS_DIR: '/tmp/f2a-test/agents',
+  AGENT_IDENTITIES_DIR: '/tmp/f2a-test/agent-identities',
 }));
 
 describe('CLI Agent Commands', () => {

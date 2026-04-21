@@ -77,7 +77,7 @@ export class MessageHandler {
           // 从 Authorization header 获取 agent token
           const authHeader = req.headers['authorization'] as string;
           const agentToken = authHeader?.startsWith('agent-')
-            ? authHeader.slice(6)  // 去掉 'agent-' 前缀
+            ? authHeader
             : undefined;
 
           if (!agentToken) {

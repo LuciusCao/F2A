@@ -26,10 +26,13 @@ jobs:
           mkdir -p /tmp/openclaw-f2a-publish
           cp -r packages/openclaw-f2a/* /tmp/openclaw-f2a-publish/
           cp packages/openclaw-f2a/.npmignore /tmp/openclaw-f2a-publish/ 2>/dev/null || true
+          # 复制 skills 目录（prepack 需要）
+          cp -r skills /tmp/openclaw-f2a-publish/skills
           # 复制 @f2a/network 作为依赖
           mkdir -p /tmp/openclaw-f2a-publish/node_modules/@f2a
           cp -r packages/network /tmp/openclaw-f2a-publish/node_modules/@f2a/network
           # 移除 tsconfig.json 中的 references（独立发布不需要）
+          # 移除 prepack 脚本（skills 已手动复制）
           cd /tmp/openclaw-f2a-publish
           python3 -c "
           import json
@@ -38,6 +41,11 @@ jobs:
           config.pop('references', None)
           with open('tsconfig.json', 'w') as f:
               json.dump(config, f, indent=2)
+          with open('package.json', 'r') as f:
+              pkg = json.load(f)
+          pkg.get('scripts', {}).pop('prepack', None)
+          with open('package.json', 'w') as f:
+              json.dump(pkg, f, indent=2)
           "
           cat tsconfig.json
       

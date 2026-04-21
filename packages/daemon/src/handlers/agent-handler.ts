@@ -317,70 +317,166 @@ export class AgentHandler {
    * DELETE /api/v1/agents/:agentId(需认证)
    */
   async handleUnregisterAgent(agentId: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // === RFC 007: Token 验证 ===
-    // 从 Authorization header 获取 agent token
-    const authHeader = req.headers['authorization'] as string;
-    const agentToken = authHeader?.startsWith('agent-')
-      ? authHeader.slice(6)  // 去掉 'agent-' 前缀
-      : undefined;
-
-    if (!agentToken) {
-      this.logger.warn('UnregisterAgent request missing Authorization header', {
-        agentIdPrefix: agentId?.slice(0, 16),
-      });
-      res.writeHead(401);
-      res.end(JSON.stringify({
-        success: false,
-        error: 'Missing Authorization header. Expected format: Authorization: agent-{token}',
-        code: 'MISSING_TOKEN',
-      }));
-      return;
-    }
-
-    // 使用全局 AgentTokenManager 验证 token 属于该 agentId
-    const verifyResult = this.agentTokenManager.verifyForAgent(agentToken, agentId);
-    if (!verifyResult.valid) {
-      this.logger.warn('UnregisterAgent token verification failed', {
-        agentIdPrefix: agentId?.slice(0, 16),
-        error: verifyResult.error,
-      });
-      res.writeHead(401);
-      res.end(JSON.stringify({
-        success: false,
-        error: verifyResult.error || 'Invalid token',
-        code: 'TOKEN_INVALID',
-      }));
-      return;
-    }
-
-    const removed = this.agentRegistry.unregister(agentId);
-
-    if (removed) {
-      // 删除消息队列
-      this.messageRouter.deleteQueue(agentId);
-
-      // 撤销该 Agent 的所有 token
-      this.agentTokenManager.revokeAllForAgent(agentId);
-
-      // RFC 004 Phase 6: 删除持久化身份文件
-      await this.identityStore.delete(agentId);
-
-      // 同步注册表到消息路由器(P1-1: MessageRouter 直接引用 AgentRegistry,无需同步)
-
-      this.logger.info('Agent unregistered via API', { agentId });
-      res.writeHead(200);
-      res.end(JSON.stringify({
-        success: true,
-        message: 'Agent unregistered',
-      }));
-    } else {
-      res.writeHead(404);
-      res.end(JSON.stringify({
-        success: false,
-        error: 'Agent not found',
-        code: 'AGENT_NOT_FOUND',
-      }));
-    }
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const data: { agentId?: string; challengeResponse?: { nonce: string; nonceSignature: string } } = JSON.parse(body || '{}');
+        
+        // === 检查 Agent 是否存在 ===
+        const agent = this.agentRegistry.get(agentId);
+        if (!agent) {
+          res.writeHead(404);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Agent not found',
+            code: 'AGENT_NOT_FOUND',
+          }));
+          return;
+        }
+        
+        // === 检查身份文件 ===
+        const identity = this.identityStore.get(agentId);
+        if (!identity) {
+          res.writeHead(404);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Agent identity not found',
+            code: 'IDENTITY_NOT_FOUND',
+          }));
+          return;
+        }
+        
+        // === Challenge-Response 流程 ===
+        if (!data.challengeResponse) {
+          // 1️⃣ 第一次请求：生成 Challenge
+          const nonce = randomBytes(32).toString('base64');
+          const expiresAt = Date.now() + CHALLENGE_EXPIRY_MS;
+          
+          this.pendingChallenges.set(agentId, {
+            nonce,
+            timestamp: expiresAt,
+            operation: 'unregister',
+          });
+          
+          this.logger.info('Challenge generated for agent unregister', {
+            agentIdPrefix: agentId.slice(0, 16),
+            noncePrefix: nonce.slice(0, 8),
+          });
+          
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            success: false,
+            requiresChallenge: true,
+            challenge: {
+              nonce,
+              expiresAt: new Date(expiresAt).toISOString(),
+              operation: 'unregister',
+            },
+            message: 'Please sign the challenge and resend with challengeResponse',
+          }));
+          return;
+        }
+        
+        // 2️⃣ 第二次请求：验证 Challenge-Response
+        const pending = this.pendingChallenges.get(agentId);
+        if (!pending || pending.nonce !== data.challengeResponse.nonce) {
+          this.logger.warn('Invalid nonce for agent unregister', {
+            agentIdPrefix: agentId.slice(0, 16),
+          });
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Invalid nonce',
+            code: 'INVALID_NONCE',
+          }));
+          return;
+        }
+        
+        // 检查 nonce 是否过期
+        const pendingTimestamp = typeof pending.timestamp === 'number'
+          ? pending.timestamp
+          : typeof pending.timestamp === 'string'
+            ? new Date(pending.timestamp).getTime()
+            : 0;
+        if (Date.now() > pendingTimestamp) {
+          this.pendingChallenges.delete(agentId);
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Nonce expired',
+            code: 'NONCE_EXPIRED',
+          }));
+          return;
+        }
+        
+        // 验证签名
+        if (!identity.e2eePublicKey) {
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Identity missing e2eePublicKey',
+            code: 'MISSING_PUBLIC_KEY',
+          }));
+          return;
+        }
+        
+        const isValid = this.e2eeCrypto.verifySignature(
+          data.challengeResponse.nonce,
+          data.challengeResponse.nonceSignature,
+          identity.e2eePublicKey
+        );
+        
+        if (!isValid) {
+          this.logger.warn('Signature verification failed for agent unregister', {
+            agentIdPrefix: agentId.slice(0, 16),
+          });
+          res.writeHead(401);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Signature verification failed',
+            code: 'CHALLENGE_FAILED',
+          }));
+          return;
+        }
+        
+        // ✅ 签名验证通过，执行注销
+        this.pendingChallenges.delete(agentId);
+        
+        const removed = this.agentRegistry.unregister(agentId);
+        if (removed) {
+          this.messageRouter.deleteQueue(agentId);
+          this.agentTokenManager.revokeAllForAgent(agentId);
+          await this.identityStore.delete(agentId);
+          
+          this.logger.info('Agent unregistered via Challenge-Response', {
+            agentIdPrefix: agentId.slice(0, 16),
+          });
+          
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            success: true,
+            message: 'Agent unregistered',
+          }));
+        } else {
+          res.writeHead(500);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Failed to unregister agent',
+            code: 'UNREGISTER_FAILED',
+          }));
+        }
+      } catch (error) {
+        const message = getErrorMessage(error);
+        this.logger.error('Unregister agent request failed', { error: message });
+        res.writeHead(400);
+        res.end(JSON.stringify({
+          success: false,
+          error: 'Invalid request',
+          code: 'INVALID_REQUEST',
+        }));
+      }
+    });
   }
 
   /**

@@ -9,6 +9,7 @@
  */
 
 import { sendRequest } from './http-client.js';
+import { sendWithChallengeResponse } from './challenge-helper.js';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
 import { readIdentityByAgentId, AGENT_IDENTITIES_DIR } from './init.js';
@@ -321,8 +322,29 @@ export async function unregisterAgent(agentId: string): Promise<void> {
     process.exit(1);
   }
 
+  // 读取身份文件（Challenge-Response 需要）
+  const identity = readIdentityByAgentId(agentId);
+  if (!identity) {
+    console.error('❌ 找不到身份文件');
+    console.error(`   AgentId: ${agentId}`);
+    console.error('请先运行: f2a agent init --name <name> --webhook <url>');
+    process.exit(1);
+  }
+
+  if (!identity.privateKey) {
+    console.error('❌ 身份文件缺少私钥，无法签名验证');
+    console.error('请确保身份文件完整');
+    process.exit(1);
+  }
+
   try {
-    const result = await sendRequest('DELETE', `/api/v1/agents/${agentId}`);
+    // Challenge-Response 认证
+    const result = await sendWithChallengeResponse(
+      'DELETE',
+      `/api/v1/agents/${agentId}`, 
+      { agentId },
+      identity
+    );
 
     if (result.success) {
       console.log('✅ Agent 已注销');
@@ -330,6 +352,9 @@ export async function unregisterAgent(agentId: string): Promise<void> {
       console.log('   身份文件已保留，可重新注册');
     } else {
       console.error(`❌ 注销失败: ${result.error}`);
+      if (result.code === 'CHALLENGE_FAILED') {
+        console.error('提示: 身份验证失败，请检查身份文件');
+      }
       process.exit(1);
     }
   } catch (err) {

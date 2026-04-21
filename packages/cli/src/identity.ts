@@ -226,7 +226,7 @@ export async function showIdentityStatus(): Promise<void> {
   
   console.log('');
   
-  // Agent Identity - RFC008: 使用 ~/.f2a/agents/ 目录
+  // Agent Identity - RFC008: 使用 ~/.f2a/agent-identities/ 目录
   const agentsDir = join(dataDir, 'agent-identities');
   
   if (existsSync(agentsDir)) {
@@ -246,7 +246,7 @@ export async function showIdentityStatus(): Promise<void> {
         }
       }
     } else {
-      console.log('🤖 Agent Identity: ⚪ No agents found in ~/.f2a/agents/');
+      console.log('🤖 Agent Identity: ⚪ No agents found in ~/.f2a/agent-identities/');
       console.log('   Run "f2a agent init --name <name>" to create one');
     }
   } else {

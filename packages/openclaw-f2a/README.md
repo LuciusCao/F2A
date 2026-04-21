@@ -99,7 +99,7 @@ F2A P2P Network → F2A Daemon → Webhook → OpenClaw F2A Plugin → OpenClaw 
 
 ### Agent 身份恢复
 
-插件会在 `~/.f2a/agents/` 目录查找已保存的 Agent Identity 文件。如果找到有效的 Identity 且包含 E2EE 公钥，会尝试通过 Challenge-Response 验证恢复身份：
+插件会在 `~/.f2a/agent-identities/` 目录查找已保存的 Agent Identity 文件。如果找到有效的 Identity 且包含 E2EE 公钥，会尝试通过 Challenge-Response 验证恢复身份：
 
 1. 读取本地保存的 Agent Identity
 2. 向 Daemon 发送验证请求

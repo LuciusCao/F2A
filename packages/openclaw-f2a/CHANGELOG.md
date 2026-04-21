@@ -20,7 +20,7 @@ All notable changes to @f2a/openclaw-f2a will be documented in this file.
 
 ### Phase 6: Agent Identity Persistence
 
-- Agent identity persisted in `~/.f2a/agents/<agentId>.json`
+- Agent identity persisted in `~/.f2a/agent-identities/<agentId>.json`
 - Plugin reads saved agentId on restart
 - Supports identity restoration via daemon API
 

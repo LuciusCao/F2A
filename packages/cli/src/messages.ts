@@ -18,7 +18,7 @@ import { RFC008IdentityFile, Challenge, ChallengeResponse, signChallenge, isNewF
 
 /**
  * 获取 Agent Token（用于 Authorization header）
- * 旧版兼容：从 ~/.f2a/agents/{agentId}.json 读取 token
+ * 旧版兼容：从 ~/.f2a/agent-identities/{agentId}.json 读取 token
  */
 function getAgentToken(agentId: string): string | undefined {
   const dataDir = join(homedir(), '.f2a');

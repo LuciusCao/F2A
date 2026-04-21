@@ -502,7 +502,7 @@ daemon 生成新的 AgentId: agent:12D3KooWabc:87654321  ❌ 新 ID！
 
 **存储位置**：
 ```
-~/.f2a/agents/
+~/.f2a/agent-identities/
   ├── agent:12D3KooWabc:12345678.json  # Agent A
   └── agent:12D3KooWabc:87654321.json  # Agent B
 ```
@@ -544,7 +544,7 @@ class AgentIdentityStore {
   private agents: Map<string, AgentIdentity> = new Map();
   
   constructor(dataDir: string) {
-    this.agentsDir = join(dataDir, 'agents');
+    this.agentIdentitiesDir = join(dataDir, 'agent-identities');
   }
   
   /**
@@ -673,7 +673,7 @@ handleRegisterAgent(req, res) {
 ```typescript
 // packages/openclaw-f2a/src/agent-identity.ts
 
-const F2A_AGENT_DIR = join(homedir(), '.f2a', 'agents');
+const F2A_AGENT_DIR = join(homedir(), '.f2a', 'agent-identities');
 
 /**
  * 读取已保存的 Agent Identity
@@ -1068,7 +1068,7 @@ handleVerifyAgent(req, res) {
 
 | 特性 | Node Identity | Agent Identity |
 |------|---------------|----------------|
-| 存储位置 | ~/.f2a/node-identity.json | ~/.f2a/agents/*.json |
+| 存储位置 | ~/.f2a/node-identity.json | ~/.f2a/agent-identities/*.json |
 | 签发者 | libp2p | daemon（节点） |
 | 签名内容 | peerId | agentId |
 | 数量 | 每节点 1 个 | 每节点可多个 |

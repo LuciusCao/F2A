@@ -25,7 +25,7 @@ import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { sendRequest } from './http-client.js';
-import { listAgents, registerAgent, unregisterAgent } from './agents.js';
+import { listAgents, registerAgent, unregisterAgent, updateAgent } from './agents.js';
 import { sendMessage, getMessages, clearMessages } from './messages.js';
 import { startForeground, startBackground, stopDaemon, restartDaemon, showStatus } from './daemon.js';
 import { showIdentityStatus, exportIdentity, importIdentityInternal, initIdentity } from './identity.js';

@@ -180,6 +180,70 @@ export async function listAgents(): Promise<void> {
 }
 
 /**
+ * 更新 Agent 配置（如 webhook）
+ * f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]
+ */
+export async function updateAgent(options: {
+  agentId: string;
+  webhook?: string;
+  name?: string;
+}): Promise<void> {
+  if (!options.agentId) {
+    console.error('❌ 缺少 --agent-id 参数');
+    console.error('用法: f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]');
+    process.exit(1);
+  }
+
+  const identity = readIdentityByAgentId(options.agentId);
+
+  if (!identity) {
+    console.error('❌ 找不到身份文件');
+    console.error(`   AgentId: ${options.agentId}`);
+    console.error('请先运行: f2a agent init --name <name> --webhook <url>');
+    process.exit(1);
+  }
+
+  // 更新本地身份文件
+  const updates: string[] = [];
+
+  if (options.webhook) {
+    identity.webhook = { url: options.webhook }; 
+    updates.push(`webhook: ${options.webhook}`);
+  }
+
+  if (options.name) {
+    identity.name = options.name;
+    updates.push(`name: ${options.name}`);
+  }
+
+  if (updates.length === 0) {
+    console.log('⚠️  没有要更新的内容');
+    console.error('请提供 --webhook 或 --name 参数');
+    process.exit(1);
+  }
+
+  identity.lastActiveAt = new Date().toISOString();
+
+  try {
+    const identityPath = join(AGENT_IDENTITIES_DIR, `${options.agentId}.json`);
+    writeFileSync(identityPath, JSON.stringify(identity, null, 2), { mode: 0o600 });
+
+    console.log('✅ Agent 身份已更新');
+    console.log(`   AgentId: ${options.agentId}`);
+    for (const u of updates) {
+      console.log(`   ${u}`);
+    }
+    console.log('');
+    console.log('💡 提示: 如果 Agent 已注册，需要重新注册以更新 Daemon 中的 webhook:');
+    console.log(`   f2a agent register --agent-id ${options.agentId} --force`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`❌ 更新失败: ${message}`);
+    process.exit(1);
+  }
+}
+
+/**
  * 注销 Agent
  * f2a agent unregister --agent-id <agentId>
  */

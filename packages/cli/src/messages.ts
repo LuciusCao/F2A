@@ -4,38 +4,58 @@
  * 
  * Challenge-Response 签名认证
  * - 按 agentId 查找本地身份文件
- * - 签名 Challenge 发送消息
+ * - 通过 /api/v1/challenge 获取 challenge
+ * - 签名后通过 /api/v1/challenge/verify 获取临时 agentToken
+ * - 使用 agentToken 发送消息
  */
 
 import { sendRequest } from './http-client.js';
-import { join } from 'path';
-import { readIdentityByAgentId, AGENT_IDENTITIES_DIR } from './init.js';
+import { readIdentityByAgentId } from './init.js';
 import type { RFC008IdentityFile, Challenge, ChallengeResponse } from '@f2a/network';
 import { signChallenge } from '@f2a/network';
 
 /**
- * Challenge-Response 认证流程
+ * 通过 Challenge-Response 获取临时 Agent Token
+ * 
+ * 流程：
+ * 1. POST /api/v1/challenge 获取 challenge
+ * 2. 用私钥签名 challenge
+ * 3. POST /api/v1/challenge/verify 验证并获取 agentToken
  */
-async function challengeResponseFlow(
+async function getAgentTokenViaChallenge(
   identity: RFC008IdentityFile,
-  initialResult: Record<string, unknown>,
-  messagePayload: Record<string, unknown>
-): Promise<Record<string, unknown>> {
-  const challenge = initialResult.challenge as Challenge | undefined;
-  
-  if (!challenge) {
-    return initialResult;
+  toAgentId?: string
+): Promise<string | undefined> {
+  // 1. 请求 challenge
+  const challengeResult = await sendRequest('POST', '/api/v1/challenge', {
+    agentId: identity.agentId,
+    operation: 'send_message',
+    targetAgentId: toAgentId,
+  });
+
+  if (!challengeResult.success || !challengeResult.challenge) {
+    console.error('❌ 获取 Challenge 失败:', challengeResult.error);
+    return undefined;
   }
 
+  const challenge = challengeResult.challenge as Challenge;
+
+  // 2. 签名 challenge
   const response: ChallengeResponse = signChallenge(challenge, identity.privateKey);
 
-  const finalPayload = {
-    ...messagePayload,
-    challengeResponse: response,
-    publicKey: identity.publicKey,
-  };
+  // 3. 验证 challenge 并获取 token
+  const verifyResult = await sendRequest('POST', '/api/v1/challenge/verify', {
+    agentId: identity.agentId,
+    challenge,
+    response,
+  });
 
-  return sendRequest('POST', '/api/v1/messages', finalPayload);
+  if (!verifyResult.success || !verifyResult.agentToken) {
+    console.error('❌ Challenge 验证失败:', verifyResult.error);
+    return undefined;
+  }
+
+  return verifyResult.agentToken as string;
 }
 
 /**
@@ -73,24 +93,32 @@ export async function sendMessage(options: {
     process.exit(1);
   }
 
-  const messagePayload = {
-    fromAgentId: agentId,
-    toAgentId,
-    content,
-    type: type || 'message',
-    metadata,
-    publicKey: identity.publicKey,
-  };
-
   try {
-    const initialResult = await sendRequest('POST', '/api/v1/messages', messagePayload);
+    // 通过 Challenge-Response 获取临时 Agent Token
+    const agentToken = await getAgentTokenViaChallenge(identity, toAgentId);
 
-    if (initialResult.challenge) {
-      const finalResult = await challengeResponseFlow(identity, initialResult, messagePayload);
-      handleSendResult(finalResult, agentId, toAgentId);
-    } else {
-      handleSendResult(initialResult, agentId, toAgentId);
+    if (!agentToken) {
+      console.error('❌ 无法获取 Agent Token，消息发送失败');
+      console.error('提示: 请确保 Agent 已注册，且 Daemon 正在运行');
+      process.exit(1);
     }
+
+    const messagePayload = {
+      fromAgentId: agentId,
+      toAgentId,
+      content,
+      type: type || 'message',
+      metadata,
+    };
+
+    const result = await sendRequest(
+      'POST',
+      '/api/v1/messages',
+      messagePayload,
+      { Authorization: agentToken }
+    );
+
+    handleSendResult(result, agentId, toAgentId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`❌ 无法连接到 Daemon: ${message}`);

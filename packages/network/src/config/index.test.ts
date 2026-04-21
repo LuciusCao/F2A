@@ -243,23 +243,37 @@ describe('Config Module', () => {
   });
 
   describe('默认值导出', () => {
-    it('应该导出 DEFAULT_P2P_NETWORK_CONFIG', () => {
+    it('应该导出 DEFAULT_P2P_NETWORK_CONFIG 并包含有效默认值', () => {
       expect(DEFAULT_P2P_NETWORK_CONFIG).toBeDefined();
-      expect(DEFAULT_P2P_NETWORK_CONFIG.listenPort).toBeDefined();
+      expect(DEFAULT_P2P_NETWORK_CONFIG.listenPort).toBe(0); // 0 表示随机端口
+      expect(DEFAULT_P2P_NETWORK_CONFIG.bootstrapPeers).toEqual([]);
+      expect(DEFAULT_P2P_NETWORK_CONFIG.enableMDNS).toBe(true);
+      expect(DEFAULT_P2P_NETWORK_CONFIG.enableDHT).toBe(true);
     });
 
-    it('应该导出 DEFAULT_SECURITY_CONFIG', () => {
+    it('应该导出 DEFAULT_SECURITY_CONFIG 并包含完整安全配置', () => {
       expect(DEFAULT_SECURITY_CONFIG).toBeDefined();
+      expect(DEFAULT_SECURITY_CONFIG.level).toBe('medium');
+      expect(DEFAULT_SECURITY_CONFIG.requireConfirmation).toBe(true);
+      expect(DEFAULT_SECURITY_CONFIG.verifySignatures).toBe(true);
+      expect(DEFAULT_SECURITY_CONFIG.rateLimit.maxRequests).toBe(100);
+      expect(DEFAULT_SECURITY_CONFIG.rateLimit.windowMs).toBe(60000);
     });
 
-    it('应该导出 DEFAULT_F2A_OPTIONS', () => {
+    it('应该导出 DEFAULT_F2A_OPTIONS 并包含完整选项', () => {
       expect(DEFAULT_F2A_OPTIONS).toBeDefined();
+      expect(DEFAULT_F2A_OPTIONS.displayName).toBe('F2A-Node');
+      expect(DEFAULT_F2A_OPTIONS.agentType).toBe('openclaw');
+      expect(DEFAULT_F2A_OPTIONS.dataDir).toBe('.f2a');
+      expect(DEFAULT_F2A_OPTIONS.logLevel).toBe('INFO');
     });
 
-    it('应该导出 DEFAULT_RATE_LIMIT_CONFIG', () => {
+    it('应该导出 DEFAULT_RATE_LIMIT_CONFIG 并包含有效限流配置', () => {
       expect(DEFAULT_RATE_LIMIT_CONFIG).toBeDefined();
-      expect(DEFAULT_RATE_LIMIT_CONFIG.maxRequests).toBeGreaterThan(0);
-      expect(DEFAULT_RATE_LIMIT_CONFIG.windowMs).toBeGreaterThan(0);
+      expect(DEFAULT_RATE_LIMIT_CONFIG.maxRequests).toBe(100);
+      expect(DEFAULT_RATE_LIMIT_CONFIG.windowMs).toBe(60000);
+      expect(DEFAULT_RATE_LIMIT_CONFIG.burstMultiplier).toBe(1.5);
+      expect(DEFAULT_RATE_LIMIT_CONFIG.skipSuccessfulRequests).toBe(false);
     });
   });
 });

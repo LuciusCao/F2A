@@ -40,8 +40,11 @@ describe('E2EECrypto', () => {
     it('should export and import key pair', () => {
       const exported = cryptoA.exportKeyPair();
       expect(exported).not.toBeNull();
-      expect(exported!.publicKey).toBeDefined();
-      expect(exported!.privateKey).toBeDefined();
+      // 验证密钥格式：base64 编码的 32 字节 X25519 密钥
+      expect(exported!.publicKey.length).toBe(44); // 32 bytes base64 = 44 chars (with padding)
+      expect(exported!.privateKey.length).toBe(44);
+      expect(exported!.publicKey).toMatch(/^[A-Za-z0-9+/]+=*$/);
+      expect(exported!.privateKey).toMatch(/^[A-Za-z0-9+/]+=*$/);
 
       // Create new instance and import
       const cryptoC = new E2EECrypto();
@@ -150,9 +153,13 @@ describe('E2EECrypto', () => {
       const encrypted = cryptoA.encrypt('peer-b', plaintext);
       
       expect(encrypted).not.toBeNull();
-      expect(encrypted!.ciphertext).toBeDefined();
-      expect(encrypted!.iv).toBeDefined();
-      expect(encrypted!.authTag).toBeDefined();
+      // 验证加密结果格式：base64 编码的 AES-GCM 输出
+      expect(encrypted!.ciphertext.length).toBeGreaterThan(0);
+      expect(encrypted!.ciphertext).toMatch(/^[A-Za-z0-9+/]+=*$/);
+      expect(encrypted!.iv.length).toBe(24); // 12 bytes base64 = 16 chars (no padding) or 24 with padding
+      expect(encrypted!.iv).toMatch(/^[A-Za-z0-9+/]+=*$/);
+      expect(encrypted!.authTag.length).toBeGreaterThan(0);
+      expect(encrypted!.authTag).toMatch(/^[A-Za-z0-9+/]+=*$/);
 
       const decrypted = cryptoB.decrypt(encrypted!);
       expect(decrypted).toBe(plaintext);
@@ -245,8 +252,9 @@ describe('E2EECrypto', () => {
       const encrypted = cryptoA.encrypt('peer-b', plaintext);
       expect(encrypted).not.toBeNull();
       
-      // 验证加密消息包含盐值
-      expect(encrypted!.salt).toBeDefined();
+      // 验证加密消息包含盐值且格式正确
+      expect(encrypted!.salt.length).toBeGreaterThan(0);
+      expect(encrypted!.salt).toMatch(/^[A-Za-z0-9+/]+=*$/);
       
       // 验证盐值长度（base64 编码的 16 字节）
       const saltBuffer = Buffer.from(encrypted!.salt, 'base64');
@@ -324,10 +332,13 @@ describe('E2EECrypto', () => {
     it('应该能够生成密钥确认挑战', () => {
       const challenge = cryptoA.generateKeyConfirmationChallenge('peer-b');
       expect(challenge).not.toBeNull();
-      expect(challenge!.challenge).toBeDefined();
-      expect(challenge!.senderId).toBeDefined();
-      expect(challenge!.timestamp).toBeDefined();
-      expect(typeof challenge!.challenge).toBe('string');
+      // 验证挑战格式
+      expect(challenge!.challenge.length).toBeGreaterThan(0);
+      expect(challenge!.challenge).toMatch(/^[A-Za-z0-9+/]+=*$/);
+      // senderId 是加密后的值，验证格式而非具体值
+      expect(challenge!.senderId.length).toBeGreaterThan(0);
+      expect(typeof challenge!.senderId).toBe('string');
+      expect(challenge!.timestamp).toBeGreaterThan(0);
     });
 
     it('应该返回 null 对于未注册 peer 的挑战', () => {
@@ -367,10 +378,15 @@ describe('E2EECrypto', () => {
 
       const response = cryptoB.respondToKeyConfirmationChallenge('peer-a', challenge!);
       expect(response).not.toBeNull();
-      expect(response!.challengeResponse).toBeDefined();
-      expect(response!.counterChallenge).toBeDefined();
-      expect(response!.senderId).toBeDefined();
-      expect(response!.timestamp).toBeDefined();
+      // 验证响应格式
+      expect(response!.challengeResponse.length).toBeGreaterThan(0);
+      expect(response!.challengeResponse).toMatch(/^[A-Za-z0-9+/]+=*$/);
+      expect(response!.counterChallenge.length).toBeGreaterThan(0);
+      expect(response!.counterChallenge).toMatch(/^[A-Za-z0-9+/]+=*$/);
+      // senderId 是加密后的值，验证格式而非具体值
+      expect(response!.senderId.length).toBeGreaterThan(0);
+      expect(typeof response!.senderId).toBe('string');
+      expect(response!.timestamp).toBeGreaterThan(0);
     });
 
     it('应该返回 null 对于未注册 peer 的挑战响应', () => {

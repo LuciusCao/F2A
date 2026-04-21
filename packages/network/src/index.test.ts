@@ -273,9 +273,10 @@ describe('SDK Integration - 真实业务场景', () => {
 
       const signedMessage = signer.sign(payload);
       expect(signedMessage).toBeDefined();
-      expect(signedMessage.signature).toBeDefined();
-      expect(signedMessage.timestamp).toBeDefined();
-      expect(signedMessage.nonce).toBeDefined();
+      expect(signedMessage.payload).toBe(payload);
+      expect(signedMessage.signature).toMatch(/^[a-f0-9]{64}$/); // HMAC-SHA256 = 64 hex chars
+      expect(signedMessage.timestamp).toBeGreaterThan(0);
+      expect(signedMessage.nonce.length).toBe(32); // 16 bytes -> 32 hex chars
 
       const result = signer.verify(signedMessage);
       expect(result.valid).toBe(true);

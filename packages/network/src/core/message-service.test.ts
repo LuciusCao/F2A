@@ -561,4 +561,161 @@ describe('MessageService', () => {
       expect(resultAfter.success).toBe(true);
     });
   });
+
+  describe('setMessageHandlerUrl', () => {
+    it('should set message handler URL', () => {
+      messageService.setMessageHandlerUrl('http://localhost:3000/handler');
+      // No error = success
+    });
+  });
+
+  describe('local routing failure', () => {
+    it('should return error when local routing fails', async () => {
+      const fromAgentId = 'agent:local1234:abcd';
+      const toAgentId = 'agent:target1234:efgh';
+      
+      agentRegistry.register(fromAgentId, createAgentRegistration(fromAgentId));
+      agentRegistry.register(toAgentId, createAgentRegistration(toAgentId));
+      agentsMap.set(fromAgentId, agentRegistry.get(fromAgentId)!);
+      agentsMap.set(toAgentId, agentRegistry.get(toAgentId)!);
+      
+      // Make route return false (simulating routing failure)
+      messageRouter.setRouteReturnValue(false);
+      
+      const result = await messageService.sendMessage(
+        fromAgentId,
+        toAgentId,
+        'test message'
+      );
+      
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('TASK_FAILED');
+      expect(result.error?.message).toContain('Local message routing failed');
+    });
+  });
+
+  describe('handleFreeMessage with handler URL', () => {
+    it('should call message handler URL when configured', async () => {
+      // Mock fetch
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ response: 'Hello back!' })
+      });
+      global.fetch = mockFetch;
+      
+      // Create service with handler URL
+      const serviceWithHandler = new MessageService(
+        {
+          p2pNetwork: p2pNetwork as unknown as P2PNetwork,
+          messageRouter: messageRouter as unknown as MessageRouter,
+          agentRegistry: agentRegistry as unknown as AgentRegistry,
+          messageHandlerUrl: 'http://localhost:3000/handler'
+        },
+        eventEmitter
+      );
+      
+      await serviceWithHandler.handleFreeMessage('peer-123', 'msg-456', 'hello');
+      
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:3000/handler',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: expect.stringContaining('hello')
+        })
+      );
+    });
+
+    it('should send response back when handler returns reply', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ reply: 'Reply message' })
+      });
+      global.fetch = mockFetch;
+      
+      const sendFreeMessageSpy = vi.spyOn(p2pNetwork, 'sendFreeMessage').mockResolvedValue(success(undefined));
+      
+      const serviceWithHandler = new MessageService(
+        {
+          p2pNetwork: p2pNetwork as unknown as P2PNetwork,
+          messageRouter: messageRouter as unknown as MessageRouter,
+          agentRegistry: agentRegistry as unknown as AgentRegistry,
+          messageHandlerUrl: 'http://localhost:3000/handler'
+        },
+        eventEmitter
+      );
+      
+      await serviceWithHandler.handleFreeMessage('peer-123', 'msg-456', 'hello', 'chat');
+      
+      expect(sendFreeMessageSpy).toHaveBeenCalledWith('peer-123', 'Reply message', 'chat');
+    });
+
+    it('should handle handler returning error status', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500
+      });
+      global.fetch = mockFetch;
+      
+      const serviceWithHandler = new MessageService(
+        {
+          p2pNetwork: p2pNetwork as unknown as P2PNetwork,
+          messageRouter: messageRouter as unknown as MessageRouter,
+          agentRegistry: agentRegistry as unknown as AgentRegistry,
+          messageHandlerUrl: 'http://localhost:3000/handler'
+        },
+        eventEmitter
+      );
+      
+      // Should not throw, just log warning
+      await serviceWithHandler.handleFreeMessage('peer-123', 'msg-456', 'hello');
+      
+      expect(mockFetch).toHaveBeenCalled();
+    });
+
+    it('should handle fetch error gracefully', async () => {
+      const mockFetch = vi.fn().mockRejectedValue(new Error('Network error'));
+      global.fetch = mockFetch;
+      
+      const serviceWithHandler = new MessageService(
+        {
+          p2pNetwork: p2pNetwork as unknown as P2PNetwork,
+          messageRouter: messageRouter as unknown as MessageRouter,
+          agentRegistry: agentRegistry as unknown as AgentRegistry,
+          messageHandlerUrl: 'http://localhost:3000/handler'
+        },
+        eventEmitter
+      );
+      
+      // Should not throw, just log error
+      await serviceWithHandler.handleFreeMessage('peer-123', 'msg-456', 'hello');
+      
+      expect(mockFetch).toHaveBeenCalled();
+    });
+
+    it('should handle handler returning no response', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({})  // No response/reply field
+      });
+      global.fetch = mockFetch;
+      
+      const sendFreeMessageSpy = vi.spyOn(p2pNetwork, 'sendFreeMessage');
+      
+      const serviceWithHandler = new MessageService(
+        {
+          p2pNetwork: p2pNetwork as unknown as P2PNetwork,
+          messageRouter: messageRouter as unknown as MessageRouter,
+          agentRegistry: agentRegistry as unknown as AgentRegistry,
+          messageHandlerUrl: 'http://localhost:3000/handler'
+        },
+        eventEmitter
+      );
+      
+      await serviceWithHandler.handleFreeMessage('peer-123', 'msg-456', 'hello');
+      
+      // Should not call sendFreeMessage when no response
+      expect(sendFreeMessageSpy).not.toHaveBeenCalled();
+    });
+  });
 });

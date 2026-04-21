@@ -155,6 +155,69 @@ describe('ChainSignatureManager', () => {
       expect(score).toBe(100); // 70 + 10 + 20
     });
   });
+
+  describe('createSignedEvent', () => {
+    it('should create signed event with genesis hash for empty chain', () => {
+      const event = chainManager.createSignedEvent('peer-1', 10, []);
+      expect(event.peerId).toBe('peer-1');
+      expect(event.delta).toBe(10);
+      expect(event.prevHash).toBe('genesis');
+      expect(event.signatures).toEqual([]);
+      expect(event.timestamp).toBeDefined();
+    });
+
+    it('should create signed event with correct prevHash for existing chain', () => {
+      const event1: SignedReputationEvent = {
+        peerId: 'peer-1',
+        delta: 10,
+        prevHash: 'genesis',
+        timestamp: Date.now(),
+        signatures: [],
+      };
+      chainManager.addSignedEvent(event1);
+
+      const event2 = chainManager.createSignedEvent('peer-1', -5, []);
+      expect(event2.prevHash).toBe(chainManager.hashEvent(event1));
+    });
+  });
+
+  describe('export/import chain', () => {
+    it('should export chain as JSON', () => {
+      const event1: SignedReputationEvent = {
+        peerId: 'peer-1',
+        delta: 10,
+        prevHash: 'genesis',
+        timestamp: Date.now(),
+        signatures: [],
+      };
+      chainManager.addSignedEvent(event1);
+
+      const exported = chainManager.exportChain('peer-1');
+      expect(exported).toBeDefined();
+      expect(typeof exported).toBe('string');
+      
+      const parsed = JSON.parse(exported);
+      expect(parsed.length).toBe(1);
+      expect(parsed[0].peerId).toBe('peer-1');
+    });
+
+    it('should import valid chain', () => {
+      const chainData = JSON.stringify([
+        { peerId: 'peer-2', delta: 10, prevHash: 'genesis', timestamp: Date.now(), signatures: [] }
+      ]);
+      
+      const result = chainManager.importChain('peer-2', chainData);
+      expect(result).toBe(true);
+      
+      const chain = chainManager.getEventChain('peer-2');
+      expect(chain.length).toBe(1);
+    });
+
+    it('should reject invalid JSON', () => {
+      const result = chainManager.importChain('peer-3', 'invalid-json');
+      expect(result).toBe(false);
+    });
+  });
 });
 
 describe('InvitationManager', () => {
@@ -292,6 +355,45 @@ describe('InvitationManager', () => {
       expect(afterScore).toBe(beforeScore);
     });
   });
+
+  describe('getAllInvitations', () => {
+    it('should return all invitations with valid records', () => {
+      for (let i = 0; i < 5; i++) {
+        reputationManager.recordSuccess('inviter-1', `task-${i}`);
+      }
+
+      invitationManager.createInvitation('inviter-1', 'invitee-1');
+      invitationManager.createInvitation('inviter-1', 'invitee-2');
+
+      const all = invitationManager.getAllInvitations();
+      expect(all.length).toBe(2);
+      
+      // 验证第一条邀请记录的具体字段
+      const invitation1 = all.find(i => i.inviteeId === 'invitee-1');
+      expect(invitation1).toBeDefined();
+      expect(invitation1!.inviterId).toBe('inviter-1');
+      expect(invitation1!.inviteeId).toBe('invitee-1');
+      expect(invitation1!.invitationSignature.length).toBeGreaterThan(0);
+      expect(invitation1!.invitationSignature).toMatch(/^[a-f0-9]{64}$/); // SHA256 = 64 hex chars
+      expect(invitation1!.timestamp).toBeGreaterThan(0);
+      
+      // 验证第二条邀请记录
+      const invitation2 = all.find(i => i.inviteeId === 'invitee-2');
+      expect(invitation2).toBeDefined();
+      expect(invitation2!.inviterId).toBe('inviter-1');
+      expect(invitation2!.inviteeId).toBe('invitee-2');
+      expect(invitation2!.timestamp).toBeGreaterThan(0);
+      
+      // 验证两条邀请的签名不同（因为包含 timestamp）
+      expect(invitation1!.invitationSignature).not.toBe(invitation2!.invitationSignature);
+    });
+
+    it('should return empty array when no invitations', () => {
+      const all = invitationManager.getAllInvitations();
+      expect(all.length).toBe(0);
+      expect(Array.isArray(all)).toBe(true);
+    });
+  });
 });
 
 describe('ChallengeManager', () => {
@@ -412,6 +514,56 @@ describe('ChallengeManager', () => {
 
       const pending = challengeManager.getPendingChallenges();
       expect(pending.length).toBe(2);
+    });
+  });
+
+  describe('重放攻击防护', () => {
+    it('should reject already processed challenge', () => {
+      const challenge = challengeManager.submitChallenge(
+        'challenger-1',
+        'target-1',
+        'invalid_history',
+        'evidence'
+      );
+
+      // 第一次处理
+      challengeManager.processChallenge(challenge);
+      
+      // 尝试重复处理
+      challenge.processed = true;
+      const result = challengeManager.processChallenge(challenge);
+      expect(result.success).toBe(false);
+      expect(result.reason).toContain('already processed');
+    });
+
+    it('should reject challenge with reused nonce', () => {
+      const challenge1 = challengeManager.submitChallenge(
+        'challenger-1',
+        'target-1',
+        'invalid_history',
+        'evidence'
+      );
+      challengeManager.processChallenge(challenge1);
+
+      // 创建一个使用相同 nonce 的挑战（但不标记为已处理）
+      const challenge2 = {
+        ...challenge1,
+        challengerId: 'challenger-2',
+        targetId: 'target-2',
+        processed: false, // 重置为未处理状态
+      };
+      
+      const result = challengeManager.processChallenge(challenge2);
+      expect(result.success).toBe(false);
+      expect(result.reason).toContain('nonce already used');
+    });
+  });
+
+  describe('stop 方法', () => {
+    it('should stop challenge manager without error', () => {
+      challengeManager.submitChallenge('c1', 't1', 'invalid_history', 'e1');
+      challengeManager.stop();
+      // 清理应该成功，没有错误
     });
   });
 });

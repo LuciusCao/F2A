@@ -233,3 +233,95 @@ Phase 4 (P3): 维持现有覆盖率
 3. **持续监控代码规模**
    - 新模块保持 < 600 行
    - 定期 review 是否需要继续拆分
+
+---
+
+## 测试质量改进 (2026-04-21)
+
+### 薄弱断言改进
+
+**目标**: 将 `.toBeDefined()` 等薄弱断言替换为具体值验证
+
+**改进的文件**:
+
+| 文件 | 改进断言数 | 改进内容 |
+|------|-----------|----------|
+| `src/config/index.test.ts` | 12 | 默认配置值验证具体数值 |
+| `src/index.test.ts` | 4 | 签名结果验证格式和长度 |
+| `src/utils/signature.test.ts` | 3 | 签名字段验证正则格式 |
+| `src/core/e2ee-crypto.test.ts` | 15 | 加密密钥/挑战/响应验证具体格式 |
+
+**改进示例**:
+
+```typescript
+// 改进前（薄弱）
+expect(DEFAULT_P2P_NETWORK_CONFIG.listenPort).toBeDefined();
+
+// 改进后（具体）
+expect(DEFAULT_P2P_NETWORK_CONFIG.listenPort).toBe(0);
+expect(DEFAULT_P2P_NETWORK_CONFIG.bootstrapPeers).toEqual([]);
+expect(DEFAULT_P2P_NETWORK_CONFIG.enableMDNS).toBe(true);
+
+// 改进前（薄弱）
+expect(signed.signature).toBeDefined();
+
+// 改进后（具体）
+expect(signed.signature).toMatch(/^[a-f0-9]{64}$/); // HMAC-SHA256 = 64 hex chars
+expect(signed.timestamp).toBeGreaterThan(0);
+expect(signed.nonce.length).toBe(32);
+```
+
+**验证标准**:
+- 正常路径: 至少 3 个具体值验证
+- 格式验证: 使用正则匹配验证 base64/hex 格式
+- 数值验证: 验证具体值而非仅检查存在
+
+### 跳过测试修复
+
+**目标**: 启用 `.skip()` 测试并补充具体验证
+
+| 文件 | 测试 | 问题 | 解决方案 |
+|------|------|------|----------|
+| `node-agent-identity.test.ts` | revokeAgent | 未传 dataDir 导致文件找不到 | 传入 `tempDir` 并验证文件删除 |
+
+**改进内容**:
+- Line 1275: `new IdentityDelegator(nodeManager)` → `new IdentityDelegator(nodeManager, tempDir)`
+- 新增文件存在性验证（创建后存在，撤销后不存在）
+
+### getAllInvitations 断言补充
+
+**目标**: 补充邀请记录的具体字段验证
+
+| 文件 | 改进断言数 | 改进内容 |
+|------|-----------|----------|
+| `reputation-security.test.ts` | 12 | 验证 inviterId/inviteeId/签名格式/timestamp |
+
+**验证内容**:
+- `inviterId`, `inviteeId` 具体值匹配
+- `invitationSignature` 正则验证 SHA256 格式 (`/^[a-f0-9]{64}$/`)
+- `timestamp` 数值验证 (> 0)
+- 签名唯一性验证（两条邀请签名不同）
+
+---
+
+## 测试改进总结
+
+**改进统计**:
+- 薄弱断言替换: 约 50 处 `.toBeDefined()` → 具体值验证
+- 跳过测试启用: 1 个 (revokeAgent)
+- 断言补充: 12 处 (getAllInvitations)
+
+**测试通过率**: 全部通过 (156 + 52 + 31 = 239 tests)
+
+---
+
+## Step 2 测试改进 ✅ (2026-04-21)
+
+**f2a.test.ts**: ~25 处薄弱断言替换为具体验证（签名/公钥格式、服务接口方法、peer 结构）
+**node-identity.test.ts**: 新增错误密码/空密码解密失败测试
+
+**测试结果**: 1504 passed | 22 skipped (3.54s)
+
+---
+
+## 未来改进建议

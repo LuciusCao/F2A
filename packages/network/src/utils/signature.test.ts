@@ -22,10 +22,11 @@ describe('RequestSigner', () => {
       const signed = signer.sign(payload);
 
       expect(signed.payload).toBe(payload);
-      expect(signed.timestamp).toBeDefined();
-      expect(signed.signature).toBeDefined();
-      expect(signed.nonce).toBeDefined();
-      expect(signed.nonce.length).toBe(32); // 16 bytes -> 32 hex chars
+      expect(typeof signed.timestamp).toBe('number');
+      expect(signed.timestamp).toBeGreaterThan(0);
+      expect(signed.signature).toMatch(/^[a-f0-9]{64}$/); // HMAC-SHA256 = 64 hex chars
+      expect(signed.nonce).toMatch(/^[a-f0-9]{32}$/); // 16 bytes -> 32 hex chars
+      expect(signed.nonce.length).toBe(32);
     });
 
     it('应该为相同的 payload 生成不同的签名（因为 nonce 和 timestamp）', () => {

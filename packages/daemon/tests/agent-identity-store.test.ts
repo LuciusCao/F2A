@@ -43,13 +43,13 @@ function createMockIdentity(agentId?: string): AgentIdentity {
 describe('AgentIdentityStore', () => {
   let store: AgentIdentityStore;
   let testDir: string;
-  let agentsDir: string;
+  let agentIdentitiesDir: string;
 
   beforeEach(() => {
     // 创建测试目录
     testDir = join(tmpdir(), `agent-identity-test-${Date.now()}`);
     mkdirSync(testDir, { recursive: true });
-    agentsDir = join(testDir, 'agents');
+    agentIdentitiesDir = join(testDir, 'agent-identities');
     
     // 创建 Store（不使用签名验证）
     store = new AgentIdentityStore(testDir);
@@ -67,7 +67,7 @@ describe('AgentIdentityStore', () => {
       const identity = createMockIdentity();
       await store.save(identity);
 
-      const file = join(agentsDir, `${identity.agentId}.json`);
+      const file = join(agentIdentitiesDir, `${identity.agentId}.json`);
       expect(existsSync(file)).toBe(true);
 
       const content = JSON.parse(readFileSync(file, 'utf-8'));
@@ -77,13 +77,13 @@ describe('AgentIdentityStore', () => {
 
     it('should create agents directory if not exists', async () => {
       // 测试目录存在，但 agents 子目录不存在
-      expect(existsSync(agentsDir)).toBe(false);
+      expect(existsSync(agentIdentitiesDir)).toBe(false);
 
       const identity = createMockIdentity();
       await store.save(identity);
 
       // agents 目录应该被自动创建
-      expect(existsSync(agentsDir)).toBe(true);
+      expect(existsSync(agentIdentitiesDir)).toBe(true);
     });
 
     it('should update existing identity', async () => {
@@ -98,7 +98,7 @@ describe('AgentIdentityStore', () => {
       expect(retrieved?.name).toBe('Updated Name');
 
       // 文件内容也应该更新
-      const file = join(agentsDir, `${identity.agentId}.json`);
+      const file = join(agentIdentitiesDir, `${identity.agentId}.json`);
       const content = JSON.parse(readFileSync(file, 'utf-8'));
       expect(content.name).toBe('Updated Name');
     });
@@ -117,13 +117,13 @@ describe('AgentIdentityStore', () => {
   describe('loadAll()', () => {
     it('should load all identity files on startup', () => {
       // 手动创建 agents 目录和多个 identity 文件
-      mkdirSync(agentsDir, { recursive: true });
+      mkdirSync(agentIdentitiesDir, { recursive: true });
 
       const identity1 = createMockIdentity('agent:xxx:11111111');
       const identity2 = createMockIdentity('agent:xxx:22222222');
 
-      writeFileSync(join(agentsDir, `${identity1.agentId}.json`), JSON.stringify(identity1));
-      writeFileSync(join(agentsDir, `${identity2.agentId}.json`), JSON.stringify(identity2));
+      writeFileSync(join(agentIdentitiesDir, `${identity1.agentId}.json`), JSON.stringify(identity1));
+      writeFileSync(join(agentIdentitiesDir, `${identity2.agentId}.json`), JSON.stringify(identity2));
 
       store.loadAll();
 
@@ -133,14 +133,14 @@ describe('AgentIdentityStore', () => {
     });
 
     it('should skip invalid identity files', () => {
-      mkdirSync(agentsDir, { recursive: true });
+      mkdirSync(agentIdentitiesDir, { recursive: true });
 
       // 创建无效文件（不是 JSON）
-      writeFileSync(join(agentsDir, 'invalid.json'), 'not json');
+      writeFileSync(join(agentIdentitiesDir, 'invalid.json'), 'not json');
 
       // 创建结构无效的文件
       const invalidIdentity = { agentId: 'invalid' }; // 缺少必须字段
-      writeFileSync(join(agentsDir, 'agent:invalid:123.json'), JSON.stringify(invalidIdentity));
+      writeFileSync(join(agentIdentitiesDir, 'agent:invalid:123.json'), JSON.stringify(invalidIdentity));
 
       store.loadAll();
 
@@ -148,11 +148,11 @@ describe('AgentIdentityStore', () => {
     });
 
     it('should skip files that do not start with agent:', () => {
-      mkdirSync(agentsDir, { recursive: true });
+      mkdirSync(agentIdentitiesDir, { recursive: true });
 
       // 创建不符合命名规范的文件
       const identity = createMockIdentity();
-      writeFileSync(join(agentsDir, 'other-file.json'), JSON.stringify(identity));
+      writeFileSync(join(agentIdentitiesDir, 'other-file.json'), JSON.stringify(identity));
 
       store.loadAll();
 
@@ -160,7 +160,7 @@ describe('AgentIdentityStore', () => {
     });
 
     it('should handle empty directory', () => {
-      mkdirSync(agentsDir, { recursive: true });
+      mkdirSync(agentIdentitiesDir, { recursive: true });
 
       store.loadAll();
 
@@ -171,7 +171,7 @@ describe('AgentIdentityStore', () => {
       // 不创建 agents 目录，loadAll 应该自动创建
       store.loadAll();
 
-      expect(existsSync(agentsDir)).toBe(true);
+      expect(existsSync(agentIdentitiesDir)).toBe(true);
       expect(store.list().length).toBe(0);
     });
   });
@@ -292,7 +292,7 @@ describe('AgentIdentityStore', () => {
       expect(store.get(identity.agentId)).toBeUndefined();
 
       // 文件也应该被删除
-      const file = join(agentsDir, `${identity.agentId}.json`);
+      const file = join(agentIdentitiesDir, `${identity.agentId}.json`);
       expect(existsSync(file)).toBe(false);
     });
 
@@ -408,7 +408,7 @@ describe('AgentIdentityStore', () => {
       expect(store.size()).toBe(0);
 
       // 文件也应该被删除
-      const files = readdirSync(agentsDir).filter(f => f.startsWith('agent:'));
+      const files = readdirSync(agentIdentitiesDir).filter(f => f.startsWith('agent:'));
       expect(files.length).toBe(0);
     });
   });
@@ -463,17 +463,17 @@ describe('AgentIdentityStore', () => {
 
       const storeWithVerify = new AgentIdentityStore(testDir, verifyFn);
 
-      mkdirSync(agentsDir, { recursive: true });
+      mkdirSync(agentIdentitiesDir, { recursive: true });
 
       // 创建有效签名的 identity
       const validIdentity = createMockIdentity('agent:valid:1111');
       validIdentity.signature = 'valid-signature';
-      writeFileSync(join(agentsDir, `${validIdentity.agentId}.json`), JSON.stringify(validIdentity));
+      writeFileSync(join(agentIdentitiesDir, `${validIdentity.agentId}.json`), JSON.stringify(validIdentity));
 
       // 创建无效签名的 identity
       const invalidIdentity = createMockIdentity('agent:invalid:2222');
       invalidIdentity.signature = 'invalid-signature';
-      writeFileSync(join(agentsDir, `${invalidIdentity.agentId}.json`), JSON.stringify(invalidIdentity));
+      writeFileSync(join(agentIdentitiesDir, `${invalidIdentity.agentId}.json`), JSON.stringify(invalidIdentity));
 
       storeWithVerify.loadAll();
 
@@ -484,11 +484,11 @@ describe('AgentIdentityStore', () => {
 
     it('should load all identities without verify function', () => {
       // 不提供验证函数，所有有效结构的 identity 都应该被加载
-      mkdirSync(agentsDir, { recursive: true });
+      mkdirSync(agentIdentitiesDir, { recursive: true });
 
       const identity = createMockIdentity();
       identity.signature = 'any-signature';
-      writeFileSync(join(agentsDir, `${identity.agentId}.json`), JSON.stringify(identity));
+      writeFileSync(join(agentIdentitiesDir, `${identity.agentId}.json`), JSON.stringify(identity));
 
       store.loadAll();
 
@@ -498,7 +498,7 @@ describe('AgentIdentityStore', () => {
 
   describe('安全防护', () => {
     it('should filter dangerous keys in JSON.parse', () => {
-      mkdirSync(agentsDir, { recursive: true });
+      mkdirSync(agentIdentitiesDir, { recursive: true });
 
       // 创建包含危险 key 的文件
       const maliciousContent = JSON.stringify({
@@ -512,7 +512,7 @@ describe('AgentIdentityStore', () => {
         constructor: { prototype: { malicious: true } },
       });
 
-      writeFileSync(join(agentsDir, 'agent:test:1234.json'), maliciousContent);
+      writeFileSync(join(agentIdentitiesDir, 'agent:test:1234.json'), maliciousContent);
 
       store.loadAll();
 

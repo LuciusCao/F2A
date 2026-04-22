@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 
 import { join } from 'path';
 import { homedir } from 'os';
 import { AgentIdentityKeypair, RFC008IdentityFile, Ed25519Keypair } from '@f2a/network';
+import { isJsonMode, outputJson, outputError } from './output.js';
 
 /**
  * 默认 F2A 数据目录
@@ -172,24 +173,38 @@ export async function cliInitAgent(options: {
   });
 
   if (result.success) {
-    console.log('✅ Agent identity created successfully.');
-    console.log('');
-    console.log(`   AgentId: ${result.agentId}`);
-    console.log(`   Name: ${options.name}`);
-    console.log(`   Webhook: ${options.webhook}`);
-    console.log('');
-    console.log('📝 Please save the following information for your records:');
-    console.log('   AgentId: ' + result.agentId);
-    console.log('   Identity: ' + result.identityFile);
-    console.log('');
-    console.log('💡 Use the F2A CLI with the F2A-AgentId parameter:');
-    console.log('   f2a agent register --agent-id <F2A-AgentId>');
-    console.log('   f2a message send --agent-id <F2A-AgentId> --to <target> "content"');
+    if (isJsonMode()) {
+      outputJson({
+        agentId: result.agentId,
+        name: options.name,
+        webhook: options.webhook,
+        capabilities: parsedCapabilities || [],
+        identityPath: result.identityFile
+      });
+    } else {
+      console.log('✅ Agent identity created successfully.');
+      console.log('');
+      console.log(`   AgentId: ${result.agentId}`);
+      console.log(`   Name: ${options.name}`);
+      console.log(`   Webhook: ${options.webhook}`);
+      console.log('');
+      console.log('📝 Please save the following information for your records:');
+      console.log('   AgentId: ' + result.agentId);
+      console.log('   Identity: ' + result.identityFile);
+      console.log('');
+      console.log('💡 Use the F2A CLI with the F2A-AgentId parameter:');
+      console.log('   f2a agent register --agent-id <F2A-AgentId>');
+      console.log('   f2a message send --agent-id <F2A-AgentId> --to <target> "content"');
+    }
   } else {
-    console.error(`❌ Initialization failed: ${result.error}`);
-    console.error('');
-    console.error('Usage: f2a agent init --name <name> --webhook <url> [--force]');
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError(result.error || 'Initialization failed', 'AGENT_INIT_FAILED');
+    } else {
+      console.error(`❌ Initialization failed: ${result.error}`);
+      console.error('');
+      console.error('Usage: f2a agent init --name <name> --webhook <url> [--force]');
+      process.exit(1);
+    }
   }
 }
 
@@ -205,55 +220,78 @@ export async function showAgentStatus(agentId?: string): Promise<void> {
     const identities = listLocalIdentities();
 
     if (identities.length === 0) {
-      console.log('📭 No local identity files found.');
-      console.log('Please run: f2a agent init --name <name> --webhook <url>');
+      if (isJsonMode()) {
+        outputJson([]);
+      } else {
+        console.log('📭 No local identity files found.');
+        console.log('Please run: f2a agent init --name <name> --webhook <url>');
+      }
       return;
     }
 
-    console.log(`📋 Local identity files (${identities.length}):`);
-    console.log('');
-    for (const id of identities) {
-      const statusMark = id.name ? '🔹' : '⚪';
-      console.log(`${statusMark} ${id.name}`);
-      console.log(`   AgentId: ${id.agentId}`);
-      console.log(`   Path: ${id.path}`);
+    if (isJsonMode()) {
+      outputJson(identities);
+    } else {
+      console.log(`📋 Local identity files (${identities.length}):`);
       console.log('');
+      for (const id of identities) {
+        const statusMark = id.name ? '🔹' : '⚪';
+        console.log(`${statusMark} ${id.name}`);
+        console.log(`   AgentId: ${id.agentId}`);
+        console.log(`   Path: ${id.path}`);
+        console.log('');
+      }
+      console.log('Use --agent-id <id> to view details.');
     }
-    console.log('Use --agent-id <id> to view details.');
     return;
   }
 
   const identity = readIdentityByAgentId(agentId);
 
   if (!identity) {
-    console.log('❌ Identity file not found.');
-    console.log(`   AgentId: ${agentId}`);
-    console.log(`   Expected: ${join(AGENT_IDENTITIES_DIR, `${agentId}.json`)}`);
+    if (isJsonMode()) {
+      outputError(`Identity file not found for agent: ${agentId}`, 'AGENT_NOT_FOUND');
+    } else {
+      console.log('❌ Identity file not found.');
+      console.log(`   AgentId: ${agentId}`);
+      console.log(`   Expected: ${join(AGENT_IDENTITIES_DIR, `${agentId}.json`)}`);
+    }
     return;
   }
 
-  console.log('=== Agent Status ===');
-  console.log('');
-  console.log(`AgentId: ${identity.agentId}`);
-  console.log(`Name: ${identity.name || 'N/A'}`);
-  console.log(`Public Key: ${identity.publicKey.slice(0, 24)}...`);
-  
-  if (identity.nodeSignature) {
-    console.log(`Node Signature: ✅ Issued`);
-    console.log(`Node PeerId: ${identity.nodePeerId || 'N/A'}`);
+  if (isJsonMode()) {
+    outputJson({
+      agentId: identity.agentId,
+      name: identity.name || null,
+      nodeId: identity.nodePeerId || null,
+      registered: !!identity.nodeSignature,
+      webhook: identity.webhook?.url || null,
+      capabilities: identity.capabilities || []
+    });
   } else {
-    console.log(`Node Signature: ⚪ Not issued`);
-    console.log('   Use f2a agent register to register with Daemon');
-  }
+    console.log('=== Agent Status ===');
+    console.log('');
+    console.log(`AgentId: ${identity.agentId}`);
+    console.log(`Name: ${identity.name || 'N/A'}`);
+    console.log(`Public Key: ${identity.publicKey.slice(0, 24)}...`);
+    
+    if (identity.nodeSignature) {
+      console.log(`Node Signature: ✅ Issued`);
+      console.log(`Node PeerId: ${identity.nodePeerId || 'N/A'}`);
+    } else {
+      console.log(`Node Signature: ⚪ Not issued`);
+      console.log('   Use f2a agent register to register with Daemon');
+    }
 
-  if (identity.capabilities && identity.capabilities.length > 0) {
-    console.log(`Capabilities: ${identity.capabilities.map((c: { name: string }) => c.name).join(', ')}`);
-  }
+    if (identity.capabilities && identity.capabilities.length > 0) {
+      console.log(`Capabilities: ${identity.capabilities.map((c: { name: string }) => c.name).join(', ')}`);
+    }
 
-  if (identity.webhook) {
-    console.log(`Webhook: ${identity.webhook.url}`);
-  }
+    if (identity.webhook) {
+      console.log(`Webhook: ${identity.webhook.url}`);
+    }
 
-  console.log(`Created: ${identity.createdAt}`);
-  console.log(`Last Active: ${identity.lastActiveAt || 'N/A'}`);
+    console.log(`Created: ${identity.createdAt}`);
+    console.log(`Last Active: ${identity.lastActiveAt || 'N/A'}`);
+  }
 }

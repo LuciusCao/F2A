@@ -17,6 +17,7 @@ import type { ExportedNodeIdentity, ExportedAgentIdentity, AgentIdentity } from 
 import { success, failure, failureFromError, Result, createError } from '@f2a/network';
 import { secureWipe } from '@f2a/network';
 import { Logger } from '@f2a/network';
+import { isJsonMode, outputJson } from './output.js';
 
 const logger = new Logger({ component: 'IdentityCLI' });
 
@@ -193,6 +194,76 @@ export async function initNodeIdentity(options?: { force?: boolean }): Promise<v
 export async function showIdentityStatus(): Promise<void> {
   const dataDir = join(homedir(), DEFAULT_DATA_DIR);
   
+  // JSON mode: collect data first, then output
+  if (isJsonMode()) {
+    const jsonData: {
+      nodeIdentity: {
+        exists: boolean;
+        nodeId?: string;
+        path: string;
+        legacy?: boolean;
+        error?: string;
+      };
+      agentIdentities: Array<{ agentId: string; name: string; path: string }>;
+      agentCount: number;
+    } = {
+      nodeIdentity: {
+        exists: false,
+        path: join(dataDir, 'node-identity.json')
+      },
+      agentIdentities: [],
+      agentCount: 0
+    };
+    
+    // Node Identity
+    const nodeIdentityPath = join(dataDir, 'node-identity.json');
+    const legacyIdentityPath = join(dataDir, 'identity.json');
+    
+    const nodeExists = existsSync(nodeIdentityPath);
+    const legacyExists = existsSync(legacyIdentityPath);
+    
+    if (legacyExists && !nodeExists) {
+      jsonData.nodeIdentity.exists = false;
+      jsonData.nodeIdentity.legacy = true;
+    } else if (nodeExists) {
+      const nodeManager = new NodeIdentityManager({ dataDir });
+      const result = await nodeManager.loadOrCreate();
+      
+      if (result.success && result.data) {
+        jsonData.nodeIdentity.exists = true;
+        jsonData.nodeIdentity.nodeId = result.data.nodeId;
+      } else {
+        jsonData.nodeIdentity.exists = true;
+        jsonData.nodeIdentity.error = result.error?.message || 'Unknown error';
+      }
+    }
+    
+    // Agent Identity - RFC008: Use ~/.f2a/agent-identities/ directory
+    const agentsDir = join(dataDir, 'agent-identities');
+    
+    if (existsSync(agentsDir)) {
+      const agentFiles = readdirSync(agentsDir).filter(f => f.endsWith('.json') && f.startsWith('agent:'));
+      jsonData.agentCount = agentFiles.length;
+      
+      for (const agentFile of agentFiles) {
+        try {
+          const agentData = JSON.parse(readFileSync(join(agentsDir, agentFile), 'utf-8'));
+          jsonData.agentIdentities.push({
+            agentId: agentData.agentId,
+            name: agentData.name || 'unnamed',
+            path: join(agentsDir, agentFile)
+          });
+        } catch {
+          // Skip files that fail to parse
+        }
+      }
+    }
+    
+    outputJson(jsonData);
+    return;
+  }
+  
+  // Human-readable output
   console.log('');
   console.log('=== F2A Identity Status ===');
   console.log('');
@@ -263,14 +334,15 @@ export async function showIdentityStatus(): Promise<void> {
 export async function exportIdentity(outputPath?: string): Promise<void> {
   const dataDir = join(homedir(), DEFAULT_DATA_DIR);
   
-  console.log('');
-  console.log('=== Exporting F2A Identity ===');
-  console.log('');
-  
   const exportData: IdentityExport = {
     version: '1.0',
     exportedAt: new Date().toISOString()
   };
+  
+  // Track export results for JSON output
+  let nodeExported = false;
+  let agentExported = false;
+  let agentsExported = 0;
   
   // Export Node Identity
   try {
@@ -284,13 +356,10 @@ export async function exportIdentity(outputPath?: string): Promise<void> {
         nodeId: nodeResult.data.nodeId,
         privateKey: nodeResult.data.privateKey
       };
-      console.log('📦 Node Identity: ✅ Exported');
-    } else {
-      console.log('📦 Node Identity: ⚪ Not found or failed to load');
+      nodeExported = true;
     }
-  } catch (error) {
-    console.log('📦 Node Identity: ❌ Export failed');
-    console.log(`   Error: ${error instanceof Error ? error.message : String(error)}`);
+  } catch {
+    // Export failed, nodeExported remains false
   }
   
   // Export Agent Identity
@@ -300,13 +369,11 @@ export async function exportIdentity(outputPath?: string): Promise<void> {
     
     if (agentResult.success) {
       exportData.agent = agentResult.data;
-      console.log('🤖 Agent Identity: ✅ Exported');
-    } else {
-      console.log('🤖 Agent Identity: ⚪ Not found');
+      agentExported = true;
+      agentsExported = 1;
     }
-  } catch (error) {
-    console.log('🤖 Agent Identity: ❌ Export failed');
-    console.log(`   Error: ${error instanceof Error ? error.message : String(error)}`);
+  } catch {
+    // Export failed, agentExported remains false
   }
   
   // Determine output path
@@ -314,6 +381,34 @@ export async function exportIdentity(outputPath?: string): Promise<void> {
   
   // Write file
   writeFileSync(finalOutputPath, JSON.stringify(exportData, null, 2), { mode: 0o600 });
+  
+  // JSON mode output
+  if (isJsonMode()) {
+    outputJson({
+      outputPath: finalOutputPath,
+      nodeExported,
+      agentExported,
+      agentsExported
+    });
+    return;
+  }
+  
+  // Human-readable output
+  console.log('');
+  console.log('=== Exporting F2A Identity ===');
+  console.log('');
+  
+  if (nodeExported) {
+    console.log('📦 Node Identity: ✅ Exported');
+  } else {
+    console.log('📦 Node Identity: ⚪ Not found or failed to load');
+  }
+  
+  if (agentExported) {
+    console.log('🤖 Agent Identity: ✅ Exported');
+  } else {
+    console.log('🤖 Agent Identity: ⚪ Not found');
+  }
   
   console.log('');
   console.log(`✅ Identity exported to: ${finalOutputPath}`);

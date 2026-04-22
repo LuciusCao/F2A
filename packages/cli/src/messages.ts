@@ -35,7 +35,11 @@ async function getAgentTokenViaChallenge(
   });
 
   if (!challengeResult.success || !challengeResult.challenge) {
-    console.error('❌ Error: Failed to get challenge from server.', challengeResult.error);
+    if (isJsonMode()) {
+      outputError('Failed to get challenge from server', 'CHALLENGE_FAILED');
+    } else {
+      console.error('❌ Error: Failed to get challenge from server.', challengeResult.error);
+    }
     return undefined;
   }
 
@@ -52,7 +56,11 @@ async function getAgentTokenViaChallenge(
   });
 
   if (!verifyResult.success || !verifyResult.agentToken) {
-    console.error('❌ Error: Challenge verification failed.', verifyResult.error);
+    if (isJsonMode()) {
+      outputError('Challenge verification failed', 'CHALLENGE_VERIFY_FAILED');
+    } else {
+      console.error('❌ Error: Challenge verification failed.', verifyResult.error);
+    }
     return undefined;
   }
 
@@ -98,6 +106,10 @@ export async function sendMessage(options: {
   const identity = readIdentityByAgentId(agentId);
 
   if (!identity) {
+    if (isJsonMode()) {
+      outputError('Cannot find identity file for the specified agent', 'AGENT_NOT_FOUND');
+      return;
+    }
     console.error('❌ Error: Cannot find identity file for the specified agent.');
     console.error(`   AgentId: ${agentId}`);
     console.error('Please run: f2a agent init --name <name> --webhook <url>');
@@ -109,6 +121,10 @@ export async function sendMessage(options: {
     const agentToken = await getAgentTokenViaChallenge(identity, toAgentId);
 
     if (!agentToken) {
+      if (isJsonMode()) {
+        outputError('Failed to obtain Agent Token. Message send failed', 'TOKEN_FAILED');
+        return;
+      }
       console.error('❌ Error: Failed to obtain Agent Token. Message send failed.');
       console.error('Hint: Please ensure the Agent is registered and the Daemon is running.');
       process.exit(1);
@@ -132,6 +148,10 @@ export async function sendMessage(options: {
     handleSendResult(result, agentId, toAgentId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (isJsonMode()) {
+      outputError(`Cannot connect to Daemon: ${message}`, 'DAEMON_NOT_RUNNING');
+      return;
+    }
     console.error(`❌ Error: Cannot connect to Daemon: ${message}`);
     console.error('Please ensure Daemon is running: f2a daemon start');
     process.exit(1);
@@ -147,6 +167,15 @@ function handleSendResult(
   toAgentId?: string
 ): void {
   if (result.success) {
+    if (isJsonMode()) {
+      outputJson({
+        sent: true,
+        fromAgentId: fromAgentId,
+        toAgentId: toAgentId || null,
+        messageId: result.messageId || null
+      });
+      return;
+    }
     console.log('✅ Success: Message sent successfully.');
     console.log(`   From: ${fromAgentId}`);
     if (toAgentId) {
@@ -158,6 +187,10 @@ function handleSendResult(
       console.log(`   Message ID: ${result.messageId}`);
     }
   } else {
+    if (isJsonMode()) {
+      outputError(`Failed to send message: ${result.error}`, (result.code as string) || 'SEND_FAILED');
+      return;
+    }
     console.error(`❌ Error: Failed to send message: ${result.error}`);
     if (result.code === 'AGENT_NOT_REGISTERED') {
       console.error('Hint: Please ensure the Agent is registered.');
@@ -284,13 +317,27 @@ export async function clearMessages(options: {
     );
 
     if (result.success) {
+      if (isJsonMode()) {
+        outputJson({
+          cleared: result.cleared || 0
+        });
+        return;
+      }
       console.log(`✅ Success: Cleared ${result.cleared || 0} message(s).`);
     } else {
+      if (isJsonMode()) {
+        outputError(`Failed to clear messages: ${result.error}`, 'CLEAR_FAILED');
+        return;
+      }
       console.error(`❌ Error: Failed to clear messages: ${result.error}`);
       process.exit(1);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (isJsonMode()) {
+      outputError(`Cannot connect to Daemon: ${message}`, 'DAEMON_NOT_RUNNING');
+      return;
+    }
     console.error(`❌ Error: Cannot connect to Daemon: ${message}`);
     console.error('Please ensure Daemon is running: f2a daemon start');
     process.exit(1);

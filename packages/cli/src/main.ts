@@ -28,7 +28,7 @@ import { startForeground, startBackground, stopDaemon, restartDaemon, showStatus
 import { showIdentityStatus, exportIdentity, importIdentityInternal } from './identity.js';
 import { cliInitAgent, showAgentStatus } from './init.js';
 import { nodeInit, nodeStatus, nodePeers, nodeHealth, nodeDiscover } from './node.js';
-import { setJsonMode, isJsonMode, outputError } from './output.js';
+import { setJsonMode, isJsonMode, outputJson, outputError } from './output.js';
 
 // ESM 环境下获取 __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -300,7 +300,15 @@ function parseArgs(args: string[]): Record<string, string | string[] | boolean> 
  */
 async function handleAgentCommand(subArgs: string[]): Promise<void> {
   if (subArgs.length === 0 || subArgs[0] === '--help' || subArgs[0] === '-h') {
-    showAgentHelp();
+    if (isJsonMode()) {
+      outputJson({
+        command: 'agent',
+        subcommands: ['init', 'register', 'list', 'unregister', 'status', 'update'],
+        usage: 'f2a agent <subcommand> [options]'
+      });
+    } else {
+      showAgentHelp();
+    }
     return;
   }
 
@@ -407,7 +415,15 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
  */
 async function handleMessageCommand(subArgs: string[]): Promise<void> {
   if (subArgs.length === 0 || subArgs[0] === '--help' || subArgs[0] === '-h') {
-    showMessageHelp();
+    if (isJsonMode()) {
+      outputJson({
+        command: 'message',
+        subcommands: ['send', 'list', 'clear'],
+        usage: 'f2a message <subcommand> [options]'
+      });
+    } else {
+      showMessageHelp();
+    }
     return;
   }
 
@@ -457,7 +473,15 @@ async function handleMessageCommand(subArgs: string[]): Promise<void> {
  */
 async function handleDaemonCommand(subArgs: string[]): Promise<void> {
   if (subArgs.length === 0 || subArgs[0] === '--help' || subArgs[0] === '-h') {
-    showDaemonHelp();
+    if (isJsonMode()) {
+      outputJson({
+        command: 'daemon',
+        subcommands: ['start', 'stop', 'restart', 'status', 'foreground'],
+        usage: 'f2a daemon <subcommand> [options]'
+      });
+    } else {
+      showDaemonHelp();
+    }
     return;
   }
 
@@ -500,7 +524,15 @@ async function handleDaemonCommand(subArgs: string[]): Promise<void> {
  */
 async function handleIdentityCommand(subArgs: string[]): Promise<void> {
   if (subArgs.length === 0 || subArgs[0] === '--help' || subArgs[0] === '-h') {
-    showIdentityHelp();
+    if (isJsonMode()) {
+      outputJson({
+        command: 'identity',
+        subcommands: ['status', 'export', 'import'],
+        usage: 'f2a identity <subcommand> [options]'
+      });
+    } else {
+      showIdentityHelp();
+    }
     return;
   }
 
@@ -532,27 +564,41 @@ async function handleIdentityCommand(subArgs: string[]): Promise<void> {
       const result = await importIdentityInternal(inputPath);
       if (result.success) {
         const data = result.data;
-        console.log(`✅ Import complete`);
-        if (data.nodeImported) {
-          console.log('   Node Identity: ✅ imported');
-        }
-        if (data.agentImported) {
-          console.log('   Agent Identity: ✅ imported');
-        }
-        if (data.warnings.length > 0) {
-          console.log('');
-          console.log('⚠️  Warnings:');
-          data.warnings.forEach(w => console.log(`   - ${w}`));
-        }
-        if (data.agentConfirmation) {
-          console.log('');
-          console.log('⚠️  Agent import requires confirmation:');
-          console.log(`   ${data.agentConfirmation.reason}`);
-          console.log('   Use --force to force import');
+        if (isJsonMode()) {
+          outputJson({
+            imported: true,
+            nodeImported: data.nodeImported,
+            agentImported: data.agentImported,
+            warnings: data.warnings,
+            agentConfirmation: data.agentConfirmation
+          });
+        } else {
+          console.log(`✅ Import complete`);
+          if (data.nodeImported) {
+            console.log('   Node Identity: ✅ imported');
+          }
+          if (data.agentImported) {
+            console.log('   Agent Identity: ✅ imported');
+          }
+          if (data.warnings.length > 0) {
+            console.log('');
+            console.log('⚠️  Warnings:');
+            data.warnings.forEach(w => console.log(`   - ${w}`));
+          }
+          if (data.agentConfirmation) {
+            console.log('');
+            console.log('⚠️  Agent import requires confirmation:');
+            console.log(`   ${data.agentConfirmation.reason}`);
+            console.log('   Use --force to force import');
+          }
         }
       } else {
-        console.error(`❌ Import failed: ${result.error?.message}`);
-        process.exit(1);
+        if (isJsonMode()) {
+          outputError(result.error?.message || 'Import failed', 'IMPORT_FAILED');
+        } else {
+          console.error(`❌ Import failed: ${result.error?.message}`);
+          process.exit(1);
+        }
       }
       break;
 
@@ -572,7 +618,15 @@ async function handleIdentityCommand(subArgs: string[]): Promise<void> {
  */
 async function handleNodeCommand(subArgs: string[]): Promise<void> {
   if (subArgs.length === 0 || subArgs[0] === '--help' || subArgs[0] === '-h') {
-    showNodeHelp();
+    if (isJsonMode()) {
+      outputJson({
+        command: 'node',
+        subcommands: ['init', 'status', 'peers', 'health', 'discover'],
+        usage: 'f2a node <subcommand> [options]'
+      });
+    } else {
+      showNodeHelp();
+    }
     return;
   }
 
@@ -631,13 +685,26 @@ async function main(): Promise<void> {
 
   // 无参数或 --help 显示帮助
   if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
-    showHelp();
+    if (isJsonMode()) {
+      outputJson({
+        version: getVersion(),
+        commands: ['node', 'agent', 'message', 'daemon', 'identity'],
+        usage: 'f2a <command> [options]',
+        globalOptions: ['--json', '--help', '--version']
+      });
+    } else {
+      showHelp();
+    }
     return;
   }
 
   // --version 显示版本
   if (args[0] === '--version' || args[0] === '-v') {
-    console.log(getVersion());
+    if (isJsonMode()) {
+      outputJson({ version: getVersion() });
+    } else {
+      console.log(getVersion());
+    }
     return;
   }
 

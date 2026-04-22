@@ -67,6 +67,10 @@ export async function registerAgent(options: {
   const identity = readIdentityByAgentId(options.agentId);
 
   if (!identity) {
+    if (isJsonMode()) {
+      outputError('Identity file not found', 'AGENT_NOT_FOUND');
+      return;
+    }
     console.error('❌ Error: Identity file not found.');
     console.error(`   AgentId: ${options.agentId}`);
     console.error('Please run: f2a agent init --name <name> --webhook <url>');
@@ -75,6 +79,14 @@ export async function registerAgent(options: {
 
   // 检查是否已注册
   if (identity.nodeSignature && !options.force) {
+    if (isJsonMode()) {
+      outputJson({
+        alreadyRegistered: true,
+        agentId: identity.agentId,
+        nodePeerId: identity.nodePeerId || null
+      });
+      return;
+    }
     console.log('✅ Success: Agent is already registered.');
     console.log(`   AgentId: ${identity.agentId}`);
     console.log(`   Node PeerId: ${identity.nodePeerId || 'N/A'}`);
@@ -107,6 +119,18 @@ export async function registerAgent(options: {
         updateIdentityWithNodeSignature(options.agentId, identity, nodeSignature, nodePeerId);
       }
 
+      if (isJsonMode()) {
+        outputJson({
+          registered: true,
+          agentId: identity.agentId,
+          name: identity.name || null,
+          capabilities: capabilities.map((c: { name: string }) => c.name),
+          webhook: identity.webhook?.url || null,
+          nodePeerId: nodePeerId || null
+        });
+        return;
+      }
+
       console.log('✅ Success: Agent registered successfully.');
       console.log(`   AgentId: ${identity.agentId}`);
       console.log(`   Name: ${identity.name || 'N/A'}`);
@@ -120,11 +144,19 @@ export async function registerAgent(options: {
         console.log(`   Node: ${nodePeerId.slice(0, 24)}...`);
       }
     } else {
+      if (isJsonMode()) {
+        outputError(`Registration failed: ${result.error}`, 'REGISTRATION_FAILED');
+        return;
+      }
       console.error(`❌ Error: Registration failed: ${result.error}`);
       process.exit(1);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (isJsonMode()) {
+      outputError(`Unable to connect to Daemon: ${message}`, 'DAEMON_NOT_RUNNING');
+      return;
+    }
     console.error(`❌ Error: Unable to connect to Daemon: ${message}`);
     console.error('Please ensure Daemon is running: f2a daemon start');
     process.exit(1);
@@ -237,6 +269,10 @@ export async function updateAgent(options: {
   const identity = readIdentityByAgentId(options.agentId);
 
   if (!identity) {
+    if (isJsonMode()) {
+      outputError('Identity file not found', 'AGENT_NOT_FOUND');
+      return;
+    }
     console.error('❌ Error: Identity file not found.');
     console.error(`   AgentId: ${options.agentId}`);
     console.error('Please run: f2a agent init --name <name> --webhook <url>');
@@ -244,6 +280,10 @@ export async function updateAgent(options: {
   }
 
   if (!identity.privateKey) {
+    if (isJsonMode()) {
+      outputError('Identity file missing private key. Cannot sign for verification', 'MISSING_PRIVATE_KEY');
+      return;
+    }
     console.error('❌ Error: Identity file missing private key. Cannot sign for verification.');
     console.error(`   AgentId: ${options.agentId}`);
     console.error('Please ensure the identity file is complete, or recreate it.');
@@ -299,6 +339,10 @@ export async function updateAgent(options: {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (isJsonMode()) {
+      outputError(`Unable to connect to Daemon: ${message}`, 'DAEMON_NOT_RUNNING');
+      return;
+    }
     console.error(`❌ Error: Unable to connect to Daemon: ${message}`);
     console.error('Please ensure Daemon is running: f2a daemon start');
     process.exit(1);
@@ -326,6 +370,16 @@ function handleUpdateResult(
     const identityPath = join(AGENT_IDENTITIES_DIR, `${options.agentId}.json`);
     writeFileSync(identityPath, JSON.stringify(identity, null, 2), { mode: 0o600 });
 
+    if (isJsonMode()) {
+      outputJson({
+        updated: true,
+        agentId: options.agentId,
+        name: options.name || identity.name || null,
+        webhook: options.webhook || identity.webhook?.url || null
+      });
+      return;
+    }
+
     console.log('✅ Success: Agent updated successfully.');
     console.log(`   AgentId: ${options.agentId}`);
     if (options.name) {
@@ -337,6 +391,10 @@ function handleUpdateResult(
     console.log('');
     console.log('💡 Daemon and local identity file have been synchronized.');
   } else {
+    if (isJsonMode()) {
+      outputError(`Update failed: ${result.error}`, (result.code as string) || 'UPDATE_FAILED');
+      return;
+    }
     console.error(`❌ Error: Update failed: ${result.error}`);
     if (result.code === 'AGENT_NOT_FOUND') {
       console.error('Hint: Agent not registered. Please register first.');
@@ -367,6 +425,10 @@ export async function unregisterAgent(agentId: string): Promise<void> {
   // 读取身份文件（Challenge-Response 需要）
   const identity = readIdentityByAgentId(agentId);
   if (!identity) {
+    if (isJsonMode()) {
+      outputError('Identity file not found', 'AGENT_NOT_FOUND');
+      return;
+    }
     console.error('❌ Error: Identity file not found.');
     console.error(`   AgentId: ${agentId}`);
     console.error('Please run: f2a agent init --name <name> --webhook <url>');
@@ -374,6 +436,10 @@ export async function unregisterAgent(agentId: string): Promise<void> {
   }
 
   if (!identity.privateKey) {
+    if (isJsonMode()) {
+      outputError('Identity file missing private key. Cannot sign for verification', 'MISSING_PRIVATE_KEY');
+      return;
+    }
     console.error('❌ Error: Identity file missing private key. Cannot sign for verification.');
     console.error('Please ensure the identity file is complete.');
     process.exit(1);
@@ -389,10 +455,21 @@ export async function unregisterAgent(agentId: string): Promise<void> {
     );
 
     if (result.success) {
+      if (isJsonMode()) {
+        outputJson({
+          unregistered: true,
+          agentId: agentId
+        });
+        return;
+      }
       console.log('✅ Success: Agent unregistered successfully.');
       console.log(`   AgentId: ${agentId}`);
       console.log('   Identity file retained, can re-register.');
     } else {
+      if (isJsonMode()) {
+        outputError(`Unregistration failed: ${result.error}`, (result.code as string) || 'UNREGISTRATION_FAILED');
+        return;
+      }
       console.error(`❌ Error: Unregistration failed: ${result.error}`);
       if (result.code === 'CHALLENGE_FAILED') {
         console.error('Hint: Authentication failed. Please check the identity file.');
@@ -401,6 +478,10 @@ export async function unregisterAgent(agentId: string): Promise<void> {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (isJsonMode()) {
+      outputError(`Unable to connect to Daemon: ${message}`, 'DAEMON_NOT_RUNNING');
+      return;
+    }
     console.error(`❌ Error: Unable to connect to Daemon: ${message}`);
     console.error('Please ensure Daemon is running: f2a daemon start');
     process.exit(1);

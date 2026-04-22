@@ -12,7 +12,7 @@ import { createServer } from 'net';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { loadConfig } from './config.js';
-import { isJsonMode, outputJson } from './output.js';
+import { isJsonMode, outputJson, outputError, outputErrorNonFatal } from './output.js';
 
 // ESM 中使用 createRequire 来获取 require.resolve
 const require = createRequire(import.meta.url);
@@ -229,25 +229,37 @@ export async function startForeground(): Promise<void> {
   
   // Check if daemon is already running
   if (await isDaemonRunning()) {
-    console.error('[F2A] Error: Daemon is already running. Please stop it before starting a new instance.');
-    console.error('[F2A] Hint: Use "f2a daemon stop" to stop the existing daemon first.');
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError('Daemon is already running. Please stop it before starting a new instance.', 'DAEMON_ALREADY_RUNNING');
+    } else {
+      console.error('[F2A] Error: Daemon is already running. Please stop it before starting a new instance.');
+      console.error('[F2A] Hint: Use "f2a daemon stop" to stop the existing daemon first.');
+      process.exit(1);
+    }
+    return;
   }
 
   // Check if port is in use
   const portInUse = await checkPortInUse(controlPort);
   if (portInUse) {
-    console.error(`[F2A] Error: Port ${controlPort} is already in use.`);
-    console.error('[F2A] Hint: Check if another F2A daemon is running, or set F2A_CONTROL_PORT environment variable to use a different port.');
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError(`Port ${controlPort} is already in use.`, 'PORT_IN_USE');
+    } else {
+      console.error(`[F2A] Error: Port ${controlPort} is already in use.`);
+      console.error('[F2A] Hint: Check if another F2A daemon is running, or set F2A_CONTROL_PORT environment variable to use a different port.');
+      process.exit(1);
+    }
+    return;
   }
 
   ensureF2ADir();
   rotateLogIfNeeded();
   
-  console.log('[F2A] Starting daemon (foreground mode)...');
-  console.log(`[F2A] Control port: ${controlPort}`);
-  console.log('[F2A] Press Ctrl+C to stop.');
+  if (!isJsonMode()) {
+    console.log('[F2A] Starting daemon (foreground mode)...');
+    console.log(`[F2A] Control port: ${controlPort}`);
+    console.log('[F2A] Press Ctrl+C to stop.');
+  }
 
   // 动态导入 daemon 模块并启动
   const { F2ADaemon } = await import('@f2a/daemon');
@@ -281,10 +293,14 @@ export async function startForeground(): Promise<void> {
 
   // Handle shutdown signals
   const shutdown = async () => {
-    console.log('\n[F2A] Stopping daemon...');
+    if (!isJsonMode()) {
+      console.log('\n[F2A] Stopping daemon...');
+    }
     await daemon.stop();
     removePidFile();
-    console.log('[F2A] Daemon stopped successfully.');
+    if (!isJsonMode()) {
+      console.log('[F2A] Daemon stopped successfully.');
+    }
     process.exit(0);
   };
 
@@ -293,15 +309,28 @@ export async function startForeground(): Promise<void> {
 
   try {
     await daemon.start();
-    console.log(`[F2A] Daemon started successfully. Node ID: ${daemon.getF2A()?.peerId?.slice(0, 16)}...`);
+    if (isJsonMode()) {
+      outputJson({
+        status: 'running',
+        mode: 'foreground',
+        port: controlPort,
+        peerId: daemon.getF2A()?.peerId?.slice(0, 16)
+      });
+    } else {
+      console.log(`[F2A] Daemon started successfully. Node ID: ${daemon.getF2A()?.peerId?.slice(0, 16)}...`);
+    }
     
     // Keep process running
     await new Promise<void>((resolve) => {
       process.on('exit', () => resolve());
     });
   } catch (error) {
-    console.error('[F2A] Error: Failed to start daemon:', error instanceof Error ? error.message : String(error));
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError('Failed to start daemon: ' + (error instanceof Error ? error.message : String(error)), 'START_FAILED');
+    } else {
+      console.error('[F2A] Error: Failed to start daemon:', error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
   }
 }
 
@@ -313,20 +342,30 @@ export async function startBackground(): Promise<void> {
   
   // Check if daemon is already running
   if (await isDaemonRunning()) {
-    console.error('[F2A] Error: Daemon is already running. Please stop it before starting a new instance.');
     const status = getDaemonStatus();
-    if (status.pid) {
-      console.error(`[F2A] PID: ${status.pid}`);
+    if (isJsonMode()) {
+      outputError('Daemon is already running. Please stop it before starting a new instance.', 'DAEMON_ALREADY_RUNNING');
+    } else {
+      console.error('[F2A] Error: Daemon is already running. Please stop it before starting a new instance.');
+      if (status.pid) {
+        console.error(`[F2A] PID: ${status.pid}`);
+      }
+      process.exit(1);
     }
-    process.exit(1);
+    return;
   }
 
   // Check if port is in use
   const portInUse = await checkPortInUse(controlPort);
   if (portInUse) {
-    console.error(`[F2A] Error: Port ${controlPort} is already in use.`);
-    console.error('[F2A] Hint: Check if another F2A daemon is running, or set F2A_CONTROL_PORT environment variable to use a different port.');
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError(`Port ${controlPort} is already in use.`, 'PORT_IN_USE');
+    } else {
+      console.error(`[F2A] Error: Port ${controlPort} is already in use.`);
+      console.error('[F2A] Hint: Check if another F2A daemon is running, or set F2A_CONTROL_PORT environment variable to use a different port.');
+      process.exit(1);
+    }
+    return;
   }
 
   ensureF2ADir();
@@ -334,9 +373,11 @@ export async function startBackground(): Promise<void> {
   // Rotate log file
   rotateLogIfNeeded();
 
-  console.log('[F2A] Starting daemon (background mode)...');
-  console.log(`[F2A] Control port: ${controlPort}`);
-  console.log(`[F2A] Log file: ${LOG_FILE}`);
+  if (!isJsonMode()) {
+    console.log('[F2A] Starting daemon (background mode)...');
+    console.log(`[F2A] Control port: ${controlPort}`);
+    console.log(`[F2A] Log file: ${LOG_FILE}`);
+  }
 
   // 使用 require.resolve 定位 @f2a/daemon 包的位置
   // 这样无论 npm 如何 hoisting 依赖，都能找到正确的路径
@@ -355,9 +396,14 @@ export async function startBackground(): Promise<void> {
   
   // Check if daemon script exists
   if (!existsSync(daemonScript)) {
-    console.error('[F2A] Error: Daemon script not found.');
-    console.error('[F2A] Hint: Please run "npm run build" first to compile the daemon module.');
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError('Daemon script not found. Please run "npm run build" first to compile the daemon module.', 'DAEMON_SCRIPT_NOT_FOUND');
+    } else {
+      console.error('[F2A] Error: Daemon script not found.');
+      console.error('[F2A] Hint: Please run "npm run build" first to compile the daemon module.');
+      process.exit(1);
+    }
+    return;
   }
 
   // 读取配置
@@ -386,11 +432,18 @@ export async function startBackground(): Promise<void> {
 
   // Acquire file lock (prevent race conditions)
   if (!acquireLock()) {
-    console.error('[F2A] Error: Cannot acquire lock. Another daemon instance may be starting or has just started.');
-    console.error('[F2A] Hint: Please try again later, or check if another f2a daemon process is running.');
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError('Cannot acquire lock. Another daemon instance may be starting or has just started.', 'LOCK_ACQUISITION_FAILED');
+    } else {
+      console.error('[F2A] Error: Cannot acquire lock. Another daemon instance may be starting or has just started.');
+      console.error('[F2A] Hint: Please try again later, or check if another f2a daemon process is running.');
+      process.exit(1);
+    }
+    return;
   }
 
+  let childPid: number | undefined;
+  
   try {
     // 启动后台进程
     const child = spawn(nodePath, [daemonScript], {
@@ -423,7 +476,10 @@ export async function startBackground(): Promise<void> {
         
         // Write PID file
         writeDaemonPid(child.pid!);
-        console.log(`[F2A] Daemon started successfully. PID: ${child.pid}`);
+        childPid = child.pid;
+        if (!isJsonMode()) {
+          console.log(`[F2A] Daemon started successfully. PID: ${child.pid}`);
+        }
         started = true;
         clearTimeout(timeout);
         resolve();
@@ -450,7 +506,12 @@ export async function startBackground(): Promise<void> {
   } catch (error) {
     // 启动失败，释放锁
     releaseLock();
-    throw error;
+    if (isJsonMode()) {
+      outputError('Failed to start daemon: ' + (error instanceof Error ? error.message : String(error)), 'START_FAILED');
+    } else {
+      throw error;
+    }
+    return;
   }
   
   // 释放文件锁（daemon 已成功启动）
@@ -458,18 +519,30 @@ export async function startBackground(): Promise<void> {
 
   // Wait for daemon HTTP service to be ready (poll /health endpoint)
   // Timeout can be configured via F2A_HEALTH_TIMEOUT environment variable (milliseconds, default 15000)
-  console.log('[F2A] Waiting for daemon service to be ready...');
+  if (!isJsonMode()) {
+    console.log('[F2A] Waiting for daemon service to be ready...');
+  }
   const healthTimeout = parseInt(process.env.F2A_HEALTH_TIMEOUT || '15000', 10);
   const healthReady = await waitForDaemonHealth(controlPort, healthTimeout);
   
-  if (healthReady) {
-    console.log('[F2A] Daemon service is ready.');
+  if (isJsonMode()) {
+    outputJson({
+      status: 'running',
+      mode: 'background',
+      pid: childPid,
+      port: controlPort,
+      logFile: LOG_FILE,
+      healthReady
+    });
   } else {
-    console.warn('[F2A] Warning: Daemon service may not be fully ready. Please check the log file for details.');
+    if (healthReady) {
+      console.log('[F2A] Daemon service is ready.');
+    } else {
+      console.warn('[F2A] Warning: Daemon service may not be fully ready. Please check the log file for details.');
+    }
+    console.log('[F2A] Hint: Use "f2a daemon status" to check daemon status.');
+    console.log('[F2A] Hint: Use "f2a daemon stop" to stop the daemon.');
   }
-
-  console.log('[F2A] Hint: Use "f2a daemon status" to check daemon status.');
-  console.log('[F2A] Hint: Use "f2a daemon stop" to stop the daemon.');
 }
 
 /**
@@ -479,17 +552,27 @@ export async function stopDaemon(): Promise<void> {
   const pid = readDaemonPid();
   
   if (pid === null) {
-    console.log('[F2A] No daemon is currently running.');
+    if (isJsonMode()) {
+      outputJson({ status: 'not_running', message: 'No daemon is currently running' });
+    } else {
+      console.log('[F2A] No daemon is currently running.');
+    }
     return;
   }
 
   if (!isProcessRunning(pid)) {
-    console.log('[F2A] Daemon process no longer exists. Cleaning up PID file.');
     removePidFile();
+    if (isJsonMode()) {
+      outputJson({ status: 'not_running', message: 'Daemon process no longer exists. PID file cleaned up.' });
+    } else {
+      console.log('[F2A] Daemon process no longer exists. Cleaning up PID file.');
+    }
     return;
   }
 
-  console.log(`[F2A] Stopping daemon (PID: ${pid})...`);
+  if (!isJsonMode()) {
+    console.log(`[F2A] Stopping daemon (PID: ${pid})...`);
+  }
 
   try {
     // 跨平台信号处理
@@ -524,7 +607,9 @@ export async function stopDaemon(): Promise<void> {
 
       // Force kill if process is still running
       if (isProcessRunning(pid)) {
-        console.log('[F2A] Daemon did not respond to SIGTERM. Force killing...');
+        if (!isJsonMode()) {
+          console.log('[F2A] Daemon did not respond to SIGTERM. Force killing...');
+        }
         process.kill(pid, 'SIGKILL');
         await new Promise(resolve => setTimeout(resolve, 500));
       }
@@ -534,19 +619,35 @@ export async function stopDaemon(): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 100));
     
     if (!isProcessRunning(pid)) {
-      console.log('[F2A] Daemon stopped successfully.');
       removePidFile();
+      if (isJsonMode()) {
+        outputJson({ status: 'stopped', pid: pid });
+      } else {
+        console.log('[F2A] Daemon stopped successfully.');
+      }
     } else {
-      console.error('[F2A] Error: Cannot stop daemon. Process may be stuck or requires higher privileges.');
-      process.exit(1);
+      if (isJsonMode()) {
+        outputError('Cannot stop daemon. Process may be stuck or requires higher privileges.', 'STOP_FAILED');
+      } else {
+        console.error('[F2A] Error: Cannot stop daemon. Process may be stuck or requires higher privileges.');
+        process.exit(1);
+      }
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EPERM') {
-      console.error('[F2A] Error: Permission denied. Cannot stop daemon.');
-      process.exit(1);
+      if (isJsonMode()) {
+        outputError('Permission denied. Cannot stop daemon.', 'PERMISSION_DENIED');
+      } else {
+        console.error('[F2A] Error: Permission denied. Cannot stop daemon.');
+        process.exit(1);
+      }
     } else if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
-      console.log('[F2A] Daemon process no longer exists.');
       removePidFile();
+      if (isJsonMode()) {
+        outputJson({ status: 'not_running', message: 'Daemon process no longer exists.' });
+      } else {
+        console.log('[F2A] Daemon process no longer exists.');
+      }
     } else {
       throw error;
     }
@@ -558,51 +659,74 @@ export async function stopDaemon(): Promise<void> {
  * Stop then start, keeping original configuration
  */
 export async function restartDaemon(): Promise<void> {
-  console.log('[F2A] Restarting daemon...');
+  if (!isJsonMode()) {
+    console.log('[F2A] Restarting daemon...');
+  }
   
   // Check current status
   const status = getDaemonStatus();
+  const oldPid = status.pid;
   
   if (status.running) {
-    console.log('[F2A] Stopping current daemon...');
+    if (!isJsonMode()) {
+      console.log('[F2A] Stopping current daemon...');
+    }
     await stopDaemon();
     
     // Wait briefly for port to be released
-    console.log('[F2A] Waiting for resources to be released...');
+    if (!isJsonMode()) {
+      console.log('[F2A] Waiting for resources to be released...');
+    }
     await new Promise(resolve => setTimeout(resolve, 1000));
   } else {
-    console.log('[F2A] No daemon is currently running.');
+    if (!isJsonMode()) {
+      console.log('[F2A] No daemon is currently running.');
+    }
   }
   
   // Check if port is still in use
   const controlPort = getControlPort();
-  const portInUse = await checkPortInUse(controlPort);
+  let portStillInUse = await checkPortInUse(controlPort);
   
-  if (portInUse) {
-    console.warn(`[F2A] Warning: Port ${controlPort} is still in use.`);
-    console.warn('[F2A] Waiting longer for port to be released...');
+  if (portStillInUse) {
+    if (!isJsonMode()) {
+      console.warn(`[F2A] Warning: Port ${controlPort} is still in use.`);
+      console.warn('[F2A] Waiting longer for port to be released...');
+    }
     
     // Wait up to 10 seconds
     let attempts = 0;
     const maxAttempts = 20;
     
-    while (portInUse && attempts < maxAttempts) {
+    while (portStillInUse && attempts < maxAttempts) {
       await new Promise(resolve => setTimeout(resolve, 500));
       attempts++;
+      portStillInUse = await checkPortInUse(controlPort);
     }
     
-    if (await checkPortInUse(controlPort)) {
-      console.error(`[F2A] Error: Port ${controlPort} is still in use. Cannot start daemon.`);
-      console.error('[F2A] Hint: Please manually check and release the port.');
-      process.exit(1);
+    if (portStillInUse) {
+      if (isJsonMode()) {
+        outputError(`Port ${controlPort} is still in use. Cannot start daemon.`, 'PORT_IN_USE');
+      } else {
+        console.error(`[F2A] Error: Port ${controlPort} is still in use. Cannot start daemon.`);
+        console.error('[F2A] Hint: Please manually check and release the port.');
+        process.exit(1);
+      }
+      return;
     }
   }
   
   // Start daemon
-  console.log('[F2A] Starting daemon...');
+  if (!isJsonMode()) {
+    console.log('[F2A] Starting daemon...');
+  }
   await startBackground();
   
-  console.log('[F2A] Daemon restart completed successfully.');
+  // Note: startBackground() already outputs JSON in JSON mode, so we don't need to output again here
+  // The success/failure is handled by startBackground()
+  if (!isJsonMode()) {
+    console.log('[F2A] Daemon restart completed successfully.');
+  }
 }
 
 /**

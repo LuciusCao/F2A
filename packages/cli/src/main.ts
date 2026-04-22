@@ -310,21 +310,25 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
   switch (subcommand) {
     case 'init':
       const initOpts = parseArgs(restArgs);
-      const initWebhook = initOpts.webhook as string | undefined;
-      if (!initWebhook) {
+      // Collect all missing required parameters
+      const missingParams: string[] = [];
+      if (!initOpts.name) missingParams.push('--name');
+      if (!initOpts.webhook) missingParams.push('--webhook');
+      
+      if (missingParams.length > 0) {
         if (isJsonMode()) {
-          outputError('Missing required parameter: --webhook', 'MISSING_WEBHOOK');
+          outputError(`Missing required parameters: ${missingParams.join(', ')}`, 'MISSING_PARAMETERS');
         } else {
-          console.error('❌ Missing --webhook parameter');
-          console.error('Agent requires a webhook URL to receive messages');
-          console.error('Usage: f2a agent init --name <name> --webhook <url>');
+          console.error(`❌ Missing required parameters: ${missingParams.join(', ')}`);
+          console.error('Usage: f2a agent init --name <name> --webhook <url> [--capability <cap>]...');
           process.exit(1);
         }
         return;
       }
+      
       await cliInitAgent({
         name: initOpts.name as string,
-        webhook: initWebhook,
+        webhook: initOpts.webhook as string,
         capabilities: Array.isArray(initOpts.capability)
           ? initOpts.capability as string[]
           : initOpts.capability

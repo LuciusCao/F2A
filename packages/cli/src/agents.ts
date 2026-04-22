@@ -15,6 +15,7 @@ import { join } from 'path';
 import { readIdentityByAgentId, AGENT_IDENTITIES_DIR } from './init.js';
 import type { RFC008IdentityFile, Challenge, ChallengeResponse } from '@f2a/network';
 import { signChallenge } from '@f2a/network';
+import { isJsonMode, outputJson, outputError } from './output.js';
 
 /**
  * 更新身份文件（添加 nodeSignature）
@@ -53,26 +54,26 @@ export async function registerAgent(options: {
   force?: boolean;
 }): Promise<void> {
   if (!options.agentId) {
-    console.error('❌ 缺少 --agent-id 参数');
-    console.error('用法：f2a agent register --agent-id <agentId>');
+    console.error('❌ Error: Missing required parameter --agent-id. The agent ID is required for registration.');
+    console.error('Usage: f2a agent register --agent-id <agentId>');
     process.exit(1);
   }
 
   const identity = readIdentityByAgentId(options.agentId);
 
   if (!identity) {
-    console.error('❌ 找不到身份文件');
+    console.error('❌ Error: Identity file not found.');
     console.error(`   AgentId: ${options.agentId}`);
-    console.error('请先运行: f2a agent init --name <name> --webhook <url>');
+    console.error('Please run: f2a agent init --name <name> --webhook <url>');
     process.exit(1);
   }
 
   // 检查是否已注册
   if (identity.nodeSignature && !options.force) {
-    console.log('✅ Agent 已注册');
+    console.log('✅ Success: Agent is already registered.');
     console.log(`   AgentId: ${identity.agentId}`);
     console.log(`   Node PeerId: ${identity.nodePeerId || 'N/A'}`);
-    console.log('   使用 --force 强制重新注册');
+    console.log('   Use --force to re-register.');
     return;
   }
 
@@ -101,7 +102,7 @@ export async function registerAgent(options: {
         updateIdentityWithNodeSignature(options.agentId, identity, nodeSignature, nodePeerId);
       }
 
-      console.log('✅ Agent 已注册');
+      console.log('✅ Success: Agent registered successfully.');
       console.log(`   AgentId: ${identity.agentId}`);
       console.log(`   Name: ${identity.name || 'N/A'}`);
       if (capabilities.length > 0) {
@@ -114,13 +115,13 @@ export async function registerAgent(options: {
         console.log(`   Node: ${nodePeerId.slice(0, 24)}...`);
       }
     } else {
-      console.error(`❌ 注册失败: ${result.error}`);
+      console.error(`❌ Error: Registration failed: ${result.error}`);
       process.exit(1);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 Daemon: ${message}`);
-    console.error('请确保 Daemon 正在运行: f2a daemon start');
+    console.error(`❌ Error: Unable to connect to Daemon: ${message}`);
+    console.error('Please ensure Daemon is running: f2a daemon start');
     process.exit(1);
   }
 }
@@ -134,9 +135,14 @@ export async function listAgents(): Promise<void> {
     const result = await sendRequest('GET', '/api/v1/agents');
 
     if (!result.success) {
-      console.error(`❌ 获取 Agent 列表失败: ${result.error}`);
-      console.error('请确保 Daemon 正在运行: f2a daemon start');
-      process.exit(1);
+      if (isJsonMode()) {
+        outputError(result.error as string, 'LIST_FAILED');
+      } else {
+        console.error(`❌ Error: Failed to get agent list: ${result.error}`);
+        console.error('Please ensure Daemon is running: f2a daemon start');
+        process.exit(1);
+      }
+      return;
     }
 
     if (result.agents) {
@@ -148,36 +154,52 @@ export async function listAgents(): Promise<void> {
         lastActiveAt?: string;
       }>;
 
-      if (agents.length === 0) {
-        console.log('📭 没有已注册的 Agent');
-        return;
-      }
-
-      console.log(`🤖 已注册的 Agent (${agents.length}):`);
-      console.log('');
-
-      for (const agent of agents) {
-        const lastActive = agent.lastActiveAt
-          ? new Date(agent.lastActiveAt).toLocaleString('zh-CN')
-          : 'never';
-
-        console.log(`🔹 ${agent.name}`);
-        console.log(`   ID: ${agent.agentId}`);
-        if (agent.capabilities && agent.capabilities.length > 0) {
-          console.log(`   Capabilities: ${agent.capabilities.map(c => c.name).join(', ')}`);
+      if (isJsonMode()) {
+        outputJson({
+          agents: agents.map(agent => ({
+            agentId: agent.agentId,
+            name: agent.name,
+            capabilities: agent.capabilities || [],
+            webhookUrl: agent.webhookUrl,
+            lastActiveAt: agent.lastActiveAt
+          }))
+        });
+      } else {
+        if (agents.length === 0) {
+          console.log('📭 No registered agents found.');
+          return;
         }
-        if (agent.webhookUrl) {
-          console.log(`   Webhook: ${agent.webhookUrl}`);
-        }
-        console.log(`   Last Active: ${lastActive}`);
+
+        console.log(`🤖 Registered Agents (${agents.length}):`);
         console.log('');
+
+        for (const agent of agents) {
+          const lastActive = agent.lastActiveAt
+            ? new Date(agent.lastActiveAt).toLocaleString('zh-CN')
+            : 'never';
+
+          console.log(`🔹 ${agent.name}`);
+          console.log(`   ID: ${agent.agentId}`);
+          if (agent.capabilities && agent.capabilities.length > 0) {
+            console.log(`   Capabilities: ${agent.capabilities.map(c => c.name).join(', ')}`);
+          }
+          if (agent.webhookUrl) {
+            console.log(`   Webhook: ${agent.webhookUrl}`);
+          }
+          console.log(`   Last Active: ${lastActive}`);
+          console.log('');
+        }
       }
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 Daemon: ${message}`);
-    console.error('请确保 Daemon 正在运行: f2a daemon start');
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError(message, 'DAEMON_NOT_RUNNING');
+    } else {
+      console.error(`❌ Error: Unable to connect to Daemon: ${message}`);
+      console.error('Please ensure Daemon is running: f2a daemon start');
+      process.exit(1);
+    }
   }
 }
 
@@ -197,24 +219,24 @@ export async function updateAgent(options: {
   name?: string;
 }): Promise<void> {
   if (!options.agentId) {
-    console.error('❌ 缺少 --agent-id 参数');
-    console.error('用法: f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]');
+    console.error('❌ Error: Missing required parameter --agent-id. The agent ID is required for updating agent configuration.');
+    console.error('Usage: f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]');
     process.exit(1);
   }
 
   const identity = readIdentityByAgentId(options.agentId);
 
   if (!identity) {
-    console.error('❌ 找不到身份文件');
+    console.error('❌ Error: Identity file not found.');
     console.error(`   AgentId: ${options.agentId}`);
-    console.error('请先运行: f2a agent init --name <name> --webhook <url>');
+    console.error('Please run: f2a agent init --name <name> --webhook <url>');
     process.exit(1);
   }
 
   if (!identity.privateKey) {
-    console.error('❌ 身份文件缺少私钥，无法签名验证');
+    console.error('❌ Error: Identity file missing private key. Cannot sign for verification.');
     console.error(`   AgentId: ${options.agentId}`);
-    console.error('请确保身份文件完整，或重新创建');
+    console.error('Please ensure the identity file is complete, or recreate it.');
     process.exit(1);
   }
 
@@ -224,8 +246,8 @@ export async function updateAgent(options: {
   if (options.name) updates.push('name');
 
   if (updates.length === 0) {
-    console.log('⚠️  没有要更新的内容');
-    console.error('请提供 --webhook 或 --name 参数');
+    console.log('⚠️  Warning: Nothing to update.');
+    console.error('Please provide --webhook or --name parameter.');
     process.exit(1);
   }
 
@@ -262,8 +284,8 @@ export async function updateAgent(options: {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 Daemon: ${message}`);
-    console.error('请确保 Daemon 正在运行: f2a daemon start');
+    console.error(`❌ Error: Unable to connect to Daemon: ${message}`);
+    console.error('Please ensure Daemon is running: f2a daemon start');
     process.exit(1);
   }
 }
@@ -289,7 +311,7 @@ function handleUpdateResult(
     const identityPath = join(AGENT_IDENTITIES_DIR, `${options.agentId}.json`);
     writeFileSync(identityPath, JSON.stringify(identity, null, 2), { mode: 0o600 });
 
-    console.log('✅ Agent 已更新');
+    console.log('✅ Success: Agent updated successfully.');
     console.log(`   AgentId: ${options.agentId}`);
     if (options.name) {
       console.log(`   Name: ${options.name}`);
@@ -298,14 +320,14 @@ function handleUpdateResult(
       console.log(`   Webhook: ${options.webhook}`);
     }
     console.log('');
-    console.log('💡 Daemon 和本地身份文件已同步更新');
+    console.log('💡 Daemon and local identity file have been synchronized.');
   } else {
-    console.error(`❌ 更新失败: ${result.error}`);
+    console.error(`❌ Error: Update failed: ${result.error}`);
     if (result.code === 'AGENT_NOT_FOUND') {
-      console.error('提示: Agent 未注册，请先注册');
+      console.error('Hint: Agent not registered. Please register first.');
       console.error('      f2a agent register --agent-id ' + options.agentId);
     } else if (result.code === 'CHALLENGE_FAILED') {
-      console.error('提示: 身份验证失败，请检查身份文件是否完整');
+      console.error('Hint: Authentication failed. Please check if the identity file is complete.');
     }
     process.exit(1);
   }
@@ -317,23 +339,23 @@ function handleUpdateResult(
  */
 export async function unregisterAgent(agentId: string): Promise<void> {
   if (!agentId || agentId.startsWith('--')) {
-    console.error('❌ 缺少 --agent-id 参数');
-    console.error('用法: f2a agent unregister --agent-id <agentId>');
+    console.error('❌ Error: Missing required parameter --agent-id. The agent ID is required for unregistration.');
+    console.error('Usage: f2a agent unregister --agent-id <agentId>');
     process.exit(1);
   }
 
   // 读取身份文件（Challenge-Response 需要）
   const identity = readIdentityByAgentId(agentId);
   if (!identity) {
-    console.error('❌ 找不到身份文件');
+    console.error('❌ Error: Identity file not found.');
     console.error(`   AgentId: ${agentId}`);
-    console.error('请先运行: f2a agent init --name <name> --webhook <url>');
+    console.error('Please run: f2a agent init --name <name> --webhook <url>');
     process.exit(1);
   }
 
   if (!identity.privateKey) {
-    console.error('❌ 身份文件缺少私钥，无法签名验证');
-    console.error('请确保身份文件完整');
+    console.error('❌ Error: Identity file missing private key. Cannot sign for verification.');
+    console.error('Please ensure the identity file is complete.');
     process.exit(1);
   }
 
@@ -347,20 +369,20 @@ export async function unregisterAgent(agentId: string): Promise<void> {
     );
 
     if (result.success) {
-      console.log('✅ Agent 已注销');
+      console.log('✅ Success: Agent unregistered successfully.');
       console.log(`   AgentId: ${agentId}`);
-      console.log('   身份文件已保留，可重新注册');
+      console.log('   Identity file retained, can re-register.');
     } else {
-      console.error(`❌ 注销失败: ${result.error}`);
+      console.error(`❌ Error: Unregistration failed: ${result.error}`);
       if (result.code === 'CHALLENGE_FAILED') {
-        console.error('提示: 身份验证失败，请检查身份文件');
+        console.error('Hint: Authentication failed. Please check the identity file.');
       }
       process.exit(1);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 Daemon: ${message}`);
-    console.error('请确保 Daemon 正在运行: f2a daemon start');
+    console.error(`❌ Error: Unable to connect to Daemon: ${message}`);
+    console.error('Please ensure Daemon is running: f2a daemon start');
     process.exit(1);
   }
 }

@@ -431,7 +431,7 @@ describe('CLI Daemon Commands', () => {
       
       await expect(startForeground()).rejects.toThrow('exit');
       
-      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Daemon 已经在运行中');
+      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Error: Daemon is already running. Please stop it before starting a new instance.');
       
       consoleSpy.mockRestore();
       exitSpy.mockRestore();
@@ -457,7 +457,7 @@ describe('CLI Daemon Commands', () => {
       
       await expect(startBackground()).rejects.toThrow('exit');
       
-      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Daemon 已经在运行中');
+      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Error: Daemon is already running. Please stop it before starting a new instance.');
       
       consoleSpy.mockRestore();
       exitSpy.mockRestore();
@@ -498,7 +498,7 @@ describe('CLI Daemon Commands', () => {
       
       await expect(startBackground()).rejects.toThrow('exit');
       
-      expect(consoleSpy).toHaveBeenCalledWith('[F2A] 错误: 找不到 daemon 脚本');
+      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Error: Daemon script not found.');
       
       consoleSpy.mockRestore();
       exitSpy.mockRestore();
@@ -514,7 +514,7 @@ describe('CLI Daemon Commands', () => {
       const { stopDaemon } = await import('./daemon.js');
       await stopDaemon();
       
-      expect(consoleSpy).toHaveBeenCalledWith('[F2A] 没有运行中的 daemon');
+      expect(consoleSpy).toHaveBeenCalledWith('[F2A] No daemon is currently running.');
       
       consoleSpy.mockRestore();
     });
@@ -536,7 +536,7 @@ describe('CLI Daemon Commands', () => {
       const { stopDaemon } = await import('./daemon.js');
       await stopDaemon();
       
-      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Daemon 进程已不存在，清理 PID 文件');
+      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Daemon process no longer exists. Cleaning up PID file.');
       
       consoleSpy.mockRestore();
       (process as any).kill = originalKill;
@@ -572,7 +572,7 @@ describe('CLI Daemon Commands', () => {
       const { stopDaemon } = await import('./daemon.js');
       await stopDaemon();
       
-      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Daemon 已停止');
+      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Daemon stopped successfully.');
       
       consoleSpy.mockRestore();
       (process as any).kill = originalKill;
@@ -607,7 +607,7 @@ describe('CLI Daemon Commands', () => {
       
       await expect(stopDaemon()).rejects.toThrow('exit');
       
-      expect(consoleSpy).toHaveBeenCalledWith('[F2A] 没有权限停止 daemon');
+      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Error: Permission denied. Cannot stop daemon.');
       
       consoleSpy.mockRestore();
       exitSpy.mockRestore();
@@ -647,15 +647,15 @@ describe('CLI Daemon Commands', () => {
       await stopDaemon();
       
       // Verify the daemon stopping process includes force kill message
-      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Daemon 未响应 SIGTERM，强制终止...');
+      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Daemon did not respond to SIGTERM. Force killing...');
       
       // The final message should indicate the daemon stopped
       // Depending on where the ESRCH exception is caught, it could be either:
-      // - "[F2A] Daemon 已停止" (if caught by isProcessRunning and returns false)
-      // - "[F2A] Daemon 进程已不存在" (if caught by outer catch block)
+      // - "[F2A] Daemon stopped successfully." (if caught by isProcessRunning and returns false)
+      // - "[F2A] Daemon process no longer exists." (if caught by outer catch block)
       // Both are correct outcomes indicating the daemon was stopped
       const calls = consoleSpy.mock.calls.map(call => call[0]);
-      const hasStopped = calls.includes('[F2A] Daemon 已停止') || calls.includes('[F2A] Daemon 进程已不存在');
+      const hasStopped = calls.includes('[F2A] Daemon stopped successfully.') || calls.includes('[F2A] Daemon process no longer exists.');
       expect(hasStopped).toBe(true);
       
       consoleSpy.mockRestore();
@@ -682,8 +682,8 @@ describe('CLI Daemon Commands', () => {
       const { showStatus } = await import('./daemon.js');
       await showStatus();
       
-      expect(consoleSpy).toHaveBeenCalledWith('F2A Daemon 状态:');
-      expect(consoleSpy).toHaveBeenCalledWith('  运行中: 否');
+      expect(consoleSpy).toHaveBeenCalledWith('F2A Daemon Status:');
+      expect(consoleSpy).toHaveBeenCalledWith('  Running: No');
       
       consoleSpy.mockRestore();
     });
@@ -715,7 +715,7 @@ describe('CLI Daemon Commands', () => {
       const { showStatus } = await import('./daemon.js');
       await showStatus();
       
-      expect(consoleSpy).toHaveBeenCalledWith('  运行中: 是');
+      expect(consoleSpy).toHaveBeenCalledWith('  Running: Yes');
       expect(consoleSpy).toHaveBeenCalledWith('  PID: 12345');
       
       consoleSpy.mockRestore();
@@ -768,17 +768,17 @@ describe('CLI Daemon Commands', () => {
 
   describe('daemon script path', () => {
     it('should use correct path for daemon script', async () => {
-      // 实际测试：验证路径计算正确
+      // Actual test: verify path calculation is correct
       const { join } = await import('path');
       const { fileURLToPath } = await import('url');
       const { existsSync } = await import('fs');
       
-      // 计算实际路径（模拟 daemon.ts 中的逻辑）
+      // Calculate actual path (simulate logic in daemon.ts)
       const __filename = fileURLToPath(import.meta.url);
       const __dirname = join(__filename, '..');
       const daemonScript = join(__dirname, '..', 'daemon', 'main.js');
       
-      // 验证路径存在（这是真实文件系统测试）
+      // Verify path exists (this is a real filesystem test)
       expect(existsSync(daemonScript)).toBe(true);
     });
   });
@@ -1093,7 +1093,7 @@ describe('CLI Daemon Commands', () => {
       // Wait for async operations
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      expect(consoleSpy).toHaveBeenCalledWith('  运行中: 是');
+      expect(consoleSpy).toHaveBeenCalledWith('  Running: Yes');
       expect(consoleSpy).toHaveBeenCalledWith('  PID: 12345');
       
       consoleSpy.mockRestore();
@@ -1140,7 +1140,7 @@ describe('CLI Daemon Commands', () => {
       await new Promise(resolve => setTimeout(resolve, 100));
       
       // Should still show status without peerId
-      expect(consoleSpy).toHaveBeenCalledWith('  运行中: 是');
+      expect(consoleSpy).toHaveBeenCalledWith('  Running: Yes');
       
       consoleSpy.mockRestore();
       (process as any).kill = originalKill;
@@ -1175,7 +1175,7 @@ describe('CLI Daemon Commands', () => {
       // Wait for async operations
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      expect(consoleSpy).toHaveBeenCalledWith('  运行中: 是');
+      expect(consoleSpy).toHaveBeenCalledWith('  Running: Yes');
       
       consoleSpy.mockRestore();
       (process as any).kill = originalKill;
@@ -1210,7 +1210,7 @@ describe('CLI Daemon Commands', () => {
       // Wait for async operations
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      expect(consoleSpy).toHaveBeenCalledWith('  运行中: 是');
+      expect(consoleSpy).toHaveBeenCalledWith('  Running: Yes');
       
       consoleSpy.mockRestore();
       (process as any).kill = originalKill;
@@ -1325,7 +1325,7 @@ describe('CLI Daemon Commands', () => {
       
       await expect(startForeground()).rejects.toThrow('exit');
       
-      expect(consoleSpy).toHaveBeenCalledWith('[F2A] 端口 9001 已被占用');
+      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Error: Port 9001 is already in use.');
       
       consoleSpy.mockRestore();
       exitSpy.mockRestore();
@@ -1336,7 +1336,7 @@ describe('CLI Daemon Commands', () => {
     it('should exit when port is already in use', async () => {
       // Mock sequence:
       // 1. isDaemonRunning: PID file doesn't exist -> port check -> port in use
-      // This should trigger "Daemon 已经在运行中" error
+      // This should trigger "Daemon is already running" error
       
       (existsSync as any).mockReset();
       (existsSync as any).mockReturnValue(false);
@@ -1364,8 +1364,8 @@ describe('CLI Daemon Commands', () => {
       
       await expect(startBackground()).rejects.toThrow('exit');
       
-      // When port is in use, isDaemonRunning returns true, so we get "Daemon 已经在运行中"
-      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Daemon 已经在运行中');
+      // When port is in use, isDaemonRunning returns true, so we get "Daemon is already running"
+      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Error: Daemon is already running. Please stop it before starting a new instance.');
       
       consoleSpy.mockRestore();
       exitSpy.mockRestore();
@@ -1412,8 +1412,8 @@ describe('CLI Daemon Commands', () => {
       // Wait for async operations
       await new Promise(resolve => setTimeout(resolve, 200));
       
-      expect(consoleSpy).toHaveBeenCalledWith('  运行中: 是 (PID 文件丢失)');
-      expect(consoleSpy).toHaveBeenCalledWith('  警告: 检测到端口 9001 被占用，但 PID 文件不存在');
+      expect(consoleSpy).toHaveBeenCalledWith('  Running: Yes (PID file missing)');
+      expect(consoleSpy).toHaveBeenCalledWith('  Warning: Port 9001 is in use but PID file does not exist.');
       
       consoleSpy.mockRestore();
     });
@@ -1493,8 +1493,8 @@ describe('CLI Daemon Commands', () => {
       const { showStatus } = await import('./daemon.js');
       await showStatus();
       
-      expect(consoleSpy).toHaveBeenCalledWith('  运行中: 否');
-      expect(consoleSpy).toHaveBeenCalledWith('  使用 "f2a daemon" 启动 daemon');
+      expect(consoleSpy).toHaveBeenCalledWith('  Running: No');
+      expect(consoleSpy).toHaveBeenCalledWith('  Hint: Use "f2a daemon" to start the daemon.');
       
       consoleSpy.mockRestore();
     });

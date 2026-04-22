@@ -47,13 +47,12 @@ describe('CLI Main Entry (main.ts)', () => {
       it('should show all available commands in help', async () => {
         const result = await runCli(['--help']);
         
-        // 验证主要命令出现在帮助中（注意：帮助文本用的是 "message" 而不是 "messages"）
-        expect(result.stdout).toContain('status');
-        expect(result.stdout).toContain('peers');
-        expect(result.stdout).toContain('send');
-        expect(result.stdout).toContain('message');  // 帮助显示为 "message"
+        // 验证主要命令出现在帮助中
+        expect(result.stdout).toContain('node');
         expect(result.stdout).toContain('agent');
-        expect(result.stdout).toContain('restart');  // restart 子命令
+        expect(result.stdout).toContain('message');
+        expect(result.stdout).toContain('daemon');
+        expect(result.stdout).toContain('identity');
       });
     });
 
@@ -100,26 +99,26 @@ describe('CLI Main Entry (main.ts)', () => {
     describe('子命令路由', () => {
       // 这些测试需要 daemon 运行，所以主要验证命令格式和错误处理
       
-      it('should attempt to send status command without daemon', async () => {
-        const result = await runCli(['status']);
+      it('should attempt to send node status command without daemon', async () => {
+        const result = await runCli(['node', 'status']);
         
         // 无 daemon 时应显示连接错误（中文或英文）
         expect(result.stderr).toMatch(/无法连接|Failed to connect|Connection failed/);
         expect(result.stderr).toMatch(/daemon|Daemon/);
       });
 
-      it('should attempt to send peers command without daemon', async () => {
-        const result = await runCli(['peers']);
+      it('should attempt to send node peers command without daemon', async () => {
+        const result = await runCli(['node', 'peers']);
         
         expect(result.stderr).toMatch(/无法连接|Failed to connect|Connection failed/);
       });
 
-      it('should handle init command (may show deprecation notice)', async () => {
-        const result = await runCli(['init']);
+      it('should handle node init command (may show deprecation notice)', async () => {
+        const result = await runCli(['node', 'init']);
         
-        // init 命令可能显示废弃提示或连接错误
+        // node init 命令可能显示废弃提示或连接错误
         const combined = result.stdout + result.stderr;
-        expect(combined).toMatch(/废弃|daemon|Daemon|无法连接|Failed to connect|Connection failed/);
+        expect(combined).toMatch(/废弃|daemon|Daemon|无法连接|Failed to connect|Connection failed|Node Identity/);
       });
     });
 

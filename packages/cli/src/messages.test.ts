@@ -3,16 +3,24 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Mock process.exit to prevent tests from exiting
 process.exit = vi.fn() as any;
 
-// 在导入模块前设置环境变量
+// Set environment variables before importing modules
 process.env.F2A_CONTROL_TOKEN = '***';
 process.env.F2A_CONTROL_PORT = '9001';
 
 import { sendMessage, getMessages, clearMessages } from './messages.js';
 import { request, RequestOptions } from 'http';
+import { isJsonMode, outputJson, outputError } from './output.js';
 
 // Mock http module
 vi.mock('http', () => ({
   request: vi.fn(),
+}));
+
+// Mock output module
+vi.mock('./output.js', () => ({
+  isJsonMode: vi.fn(() => false),
+  outputJson: vi.fn(),
+  outputError: vi.fn(),
 }));
 
 // Mock control-token module
@@ -90,7 +98,7 @@ describe('CLI Messages Commands', () => {
   });
 
   describe('sendMessage', () => {
-    describe('参数验证', () => {
+    describe('Parameter validation', () => {
       it('should fail when agentId is missing', async () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         
@@ -108,13 +116,13 @@ describe('CLI Messages Commands', () => {
         await sendMessage({ agentId: 'agent:test:123', content: '' });
 
         expect(process.exit).toHaveBeenCalledWith(1);
-        expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('消息内容'));
+        expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('message content'));
         
         consoleErrorSpy.mockRestore();
       });
     });
 
-    describe('发送流程', () => {
+    describe('Send flow', () => {
       it('should send direct message successfully', async () => {
         const responseData = { success: true, messageId: 'msg:123' };
 
@@ -186,7 +194,7 @@ describe('CLI Messages Commands', () => {
           content: 'hello',
         });
 
-        expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('发送失败'));
+        expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to send'));
         
         consoleErrorSpy.mockRestore();
       });
@@ -194,7 +202,7 @@ describe('CLI Messages Commands', () => {
   });
 
   describe('getMessages', () => {
-    describe('正常路径', () => {
+    describe('Normal flow', () => {
       it('should display messages when messages exist', async () => {
         const responseData = {
           success: true,
@@ -246,15 +254,196 @@ describe('CLI Messages Commands', () => {
         
         await getMessages({ agentId: 'agent:test:456' });
 
-        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('没有消息'));
+        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('No messages'));
         
         consoleSpy.mockRestore();
+      });
+    });
+
+    describe('JSON output mode', () => {
+      it('should output messages as JSON when jsonMode is enabled', async () => {
+        const responseData = {
+          success: true,
+          messages: [
+            {
+              messageId: 'msg:1',
+              fromAgentId: 'agent:sender:123',
+              toAgentId: 'agent:test:456',
+              content: 'Hello',
+              type: 'message',
+              createdAt: '2024-01-01T00:00:00Z',
+              read: false,
+            },
+            {
+              messageId: 'msg:2',
+              fromAgentId: 'agent:sender:789',
+              toAgentId: 'agent:test:456',
+              content: 'World',
+              type: 'task_request',
+              createdAt: '2024-01-02T00:00:00Z',
+              read: true,
+            },
+          ],
+        };
+
+        mockResponse.on.mockImplementation((event: string, callback: Function) => {
+          if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
+          if (event === 'end') callback();
+        });
+
+        (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
+          callback(mockResponse);
+          return mockRequest;
+        });
+
+        (isJsonMode as any).mockReturnValue(true);
+        
+        await getMessages({ agentId: 'agent:test:456' });
+
+        expect(outputJson).toHaveBeenCalledWith({
+          messages: expect.arrayContaining([
+            expect.objectContaining({ content: 'Hello' }),
+            expect.objectContaining({ content: 'World' }),
+          ]),
+          total: 2,
+          unread: 1,
+        });
+
+        (isJsonMode as any).mockReturnValue(false);
+      });
+
+      it('should output error JSON when agentId is missing in jsonMode', async () => {
+        (isJsonMode as any).mockReturnValue(true);
+        
+        await getMessages({ agentId: '' });
+
+        expect(outputError).toHaveBeenCalledWith('Missing required --agent-id parameter', 'MISSING_AGENT_ID');
+        
+        (isJsonMode as any).mockReturnValue(false);
+      });
+
+      it('should output error JSON when API request fails', async () => {
+        const responseData = { success: false, error: 'Agent not found' };
+
+        mockResponse.on.mockImplementation((event: string, callback: Function) => {
+          if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
+          if (event === 'end') callback();
+        });
+
+        (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
+          callback(mockResponse);
+          return mockRequest;
+        });
+
+        (isJsonMode as any).mockReturnValue(true);
+        
+        await getMessages({ agentId: 'agent:test:456' });
+
+        expect(outputError).toHaveBeenCalledWith('Agent not found', 'MESSAGES_FAILED');
+        
+        (isJsonMode as any).mockReturnValue(false);
+      });
+
+      it('should output error JSON when daemon is not running', async () => {
+        const responseData = { 
+          success: false, 
+          error: 'Connection failed: ECONNREFUSED. Please ensure daemon is running.' 
+        };
+
+        mockResponse.on.mockImplementation((event: string, callback: Function) => {
+          if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
+          if (event === 'end') callback();
+        });
+
+        (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
+          callback(mockResponse);
+          return mockRequest;
+        });
+
+        (isJsonMode as any).mockReturnValue(true);
+        
+        await getMessages({ agentId: 'agent:test:456' });
+
+        expect(outputError).toHaveBeenCalledWith(
+          expect.stringContaining('ECONNREFUSED'),
+          'MESSAGES_FAILED'
+        );
+        
+        (isJsonMode as any).mockReturnValue(false);
+      });
+
+      it('should filter unread messages in JSON mode', async () => {
+        const responseData = {
+          success: true,
+          messages: [
+            {
+              messageId: 'msg:1',
+              content: 'Unread',
+              read: false,
+            },
+            {
+              messageId: 'msg:2',
+              content: 'Read',
+              read: true,
+            },
+          ],
+        };
+
+        mockResponse.on.mockImplementation((event: string, callback: Function) => {
+          if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
+          if (event === 'end') callback();
+        });
+
+        (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
+          callback(mockResponse);
+          return mockRequest;
+        });
+
+        (isJsonMode as any).mockReturnValue(true);
+        
+        await getMessages({ agentId: 'agent:test:456', unread: true });
+
+        expect(outputJson).toHaveBeenCalledWith({
+          messages: expect.arrayContaining([
+            expect.objectContaining({ content: 'Unread' }),
+          ]),
+          total: 1,
+          unread: 1,
+        });
+
+        (isJsonMode as any).mockReturnValue(false);
+      });
+
+      it('should output empty messages array as JSON', async () => {
+        const responseData = { success: true, messages: [] };
+
+        mockResponse.on.mockImplementation((event: string, callback: Function) => {
+          if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
+          if (event === 'end') callback();
+        });
+
+        (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
+          callback(mockResponse);
+          return mockRequest;
+        });
+
+        (isJsonMode as any).mockReturnValue(true);
+        
+        await getMessages({ agentId: 'agent:test:456' });
+
+        expect(outputJson).toHaveBeenCalledWith({
+          messages: [],
+          total: 0,
+          unread: 0,
+        });
+
+        (isJsonMode as any).mockReturnValue(false);
       });
     });
   });
 
   describe('clearMessages', () => {
-    describe('正常路径', () => {
+    describe('Normal flow', () => {
       it('should clear messages successfully', async () => {
         const responseData = { success: true, cleared: 5 };
 
@@ -278,7 +467,7 @@ describe('CLI Messages Commands', () => {
       });
     });
 
-    describe('参数验证', () => {
+    describe('Parameter validation', () => {
       it('should fail when agentId is missing', async () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         

@@ -6,6 +6,14 @@ import { request } from 'http';
 import { createServer } from 'net';
 import { spawn } from 'child_process';
 
+// Mock output module
+vi.mock('./output.js', () => ({
+  isJsonMode: vi.fn(() => false), // Default: false
+  outputJson: vi.fn(),
+  outputError: vi.fn(),
+  setJsonMode: vi.fn(),
+}));
+
 // Mock fs module properly with importOriginal
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal();
@@ -44,14 +52,17 @@ describe('daemon.ts coverage improvement', () => {
   const F2A_DIR = join(homedir(), '.f2a');
   const LOG_FILE = join(F2A_DIR, 'daemon.log');
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    // Reset isJsonMode to return false by default
+    const outputModule = await import('./output.js');
+    vi.mocked(outputModule.isJsonMode).mockReturnValue(false);
     process.env.F2A_CONTROL_PORT = '9001';
   });
 
   afterEach(() => {
     delete process.env.F2A_CONTROL_PORT;
-    vi.resetModules();
+    vi.clearAllMocks();
   });
 
   describe('showStatus - daemon running with PID file', () => {
@@ -107,11 +118,11 @@ describe('daemon.ts coverage improvement', () => {
       // Wait for async operations
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      expect(consoleSpy).toHaveBeenCalledWith('F2A Daemon 状态:');
-      expect(consoleSpy).toHaveBeenCalledWith('  控制端口: 9001');
-      expect(consoleSpy).toHaveBeenCalledWith('  运行中: 是');
+      expect(consoleSpy).toHaveBeenCalledWith('F2A Daemon Status:');
+      expect(consoleSpy).toHaveBeenCalledWith('  Control port: 9001');
+      expect(consoleSpy).toHaveBeenCalledWith('  Running: Yes');
       expect(consoleSpy).toHaveBeenCalledWith('  PID: 12345');
-      expect(consoleSpy).toHaveBeenCalledWith(`  日志文件: ${LOG_FILE}`);
+      expect(consoleSpy).toHaveBeenCalledWith(`  Log file: ${LOG_FILE}`);
       // peerId is sliced to 16 chars: 'test-peer-id-12345678901234567890' → 'test-peer-id-123'
       expect(consoleSpy).toHaveBeenCalledWith('  Node ID: test-peer-id-123...');
       
@@ -159,7 +170,7 @@ describe('daemon.ts coverage improvement', () => {
       
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      expect(consoleSpy).toHaveBeenCalledWith('  运行中: 是');
+      expect(consoleSpy).toHaveBeenCalledWith('  Running: Yes');
       expect(consoleSpy).toHaveBeenCalledWith('  PID: 12345');
       // Peer ID should NOT be printed when fetch fails
       
@@ -217,10 +228,10 @@ describe('daemon.ts coverage improvement', () => {
       
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      expect(consoleSpy).toHaveBeenCalledWith('  运行中: 是 (PID 文件丢失)');
-      expect(consoleSpy).toHaveBeenCalledWith('  警告: 检测到端口 9001 被占用，但 PID 文件不存在');
-      expect(consoleSpy).toHaveBeenCalledWith('  可能原因: 系统重启或 PID 文件被删除');
-      expect(consoleSpy).toHaveBeenCalledWith('  建议: 手动恢复 PID 文件或重启 daemon');
+      expect(consoleSpy).toHaveBeenCalledWith('  Running: Yes (PID file missing)');
+      expect(consoleSpy).toHaveBeenCalledWith('  Warning: Port 9001 is in use but PID file does not exist.');
+      expect(consoleSpy).toHaveBeenCalledWith('  Possible cause: System reboot or PID file was deleted.');
+      expect(consoleSpy).toHaveBeenCalledWith('  Suggestion: Manually restore PID file or restart daemon.');
       // peerId is sliced to 16 chars: 'port-only-peer-id-1234567890' → 'port-only-peer-i'
       expect(consoleSpy).toHaveBeenCalledWith('  Node ID: port-only-peer-i...');
       
@@ -264,8 +275,8 @@ describe('daemon.ts coverage improvement', () => {
       
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      expect(consoleSpy).toHaveBeenCalledWith('  运行中: 是 (PID 文件丢失)');
-      expect(consoleSpy).toHaveBeenCalledWith('  警告: 检测到端口 9001 被占用，但 PID 文件不存在');
+      expect(consoleSpy).toHaveBeenCalledWith('  Running: Yes (PID file missing)');
+      expect(consoleSpy).toHaveBeenCalledWith('  Warning: Port 9001 is in use but PID file does not exist.');
       // Peer ID should NOT be printed when fetch fails
       
       consoleSpy.mockRestore();
@@ -402,8 +413,8 @@ describe('daemon.ts coverage improvement', () => {
       
       await new Promise(resolve => setTimeout(resolve, 50));
       
-      expect(consoleSpy).toHaveBeenCalledWith('  运行中: 否');
-      expect(consoleSpy).toHaveBeenCalledWith('  使用 "f2a daemon" 启动 daemon');
+      expect(consoleSpy).toHaveBeenCalledWith('  Running: No');
+      expect(consoleSpy).toHaveBeenCalledWith('  Hint: Use "f2a daemon" to start the daemon.');
       
       consoleSpy.mockRestore();
     });
@@ -437,6 +448,9 @@ describe('daemon.ts coverage improvement', () => {
       expect(typeof restartDaemon).toBe('function');
     });
   });
+
+  // JSON output mode tests are in daemon.test.ts for simpler mock setup
+  // The daemon.ts implementation supports --json flag correctly
 
   // Note: The tests for fetchDaemonInfo with Peer ID are already covered 
   // in the existing daemon.test.ts "should show daemon running status with PID" test

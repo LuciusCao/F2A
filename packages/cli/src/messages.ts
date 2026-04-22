@@ -1,32 +1,33 @@
 /**
- * F2A CLI - 消息命令
+ * F2A CLI - Message Commands
  * f2a message send / list / clear
  * 
- * Challenge-Response 签名认证
- * - 按 agentId 查找本地身份文件
- * - 通过 /api/v1/challenge 获取 challenge
- * - 签名后通过 /api/v1/challenge/verify 获取临时 agentToken
- * - 使用 agentToken 发送消息
+ * Challenge-Response Signature Authentication
+ * - Find local identity file by agentId
+ * - Get challenge via /api/v1/challenge
+ * - Sign and get temporary agentToken via /api/v1/challenge/verify
+ * - Send message using agentToken
  */
 
 import { sendRequest } from './http-client.js';
 import { readIdentityByAgentId } from './init.js';
 import type { RFC008IdentityFile, Challenge, ChallengeResponse } from '@f2a/network';
 import { signChallenge } from '@f2a/network';
+import { isJsonMode, outputJson, outputError } from './output.js';
 
 /**
- * 通过 Challenge-Response 获取临时 Agent Token
+ * Get temporary Agent Token via Challenge-Response
  * 
- * 流程：
- * 1. POST /api/v1/challenge 获取 challenge
- * 2. 用私钥签名 challenge
- * 3. POST /api/v1/challenge/verify 验证并获取 agentToken
+ * Flow:
+ * 1. POST /api/v1/challenge to get challenge
+ * 2. Sign challenge with private key
+ * 3. POST /api/v1/challenge/verify to verify and get agentToken
  */
 async function getAgentTokenViaChallenge(
   identity: RFC008IdentityFile,
   toAgentId?: string
 ): Promise<string | undefined> {
-  // 1. 请求 challenge
+  // 1. Request challenge
   const challengeResult = await sendRequest('POST', '/api/v1/challenge', {
     agentId: identity.agentId,
     operation: 'send_message',
@@ -34,16 +35,16 @@ async function getAgentTokenViaChallenge(
   });
 
   if (!challengeResult.success || !challengeResult.challenge) {
-    console.error('❌ 获取 Challenge 失败:', challengeResult.error);
+    console.error('❌ Error: Failed to get challenge from server.', challengeResult.error);
     return undefined;
   }
 
   const challenge = challengeResult.challenge as Challenge;
 
-  // 2. 签名 challenge
+  // 2. Sign challenge
   const response: ChallengeResponse = signChallenge(challenge, identity.privateKey);
 
-  // 3. 验证 challenge 并获取 token
+  // 3. Verify challenge and get token
   const verifyResult = await sendRequest('POST', '/api/v1/challenge/verify', {
     agentId: identity.agentId,
     challenge,
@@ -51,7 +52,7 @@ async function getAgentTokenViaChallenge(
   });
 
   if (!verifyResult.success || !verifyResult.agentToken) {
-    console.error('❌ Challenge 验证失败:', verifyResult.error);
+    console.error('❌ Error: Challenge verification failed.', verifyResult.error);
     return undefined;
   }
 
@@ -59,11 +60,11 @@ async function getAgentTokenViaChallenge(
 }
 
 /**
- * 发送消息
+ * Send message
  * f2a message send --agent-id <agentId> --to <agentId> [--type <type>] <content>
  */
 export async function sendMessage(options: {
-  /** Agent ID（必填） */
+  /** Agent ID (required) */
   agentId: string;
   toAgentId?: string;
   content: string;
@@ -73,33 +74,33 @@ export async function sendMessage(options: {
   const { agentId, toAgentId, content, type, metadata } = options;
 
   if (!agentId) {
-    console.error('❌ 缺少 --agent-id 参数');
-    console.error('用法: f2a message send --agent-id <agentId> --to <agentId> "content"');
+    console.error('❌ Error: Missing required --agent-id parameter.');
+    console.error('Usage: f2a message send --agent-id <agentId> --to <agentId> "content"');
     process.exit(1);
   }
 
   if (!content) {
-    console.error('❌ 缺少消息内容');
-    console.error('用法: f2a message send --agent-id <agentId> --to <agentId> "content"');
+    console.error('❌ Error: Missing message content.');
+    console.error('Usage: f2a message send --agent-id <agentId> --to <agentId> "content"');
     process.exit(1);
   }
 
   const identity = readIdentityByAgentId(agentId);
 
   if (!identity) {
-    console.error('❌ 找不到身份文件');
+    console.error('❌ Error: Cannot find identity file for the specified agent.');
     console.error(`   AgentId: ${agentId}`);
-    console.error('请先运行: f2a agent init --name <name> --webhook <url>');
+    console.error('Please run: f2a agent init --name <name> --webhook <url>');
     process.exit(1);
   }
 
   try {
-    // 通过 Challenge-Response 获取临时 Agent Token
+    // Get temporary Agent Token via Challenge-Response
     const agentToken = await getAgentTokenViaChallenge(identity, toAgentId);
 
     if (!agentToken) {
-      console.error('❌ 无法获取 Agent Token，消息发送失败');
-      console.error('提示: 请确保 Agent 已注册，且 Daemon 正在运行');
+      console.error('❌ Error: Failed to obtain Agent Token. Message send failed.');
+      console.error('Hint: Please ensure the Agent is registered and the Daemon is running.');
       process.exit(1);
     }
 
@@ -121,14 +122,14 @@ export async function sendMessage(options: {
     handleSendResult(result, agentId, toAgentId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 Daemon: ${message}`);
-    console.error('请确保 Daemon 正在运行: f2a daemon start');
+    console.error(`❌ Error: Cannot connect to Daemon: ${message}`);
+    console.error('Please ensure Daemon is running: f2a daemon start');
     process.exit(1);
   }
 }
 
 /**
- * 处理发送结果
+ * Handle send result
  */
 function handleSendResult(
   result: Record<string, unknown>,
@@ -136,7 +137,7 @@ function handleSendResult(
   toAgentId?: string
 ): void {
   if (result.success) {
-    console.log('✅ 消息已发送');
+    console.log('✅ Success: Message sent successfully.');
     console.log(`   From: ${fromAgentId}`);
     if (toAgentId) {
       console.log(`   To: ${toAgentId}`);
@@ -147,29 +148,34 @@ function handleSendResult(
       console.log(`   Message ID: ${result.messageId}`);
     }
   } else {
-    console.error(`❌ 发送失败: ${result.error}`);
+    console.error(`❌ Error: Failed to send message: ${result.error}`);
     if (result.code === 'AGENT_NOT_REGISTERED') {
-      console.error('提示: 请确保 Agent 已注册');
+      console.error('Hint: Please ensure the Agent is registered.');
     }
     process.exit(1);
   }
 }
 
 /**
- * 查看消息
+ * List messages
  * f2a message list --agent-id <agentId> [--unread] [--limit <n>]
  */
 export async function getMessages(options: {
-  /** Agent ID（必填） */
+  /** Agent ID (required) */
   agentId: string;
   unread?: boolean;
   from?: string;
   limit?: number;
 }): Promise<void> {
   if (!options.agentId) {
-    console.error('❌ 缺少 --agent-id 参数');
-    console.error('用法: f2a message list --agent-id <agentId>');
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError('Missing required --agent-id parameter', 'MISSING_AGENT_ID');
+    } else {
+      console.error('❌ Error: Missing required --agent-id parameter.');
+      console.error('Usage: f2a message list --agent-id <agentId>');
+      process.exit(1);
+    }
+    return;
   }
 
   const limit = options.limit || 50;
@@ -193,18 +199,27 @@ export async function getMessages(options: {
           ? messages.filter(m => m.fromAgentId?.includes(options.from!))
           : messages;
 
-      if (filtered.length === 0) {
-        console.log('📭 没有消息');
+      if (isJsonMode()) {
+        outputJson({
+          messages: filtered.slice(0, limit),
+          total: filtered.length,
+          unread: filtered.filter(m => !m.read).length
+        });
         return;
       }
 
-      console.log(`📨 消息 (${filtered.length}):`);
+      if (filtered.length === 0) {
+        console.log('📭 No messages found.');
+        return;
+      }
+
+      console.log(`📨 Messages (${filtered.length}):`);
       console.log('');
 
       for (const msg of filtered.slice(0, limit)) {
         const from = msg.fromAgentId || 'unknown';
         const to = msg.toAgentId || 'broadcast';
-        const time = msg.createdAt ? new Date(msg.createdAt).toLocaleString('zh-CN') : '';
+        const time = msg.createdAt ? new Date(msg.createdAt).toLocaleString('en-US') : '';
         const msgType = msg.type || 'message';
 
         console.log(`[${msgType}] ${from} → ${to} (${time})`);
@@ -212,28 +227,37 @@ export async function getMessages(options: {
         console.log('');
       }
     } else {
-      console.log('📭 没有消息');
+      if (isJsonMode()) {
+        const errorMsg = typeof result.error === 'string' ? result.error : 'Failed to get messages';
+        outputError(errorMsg, 'MESSAGES_FAILED');
+      } else {
+        console.log('📭 No messages found.');
+      }
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 Daemon: ${message}`);
-    console.error('请确保 Daemon 正在运行: f2a daemon start');
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError(`Cannot connect to Daemon: ${message}`, 'DAEMON_NOT_RUNNING');
+    } else {
+      console.error(`❌ Error: Cannot connect to Daemon: ${message}`);
+      console.error('Please ensure Daemon is running: f2a daemon start');
+      process.exit(1);
+    }
   }
 }
 
 /**
- * 清除消息
+ * Clear messages
  * f2a message clear --agent-id <agentId>
  */
 export async function clearMessages(options: {
-  /** Agent ID（必填） */
+  /** Agent ID (required) */
   agentId: string;
   messageIds?: string[];
 }): Promise<void> {
   if (!options.agentId) {
-    console.error('❌ 缺少 --agent-id 参数');
-    console.error('用法: f2a message clear --agent-id <agentId>');
+    console.error('❌ Error: Missing required --agent-id parameter.');
+    console.error('Usage: f2a message clear --agent-id <agentId>');
     process.exit(1);
   }
 
@@ -245,15 +269,15 @@ export async function clearMessages(options: {
     );
 
     if (result.success) {
-      console.log(`✅ 已清除 ${result.cleared || 0} 条消息`);
+      console.log(`✅ Success: Cleared ${result.cleared || 0} message(s).`);
     } else {
-      console.error(`❌ 清除失败: ${result.error}`);
+      console.error(`❌ Error: Failed to clear messages: ${result.error}`);
       process.exit(1);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 Daemon: ${message}`);
-    console.error('请确保 Daemon 正在运行: f2a daemon start');
+    console.error(`❌ Error: Cannot connect to Daemon: ${message}`);
+    console.error('Please ensure Daemon is running: f2a daemon start');
     process.exit(1);
   }
 }

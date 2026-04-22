@@ -128,15 +128,15 @@ describe('CLI Entry Functionality', () => {
   });
 
   describe('需要 daemon 的命令（无 daemon 时）', () => {
-    it('should handle status command without daemon', async () => {
-      const result = await runCli(['status']);
+    it('should handle node status command without daemon', async () => {
+      const result = await runCli(['node', 'status']);
 
       // 无 daemon 时应显示连接错误
       expect(result.stderr).toMatch(/无法连接|Failed to connect|Connection failed|Daemon/);
     });
 
-    it('should handle peers command without daemon', async () => {
-      const result = await runCli(['peers']);
+    it('should handle node peers command without daemon', async () => {
+      const result = await runCli(['node', 'peers']);
 
       expect(result.stderr).toMatch(/无法连接|Failed to connect|Connection failed|Daemon/);
     });

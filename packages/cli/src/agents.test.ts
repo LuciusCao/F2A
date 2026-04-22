@@ -4,11 +4,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 process.exit = vi.fn() as any;
 
 // 在导入模块前设置环境变量
-process.env.F2A_CONTROL_TOKEN = 'test-token';
+process.env.F2A_CONTROL_TOKEN='***';
 process.env.F2A_CONTROL_PORT = '9001';
 
-import { registerAgent, unregisterAgent, updateAgent } from './agents.js';
+import { registerAgent, unregisterAgent, updateAgent, listAgents } from './agents.js';
 import { request, RequestOptions } from 'http';
+import { setJsonMode } from './output.js';
 
 // Mock http module
 vi.mock('http', () => ({
@@ -147,7 +148,7 @@ describe('CLI Agent Commands', () => {
         
         await updateAgent({ agentId: 'agent:test:123' });
 
-        expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('没有要更新'));
+        expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('Nothing to update'));
         
         consoleWarnSpy.mockRestore();
       });
@@ -180,5 +181,221 @@ describe('CLI Agent Commands', () => {
 
     // Note: Challenge-Response flow is tested in daemon agent-handler.test.ts
     // CLI test focuses on parameter validation only
+  });
+
+  describe('listAgents', () => {
+    describe('正常模式', () => {
+      it('should list agents in human-readable format', async () => {
+        const responseData = {
+          success: true,
+          agents: [
+            {
+              agentId: 'agent:test:123',
+              name: 'Test Agent',
+              capabilities: [{ name: 'chat' }],
+              webhookUrl: 'http://test-webhook',
+              lastActiveAt: '2026-04-22T10:00:00Z'
+            }
+          ]
+        };
+
+        mockResponse.on.mockImplementation((event: string, callback: Function) => {
+          if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
+          if (event === 'end') callback();
+        });
+
+        (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
+          callback(mockResponse);
+          return mockRequest;
+        });
+
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        
+        await listAgents();
+
+        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('🤖 Registered Agents'));
+        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Test Agent'));
+        
+        consoleSpy.mockRestore();
+      });
+
+      it('should show message when no agents found', async () => {
+        const responseData = { success: true, agents: [] };
+
+        mockResponse.on.mockImplementation((event: string, callback: Function) => {
+          if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
+          if (event === 'end') callback();
+        });
+
+        (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
+          callback(mockResponse);
+          return mockRequest;
+        });
+
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        
+        await listAgents();
+
+        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('No registered agents found'));
+        
+        consoleSpy.mockRestore();
+      });
+
+      it('should handle list failure', async () => {
+        const responseData = { success: false, error: 'Daemon error' };
+
+        mockResponse.on.mockImplementation((event: string, callback: Function) => {
+          if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
+          if (event === 'end') callback();
+        });
+
+        (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
+          callback(mockResponse);
+          return mockRequest;
+        });
+
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        
+        await listAgents();
+
+        expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to get agent list'));
+        expect(process.exit).toHaveBeenCalledWith(1);
+        
+        consoleErrorSpy.mockRestore();
+      });
+    });
+
+    describe('JSON 模式', () => {
+      beforeEach(() => {
+        setJsonMode(true);
+      });
+
+      afterEach(() => {
+        setJsonMode(false);
+      });
+
+      it('should output agents in JSON format', async () => {
+        const responseData = {
+          success: true,
+          agents: [
+            {
+              agentId: 'agent:test:123',
+              name: 'Test Agent',
+              capabilities: [{ name: 'chat' }],
+              webhookUrl: 'http://test-webhook',
+              lastActiveAt: '2026-04-22T10:00:00Z'
+            }
+          ]
+        };
+
+        mockResponse.on.mockImplementation((event: string, callback: Function) => {
+          if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
+          if (event === 'end') callback();
+        });
+
+        (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
+          callback(mockResponse);
+          return mockRequest;
+        });
+
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        
+        await listAgents();
+
+        expect(consoleSpy).toHaveBeenCalledTimes(1);
+        const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+        expect(output.success).toBe(true);
+        expect(output.data.agents).toHaveLength(1);
+        expect(output.data.agents[0]).toEqual({
+          agentId: 'agent:test:123',
+          name: 'Test Agent',
+          capabilities: [{ name: 'chat' }],
+          webhookUrl: 'http://test-webhook',
+          lastActiveAt: '2026-04-22T10:00:00Z'
+        });
+        
+        consoleSpy.mockRestore();
+      });
+
+      it('should output empty agents array in JSON format', async () => {
+        const responseData = { success: true, agents: [] };
+
+        mockResponse.on.mockImplementation((event: string, callback: Function) => {
+          if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
+          if (event === 'end') callback();
+        });
+
+        (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
+          callback(mockResponse);
+          return mockRequest;
+        });
+
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        
+        await listAgents();
+
+        const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+        expect(output.success).toBe(true);
+        expect(output.data.agents).toHaveLength(0);
+        
+        consoleSpy.mockRestore();
+      });
+
+      it('should output error in JSON format when list fails', async () => {
+        const responseData = { success: false, error: 'Daemon error' };
+
+        mockResponse.on.mockImplementation((event: string, callback: Function) => {
+          if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
+          if (event === 'end') callback();
+        });
+
+        (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
+          callback(mockResponse);
+          return mockRequest;
+        });
+
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        
+        await listAgents();
+
+        expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+        const output = JSON.parse(consoleErrorSpy.mock.calls[0][0]);
+        expect(output.success).toBe(false);
+        expect(output.error).toBe('Daemon error');
+        expect(output.code).toBe('LIST_FAILED');
+        
+        consoleErrorSpy.mockRestore();
+      });
+
+      it('should output error in JSON format on connection failure', async () => {
+        (request as any).mockImplementation(() => {
+          const req = {
+            on: vi.fn((event: string, callback: Function) => {
+              if (event === 'error') {
+                callback(new Error('Connection refused'));
+              }
+            }),
+            write: vi.fn(),
+            end: vi.fn(),
+            setTimeout: vi.fn(),
+            destroy: vi.fn(),
+          };
+          return req;
+        });
+
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        
+        await listAgents();
+
+        expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+        const output = JSON.parse(consoleErrorSpy.mock.calls[0][0]);
+        expect(output.success).toBe(false);
+        expect(output.error).toContain('Connection refused');
+        // Connection errors are returned as LIST_FAILED by the http-client
+        expect(output.code).toBe('LIST_FAILED');
+        
+        consoleErrorSpy.mockRestore();
+      });
+    });
   });
 });

@@ -5,13 +5,11 @@
  * Phase 1 修复：重写为命令路由器，导入并调用各模块函数
  * 
  * 命令结构：
- * - f2a agent <subcommand>  -> agents.ts
+ * - f2a node <subcommand>    -> node.ts (init, status, peers, health, discover)
+ * - f2a agent <subcommand>   -> agents.ts
  * - f2a message <subcommand> -> messages.ts
  * - f2a daemon <subcommand>  -> daemon.ts
  * - f2a identity <subcommand> -> identity.ts
- * - f2a status              -> GET /status
- * - f2a peers               -> GET /peers
- * - f2a health              -> GET /health
  */
 
 // CLI 静默模式：禁用内部日志输出到终端
@@ -24,12 +22,13 @@ if (process.env.F2A_DEBUG !== '1') {
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { sendRequest } from './http-client.js';
 import { listAgents, registerAgent, unregisterAgent, updateAgent } from './agents.js';
 import { sendMessage, getMessages, clearMessages } from './messages.js';
 import { startForeground, startBackground, stopDaemon, restartDaemon, showStatus } from './daemon.js';
-import { showIdentityStatus, exportIdentity, importIdentityInternal, initIdentity } from './identity.js';
+import { showIdentityStatus, exportIdentity, importIdentityInternal } from './identity.js';
 import { cliInitAgent, showAgentStatus } from './init.js';
+import { nodeInit, nodeStatus, nodePeers, nodeHealth, nodeDiscover } from './node.js';
+import { setJsonMode, isJsonMode, outputError } from './output.js';
 
 // ESM 环境下获取 __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -58,48 +57,17 @@ F2A CLI v${getVersion()} - Friend-to-Agent P2P Network
 Usage: f2a <command> [options]
 
 Commands:
-  init       初始化 F2A 节点身份 [--force 强制重新创建]
-             创建 Node Identity 和基础配置文件
+  node       P2P node management (init, status, peers, health, discover)
 
-  agent      管理 Agent 身份和注册
-    init              生成 Agent 密钥对和身份文件
-                       --name <name> --webhook <url> [--capability <cap>]... [--force]
-                       自动保存到 ~/.f2a/agent-identities/
-    register          注册 Agent 到 Daemon
-                       --agent-id <agentId> [--force]
-                       获取 Node 签发的归属证明
-    list              列出已注册的 Agent
-    unregister        注销 Agent
-                       --agent-id <agentId>
-    status            查看 Agent 身份状态
-                       --agent-id <agentId>
+  agent      Agent management (init, register, list, unregister, status, update)
+  message    Message management (send, list, clear)
+  daemon     Daemon management (start, stop, restart, status, foreground)
+  identity   Identity management (status, export, import)
 
-  message    消息管理
-    send              发送消息
-                       --agent-id <agentId> [--to <agentId>] [--type <type>] "content"
-                       使用签名认证
-    list              查看消息 --agent-id <agentId> [--unread] [--limit <n>]
-    clear             清除消息 --agent-id <agentId>
-
-  daemon     Daemon 管理
-    start             启动 Daemon (后台)
-    stop              停止 Daemon
-    restart           重启 Daemon
-    status            查看 Daemon 状态
-    foreground        前台启动 Daemon
-
-  identity   身份管理
-    status            查看身份状态
-    export [file]     导出身份到文件
-    import <file>     从文件导入身份
-
-  status     查看系统状态
-  peers      查看 P2P peers
-  health     健康检查
-  discover   发现 Agent [--capability <能力>]
-
-  --help     显示帮助
-  --version  显示版本
+Global Options:
+  --json     Output results in JSON format
+  --help     Show help
+  --version  Show version
 `);
 }
 
@@ -243,6 +211,44 @@ Examples:
   f2a identity status
   f2a identity export ./backup.json
   f2a identity import ./backup.json
+`);
+}
+
+/**
+ * Show node subcommand help
+ */
+function showNodeHelp(): void {
+  console.log(`
+F2A Node Management
+
+Usage: f2a node <subcommand> [options]
+
+Subcommands:
+  init        Initialize node identity
+              f2a node init [--force]
+              --force    Force re-initialization, overwrite existing identity
+
+  status      Show node status
+              f2a node status
+              Displays node ID, multiaddrs, and system info
+
+  peers       List connected P2P peers
+              f2a node peers
+              Shows all connected peers with their status
+
+  health      Health check
+              f2a node health
+              Verifies daemon is running and healthy
+
+  discover    Discover agents on the network
+              f2a node discover [--capability <cap>]
+              --capability    Filter by capability (optional)
+
+Examples:
+  f2a node init
+  f2a node status
+  f2a node peers
+  f2a node discover --capability chat
 `);
 }
 
@@ -522,156 +528,47 @@ async function handleIdentityCommand(subArgs: string[]): Promise<void> {
 }
 
 /**
- * 获取系统状态（GET /status）
+ * Node command handler
  */
-async function handleStatus(): Promise<void> {
-  try {
-    const result = await sendRequest('GET', '/status');
-
-    if (result.success) {
-      console.log('=== F2A 系统状态 ===');
-      console.log('');
-      const peerId = result.peerId as string | undefined;
-      console.log(`Node ID: ${peerId?.slice(0, 16) || 'N/A'}...`);
-      if (result.multiaddrs) {
-        console.log(`Multiaddrs: ${(result.multiaddrs as string[]).join(', ')}`);
-      }
-      if (result.agentInfo) {
-        console.log('');
-        console.log('Agent Info:');
-        const info = result.agentInfo as { displayName?: string; nodeId?: string };
-        console.log(`  Name: ${info.displayName || 'N/A'}`);
-        console.log(`  Node ID: ${info.nodeId?.slice(0, 8) || 'N/A'}...`);
-      }
-    } else {
-      console.error(`❌ 获取状态失败：${result.error}`);
-      process.exit(1);
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 F2A Daemon：${message}`);
-    console.error('请确保 Daemon 正在运行：f2a daemon start');
-    process.exit(1);
+async function handleNodeCommand(subArgs: string[]): Promise<void> {
+  if (subArgs.length === 0 || subArgs[0] === '--help' || subArgs[0] === '-h') {
+    showNodeHelp();
+    return;
   }
-}
 
-/**
- * 获取 Peers（GET /peers）
- */
-async function handlePeers(): Promise<void> {
-  try {
-    const result = await sendRequest('GET', '/peers');
+  const subcommand = subArgs[0];
+  const restArgs = subArgs.slice(1);
 
-    if (Array.isArray(result)) {
-      // GET /peers 返回 peer 数组
-      const peers = result as Array<{ peerId?: string; id?: string; connected?: boolean; multiaddrs?: string[] }>;
-      if (peers.length === 0) {
-        console.log('⚪ 没有连接的 Peers');
-      } else {
-        console.log(`=== P2P Peers (${peers.length}) ===`);
-        console.log('');
-        for (const peer of peers) {
-          const status = peer.connected ? '🟢 已连接' : '⚪ 已断开';
-          console.log(`${status} ${peer.peerId?.slice(0, 16) || peer.id?.slice(0, 16) || 'N/A'}...`);
-          if (peer.multiaddrs && peer.multiaddrs.length > 0) {
-            console.log(`   地址: ${peer.multiaddrs[0]}`);
-          }
-        }
-      }
-    } else if (result.success && result.peers) {
-      const peers = result.peers as Array<{ peerId?: string; id?: string }>;
-      if (peers.length === 0) {
-        console.log('⚪ 没有连接的 Peers');
-      } else {
-        console.log(`=== P2P Peers (${peers.length}) ===`);
-        console.log('');
-        for (const peer of peers) {
-          console.log(`🟢 ${peer.peerId?.slice(0, 16) || peer.id?.slice(0, 16) || 'N/A'}...`);
-        }
-      }
-    } else {
-      console.error(`❌ 获取 Peers 失败：${result.error}`);
+  switch (subcommand) {
+    case 'init':
+      await nodeInit({ force: restArgs.includes('--force') });
+      break;
+
+    case 'status':
+      await nodeStatus();
+      break;
+
+    case 'peers':
+      await nodePeers();
+      break;
+
+    case 'health':
+      await nodeHealth();
+      break;
+
+    case 'discover':
+      // f2a node discover [--capability <cap>]
+      const capabilityArg = restArgs.find(arg => arg.startsWith('--capability'));
+      const capability = capabilityArg 
+        ? (capabilityArg.includes('=') ? capabilityArg.split('=')[1] : restArgs[restArgs.indexOf('--capability') + 1])
+        : undefined;
+      await nodeDiscover(capability);
+      break;
+
+    default:
+      console.error(`Unknown node subcommand: ${subcommand}`);
+      showNodeHelp();
       process.exit(1);
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 F2A Daemon：${message}`);
-    console.error('请确保 Daemon 正在运行：f2a daemon start');
-    process.exit(1);
-  }
-}
-
-/**
- * 健康检查（GET /health）
- */
-async function handleHealth(): Promise<void> {
-  try {
-    const result = await sendRequest('GET', '/health');
-
-    if (result.success) {
-      console.log('✅ Daemon 健康');
-      const peerId = result.peerId as string | undefined;
-      console.log(`   Node ID: ${peerId?.slice(0, 16) || 'N/A'}...`);
-    } else {
-      console.log('❌ Daemon 不健康');
-      process.exit(1);
-    }
-  } catch {
-    console.log('❌ 无法连接到 F2A Daemon');
-    process.exit(1);
-  }
-}
-
-/**
- * 发现 Agent（POST /control {action: 'discover'}）
- */
-async function handleDiscover(capability?: string): Promise<void> {
-  try {
-    const result = await sendRequest('POST', '/control', {
-      action: 'discover',
-      capability
-    }) as { success: boolean; agents?: Array<{
-      displayName?: string;
-      agentId?: string;
-      peerId?: string;
-      capabilities?: Array<{ name: string }>;
-      agentType?: string;
-    }>; error?: string };
-
-    if (result.success && result.agents) {
-      const agents = result.agents;
-      if (agents.length === 0) {
-        console.log('🔍 没有发现 Agent');
-        if (capability) {
-          console.log(`   搜索能力: ${capability}`);
-        }
-        return;
-      }
-
-      console.log(`🔍 发现 ${agents.length} 个 Agent${capability ? ` (能力: ${capability})` : ''}:`);
-      console.log('');
-      
-      for (const agent of agents) {
-        const displayName = agent.displayName || agent.agentId?.slice(0, 24) || 'Unknown';
-        const peerId = agent.peerId?.slice(0, 16) || 'N/A';
-        const capabilities = agent.capabilities?.map(c => c.name).join(', ') || 'N/A';
-        
-        console.log(`  📦 ${displayName}`);
-        console.log(`     Agent ID: ${agent.agentId || 'N/A'}`);
-        console.log(`     Node ID: ${peerId}...`);
-        console.log(`     Capabilities: ${capabilities}`);
-        console.log(`     Agent Type: ${agent.agentType || 'N/A'}`);
-        console.log('');
-      }
-    } else {
-      console.log('❌ 发现失败：', result.error || 'Unknown error');
-      process.exit(1);
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 无法连接到 Daemon：${message}`);
-    console.error('请确保 Daemon 正在运行：f2a daemon start');
-    process.exit(1);
   }
 }
 
@@ -680,6 +577,13 @@ async function handleDiscover(capability?: string): Promise<void> {
  */
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+
+  // Detect and extract --json global flag
+  const jsonFlagIndex = args.indexOf('--json');
+  if (jsonFlagIndex !== -1) {
+    setJsonMode(true);
+    args.splice(jsonFlagIndex, 1); // Remove --json from args
+  }
 
   // 无参数或 --help 显示帮助
   if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
@@ -698,17 +602,16 @@ async function main(): Promise<void> {
 
   try {
     switch (command) {
+      case 'node':
+        await handleNodeCommand(subArgs);
+        break;
+
       case 'agent':
         await handleAgentCommand(subArgs);
         break;
 
       case 'message':
         await handleMessageCommand(subArgs);
-        break;
-
-      case 'messages':
-        // 兼容旧命令
-        await handleMessageCommand(subArgs.length > 0 ? ['list', ...subArgs] : ['list']);
         break;
 
       case 'daemon':
@@ -719,59 +622,24 @@ async function main(): Promise<void> {
         await handleIdentityCommand(subArgs);
         break;
 
-      case 'status':
-        await handleStatus();
-        break;
-
-      case 'peers':
-        await handlePeers();
-        break;
-
-      case 'health':
-        await handleHealth();
-        break;
-
-      case 'discover':
-        // f2a discover [--capability <cap>]
-        const capabilityArg = subArgs.find(arg => arg.startsWith('--capability'));
-        const capability = capabilityArg 
-          ? (capabilityArg.includes('=') ? capabilityArg.split('=')[1] : subArgs[subArgs.indexOf('--capability') + 1])
-          : undefined;
-        await handleDiscover(capability);
-        break;
-
-      // 向后兼容的旧命令
-      case 'send':
-        // f2a send --to <peer_id> "content" -> P2P send (deprecated)
-        console.error('⚠️  f2a send 命令已废弃，请使用:');
-        console.error('   f2a message send --agent-id <agentId> --to <agent_id> "content"');
-        process.exit(1);
-        break;
-
-      case 'init':
-        await initIdentity({ force: subArgs.includes('--force') });
-        break;
-
-      case 'start':
-        // 向后兼容
-        await startBackground();
-        break;
-
-      case 'stop':
-        // 向后兼容
-        await stopDaemon();
-        break;
-
       default:
-        console.error(`❌ 未知的命令：${command}`);
-        showHelp();
-        process.exit(1);
+        if (isJsonMode()) {
+          outputError(`Unknown command: ${command}`, 'UNKNOWN_COMMAND');
+        } else {
+          console.error(`❌ 未知的命令：${command}`);
+          showHelp();
+          process.exit(1);
+        }
     }
   } catch (err) {
     // 错误已在各命令中处理，这里只捕获未处理的错误
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`❌ 执行失败：${message}`);
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError(message, 'EXECUTION_ERROR');
+    } else {
+      console.error(`❌ 执行失败：${message}`);
+      process.exit(1);
+    }
   }
 }
 

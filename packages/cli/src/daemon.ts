@@ -1,6 +1,6 @@
 /**
  * F2A CLI Daemon Commands
- * Daemon 启动和管理命令
+ * Daemon startup and management commands
  */
 
 import { spawn } from 'child_process';
@@ -12,6 +12,7 @@ import { createServer } from 'net';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { loadConfig } from './config.js';
+import { isJsonMode, outputJson } from './output.js';
 
 // ESM 中使用 createRequire 来获取 require.resolve
 const require = createRequire(import.meta.url);
@@ -226,27 +227,27 @@ export function getDaemonStatus(): { running: boolean; pid?: number; port: numbe
 export async function startForeground(): Promise<void> {
   const controlPort = getControlPort();
   
-  // 检查是否已有 daemon 在运行
+  // Check if daemon is already running
   if (await isDaemonRunning()) {
-    console.error('[F2A] Daemon 已经在运行中');
-    console.error('[F2A] 使用 "f2a daemon stop" 停止后再启动');
+    console.error('[F2A] Error: Daemon is already running. Please stop it before starting a new instance.');
+    console.error('[F2A] Hint: Use "f2a daemon stop" to stop the existing daemon first.');
     process.exit(1);
   }
 
-  // 检查端口是否被占用
+  // Check if port is in use
   const portInUse = await checkPortInUse(controlPort);
   if (portInUse) {
-    console.error(`[F2A] 端口 ${controlPort} 已被占用`);
-    console.error('[F2A] 请检查是否有其他 F2A daemon 在运行，或使用 F2A_CONTROL_PORT 环境变量指定其他端口');
+    console.error(`[F2A] Error: Port ${controlPort} is already in use.`);
+    console.error('[F2A] Hint: Check if another F2A daemon is running, or set F2A_CONTROL_PORT environment variable to use a different port.');
     process.exit(1);
   }
 
   ensureF2ADir();
   rotateLogIfNeeded();
   
-  console.log('[F2A] 启动 daemon (前台模式)...');
-  console.log(`[F2A] 控制端口: ${controlPort}`);
-  console.log('[F2A] 按 Ctrl+C 停止');
+  console.log('[F2A] Starting daemon (foreground mode)...');
+  console.log(`[F2A] Control port: ${controlPort}`);
+  console.log('[F2A] Press Ctrl+C to stop.');
 
   // 动态导入 daemon 模块并启动
   const { F2ADaemon } = await import('@f2a/daemon');
@@ -278,12 +279,12 @@ export async function startForeground(): Promise<void> {
     messageHandlerUrl,
   });
 
-  // 处理信号
+  // Handle shutdown signals
   const shutdown = async () => {
-    console.log('\n[F2A] 正在停止 daemon...');
+    console.log('\n[F2A] Stopping daemon...');
     await daemon.stop();
     removePidFile();
-    console.log('[F2A] Daemon 已停止');
+    console.log('[F2A] Daemon stopped successfully.');
     process.exit(0);
   };
 
@@ -292,14 +293,14 @@ export async function startForeground(): Promise<void> {
 
   try {
     await daemon.start();
-    console.log(`[F2A] Daemon 已启动，Node ID: ${daemon.getF2A()?.peerId?.slice(0, 16)}...`);
+    console.log(`[F2A] Daemon started successfully. Node ID: ${daemon.getF2A()?.peerId?.slice(0, 16)}...`);
     
-    // 保持进程运行
+    // Keep process running
     await new Promise<void>((resolve) => {
       process.on('exit', () => resolve());
     });
   } catch (error) {
-    console.error('[F2A] 启动失败:', error instanceof Error ? error.message : String(error));
+    console.error('[F2A] Error: Failed to start daemon:', error instanceof Error ? error.message : String(error));
     process.exit(1);
   }
 }
@@ -310,9 +311,9 @@ export async function startForeground(): Promise<void> {
 export async function startBackground(): Promise<void> {
   const controlPort = getControlPort();
   
-  // 检查是否已有 daemon 在运行
+  // Check if daemon is already running
   if (await isDaemonRunning()) {
-    console.error('[F2A] Daemon 已经在运行中');
+    console.error('[F2A] Error: Daemon is already running. Please stop it before starting a new instance.');
     const status = getDaemonStatus();
     if (status.pid) {
       console.error(`[F2A] PID: ${status.pid}`);
@@ -320,22 +321,22 @@ export async function startBackground(): Promise<void> {
     process.exit(1);
   }
 
-  // 检查端口是否被占用
+  // Check if port is in use
   const portInUse = await checkPortInUse(controlPort);
   if (portInUse) {
-    console.error(`[F2A] 端口 ${controlPort} 已被占用`);
-    console.error('[F2A] 请检查是否有其他 F2A daemon 在运行，或使用 F2A_CONTROL_PORT 环境变量指定其他端口');
+    console.error(`[F2A] Error: Port ${controlPort} is already in use.`);
+    console.error('[F2A] Hint: Check if another F2A daemon is running, or set F2A_CONTROL_PORT environment variable to use a different port.');
     process.exit(1);
   }
 
   ensureF2ADir();
 
-  // 日志轮转
+  // Rotate log file
   rotateLogIfNeeded();
 
-  console.log('[F2A] 启动 daemon (后台模式)...');
-  console.log(`[F2A] 控制端口: ${controlPort}`);
-  console.log(`[F2A] 日志文件: ${LOG_FILE}`);
+  console.log('[F2A] Starting daemon (background mode)...');
+  console.log(`[F2A] Control port: ${controlPort}`);
+  console.log(`[F2A] Log file: ${LOG_FILE}`);
 
   // 使用 require.resolve 定位 @f2a/daemon 包的位置
   // 这样无论 npm 如何 hoisting 依赖，都能找到正确的路径
@@ -352,10 +353,10 @@ export async function startBackground(): Promise<void> {
     daemonScript = join(__dirname, '..', 'daemon', 'main.js');
   }
   
-  // 检查 daemon 脚本是否存在
+  // Check if daemon script exists
   if (!existsSync(daemonScript)) {
-    console.error('[F2A] 错误: 找不到 daemon 脚本');
-    console.error('[F2A] 请先运行 npm run build');
+    console.error('[F2A] Error: Daemon script not found.');
+    console.error('[F2A] Hint: Please run "npm run build" first to compile the daemon module.');
     process.exit(1);
   }
 
@@ -383,10 +384,10 @@ export async function startBackground(): Promise<void> {
     env.F2A_P2P_PORT = config.p2pPort.toString();
   }
 
-  // 获取文件锁（防止竞态条件）
+  // Acquire file lock (prevent race conditions)
   if (!acquireLock()) {
-    console.error('[F2A] 无法获取锁，可能有其他 daemon 实例正在启动或刚刚启动');
-    console.error('[F2A] 请稍后重试，或检查是否有其他 f2a daemon 进程在运行');
+    console.error('[F2A] Error: Cannot acquire lock. Another daemon instance may be starting or has just started.');
+    console.error('[F2A] Hint: Please try again later, or check if another f2a daemon process is running.');
     process.exit(1);
   }
 
@@ -400,10 +401,10 @@ export async function startBackground(): Promise<void> {
       cwd: homedir(),
     });
 
-    // 等待 daemon 进程启动
+    // Wait for daemon process to start
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new Error('启动超时'));
+        reject(new Error('Startup timeout: Daemon process did not start within 10 seconds.'));
       }, 10000);
 
       let started = false;
@@ -412,17 +413,17 @@ export async function startBackground(): Promise<void> {
         // 再次检查竞态条件：确保没有其他进程同时写入 PID 文件
         const currentPid = readDaemonPid();
         if (currentPid !== null && currentPid !== child.pid && isProcessRunning(currentPid)) {
-          // 另一个进程已启动，终止当前进程
-          // 注意：不要删除 PID 文件，它属于另一个进程
+          // Another process already started, terminate current process
+          // Note: Do not delete PID file, it belongs to another process
           child.kill();
           clearTimeout(timeout);
-          reject(new Error('另一个 daemon 实例已启动'));
+          reject(new Error('Race condition: Another daemon instance has already started.'));
           return;
         }
         
-        // 写入 PID 文件
+        // Write PID file
         writeDaemonPid(child.pid!);
-        console.log(`[F2A] Daemon 已启动，PID: ${child.pid}`);
+        console.log(`[F2A] Daemon started successfully. PID: ${child.pid}`);
         started = true;
         clearTimeout(timeout);
         resolve();
@@ -435,11 +436,11 @@ export async function startBackground(): Promise<void> {
         }
       });
 
-      // 检查进程是否立即退出
+      // Check if process exits immediately
       child.on('exit', (code) => {
         clearTimeout(timeout);
         if (!started) {
-          reject(new Error(`Daemon 启动失败，退出码: ${code}`));
+          reject(new Error(`Daemon startup failed with exit code: ${code}. Check daemon.log for details.`));
         }
       });
     });
@@ -455,20 +456,20 @@ export async function startBackground(): Promise<void> {
   // 释放文件锁（daemon 已成功启动）
   releaseLock();
 
-  // 等待 daemon HTTP 服务就绪（轮询 /health 端点）
-  // 可通过 F2A_HEALTH_TIMEOUT 环境变量配置超时时间（毫秒，默认 15000）
-  console.log('[F2A] 等待 daemon 服务就绪...');
+  // Wait for daemon HTTP service to be ready (poll /health endpoint)
+  // Timeout can be configured via F2A_HEALTH_TIMEOUT environment variable (milliseconds, default 15000)
+  console.log('[F2A] Waiting for daemon service to be ready...');
   const healthTimeout = parseInt(process.env.F2A_HEALTH_TIMEOUT || '15000', 10);
   const healthReady = await waitForDaemonHealth(controlPort, healthTimeout);
   
   if (healthReady) {
-    console.log('[F2A] Daemon 服务已就绪');
+    console.log('[F2A] Daemon service is ready.');
   } else {
-    console.warn('[F2A] 警告: Daemon 服务可能未完全就绪，请检查日志');
+    console.warn('[F2A] Warning: Daemon service may not be fully ready. Please check the log file for details.');
   }
 
-  console.log('[F2A] 使用 "f2a daemon status" 查看状态');
-  console.log('[F2A] 使用 "f2a daemon stop" 停止 daemon');
+  console.log('[F2A] Hint: Use "f2a daemon status" to check daemon status.');
+  console.log('[F2A] Hint: Use "f2a daemon stop" to stop the daemon.');
 }
 
 /**
@@ -478,17 +479,17 @@ export async function stopDaemon(): Promise<void> {
   const pid = readDaemonPid();
   
   if (pid === null) {
-    console.log('[F2A] 没有运行中的 daemon');
+    console.log('[F2A] No daemon is currently running.');
     return;
   }
 
   if (!isProcessRunning(pid)) {
-    console.log('[F2A] Daemon 进程已不存在，清理 PID 文件');
+    console.log('[F2A] Daemon process no longer exists. Cleaning up PID file.');
     removePidFile();
     return;
   }
 
-  console.log(`[F2A] 正在停止 daemon (PID: ${pid})...`);
+  console.log(`[F2A] Stopping daemon (PID: ${pid})...`);
 
   try {
     // 跨平台信号处理
@@ -521,30 +522,30 @@ export async function stopDaemon(): Promise<void> {
         attempts++;
       }
 
-      // 如果进程还在运行，强制终止
+      // Force kill if process is still running
       if (isProcessRunning(pid)) {
-        console.log('[F2A] Daemon 未响应 SIGTERM，强制终止...');
+        console.log('[F2A] Daemon did not respond to SIGTERM. Force killing...');
         process.kill(pid, 'SIGKILL');
         await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
 
-    // 再次检查进程状态
+    // Check process status again
     await new Promise(resolve => setTimeout(resolve, 100));
     
     if (!isProcessRunning(pid)) {
-      console.log('[F2A] Daemon 已停止');
+      console.log('[F2A] Daemon stopped successfully.');
       removePidFile();
     } else {
-      console.error('[F2A] 无法停止 daemon');
+      console.error('[F2A] Error: Cannot stop daemon. Process may be stuck or requires higher privileges.');
       process.exit(1);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EPERM') {
-      console.error('[F2A] 没有权限停止 daemon');
+      console.error('[F2A] Error: Permission denied. Cannot stop daemon.');
       process.exit(1);
     } else if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
-      console.log('[F2A] Daemon 进程已不存在');
+      console.log('[F2A] Daemon process no longer exists.');
       removePidFile();
     } else {
       throw error;
@@ -553,35 +554,35 @@ export async function stopDaemon(): Promise<void> {
 }
 
 /**
- * 重启后台 daemon
- * 先停止再启动，保持原有配置
+ * Restart background daemon
+ * Stop then start, keeping original configuration
  */
 export async function restartDaemon(): Promise<void> {
-  console.log('[F2A] 正在重启 daemon...');
+  console.log('[F2A] Restarting daemon...');
   
-  // 检查当前状态
+  // Check current status
   const status = getDaemonStatus();
   
   if (status.running) {
-    console.log('[F2A] 停止当前 daemon...');
+    console.log('[F2A] Stopping current daemon...');
     await stopDaemon();
     
-    // 等待一小段时间确保端口释放
-    console.log('[F2A] 等待资源释放...');
+    // Wait briefly for port to be released
+    console.log('[F2A] Waiting for resources to be released...');
     await new Promise(resolve => setTimeout(resolve, 1000));
   } else {
-    console.log('[F2A] 当前没有运行中的 daemon');
+    console.log('[F2A] No daemon is currently running.');
   }
   
-  // 检查端口是否仍被占用
+  // Check if port is still in use
   const controlPort = getControlPort();
   const portInUse = await checkPortInUse(controlPort);
   
   if (portInUse) {
-    console.warn(`[F2A] 警告: 端口 ${controlPort} 仍被占用`);
-    console.warn('[F2A] 等待更长时间...');
+    console.warn(`[F2A] Warning: Port ${controlPort} is still in use.`);
+    console.warn('[F2A] Waiting longer for port to be released...');
     
-    // 最多等待 10 秒
+    // Wait up to 10 seconds
     let attempts = 0;
     const maxAttempts = 20;
     
@@ -591,65 +592,114 @@ export async function restartDaemon(): Promise<void> {
     }
     
     if (await checkPortInUse(controlPort)) {
-      console.error(`[F2A] 错误: 端口 ${controlPort} 仍被占用，无法启动`);
-      console.error('[F2A] 请手动检查并释放端口');
+      console.error(`[F2A] Error: Port ${controlPort} is still in use. Cannot start daemon.`);
+      console.error('[F2A] Hint: Please manually check and release the port.');
       process.exit(1);
     }
   }
   
-  // 启动 daemon
-  console.log('[F2A] 启动 daemon...');
+  // Start daemon
+  console.log('[F2A] Starting daemon...');
   await startBackground();
   
-  console.log('[F2A] Daemon 重启完成');
+  console.log('[F2A] Daemon restart completed successfully.');
 }
 
 /**
- * 显示 daemon 状态
+ * Show daemon status
  */
 export async function showStatus(): Promise<void> {
   const status = getDaemonStatus();
   const port = getControlPort();
   
-  // 检查端口是否被占用（处理 PID 文件丢失的情况）
+  // Check if port is in use (handle PID file missing case)
   const portInUse = await checkPortInUse(port);
   
-  console.log('F2A Daemon 状态:');
-  console.log(`  控制端口: ${port}`);
+  // JSON output mode
+  if (isJsonMode()) {
+    if (status.running && status.pid) {
+      // Daemon running with PID
+      try {
+        const info = await fetchDaemonInfo(port);
+        outputJson({
+          running: true,
+          pid: status.pid,
+          port: port,
+          peerId: info?.peerId,
+          logFile: LOG_FILE
+        });
+      } catch {
+        outputJson({
+          running: true,
+          pid: status.pid,
+          port: port,
+          logFile: LOG_FILE
+        });
+      }
+    } else if (portInUse) {
+      // PID file missing but port in use
+      try {
+        const info = await fetchDaemonInfo(port);
+        outputJson({
+          running: true,
+          port: port,
+          peerId: info?.peerId,
+          warning: 'PID file missing - port in use but no PID file found'
+        });
+      } catch {
+        outputJson({
+          running: true,
+          port: port,
+          warning: 'PID file missing - port in use but no PID file found'
+        });
+      }
+    } else {
+      // Daemon not running
+      outputJson({
+        running: false,
+        port: port
+      });
+    }
+    return;
+  }
+  
+  // Human-readable output mode
+  console.log('F2A Daemon Status:');
+  console.log(`  Control port: ${port}`);
   
   if (status.running && status.pid) {
-    console.log(`  运行中: 是`);
+    console.log(`  Running: Yes`);
     console.log(`  PID: ${status.pid}`);
-    console.log(`  日志文件: ${LOG_FILE}`);
+    console.log(`  Log file: ${LOG_FILE}`);
     
-    // 尝试获取更多信息
+    // Try to get more info
     try {
       const info = await fetchDaemonInfo(port);
       if (info) {
         console.log(`  Node ID: ${info.peerId?.slice(0, 16)}...`);
       }
     } catch {
-      // 忽略错误
+      // Ignore errors
     }
   } else if (portInUse) {
-    // PID 文件丢失但端口被占用
-    console.log(`  运行中: 是 (PID 文件丢失)`);
-    console.log(`  警告: 检测到端口 ${port} 被占用，但 PID 文件不存在`);
-    console.log(`  可能原因: 系统重启或 PID 文件被删除`);
-    console.log(`  建议: 手动恢复 PID 文件或重启 daemon`);
+    // PID file missing but port in use
+    console.log(`  Running: Yes (PID file missing)`);
+    console.log(`  Warning: Port ${port} is in use but PID file does not exist.`);
+    console.log(`  Possible cause: System reboot or PID file was deleted.`);
+    console.log(`  Suggestion: Manually restore PID file or restart daemon.`);
     
-    // 尝试获取更多信息
+    // Try to get more info
     try {
       const info = await fetchDaemonInfo(port);
       if (info) {
         console.log(`  Node ID: ${info.peerId?.slice(0, 16)}...`);
       }
     } catch {
-      // 忽略错误
+      // Ignore errors
     }
   } else {
-    console.log(`  运行中: 否`);
-    console.log('  使用 "f2a daemon" 启动 daemon');
+    console.log(`  Running: No`);
+    console.log('  Hint: Use "f2a daemon" to start the daemon.');
   }
 }
 

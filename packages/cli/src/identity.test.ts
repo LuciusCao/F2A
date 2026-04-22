@@ -1,8 +1,8 @@
 /**
- * F2A CLI Identity 命令测试
+ * F2A CLI Identity command tests
  * 
- * P2-1 修复: 添加 CLI identity 命令的单元测试
- * P2-6 修复: 添加跨节点导入、E2EE 不可用等场景测试
+ * P2-1 fix: Add unit tests for CLI identity commands
+ * P2-6 fix: Add tests for cross-node import, E2EE unavailable scenarios
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -14,19 +14,19 @@ import { success, failure, createError } from '@f2a/network';
 import { NodeIdentityManager } from '@f2a/network';
 import { AgentIdentityManager } from '@f2a/network';
 
-// 测试用的临时目录
+// Test temporary directory
 const TEST_DIR = join(tmpdir(), 'f2a-identity-cli-test-' + Date.now());
 
 describe('CLI Identity Commands', () => {
   beforeEach(() => {
-    // 创建测试目录
+    // Create test directory
     if (!existsSync(TEST_DIR)) {
       mkdirSync(TEST_DIR, { recursive: true });
     }
   });
 
   afterEach(() => {
-    // 清理测试目录
+    // Clean up test directory
     if (existsSync(TEST_DIR)) {
       rmSync(TEST_DIR, { recursive: true, force: true });
     }
@@ -107,7 +107,7 @@ describe('CLI Identity Commands', () => {
           version: '1.0',
           exportedAt: new Date().toISOString(),
           node: {
-            nodeId: 'invalid@node!id', // 包含非法字符
+            nodeId: 'invalid@node!id', // Contains invalid characters
             peerId: 'test-peer-id',
             privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
           }
@@ -140,14 +140,14 @@ describe('CLI Identity Commands', () => {
         if (result.success) {
           expect(result.data.nodeImported).toBe(true);
           
-          // 验证文件已创建
+          // Verify file created
           const nodeFile = join(TEST_DIR, 'node-identity.json');
           expect(existsSync(nodeFile)).toBe(true);
         }
       });
 
       it('should refuse to overwrite different node identity', async () => {
-        // 使用 NodeIdentityManager 创建一个有效的现有 Node Identity
+        // Use NodeIdentityManager to create a valid existing Node Identity
         const nodeManager = new NodeIdentityManager({ dataDir: TEST_DIR });
         const createResult = await nodeManager.loadOrCreate();
         expect(createResult.success).toBe(true);
@@ -177,7 +177,7 @@ describe('CLI Identity Commands', () => {
       });
 
       it('should accept same node identity without error', async () => {
-        // 先创建一个现有的 Node Identity
+        // First create an existing Node Identity
         const existingNodeFile = join(TEST_DIR, 'node-identity.json');
         writeFileSync(existingNodeFile, JSON.stringify({
           nodeId: 'same-node-id',
@@ -233,7 +233,7 @@ describe('CLI Identity Commands', () => {
           agent: {
             id: 'test-agent-id',
             name: 'test-agent'
-            // 缺少 nodeId, publicKey, signature, privateKey
+            // Missing nodeId, publicKey, signature, privateKey
           }
         }), 'utf-8');
         
@@ -248,7 +248,7 @@ describe('CLI Identity Commands', () => {
 
       it('should return error for expired agent identity', async () => {
         const pastDate = new Date();
-        pastDate.setDate(pastDate.getDate() - 1); // 昨天已过期
+        pastDate.setDate(pastDate.getDate() - 1); // Expired yesterday
         
         const importFile = join(TEST_DIR, 'expired-agent.json');
         writeFileSync(importFile, JSON.stringify({
@@ -278,7 +278,7 @@ describe('CLI Identity Commands', () => {
 
       it('should import valid agent identity', async () => {
         const futureDate = new Date();
-        futureDate.setDate(futureDate.getDate() + 30); // 30天后过期
+        futureDate.setDate(futureDate.getDate() + 30); // Expires in 30 days
         
         const importFile = join(TEST_DIR, 'valid-agent.json');
         writeFileSync(importFile, JSON.stringify({
@@ -297,18 +297,18 @@ describe('CLI Identity Commands', () => {
           }
         }), 'utf-8');
         
-        // P1-2 修复: 使用 forceImport 跳过签名验证
+        // P1-2 fix: Use forceImport to skip signature verification
         const result = await importIdentityInternal(importFile, TEST_DIR, true);
         
         expect(result.success).toBe(true);
         if (result.success) {
           expect(result.data.agentImported).toBe(true);
           
-          // 验证文件已创建
+          // Verify file created
           const agentFile = join(TEST_DIR, 'agent-identity.json');
           expect(existsSync(agentFile)).toBe(true);
           
-          // 验证内容
+          // Verify content
           const savedData = JSON.parse(readFileSync(agentFile, 'utf-8'));
           expect(savedData.id).toBe('test-agent-id');
           expect(savedData.name).toBe('test-agent');
@@ -332,7 +332,7 @@ describe('CLI Identity Commands', () => {
           }
         }), 'utf-8');
         
-        // P1-2 修复: 使用 forceImport 跳过签名验证
+        // P1-2 fix: Use forceImport to skip signature verification
         const result = await importIdentityInternal(importFile, TEST_DIR, true);
         
         expect(result.success).toBe(true);
@@ -358,7 +358,7 @@ describe('CLI Identity Commands', () => {
           }
         }), 'utf-8');
         
-        // P1-2 修复: 使用 forceImport 跳过签名验证
+        // P1-2 fix: Use forceImport to skip signature verification
         await importIdentityInternal(importFile, TEST_DIR, true);
         
         const agentFile = join(TEST_DIR, 'agent-identity.json');
@@ -371,12 +371,12 @@ describe('CLI Identity Commands', () => {
 
     describe('combined import', () => {
       it('should import both node and agent identity', async () => {
-        // 先创建一个有效的 Node Identity
+        // First create a valid Node Identity
         const nodeManager = new NodeIdentityManager({ dataDir: TEST_DIR });
         await nodeManager.loadOrCreate();
         const existingNodeId = nodeManager.getNodeId();
         
-        // 使用与现有 Node 相同的 nodeId 创建 Agent 导入数据
+        // Create Agent import data with same nodeId as existing Node
         const futureDate = new Date();
         futureDate.setDate(futureDate.getDate() + 30);
         
@@ -385,7 +385,7 @@ describe('CLI Identity Commands', () => {
           version: '1.0',
           exportedAt: new Date().toISOString(),
           node: {
-            nodeId: existingNodeId, // 使用现有的 nodeId
+            nodeId: existingNodeId, // Use existing nodeId
             peerId: 'test-peer-id',
             privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
           },
@@ -393,7 +393,7 @@ describe('CLI Identity Commands', () => {
             id: 'combined-agent-id',
             name: 'combined-agent',
             capabilities: [],
-            nodeId: existingNodeId, // 与 node nodeId 匹配
+            nodeId: existingNodeId, // Match node nodeId
             publicKey: 'dGVzdC1wdWJsaWMta2V5',
             signature: 'dGVzdC1zaWduYXR1cmU=',
             createdAt: new Date().toISOString(),
@@ -406,10 +406,10 @@ describe('CLI Identity Commands', () => {
         
         expect(result.success).toBe(true);
         if (result.success) {
-          // Node 应该成功导入（相同 nodeId）
+          // Node should successfully import (same nodeId)
           expect(result.data.nodeImported).toBe(true);
-          // Agent 可能因为签名验证失败而失败，但这是预期行为
-          // 因为我们使用的是假的签名数据
+          // Agent may fail due to signature verification failure, but this is expected
+          // because we are using fake signature data
         }
       });
     });
@@ -417,10 +417,10 @@ describe('CLI Identity Commands', () => {
 
   describe('Result type pattern (P2-2)', () => {
     it('should return Result type instead of throwing or exiting', async () => {
-      // 这个测试验证 P2-2 修复：importIdentityInternal 返回 Result 类型
+      // This test verifies P2-2 fix: importIdentityInternal returns Result type
       const result = await importIdentityInternal('/nonexistent/file.json', TEST_DIR);
       
-      // 应该返回 Result 类型，而不是抛出异常或调用 process.exit
+      // Should return Result type, not throw exception or call process.exit
       expect(result).toHaveProperty('success');
       expect(result.success).toBe(false);
       
@@ -434,11 +434,11 @@ describe('CLI Identity Commands', () => {
       const invalidFile = join(TEST_DIR, 'invalid.json');
       writeFileSync(invalidFile, 'not json', 'utf-8');
       
-      // 调用者可以处理错误而不需要 try-catch
+      // Caller can handle errors without try-catch
       const result = await importIdentityInternal(invalidFile, TEST_DIR);
       
       if (!result.success) {
-        // 调用者可以访问错误信息
+        // Caller can access error information
         const errorCode = result.error.code;
         const errorMessage = result.error.message;
         
@@ -503,7 +503,7 @@ describe('importIdentityInternal edge cases', () => {
   });
 
   it('should preserve existing data when partial import fails', async () => {
-    // 创建现有的 Agent Identity
+    // Create existing Agent Identity
     const existingAgentFile = join(testDir, 'agent-identity.json');
     const existingAgentData = {
       id: 'existing-agent-id',
@@ -517,20 +517,20 @@ describe('importIdentityInternal edge cases', () => {
     };
     writeFileSync(existingAgentFile, JSON.stringify(existingAgentData, null, 2), { mode: 0o600 });
     
-    // 尝试导入一个无效的 Agent Identity
+    // Try to import an invalid Agent Identity
     const importFile = join(testDir, 'invalid-import.json');
     writeFileSync(importFile, JSON.stringify({
       version: '1.0',
       exportedAt: new Date().toISOString(),
       agent: {
         id: 'invalid-agent-id'
-        // 缺少必要字段
+        // Missing required fields
       }
     }), 'utf-8');
     
     const result = await importIdentityInternal(importFile, testDir);
     
-    // 导入失败，但现有数据应该保留
+    // Import failed, but existing data should be preserved
     const savedData = JSON.parse(readFileSync(existingAgentFile, 'utf-8'));
     expect(savedData.id).toBe('existing-agent-id');
     expect(savedData.name).toBe('existing-agent');

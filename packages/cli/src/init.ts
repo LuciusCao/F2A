@@ -43,11 +43,11 @@ export async function initAgentIdentity(options: {
   const { name, webhook, capabilities, force } = options;
 
   if (!name) {
-    return { success: false, error: '缺少 --name 参数' };
+    return { success: false, error: 'Missing required --name parameter. The agent name is required for identity creation.' };
   }
 
   if (!webhook) {
-    return { success: false, error: '缺少 --webhook 参数。Agent 需要 webhook URL 来接收消息' };
+    return { success: false, error: 'Missing required --webhook parameter. The agent requires a webhook URL to receive messages.' };
   }
 
   try {
@@ -68,7 +68,7 @@ export async function initAgentIdentity(options: {
       return {
         success: false,
         agentId,
-        error: `身份文件已存在: ${identityPath}。使用 --force 强制重新创建`
+        error: `Identity file already exists at: ${identityPath}. Use --force to overwrite and recreate.`
       };
     }
 
@@ -90,7 +90,7 @@ export async function initAgentIdentity(options: {
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { success: false, error: `初始化失败: ${message}` };
+    return { success: false, error: `Initialization failed: ${message}` };
   }
 }
 
@@ -172,23 +172,23 @@ export async function cliInitAgent(options: {
   });
 
   if (result.success) {
-    console.log('✅ Agent 身份已创建');
+    console.log('✅ Agent identity created successfully.');
     console.log('');
     console.log(`   AgentId: ${result.agentId}`);
     console.log(`   Name: ${options.name}`);
     console.log(`   Webhook: ${options.webhook}`);
     console.log('');
-    console.log('📝 请记录以下信息到记忆：');
+    console.log('📝 Please save the following information for your records:');
     console.log('   AgentId: ' + result.agentId);
     console.log('   Identity: ' + result.identityFile);
     console.log('');
-    console.log('💡 使用 F2A CLI 时传入 F2A-AgentId：');
+    console.log('💡 Use the F2A CLI with the F2A-AgentId parameter:');
     console.log('   f2a agent register --agent-id <F2A-AgentId>');
-    console.log('   f2a message send --agent-id <F2A-AgentId> --to <目标> "内容"');
+    console.log('   f2a message send --agent-id <F2A-AgentId> --to <target> "content"');
   } else {
-    console.error(`❌ 初始化失败: ${result.error}`);
+    console.error(`❌ Initialization failed: ${result.error}`);
     console.error('');
-    console.error('用法: f2a agent init --name <name> --webhook <url> [--force]');
+    console.error('Usage: f2a agent init --name <name> --webhook <url> [--force]');
     process.exit(1);
   }
 }
@@ -205,12 +205,12 @@ export async function showAgentStatus(agentId?: string): Promise<void> {
     const identities = listLocalIdentities();
 
     if (identities.length === 0) {
-      console.log('📭 没有本地身份文件');
-      console.log('请先运行: f2a agent init --name <name> --webhook <url>');
+      console.log('📭 No local identity files found.');
+      console.log('Please run: f2a agent init --name <name> --webhook <url>');
       return;
     }
 
-    console.log(`📋 本地身份文件 (${identities.length}):`);
+    console.log(`📋 Local identity files (${identities.length}):`);
     console.log('');
     for (const id of identities) {
       const statusMark = id.name ? '🔹' : '⚪';
@@ -219,14 +219,14 @@ export async function showAgentStatus(agentId?: string): Promise<void> {
       console.log(`   Path: ${id.path}`);
       console.log('');
     }
-    console.log('使用 --agent-id <id> 查看详情');
+    console.log('Use --agent-id <id> to view details.');
     return;
   }
 
   const identity = readIdentityByAgentId(agentId);
 
   if (!identity) {
-    console.log('❌ 未找到身份文件');
+    console.log('❌ Identity file not found.');
     console.log(`   AgentId: ${agentId}`);
     console.log(`   Expected: ${join(AGENT_IDENTITIES_DIR, `${agentId}.json`)}`);
     return;
@@ -239,11 +239,11 @@ export async function showAgentStatus(agentId?: string): Promise<void> {
   console.log(`Public Key: ${identity.publicKey.slice(0, 24)}...`);
   
   if (identity.nodeSignature) {
-    console.log(`Node Signature: ✅ 已签发`);
+    console.log(`Node Signature: ✅ Issued`);
     console.log(`Node PeerId: ${identity.nodePeerId || 'N/A'}`);
   } else {
-    console.log(`Node Signature: ⚪ 未签发`);
-    console.log('   使用 f2a agent register 注册到 Daemon');
+    console.log(`Node Signature: ⚪ Not issued`);
+    console.log('   Use f2a agent register to register with Daemon');
   }
 
   if (identity.capabilities && identity.capabilities.length > 0) {

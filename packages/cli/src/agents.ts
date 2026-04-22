@@ -54,9 +54,14 @@ export async function registerAgent(options: {
   force?: boolean;
 }): Promise<void> {
   if (!options.agentId) {
-    console.error('❌ Error: Missing required parameter --agent-id. The agent ID is required for registration.');
-    console.error('Usage: f2a agent register --agent-id <agentId>');
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError('Missing required parameter: --agent-id', 'MISSING_AGENT_ID');
+    } else {
+      console.error('❌ Error: Missing required parameter --agent-id. The agent ID is required for registration.');
+      console.error('Usage: f2a agent register --agent-id <agentId>');
+      process.exit(1);
+    }
+    return;
   }
 
   const identity = readIdentityByAgentId(options.agentId);
@@ -219,9 +224,14 @@ export async function updateAgent(options: {
   name?: string;
 }): Promise<void> {
   if (!options.agentId) {
-    console.error('❌ Error: Missing required parameter --agent-id. The agent ID is required for updating agent configuration.');
-    console.error('Usage: f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]');
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError('Missing required parameter: --agent-id', 'MISSING_AGENT_ID');
+    } else {
+      console.error('❌ Error: Missing required parameter --agent-id. The agent ID is required for updating agent configuration.');
+      console.error('Usage: f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]');
+      process.exit(1);
+    }
+    return;
   }
 
   const identity = readIdentityByAgentId(options.agentId);
@@ -246,9 +256,14 @@ export async function updateAgent(options: {
   if (options.name) updates.push('name');
 
   if (updates.length === 0) {
-    console.log('⚠️  Warning: Nothing to update.');
-    console.error('Please provide --webhook or --name parameter.');
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError('Nothing to update. Please provide --webhook or --name parameter', 'INVALID_PARAMETER');
+    } else {
+      console.log('⚠️  Warning: Nothing to update.');
+      console.error('Please provide --webhook or --name parameter.');
+      process.exit(1);
+    }
+    return;
   }
 
   try {
@@ -339,9 +354,14 @@ function handleUpdateResult(
  */
 export async function unregisterAgent(agentId: string): Promise<void> {
   if (!agentId || agentId.startsWith('--')) {
-    console.error('❌ Error: Missing required parameter --agent-id. The agent ID is required for unregistration.');
-    console.error('Usage: f2a agent unregister --agent-id <agentId>');
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError('Missing required parameter: --agent-id', 'MISSING_AGENT_ID');
+    } else {
+      console.error('❌ Error: Missing required parameter --agent-id. The agent ID is required for unregistration.');
+      console.error('Usage: f2a agent unregister --agent-id <agentId>');
+      process.exit(1);
+    }
+    return;
   }
 
   // 读取身份文件（Challenge-Response 需要）

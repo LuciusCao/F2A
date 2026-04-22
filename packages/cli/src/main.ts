@@ -312,10 +312,15 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
       const initOpts = parseArgs(restArgs);
       const initWebhook = initOpts.webhook as string | undefined;
       if (!initWebhook) {
-        console.error('❌ Missing --webhook parameter');
-        console.error('Agent requires a webhook URL to receive messages');
-        console.error('Usage: f2a agent init --name <name> --webhook <url>');
-        process.exit(1);
+        if (isJsonMode()) {
+          outputError('Missing required parameter: --webhook', 'MISSING_WEBHOOK');
+        } else {
+          console.error('❌ Missing --webhook parameter');
+          console.error('Agent requires a webhook URL to receive messages');
+          console.error('Usage: f2a agent init --name <name> --webhook <url>');
+          process.exit(1);
+        }
+        return;
       }
       await cliInitAgent({
         name: initOpts.name as string,
@@ -345,9 +350,14 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
       const unregisterOpts = parseArgs(restArgs);
       const unregisterAgentId = unregisterOpts['agent-id'] as string;
       if (!unregisterAgentId) {
-        console.error('❌ Missing --agent-id parameter');
-        console.error('Usage: f2a agent unregister --agent-id <agentId>');
-        process.exit(1);
+        if (isJsonMode()) {
+          outputError('Missing required parameter: --agent-id', 'MISSING_AGENT_ID');
+        } else {
+          console.error('❌ Missing --agent-id parameter');
+          console.error('Usage: f2a agent unregister --agent-id <agentId>');
+          process.exit(1);
+        }
+        return;
       }
       await unregisterAgent(unregisterAgentId);
       break;
@@ -361,9 +371,14 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
       const updateOpts = parseArgs(restArgs);
       const updateAgentId = updateOpts['agent-id'] as string;
       if (!updateAgentId) {
-        console.error('❌ Missing --agent-id parameter');
-        console.error('Usage: f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]');
-        process.exit(1);
+        if (isJsonMode()) {
+          outputError('Missing required parameter: --agent-id', 'MISSING_AGENT_ID');
+        } else {
+          console.error('❌ Missing --agent-id parameter');
+          console.error('Usage: f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]');
+          process.exit(1);
+        }
+        return;
       }
       await updateAgent({
         agentId: updateAgentId,
@@ -373,9 +388,13 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
       break;
 
     default:
-      console.error(`❌ Unknown agent subcommand: ${subcommand}`);
-      showAgentHelp();
-      process.exit(1);
+      if (isJsonMode()) {
+        outputError(`Unknown agent subcommand: ${subcommand}`, 'UNKNOWN_SUBCOMMAND');
+      } else {
+        console.error(`❌ Unknown agent subcommand: ${subcommand}`);
+        showAgentHelp();
+        process.exit(1);
+      }
   }
 }
 
@@ -419,9 +438,13 @@ async function handleMessageCommand(subArgs: string[]): Promise<void> {
       break;
 
     default:
-      console.error(`❌ Unknown message subcommand: ${subcommand}`);
-      showMessageHelp();
-      process.exit(1);
+      if (isJsonMode()) {
+        outputError(`Unknown message subcommand: ${subcommand}`, 'UNKNOWN_SUBCOMMAND');
+      } else {
+        console.error(`❌ Unknown message subcommand: ${subcommand}`);
+        showMessageHelp();
+        process.exit(1);
+      }
   }
 }
 
@@ -458,9 +481,13 @@ async function handleDaemonCommand(subArgs: string[]): Promise<void> {
       break;
 
     default:
-      console.error(`❌ Unknown daemon subcommand: ${subcommand}`);
-      showDaemonHelp();
-      process.exit(1);
+      if (isJsonMode()) {
+        outputError(`Unknown daemon subcommand: ${subcommand}`, 'UNKNOWN_SUBCOMMAND');
+      } else {
+        console.error(`❌ Unknown daemon subcommand: ${subcommand}`);
+        showDaemonHelp();
+        process.exit(1);
+      }
   }
 }
 
@@ -489,9 +516,14 @@ async function handleIdentityCommand(subArgs: string[]): Promise<void> {
     case 'import':
       const inputPath = restArgs[0];
       if (!inputPath) {
-        console.error('❌ Error: Missing import file path');
-        console.error('Usage: f2a identity import <file.json>');
-        process.exit(1);
+        if (isJsonMode()) {
+          outputError('Missing required parameter: file path', 'MISSING_FILE_PATH');
+        } else {
+          console.error('❌ Error: Missing import file path');
+          console.error('Usage: f2a identity import <file.json>');
+          process.exit(1);
+        }
+        return;
       }
       const result = await importIdentityInternal(inputPath);
       if (result.success) {
@@ -521,9 +553,13 @@ async function handleIdentityCommand(subArgs: string[]): Promise<void> {
       break;
 
     default:
-      console.error(`❌ Unknown identity subcommand: ${subcommand}`);
-      showIdentityHelp();
-      process.exit(1);
+      if (isJsonMode()) {
+        outputError(`Unknown identity subcommand: ${subcommand}`, 'UNKNOWN_SUBCOMMAND');
+      } else {
+        console.error(`❌ Unknown identity subcommand: ${subcommand}`);
+        showIdentityHelp();
+        process.exit(1);
+      }
   }
 }
 
@@ -566,9 +602,13 @@ async function handleNodeCommand(subArgs: string[]): Promise<void> {
       break;
 
     default:
-      console.error(`Unknown node subcommand: ${subcommand}`);
-      showNodeHelp();
-      process.exit(1);
+      if (isJsonMode()) {
+        outputError(`Unknown node subcommand: ${subcommand}`, 'UNKNOWN_SUBCOMMAND');
+      } else {
+        console.error(`Unknown node subcommand: ${subcommand}`);
+        showNodeHelp();
+        process.exit(1);
+      }
   }
 }
 

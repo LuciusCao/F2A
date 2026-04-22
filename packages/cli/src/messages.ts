@@ -74,15 +74,25 @@ export async function sendMessage(options: {
   const { agentId, toAgentId, content, type, metadata } = options;
 
   if (!agentId) {
-    console.error('❌ Error: Missing required --agent-id parameter.');
-    console.error('Usage: f2a message send --agent-id <agentId> --to <agentId> "content"');
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError('Missing required parameter: --agent-id', 'MISSING_AGENT_ID');
+    } else {
+      console.error('❌ Error: Missing required --agent-id parameter.');
+      console.error('Usage: f2a message send --agent-id <agentId> --to <agentId> "content"');
+      process.exit(1);
+    }
+    return;
   }
 
   if (!content) {
-    console.error('❌ Error: Missing message content.');
-    console.error('Usage: f2a message send --agent-id <agentId> --to <agentId> "content"');
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError('Missing required parameter: message content', 'MISSING_CONTENT');
+    } else {
+      console.error('❌ Error: Missing message content.');
+      console.error('Usage: f2a message send --agent-id <agentId> --to <agentId> "content"');
+      process.exit(1);
+    }
+    return;
   }
 
   const identity = readIdentityByAgentId(agentId);
@@ -256,9 +266,14 @@ export async function clearMessages(options: {
   messageIds?: string[];
 }): Promise<void> {
   if (!options.agentId) {
-    console.error('❌ Error: Missing required --agent-id parameter.');
-    console.error('Usage: f2a message clear --agent-id <agentId>');
-    process.exit(1);
+    if (isJsonMode()) {
+      outputError('Missing required parameter: --agent-id', 'MISSING_AGENT_ID');
+    } else {
+      console.error('❌ Error: Missing required --agent-id parameter.');
+      console.error('Usage: f2a message clear --agent-id <agentId>');
+      process.exit(1);
+    }
+    return;
   }
 
   try {

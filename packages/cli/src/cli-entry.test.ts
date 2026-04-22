@@ -63,7 +63,7 @@ describe('CLI Entry Functionality', () => {
     it('should show agent subcommand help', async () => {
       const result = await runCli(['agent', '--help']);
 
-      expect(result.stdout).toContain('Agent 管理');
+      expect(result.stdout).toContain('Agent Management');
       expect(result.stdout).toContain('list');
       expect(result.stdout).toContain('register');
       expect(result.stdout).toContain('unregister');
@@ -73,7 +73,7 @@ describe('CLI Entry Functionality', () => {
     it('should show daemon subcommand help', async () => {
       const result = await runCli(['daemon', '--help']);
 
-      expect(result.stdout).toContain('Daemon 管理');
+      expect(result.stdout).toContain('Daemon Management');
       expect(result.stdout).toContain('start');
       expect(result.stdout).toContain('stop');
       expect(result.stdout).toContain('restart');
@@ -85,7 +85,7 @@ describe('CLI Entry Functionality', () => {
     it('should show message subcommand help', async () => {
       const result = await runCli(['message', '--help']);
 
-      expect(result.stdout).toContain('消息管理');
+      expect(result.stdout).toContain('Message Management');
       expect(result.stdout).toContain('send');
       expect(result.stdout).toContain('list');
       expect(result.stdout).toContain('clear');
@@ -95,7 +95,7 @@ describe('CLI Entry Functionality', () => {
     it('should show identity subcommand help', async () => {
       const result = await runCli(['identity', '--help']);
 
-      expect(result.stdout).toContain('身份管理');
+      expect(result.stdout).toContain('Identity Management');
       expect(result.stdout).toContain('status');
       expect(result.stdout).toContain('export');
       expect(result.stdout).toContain('import');
@@ -107,21 +107,21 @@ describe('CLI Entry Functionality', () => {
     it('should handle unknown command with error', async () => {
       const result = await runCli(['unknown-command']);
 
-      expect(result.stderr).toContain('未知的命令');
+      expect(result.stderr).toContain('Unknown command');
       expect(result.code).toBe(1);
     });
 
     it('should handle unknown subcommand with error', async () => {
       const result = await runCli(['agent', 'unknown']);
 
-      expect(result.stderr).toContain('未知的 agent 子命令');
+      expect(result.stderr).toContain('Unknown agent subcommand');
       expect(result.code).toBe(1);
     });
 
     it('should show help after error message', async () => {
       const result = await runCli(['unknown-command']);
 
-      expect(result.stderr).toContain('未知的命令');
+      expect(result.stderr).toContain('Unknown command');
       expect(result.stdout).toContain('Usage');
       expect(result.stdout).toContain('Commands');
     });

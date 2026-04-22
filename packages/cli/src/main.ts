@@ -76,50 +76,50 @@ Global Options:
  */
 function showAgentHelp(): void {
   console.log(`
-F2A Agent 管理
+F2A Agent Management
 
 Usage: f2a agent <subcommand> [options]
 
 Subcommands:
-  init              生成 Agent 密钥对和身份文件
+  init              Create Agent keypair and identity file
                     f2a agent init --name <name> --webhook <url> [--capability <cap>]... [--force]
-                    --name            Agent 名称（必填）
-                    --webhook         Webhook URL（必填，用于接收消息）
-                    --capability      能力标签（可多个）
-                    --force           强制重新创建
-                    身份文件自动保存到 ~/.f2a/agent-identities/
+                    --name            Agent name (required)
+                    --webhook         Webhook URL (required, for receiving messages)
+                    --capability      Capability tags (multiple allowed)
+                    --force           Force re-creation
+                    Identity file saved to ~/.f2a/agent-identities/
 
-  register          注册 Agent 到 Daemon（获取 Node 签名）
+  register          Register Agent to Daemon (get Node signature)
                     f2a agent register --agent-id <agentId> [--force]
-                    发送公钥到 Daemon，获取 Node 签名
+                    Send public key to Daemon, receive Node signature
 
-  list              列出已注册的 Agent
+  list              List registered Agents
                     f2a agent list
 
-  unregister        注销 Agent
-                    f2a agent unregister <agent_id> --agent-id <agentId>
+  unregister        Unregister Agent
+                    f2a agent unregister --agent-id <agentId>
 
-  status            查看 Agent 身份状态
+  status            View Agent identity status
                     f2a agent status --agent-id <agentId>
 
-  update            更新 Agent 配置
+  update            Update Agent configuration
                     f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]
-                    修改 webhook 或名称后需重新注册
+                    Re-register required after webhook or name changes
 
-  verify            验证 Agent（Challenge-Response）
-                    f2a agent verify <agent_id>
+  verify            Verify Agent (Challenge-Response)
+                    f2a agent verify --agent-id <agentId>
 
 Examples:
-  # 创建身份
+  # Create identity
   f2a agent init --name "my-agent" --webhook http://localhost:3000/f2a/webhook
   
-  # 注册到 Daemon（使用生成的 agentId）
+  # Register to Daemon
   f2a agent register --agent-id agent:abc123...
   
-  # 查看状态
+  # View status
   f2a agent status --agent-id agent:abc123...
   
-  # 发送消息
+  # Send message
   f2a message send --agent-id agent:abc123... --to agent:xyz789... "hello"
 `);
 }
@@ -129,23 +129,23 @@ Examples:
  */
 function showMessageHelp(): void {
   console.log(`
-F2A 消息管理
+F2A Message Management
 
 Usage: f2a message <subcommand> [options]
 
 Subcommands:
-  send              发送消息到 Agent
+  send              Send message to Agent
                     f2a message send --agent-id <agentId> --to <agent_id> [--type <type>] "content"
-                    --agent-id        Agent ID（必填）
-                    --to              接收方 Agent ID（可选，不提供则广播）
-                    --type            消息类型：message, task_request, task_response, announcement, claim
+                    --agent-id        Agent ID (required)
+                    --to              Recipient Agent ID (optional, broadcasts if omitted)
+                    --type            Message type: message, task_request, task_response, announcement, claim
 
-  list              查看消息队列
+  list              View message queue
                     f2a message list --agent-id <agentId> [--unread] [--limit <n>]
-                    --unread  只显示未读消息
-                    --limit   限制数量
+                    --unread  Show only unread messages
+                    --limit   Limit count
 
-  clear             清除消息
+  clear             Clear messages
                     f2a message clear --agent-id <agentId>
 
 Examples:
@@ -160,24 +160,24 @@ Examples:
  */
 function showDaemonHelp(): void {
   console.log(`
-F2A Daemon 管理
+F2A Daemon Management
 
 Usage: f2a daemon <subcommand> [options]
 
 Subcommands:
-  start             后台启动 Daemon
+  start             Start Daemon in background
                     f2a daemon start
 
-  stop              停止 Daemon
+  stop              Stop Daemon
                     f2a daemon stop
 
-  restart           重启 Daemon（先停止再启动）
+  restart           Restart Daemon (stop then start)
                     f2a daemon restart
 
-  status            查看 Daemon 状态
+  status            View Daemon status
                     f2a daemon status
 
-  foreground        前台启动 Daemon（用于调试）
+  foreground        Start Daemon in foreground (for debugging)
                     f2a daemon foreground
 
 Examples:
@@ -193,18 +193,18 @@ Examples:
  */
 function showIdentityHelp(): void {
   console.log(`
-F2A 身份管理
+F2A Identity Management
 
 Usage: f2a identity <subcommand> [options]
 
 Subcommands:
-  status            查看身份状态
+  status            View identity status
                     f2a identity status
 
-  export [file]     导出身份到文件（用于备份/迁移）
+  export [file]     Export identity to file (for backup/migration)
                     f2a identity export [output_file.json]
 
-  import <file>     从文件导入身份（用于恢复/迁移）
+  import <file>     Import identity from file (for recovery/migration)
                     f2a identity import <input_file.json>
 
 Examples:
@@ -312,9 +312,9 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
       const initOpts = parseArgs(restArgs);
       const initWebhook = initOpts.webhook as string | undefined;
       if (!initWebhook) {
-        console.error('❌ 缺少 --webhook 参数');
-        console.error('Agent 需要 webhook URL 来接收消息');
-        console.error('用法: f2a agent init --name <name> --webhook <url>');
+        console.error('❌ Missing --webhook parameter');
+        console.error('Agent requires a webhook URL to receive messages');
+        console.error('Usage: f2a agent init --name <name> --webhook <url>');
         process.exit(1);
       }
       await cliInitAgent({
@@ -345,8 +345,8 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
       const unregisterOpts = parseArgs(restArgs);
       const unregisterAgentId = unregisterOpts['agent-id'] as string;
       if (!unregisterAgentId) {
-        console.error('❌ 缺少 --agent-id 参数');
-        console.error('用法: f2a agent unregister --agent-id <agentId>');
+        console.error('❌ Missing --agent-id parameter');
+        console.error('Usage: f2a agent unregister --agent-id <agentId>');
         process.exit(1);
       }
       await unregisterAgent(unregisterAgentId);
@@ -361,8 +361,8 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
       const updateOpts = parseArgs(restArgs);
       const updateAgentId = updateOpts['agent-id'] as string;
       if (!updateAgentId) {
-        console.error('❌ 缺少 --agent-id 参数');
-        console.error('用法: f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]');
+        console.error('❌ Missing --agent-id parameter');
+        console.error('Usage: f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]');
         process.exit(1);
       }
       await updateAgent({
@@ -373,7 +373,7 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
       break;
 
     default:
-      console.error(`❌ 未知的 agent 子命令：${subcommand}`);
+      console.error(`❌ Unknown agent subcommand: ${subcommand}`);
       showAgentHelp();
       process.exit(1);
   }
@@ -419,7 +419,7 @@ async function handleMessageCommand(subArgs: string[]): Promise<void> {
       break;
 
     default:
-      console.error(`❌ 未知的 message 子命令：${subcommand}`);
+      console.error(`❌ Unknown message subcommand: ${subcommand}`);
       showMessageHelp();
       process.exit(1);
   }
@@ -458,7 +458,7 @@ async function handleDaemonCommand(subArgs: string[]): Promise<void> {
       break;
 
     default:
-      console.error(`❌ 未知的 daemon 子命令：${subcommand}`);
+      console.error(`❌ Unknown daemon subcommand: ${subcommand}`);
       showDaemonHelp();
       process.exit(1);
   }
@@ -489,39 +489,39 @@ async function handleIdentityCommand(subArgs: string[]): Promise<void> {
     case 'import':
       const inputPath = restArgs[0];
       if (!inputPath) {
-        console.error('❌ 错误：缺少导入文件路径');
-        console.error('用法：f2a identity import <file.json>');
+        console.error('❌ Error: Missing import file path');
+        console.error('Usage: f2a identity import <file.json>');
         process.exit(1);
       }
       const result = await importIdentityInternal(inputPath);
       if (result.success) {
         const data = result.data;
-        console.log(`✅ 导入完成`);
+        console.log(`✅ Import complete`);
         if (data.nodeImported) {
-          console.log('   Node Identity: ✅ 已导入');
+          console.log('   Node Identity: ✅ imported');
         }
         if (data.agentImported) {
-          console.log('   Agent Identity: ✅ 已导入');
+          console.log('   Agent Identity: ✅ imported');
         }
         if (data.warnings.length > 0) {
           console.log('');
-          console.log('⚠️  警告:');
+          console.log('⚠️  Warnings:');
           data.warnings.forEach(w => console.log(`   - ${w}`));
         }
         if (data.agentConfirmation) {
           console.log('');
-          console.log('⚠️  Agent 导入需要确认:');
+          console.log('⚠️  Agent import requires confirmation:');
           console.log(`   ${data.agentConfirmation.reason}`);
-          console.log('   使用 --force 参数强制导入');
+          console.log('   Use --force to force import');
         }
       } else {
-        console.error(`❌ 导入失败：${result.error?.message}`);
+        console.error(`❌ Import failed: ${result.error?.message}`);
         process.exit(1);
       }
       break;
 
     default:
-      console.error(`❌ 未知的 identity 子命令：${subcommand}`);
+      console.error(`❌ Unknown identity subcommand: ${subcommand}`);
       showIdentityHelp();
       process.exit(1);
   }
@@ -626,18 +626,18 @@ async function main(): Promise<void> {
         if (isJsonMode()) {
           outputError(`Unknown command: ${command}`, 'UNKNOWN_COMMAND');
         } else {
-          console.error(`❌ 未知的命令：${command}`);
+          console.error(`❌ Unknown command: ${command}`);
           showHelp();
           process.exit(1);
         }
     }
   } catch (err) {
-    // 错误已在各命令中处理，这里只捕获未处理的错误
+    // Errors handled in each command, this catches unhandled errors
     const message = err instanceof Error ? err.message : String(err);
     if (isJsonMode()) {
       outputError(message, 'EXECUTION_ERROR');
     } else {
-      console.error(`❌ 执行失败：${message}`);
+      console.error(`❌ Execution failed: ${message}`);
       process.exit(1);
     }
   }

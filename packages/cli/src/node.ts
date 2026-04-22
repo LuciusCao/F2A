@@ -12,13 +12,103 @@
 import { sendRequest } from './http-client.js';
 import { initIdentity } from './identity.js';
 import { isJsonMode, outputJson, outputError } from './output.js';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
+import { NodeIdentityManager } from '@f2a/network';
+
+const DEFAULT_DATA_DIR = '.f2a';
 
 /**
  * Initialize node identity
- * Reuses identity.ts initIdentity function
+ * Supports --json output mode
  */
 export async function nodeInit(options: { force?: boolean }): Promise<void> {
-  await initIdentity(options);
+  const dataDir = join(homedir(), DEFAULT_DATA_DIR);
+
+  if (isJsonMode()) {
+    // JSON mode: return structured output
+    try {
+      const result = {
+        dataDir,
+        dataDirCreated: false,
+        nodeIdentityCreated: false,
+        nodeIdentityExists: false,
+        nodeId: undefined as string | undefined,
+        configCreated: false,
+        configExists: false,
+        tokenCreated: false,
+        success: true
+      };
+
+      // 1. Ensure ~/.f2a directory exists
+      if (!existsSync(dataDir)) {
+        mkdirSync(dataDir, { recursive: true });
+        result.dataDirCreated = true;
+      }
+
+      // 2. Check/Create Node Identity
+      const nodeIdentityPath = join(dataDir, 'node-identity.json');
+      const nodeExists = existsSync(nodeIdentityPath);
+
+      if (nodeExists && !options?.force) {
+        result.nodeIdentityExists = true;
+        const nodeManager = new NodeIdentityManager({ dataDir });
+        const loadResult = await nodeManager.loadOrCreate();
+        if (loadResult.success && loadResult.data) {
+          result.nodeId = loadResult.data.nodeId;
+        }
+      } else {
+        const nodeManager = new NodeIdentityManager({ dataDir });
+        const loadResult = await nodeManager.loadOrCreate();
+        if (loadResult.success && loadResult.data) {
+          result.nodeIdentityCreated = true;
+          result.nodeId = loadResult.data.nodeId;
+        } else {
+          outputError(loadResult.error?.message || 'Failed to create node identity', 'INIT_FAILED');
+          return;
+        }
+      }
+
+      // 3. Check/create config.json
+      const configPath = join(dataDir, 'config.json');
+      if (!existsSync(configPath)) {
+        const defaultConfig = {
+          network: {
+            bootstrapPeers: [],
+            bootstrapPeerFingerprints: {}
+          },
+          autoStart: false,
+          enableMDNS: true,
+          enableDHT: false
+        };
+        writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
+        result.configCreated = true;
+      } else {
+        result.configExists = true;
+      }
+
+      // 4. Create control-token (if not exists)
+      const tokenPath = join(dataDir, 'control-token');
+      if (!existsSync(tokenPath)) {
+        const randomToken = Buffer.from(Array.from({ length: 32 }, () =>
+          Math.floor(Math.random() * 256)
+        ))
+          .toString('hex')
+          .slice(0, 32);
+        writeFileSync(tokenPath, randomToken);
+        result.tokenCreated = true;
+      }
+
+      outputJson(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      outputError(message, 'INIT_FAILED');
+    }
+  } else {
+    // Human mode: use existing initIdentity function
+    await initIdentity(options);
+  }
 }
 
 /**

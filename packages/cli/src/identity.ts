@@ -94,7 +94,7 @@ export interface ImportResult {
  * - Node Identity: libp2p PeerId (Ed25519 key pair)
  * - config.json: Basic configuration, agentName defaults to hostname
  */
-export async function initIdentity(options?: { force?: boolean }): Promise<void> {
+export async function initNodeIdentity(options?: { force?: boolean }): Promise<void> {
   const dataDir = join(homedir(), DEFAULT_DATA_DIR);
   
   console.log('');

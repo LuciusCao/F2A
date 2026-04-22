@@ -10,7 +10,7 @@
  */
 
 import { sendRequest } from './http-client.js';
-import { initIdentity } from './identity.js';
+import { initNodeIdentity } from './identity.js';
 import { isJsonMode, outputJson, outputError } from './output.js';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
@@ -106,8 +106,8 @@ export async function nodeInit(options: { force?: boolean }): Promise<void> {
       outputError(message, 'INIT_FAILED');
     }
   } else {
-    // Human mode: use existing initIdentity function
-    await initIdentity(options);
+    // Human mode: use existing initNodeIdentity function
+    await initNodeIdentity(options);
   }
 }
 

@@ -18,21 +18,39 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { join } from 'path';
 import { homedir } from 'os';
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { createHmac } from 'crypto';
+import { execSync } from 'child_process';
+import { signChallenge } from '@f2a/network';
+import type { Challenge, ChallengeResponse } from '@f2a/network';
 
 /**
- * 读取已保存的 Agent Identity
- * Phase 6: 支持身份恢复
+ * Agent Identity 文件结构
  */
-function readSavedAgentId(): string | null {
-  const agentIdentitiesDir = join(homedir(), '.f2a', 'agent-identities');
-  
+interface AgentIdentityFileData {
+  agentId: string;
+  name?: string;
+  publicKey: string;
+  privateKey?: string;
+  peerId?: string;
+  signature?: string;
+  nodeSignature?: string;
+  nodeId?: string;
+  e2eePublicKey?: string;
+  webhook?: { url: string; token?: string };
+  capabilities?: { name: string; version?: string }[];
+  createdAt: string;
+  lastActiveAt: string;
+  token?: string;
+}
+
+/**
+ * 读取最新的 identity 文件
+ * 返回完整的 identity 对象，按 lastActiveAt 排序选择最新的
+ */
+function readLatestIdentity(agentIdentitiesDir: string): AgentIdentityFileData | null {
   if (!existsSync(agentIdentitiesDir)) {
     return null;
   }
   
-  // 查找第一个有效的 Agent Identity 文件
-  // 每个节点通常只有一个 agent，所以直接查找第一个即可
   const files = readdirSync(agentIdentitiesDir)
     .filter(f => f.endsWith('.json') && f.startsWith('agent:'));
   
@@ -40,16 +58,15 @@ function readSavedAgentId(): string | null {
     return null;
   }
   
-  // 查找最新的 identity 文件（按最后活跃时间排序）
-  let latestIdentity: { agentId: string; lastActiveAt: string } | null = null;
+  let latestIdentity: AgentIdentityFileData | null = null;
   
   for (const file of files) {
     try {
       const content = readFileSync(join(agentIdentitiesDir, file), 'utf-8');
-      const identity = JSON.parse(content);
+      const identity = JSON.parse(content) as AgentIdentityFileData;
       
       if (identity && identity.agentId) {
-        if (!latestIdentity || identity.lastActiveAt > latestIdentity.lastActiveAt) {
+        if (!latestIdentity || (identity.lastActiveAt && identity.lastActiveAt > (latestIdentity.lastActiveAt || ''))) {
           latestIdentity = identity;
         }
       }
@@ -58,7 +75,66 @@ function readSavedAgentId(): string | null {
     }
   }
   
-  return latestIdentity?.agentId || null;
+  return latestIdentity;
+}
+
+/**
+ * 初始化 Agent Identity
+ * 如果 identity 文件不存在，调用 CLI 创建
+ * 
+ * @param config 插件配置
+ * @param logger 日志记录器
+ * @returns identity 对象或 null（失败时）
+ */
+function initializeAgentIdentity(
+  config: Required<WebhookConfig>,
+  logger?: ApiLogger
+): AgentIdentityFileData | null {
+  const agentIdentitiesDir = join(homedir(), '.f2a', 'agent-identities');
+  
+  // 检查是否存在 identity 文件
+  const identity = readLatestIdentity(agentIdentitiesDir);
+  
+  if (identity) {
+    logger?.info('[F2A] Found existing agent identity:', identity.agentId.slice(0, 16));
+    return identity;
+  }
+  
+  // 没有 identity，调用 CLI 创建
+  logger?.info('[F2A] No agent identity found, creating new one via CLI...');
+  
+  // 注意: init 不传 webhook，在 register 时传入
+  try {
+    const cmd = `f2a agent init --name "${config.agentName}"`;
+    logger?.info('[F2A] Running:', cmd);
+    
+    const output = execSync(cmd, { encoding: 'utf-8', stdio: 'pipe', timeout: 30000 });
+    logger?.info('[F2A] CLI output:', output.trim());
+    
+    // 重新读取创建的 identity
+    const newIdentity = readLatestIdentity(agentIdentitiesDir);
+    
+    if (newIdentity) {
+      logger?.info('[F2A] Agent identity created successfully:', newIdentity.agentId.slice(0, 16));
+      return newIdentity;
+    } else {
+      logger?.error('[F2A] Failed to read newly created identity');
+      return null;
+    }
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    logger?.error('[F2A] Failed to create agent identity:', errorMsg);
+    return null;
+  }
+}
+
+/**
+ * 读取已保存的 Agent Identity
+ * Phase 6: 支持身份恢复
+ */
+function readSavedAgentId(): string | null {
+  const identity = readLatestIdentity(join(homedir(), '.f2a', 'agent-identities'));
+  return identity?.agentId || null;
 }
 
 /** Default configuration */
@@ -118,6 +194,17 @@ export default function register(api: OpenClawPluginApi) {
       // Start daemon registration asynchronously
       setImmediate(async () => {
         if (config.autoRegister) {
+          // Task 3: 初始化 Agent Identity（如果不存在则自动创建）
+          const identity = initializeAgentIdentity(config, api.logger);
+          if (!identity) {
+            api.logger?.error('[F2A] Failed to initialize Agent identity, registration aborted');
+            return;
+          }
+          
+          // 存储 identity agentId 到 config（用于后续注销）
+          // @ts-ignore
+          config._initializedAgentId = identity.agentId;
+          
           const result = await registerToDaemon(api, config);
           if (result.success && result.agent?.agentId) {
             api.logger?.info('[F2A] Registered successfully:', result.agent.agentId);
@@ -281,12 +368,14 @@ export async function registerToDaemon(
   }
   
   // 🔑 Phase 7: 查找已保存的 AgentId，尝试 Challenge-Response 验证
+  // RFC008: 使用 Agent privateKey 进行签名验证
   const savedAgentId = readSavedAgentId();
   if (savedAgentId) {
     const identity = readIdentityFile(savedAgentId);
     
-    if (identity && identity.e2eePublicKey) {
-      api.logger?.info('[F2A] Found saved agentId with e2eePublicKey, attempting Challenge-Response...', savedAgentId.slice(0, 16));
+    // RFC008: 检查 Agent privateKey 是否存在（用于 Ed25519 签名）
+    if (identity && identity.privateKey) {
+      api.logger?.info('[F2A] Found saved agentId with privateKey, attempting Challenge-Response...', savedAgentId.slice(0, 16));
       
       const result = await verifyIdentity(api, config, identity, webhookUrl);
       if (result.success && result.agent?.agentId) {
@@ -457,12 +546,17 @@ async function invokeAgent(
 /**
  * Agent Identity 结构（简化版）
  * Phase 4: 添加 token 字段
+ * RFC008: 添加 privateKey 和 publicKey 字段
  */
 interface AgentIdentityFile {
   agentId: string;
   name: string;
   peerId: string;
   signature: string;
+  /** Agent Ed25519 公钥 (Base64) - RFC008 */
+  publicKey?: string;
+  /** Agent Ed25519 私钥 (Base64) - RFC008 */
+  privateKey?: string;
   e2eePublicKey?: string;
   webhook?: { url: string; token?: string };
   capabilities?: { name: string; version?: string }[];
@@ -534,39 +628,9 @@ function saveIdentityWithToken(agentId: string, token: string): boolean {
 }
 
 /**
- * 读取节点 E2EE 私钥
- */
-function readNodePrivateKey(): string | null {
-  try {
-    const nodeIdentityPath = join(homedir(), '.f2a', 'node-identity.json');
-    if (existsSync(nodeIdentityPath)) {
-      const nodeIdentity = JSON.parse(readFileSync(nodeIdentityPath, 'utf-8'));
-      // node-identity.json 包含 e2eeKeyPair.privateKey
-      if (nodeIdentity.e2eeKeyPair?.privateKey) {
-        return nodeIdentity.e2eeKeyPair.privateKey;
-      }
-    }
-  } catch {
-    // 忽略错误
-  }
-  return null;
-}
-
-/**
- * 签名 nonce（使用 E2EE 私钥）
- * X25519 不能直接签名，使用 HMAC-SHA256
- */
-function signNonce(nonce: string, privateKeyBase64: string): string {
-  const privateKey = Buffer.from(privateKeyBase64, 'base64');
-  const signature = createHmac('sha256', privateKey)
-    .update(nonce, 'utf-8')
-    .digest('base64');
-  return signature;
-}
-
-/**
  * Challenge-Response 验证
  * Issue #140: Added webhookUrl parameter (using Gateway URL)
+ * RFC008: 使用 Agent Ed25519 私钥签名
  */
 async function verifyIdentity(
   api: OpenClawPluginApi,
@@ -603,23 +667,38 @@ async function verifyIdentity(
     const nonce = challengeResult.nonce;
     api.logger?.info('[F2A] Challenge received, nonce prefix:', nonce.slice(0, 8));
     
-    // 2️⃣ 签名 nonce（用节点 E2EE 私钥）
-    const nodePrivateKey = readNodePrivateKey();
-    if (!nodePrivateKey) {
-      api.logger?.warn('[F2A] No node private key found, cannot sign nonce');
+    // 2️⃣ RFC008: 使用 Agent Ed25519 私钥签名
+    const privateKeyBase64 = identity.privateKey;
+    if (!privateKeyBase64) {
+      api.logger?.error('[F2A] No Agent private key found in identity file');
       return { success: false };
     }
     
-    const nonceSignature = signNonce(nonce, nodePrivateKey);
+    // 构建符合 RFC008 的 Challenge 对象
+    // 签名数据格式: `${challenge}:${timestamp}:${operation}`
+    const challenge: Challenge = {
+      challenge: nonce,  // 使用 daemon 返回的 nonce
+      timestamp: new Date().toISOString(),
+      expiresInSeconds: challengeResult.expiresIn || 60,
+      operation: 'verify_identity'
+    };
     
-    // 3️⃣ 发送响应
+    // 使用 Ed25519 签名
+    const response: ChallengeResponse = signChallenge(challenge, privateKeyBase64);
+    
+    api.logger?.info('[F2A] Challenge signed with Ed25519, signature prefix:', response.signature.slice(0, 8));
+    
+    // 3️⃣ 发送响应 - RFC008 格式
     const verifyReq = await fetch(`http://127.0.0.1:${controlPort}/api/v1/agents/verify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         agentId: identity.agentId,
-        nonce,
-        nonceSignature
+        challenge: challenge,
+        response: {
+          signature: response.signature,
+          publicKey: response.publicKey
+        }
       }),
       signal: AbortSignal.timeout(5000)
     });
@@ -642,7 +721,7 @@ async function verifyIdentity(
         api.logger?.warn('[F2A] Failed to save token to identity file');
       }
       
-      api.logger?.info('[F2A] Identity verified via Challenge-Response:', identity.agentId.slice(0, 16));
+      api.logger?.info('[F2A] Identity verified via Challenge-Response (Ed25519):', identity.agentId.slice(0, 16));
       return { success: true, sessionToken: token, agent: result.agent };
     }
     
@@ -656,3 +735,7 @@ async function verifyIdentity(
 
 // Re-export types
 export * from './types.js';
+
+// Task 3: Export initialization functions for testing
+export { initializeAgentIdentity, readLatestIdentity };
+export type { AgentIdentityFileData };

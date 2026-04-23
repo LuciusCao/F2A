@@ -1324,7 +1324,8 @@ describe('CLI Daemon Commands', () => {
       
       await expect(startForeground()).rejects.toThrow('exit');
       
-      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Error: Daemon is already running. Please stop it before starting a new instance.');
+      // startForeground 检测端口占用时返回 "Port is already in use"
+      expect(consoleSpy).toHaveBeenCalledWith('[F2A] Error: Port 9001 is already in use.');
       
       consoleSpy.mockRestore();
       exitSpy.mockRestore();

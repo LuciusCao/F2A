@@ -24,9 +24,9 @@ export interface Ed25519Keypair {
 }
 
 /**
- * RFC008 身份文件格式
+ * Agent Identity File 格式 (RFC008 定义)
  */
-export interface RFC008IdentityFile {
+export interface AgentIdentityFile {
   /** Agent ID (格式: agent:{fingerprint}) */
   agentId: string;
   /** 公钥 (Base64) */
@@ -37,8 +37,8 @@ export interface RFC008IdentityFile {
   privateKeyEncrypted: boolean;
   /** Node 签发的归属证明 (Base64) */
   nodeSignature?: string;
-  /** Node 的 PeerId */
-  nodePeerId?: string;
+  /** 签发节点的 NodeId (值等同 libp2p PeerId) */
+  nodeId?: string;
   /** Agent 名称 */
   name?: string;
   /** 能力列表 */
@@ -251,10 +251,10 @@ export class AgentIdentityKeypair {
       capabilities?: Array<{ name: string; version: string }>;
       privateKeyEncrypted?: boolean;
       nodeSignature?: string;
-      nodePeerId?: string;
+      nodeId?: string;
       webhook?: { url: string };
     } = {}
-  ): RFC008IdentityFile {
+  ): AgentIdentityFile {
     const agentId = this.computeAgentId(keypair.publicKey);
     const now = new Date().toISOString();
 
@@ -264,7 +264,7 @@ export class AgentIdentityKeypair {
       privateKey: keypair.privateKey,
       privateKeyEncrypted: options.privateKeyEncrypted ?? false,
       nodeSignature: options.nodeSignature,
-      nodePeerId: options.nodePeerId,
+      nodeId: options.nodeId,
       name: options.name,
       capabilities: options.capabilities,
       createdAt: now,

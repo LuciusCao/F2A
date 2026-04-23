@@ -82,15 +82,18 @@ Usage: f2a agent <subcommand> [options]
 
 Subcommands:
   init              Create Agent keypair and identity file
-                    f2a agent init --name <name> --webhook <url> [--capability <cap>]... [--force]
+                    f2a agent init --name <name> [--webhook <url>] [--capability <cap>]... [--force]
                     --name            Agent name (required)
-                    --webhook         Webhook URL (required, for receiving messages)
+                    --webhook         Webhook URL (optional, for receiving messages)
                     --capability      Capability tags (multiple allowed)
                     --force           Force re-creation
                     Identity file saved to ~/.f2a/agent-identities/
 
   register          Register Agent to Daemon (get Node signature)
-                    f2a agent register --agent-id <agentId> [--force]
+                    f2a agent register --agent-id <agentId> [--webhook <url>] [--force]
+                    --agent-id        Agent ID (required)
+                    --webhook         Webhook URL (optional, uses identity webhook if omitted)
+                    --force           Force re-registration
                     Send public key to Daemon, receive Node signature
 
   list              List registered Agents
@@ -103,18 +106,24 @@ Subcommands:
                     f2a agent status --agent-id <agentId>
 
   update            Update Agent configuration
-                    f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]
-                    Re-register required after webhook or name changes
+                    f2a agent update --agent-id <agentId> [--name <name>]
+                    Note: To update webhook, use: f2a agent register --agent-id <agentId> --webhook <url>
 
   verify            Verify Agent (Challenge-Response)
                     f2a agent verify --agent-id <agentId>
 
 Examples:
-  # Create identity
+  # Create identity (without webhook)
+  f2a agent init --name "my-agent"
+  
+  # Create identity (with webhook)
   f2a agent init --name "my-agent" --webhook http://localhost:3000/f2a/webhook
   
-  # Register to Daemon
+  # Register to Daemon (use identity webhook)
   f2a agent register --agent-id agent:abc123...
+  
+  # Register with specific webhook
+  f2a agent register --agent-id agent:abc123... --webhook http://new-server/f2a/webhook
   
   # View status
   f2a agent status --agent-id agent:abc123...
@@ -321,14 +330,13 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
       // Collect all missing required parameters
       const missingParams: string[] = [];
       if (!initOpts.name) missingParams.push('--name');
-      if (!initOpts.webhook) missingParams.push('--webhook');
       
       if (missingParams.length > 0) {
         if (isJsonMode()) {
           outputError(`Missing required parameters: ${missingParams.join(', ')}`, 'MISSING_PARAMETERS');
         } else {
           console.error(`❌ Missing required parameters: ${missingParams.join(', ')}`);
-          console.error('Usage: f2a agent init --name <name> --webhook <url> [--capability <cap>]...');
+          console.error('Usage: f2a agent init --name <name> [--webhook <url>] [--capability <cap>]...');
           process.exit(1);
         }
         return;
@@ -336,7 +344,7 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
       
       await cliInitAgent({
         name: initOpts.name as string,
-        webhook: initOpts.webhook as string,
+        webhook: initOpts.webhook as string | undefined,
         capabilities: Array.isArray(initOpts.capability)
           ? initOpts.capability as string[]
           : initOpts.capability
@@ -351,6 +359,7 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
       await registerAgent({
         agentId: registerOpts['agent-id'] as string,
         force: registerOpts.force as boolean,
+        webhook: registerOpts.webhook as string | undefined,
       });
       break;
 
@@ -387,14 +396,13 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
           outputError('Missing required parameter: --agent-id', 'MISSING_AGENT_ID');
         } else {
           console.error('❌ Missing --agent-id parameter');
-          console.error('Usage: f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]');
+          console.error('Usage: f2a agent update --agent-id <agentId> [--name <name>]');
           process.exit(1);
         }
         return;
       }
       await updateAgent({
         agentId: updateAgentId,
-        webhook: updateOpts.webhook as string | undefined,
         name: updateOpts.name as string | undefined,
       });
       break;

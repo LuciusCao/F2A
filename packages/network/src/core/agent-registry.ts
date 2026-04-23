@@ -85,7 +85,7 @@ export interface AgentRegistration {
    */
   nodeSignature?: string;
   /** RFC 008: Node 的 PeerId（签发归属证明的节点） */
-  nodePeerId?: string;
+  nodeId?: string;
   /** AgentId 格式版本: 'old' (RFC003) 或 'new' (RFC008) */
   idFormat?: 'old' | 'new';
   /** 注册时间 */
@@ -139,7 +139,7 @@ export interface RFC008AgentRegistrationRequest {
   /** Node 签发的归属证明（可选，注册后由 Daemon 签发） */
   nodeSignature?: string;
   /** Node 的 PeerId（可选） */
-  nodePeerId?: string;
+  nodeId?: string;
 }
 
 /**
@@ -163,7 +163,7 @@ export interface PersistedAgentRegistration {
   /** RFC 008: Node 签发的归属证明 (Base64) */
   nodeSignature?: string;
   /** RFC 008: Node 的 PeerId */
-  nodePeerId?: string;
+  nodeId?: string;
   /** AgentId 格式版本 */
   idFormat?: 'old' | 'new';
   /** 注册时间（ISO 字符串） */
@@ -361,7 +361,7 @@ export class AgentRegistry {
 
     // Node 签发归属证明（可选）
     const nodeSignature = request.nodeSignature || this.signAgentId(agentId);
-    const nodePeerId = request.nodePeerId || this.peerId;
+    const nodeId = request.nodeId || this.peerId;
 
     const registration: AgentRegistration = {
       agentId,
@@ -369,7 +369,7 @@ export class AgentRegistry {
       capabilities: request.capabilities,
       publicKey: request.publicKey,
       nodeSignature,
-      nodePeerId,
+      nodeId,
       idFormat: 'new',
       registeredAt: new Date(),
       lastActiveAt: new Date(),
@@ -452,7 +452,7 @@ export class AgentRegistry {
     signature?: string;  // 旧格式必需，新格式可选
     publicKey?: string;  // RFC008 新格式必需
     nodeSignature?: string;  // RFC008 Node 归属证明
-    nodePeerId?: string;  // RFC008 Node PeerId
+    nodeId?: string;  // RFC008 Node PeerId
     capabilities: AgentCapability[];
     webhook?: AgentWebhook;
     metadata?: Record<string, unknown>;
@@ -464,6 +464,10 @@ export class AgentRegistry {
     const parsed = parseAgentId(identity.agentId);
     const idFormat = parsed.valid ? parsed.format : 'old';
     
+    // RFC008: 如果缺少 nodeSignature/nodeId，自动签发
+    const nodeSignature = identity.nodeSignature || (idFormat === 'new' ? this.signAgentId(identity.agentId) : undefined);
+    const nodeId = identity.nodeId || (idFormat === 'new' ? this.peerId : undefined);
+    
     const registration: AgentRegistration = {
       agentId: identity.agentId,
       name: identity.name,
@@ -471,8 +475,8 @@ export class AgentRegistry {
       peerId: identity.peerId,
       signature: identity.signature,
       publicKey: identity.publicKey,
-      nodeSignature: identity.nodeSignature,
-      nodePeerId: identity.nodePeerId,
+      nodeSignature,
+      nodeId,
       idFormat,
       registeredAt: new Date(identity.createdAt),
       lastActiveAt: new Date(identity.lastActiveAt),
@@ -489,6 +493,7 @@ export class AgentRegistry {
       peerId: identity.peerId,
       idFormat,
       hasPublicKey: !!identity.publicKey,
+      nodeSignatureGenerated: !identity.nodeSignature && idFormat === 'new',
     });
     
     return registration;
@@ -945,7 +950,7 @@ export class AgentRegistry {
 
   /**
    * 转换为持久化格式（Date → ISO string）
-   * RFC008: 包含 publicKey、nodeSignature、nodePeerId、idFormat
+   * RFC008: 包含 publicKey、nodeSignature、nodeId、idFormat
    */
   private toPersistedFormat(agent: AgentRegistration): PersistedAgentRegistration {
     // 自动检测 idFormat
@@ -960,7 +965,7 @@ export class AgentRegistry {
       signature: agent.signature,
       publicKey: agent.publicKey,
       nodeSignature: agent.nodeSignature,
-      nodePeerId: agent.nodePeerId,
+      nodeId: agent.nodeId,
       idFormat,
       registeredAt: agent.registeredAt.toISOString(),
       lastActiveAt: agent.lastActiveAt.toISOString(),
@@ -971,7 +976,7 @@ export class AgentRegistry {
 
   /**
    * 从持久化格式转换（ISO string → Date）
-   * RFC008: 包含 publicKey、nodeSignature、nodePeerId、idFormat
+   * RFC008: 包含 publicKey、nodeSignature、nodeId、idFormat
    */
   private fromPersistedFormat(persisted: PersistedAgentRegistration): AgentRegistration {
     // 自动检测 idFormat
@@ -986,7 +991,7 @@ export class AgentRegistry {
       signature: persisted.signature,
       publicKey: persisted.publicKey,
       nodeSignature: persisted.nodeSignature,
-      nodePeerId: persisted.nodePeerId,
+      nodeId: persisted.nodeId,
       idFormat,
       registeredAt: new Date(persisted.registeredAt),
       lastActiveAt: new Date(persisted.lastActiveAt),

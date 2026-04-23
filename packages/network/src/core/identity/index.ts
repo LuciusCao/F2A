@@ -74,7 +74,7 @@ export type { ParsedAgentId, AgentIdValidationResult } from './agent-id.js';
 
 // RFC 008: AgentIdentityKeypair 导出
 export { AgentIdentityKeypair } from './agent-keypair.js';
-export type { Ed25519Keypair, RFC008IdentityFile } from './agent-keypair.js';
+export type { Ed25519Keypair, AgentIdentityFile } from './agent-keypair.js';
 
 // RFC 008: Challenge-Response 认证协议导出
 export {

@@ -24,15 +24,17 @@ vi.mock('@f2a/network', async (importOriginal) => {
 });
 
 /**
- * 创建 Mock AgentIdentity
+ * 创建 Mock AgentIdentity (RFC008)
  */
 function createMockIdentity(agentId?: string): AgentIdentity {
   return {
-    agentId: agentId || 'agent:12D3KooWtest:12345678',
+    agentId: agentId || 'agent:a1b2c3d4e5f6g7h8',
     name: 'Test Agent',
+    publicKey: 'dGVzdC1wdWJsaWMta2V5LWJhc2U2NA==', // Base64 encoded test key
+    privateKey: 'dGVzdC1wcml2YXRlLWtleS1iYXNlNjQ=', // Base64 encoded test key
     peerId: '12D3KooWtest...',
-    signature: 'mock-signature',
-    e2eePublicKey: 'mock-public-key',
+    nodeSignature: 'mock-node-signature',
+    nodeId: 'node:test-node-id',
     webhook: { url: 'http://127.0.0.1:9002/f2a/webhook' },
     capabilities: [{ name: 'chat', version: '1.0.0' }],
     createdAt: new Date().toISOString(),
@@ -454,11 +456,11 @@ describe('AgentIdentityStore', () => {
   });
 
   describe('签名验证（可选）', () => {
-    it('should skip identity with invalid signature when verify function provided', () => {
+    it('should skip identity with invalid nodeSignature when verify function provided', () => {
       // 创建带签名验证的 store
-      const verifyFn = vi.fn((agentId, signature, peerId) => {
-        // 简单验证：signature 必须以 'valid-' 开头
-        return signature.startsWith('valid-');
+      const verifyFn = vi.fn((agentId, nodeSignature, peerId) => {
+        // 简单验证：nodeSignature 必须以 'valid-' 开头
+        return nodeSignature.startsWith('valid-');
       });
 
       const storeWithVerify = new AgentIdentityStore(testDir, verifyFn);
@@ -467,12 +469,12 @@ describe('AgentIdentityStore', () => {
 
       // 创建有效签名的 identity
       const validIdentity = createMockIdentity('agent:valid:1111');
-      validIdentity.signature = 'valid-signature';
+      validIdentity.nodeSignature = 'valid-signature';
       writeFileSync(join(agentIdentitiesDir, `${validIdentity.agentId}.json`), JSON.stringify(validIdentity));
 
       // 创建无效签名的 identity
       const invalidIdentity = createMockIdentity('agent:invalid:2222');
-      invalidIdentity.signature = 'invalid-signature';
+      invalidIdentity.nodeSignature = 'invalid-signature';
       writeFileSync(join(agentIdentitiesDir, `${invalidIdentity.agentId}.json`), JSON.stringify(invalidIdentity));
 
       storeWithVerify.loadAll();
@@ -487,12 +489,30 @@ describe('AgentIdentityStore', () => {
       mkdirSync(agentIdentitiesDir, { recursive: true });
 
       const identity = createMockIdentity();
-      identity.signature = 'any-signature';
+      identity.nodeSignature = 'any-signature';
       writeFileSync(join(agentIdentitiesDir, `${identity.agentId}.json`), JSON.stringify(identity));
 
       store.loadAll();
 
       expect(store.has(identity.agentId)).toBe(true);
+    });
+
+    it('should load identity without nodeSignature when verify function provided', () => {
+      // nodeSignature 是可选的，没有签名也应该能加载
+      const verifyFn = vi.fn();
+      const storeWithVerify = new AgentIdentityStore(testDir, verifyFn);
+
+      mkdirSync(agentIdentitiesDir, { recursive: true });
+
+      const identity = createMockIdentity('agent:nosig:1111');
+      delete identity.nodeSignature;
+      writeFileSync(join(agentIdentitiesDir, `${identity.agentId}.json`), JSON.stringify(identity));
+
+      storeWithVerify.loadAll();
+
+      // 应该成功加载，且不调用验证函数
+      expect(storeWithVerify.has(identity.agentId)).toBe(true);
+      expect(verifyFn).not.toHaveBeenCalled();
     });
   });
 
@@ -504,8 +524,9 @@ describe('AgentIdentityStore', () => {
       const maliciousContent = JSON.stringify({
         agentId: 'agent:test:1234',
         name: 'Test',
+        publicKey: 'dGVzdC1wdWJsaWMta2V5',
         peerId: 'test-peer',
-        signature: 'test-sig',
+        nodeSignature: 'test-sig',
         createdAt: new Date().toISOString(),
         lastActiveAt: new Date().toISOString(),
         __proto__: { malicious: true },
@@ -523,6 +544,97 @@ describe('AgentIdentityStore', () => {
       // 注意：所有对象都有内置 __proto__ 属性，所以检查恶意属性
       // @ts-ignore - 检查动态属性
       expect(identity?.__proto__?.malicious).toBeUndefined();
+    });
+  });
+
+  describe('RFC008 新字段验证', () => {
+    it('should save and retrieve publicKey and privateKey correctly', async () => {
+      const identity = createMockIdentity();
+      await store.save(identity);
+
+      const retrieved = store.get(identity.agentId);
+      
+      // 验证新字段被正确保存和读取（具体值验证）
+      expect(retrieved?.publicKey).toBe('dGVzdC1wdWJsaWMta2V5LWJhc2U2NA==');
+      expect(retrieved?.privateKey).toBe('dGVzdC1wcml2YXRlLWtleS1iYXNlNjQ=');
+      expect(retrieved?.nodeSignature).toBe('mock-node-signature');
+      expect(retrieved?.nodeId).toBe('node:test-node-id');
+    });
+
+    it('should validate publicKey is required', async () => {
+      const invalidIdentity = {
+        agentId: 'agent:xxx',
+        name: 'Invalid',
+        peerId: 'peer1',
+        // 缺少 publicKey
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+      } as AgentIdentity;
+
+      await expect(store.save(invalidIdentity)).rejects.toThrow('Invalid AgentIdentity structure');
+    });
+
+    it('should allow missing optional fields (privateKey, nodeSignature, nodeId)', async () => {
+      const minimalIdentity: AgentIdentity = {
+        agentId: 'agent:minimal:1111',
+        name: 'Minimal Agent',
+        publicKey: 'bWluaW1hbC1wdWJsaWMta2V5',
+        peerId: 'peer-minimal',
+        capabilities: [],
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+      };
+
+      await store.save(minimalIdentity);
+
+      const retrieved = store.get(minimalIdentity.agentId);
+      expect(retrieved?.publicKey).toBe('bWluaW1hbC1wdWJsaWMta2V5');
+      expect(retrieved?.privateKey).toBeUndefined();
+      expect(retrieved?.nodeSignature).toBeUndefined();
+      expect(retrieved?.nodeId).toBeUndefined();
+    });
+
+    it('should persist identity with new RFC008 fields to file', async () => {
+      const identity = createMockIdentity('agent:rfc008:test');
+      identity.nodeId = 'node:rfc008-node';
+      identity.nodeSignature = 'rfc008-signature-base64';
+      
+      await store.save(identity);
+
+      const file = join(agentIdentitiesDir, `${identity.agentId}.json`);
+      const content = JSON.parse(readFileSync(file, 'utf-8'));
+
+      // 验证文件内容包含所有 RFC008 字段
+      expect(content.publicKey).toBe('dGVzdC1wdWJsaWMta2V5LWJhc2U2NA==');
+      expect(content.privateKey).toBe('dGVzdC1wcml2YXRlLWtleS1iYXNlNjQ=');
+      expect(content.nodeId).toBe('node:rfc008-node');
+      expect(content.nodeSignature).toBe('rfc008-signature-base64');
+    });
+
+    it('should reject identity with empty publicKey', async () => {
+      const invalidIdentity: AgentIdentity = {
+        agentId: 'agent:emptykey',
+        name: 'Empty Key',
+        publicKey: '', // 空 publicKey
+        peerId: 'peer1',
+        capabilities: [],
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+      };
+
+      await expect(store.save(invalidIdentity)).rejects.toThrow('Invalid AgentIdentity structure');
+    });
+
+    it('should reject identity with missing name', async () => {
+      const invalidIdentity = {
+        agentId: 'agent:noname',
+        publicKey: 'c29tZS1rZXk=',
+        peerId: 'peer1',
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+      } as AgentIdentity;
+
+      await expect(store.save(invalidIdentity)).rejects.toThrow('Invalid AgentIdentity structure');
     });
   });
 });

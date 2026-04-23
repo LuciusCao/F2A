@@ -26,6 +26,20 @@ const createMockAgentRegistry = (): AgentRegistry => ({
     capabilities: [],
     peerId: 'test-peer-id',
     signature: 'test-sig',
+    nodeSignature: 'node-sig-base64-abc123', // RFC008: Node 归属证明签名
+    nodeId: 'test-node-id-xyz789', // RFC008: 签发节点 ID
+    registeredAt: new Date(),
+    lastActiveAt: new Date(),
+    webhook: { url: 'http://test' },
+  }),
+  registerRFC008: vi.fn().mockReturnValue({  // RFC008: 新注册方法
+    agentId: 'agent:67face05d98ab91f',  // RFC008: 公钥指纹格式
+    name: 'TestAgent',
+    capabilities: [],
+    publicKey: 'dGVzdHB1YmxpY2tleQ==',
+    nodeSignature: 'node-sig-base64-abc123', // RFC008: Node 归属证明签名
+    nodeId: 'test-node-id-xyz789', // RFC008: 签发节点 ID
+    idFormat: 'new',
     registeredAt: new Date(),
     lastActiveAt: new Date(),
     webhook: { url: 'http://test' },
@@ -36,6 +50,8 @@ const createMockAgentRegistry = (): AgentRegistry => ({
     capabilities: [],
     peerId: 'test-peer-id',
     signature: 'test-sig',
+    nodeSignature: 'node-sig-restored-def456', // RFC008: Node 归属证明签名
+    nodeId: 'test-node-id-restored-uvw321', // RFC008: 签发节点 ID
     registeredAt: new Date(),
     lastActiveAt: new Date(),
   }),
@@ -246,6 +262,79 @@ describe('AgentHandler - Error Response Code Field', () => {
       expect(data.error).toBe('Invalid JSON');
       expect(data.code).toBe('INVALID_JSON');
     });
+
+    // RFC008: Task 2 测试 - 验证注册响应包含 nodeSignature 和 nodeId
+    it('新注册 Agent 应返回 nodeSignature 和 nodeId 字段', async () => {
+      const req = createMockReq({
+        method: 'POST',
+        body: { 
+          name: 'TestAgent', 
+          publicKey: 'dGVzdHB1YmxpY2tleQ==', // RFC008: Agent Ed25519 公钥
+          capabilities: ['chat'], 
+          webhook: { url: 'http://test' } 
+        },
+      });
+      const res = createMockRes();
+
+      await handler.handleRegisterAgent(req as IncomingMessage, res as ServerResponse);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      expect(res.writeHead).toHaveBeenCalledWith(201);
+      const data = getResponseData(res);
+      expect(data.success).toBe(true);
+      expect(data.restored).toBe(false);
+      // RFC008: 验证 nodeSignature 和 nodeId 在响应中
+      expect(data.nodeSignature).toBe('node-sig-base64-abc123');
+      expect(data.nodeId).toBe('test-node-id-xyz789');
+      // 同时验证 agent 对象中也包含这些字段
+      expect(data.agent.nodeSignature).toBe('node-sig-base64-abc123');
+      expect(data.agent.nodeId).toBe('test-node-id-xyz789');
+      // 验证 token 存在
+      expect(data.token).toBeDefined();
+    });
+
+    it('恢复已注册 Agent 应返回 nodeSignature 和 nodeId 字段', async () => {
+      // 设置 mock 返回已存在的 identity
+      (mockIdentityStore.get as any).mockReturnValue({
+        agentId: 'agent:test-peer:abc123',
+        name: 'ExistingAgent',
+        publicKey: 'existing-public-key',
+        peerId: 'test-peer-id',
+        nodeSignature: 'existing-node-sig-789',
+        nodeId: 'existing-node-id-456',
+        capabilities: [],
+        webhook: { url: 'http://existing-webhook' },
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+      });
+
+      const req = createMockReq({
+        method: 'POST',
+        body: { 
+          agentId: 'agent:test-peer:abc123',
+          webhook: { url: 'http://new-webhook' },
+        },
+      });
+      const res = createMockRes();
+
+      await handler.handleRegisterAgent(req as IncomingMessage, res as ServerResponse);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      const data = getResponseData(res);
+      expect(data.success).toBe(true);
+      expect(data.restored).toBe(true);
+      // RFC008: 验证 nodeSignature 和 nodeId 在响应中
+      expect(data.nodeSignature).toBe('node-sig-restored-def456');
+      expect(data.nodeId).toBe('test-node-id-restored-uvw321');
+      // 同时验证 agent 对象中也包含这些字段
+      expect(data.agent.nodeSignature).toBe('node-sig-restored-def456');
+      expect(data.agent.nodeId).toBe('test-node-id-restored-uvw321');
+      // 验证 token 存在
+      expect(data.token).toBeDefined();
+    });
   });
 
   describe('DELETE /api/v1/agents/:agentId - 注销 Agent (Challenge-Response)', () => {
@@ -275,7 +364,7 @@ describe('AgentHandler - Error Response Code Field', () => {
       });
       (mockIdentityStore.get as any).mockReturnValue({
         agentId: 'agent:test-peer:abc123',
-        e2eePublicKey: 'test-public-key',
+        publicKey: 'test-public-key', // RFC008: 使用 publicKey
       });
       
       const req = createMockReq({
@@ -302,7 +391,7 @@ describe('AgentHandler - Error Response Code Field', () => {
       });
       (mockIdentityStore.get as any).mockReturnValue({
         agentId: 'agent:test-peer:abc123',
-        e2eePublicKey: 'test-public-key',
+        publicKey: 'test-public-key', // RFC008: 使用 publicKey
       });
       (mockE2EECrypto.verifySignature as any).mockReturnValue(false);  // 签名验证失败
       
@@ -341,7 +430,7 @@ describe('AgentHandler - Error Response Code Field', () => {
       });
       (mockIdentityStore.get as any).mockReturnValue({
         agentId: 'agent:test-peer:abc123',
-        e2eePublicKey: 'test-public-key',
+        publicKey: 'test-public-key',
       });
       (mockE2EECrypto.verifySignature as any).mockReturnValue(true);  // 签名验证成功
       (mockRegistry.unregister as any).mockReturnValue(true);

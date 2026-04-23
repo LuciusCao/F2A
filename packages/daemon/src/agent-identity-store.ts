@@ -26,20 +26,24 @@ export interface AgentWebhook {
 }
 
 /**
- * Agent Identity 文件结构
+ * Agent Identity 文件结构 (RFC008)
  * 存储在 ~/.f2a/agent-identities/<agentId>.json
  */
 export interface AgentIdentity {
-  /** Agent 唯一标识符 格式: agent:<PeerId前16位>:<随机8位> */
+  /** Agent ID (格式: agent:<公钥指纹16位>) */
   agentId: string;
   /** Agent 显示名称 */
   name: string;
+  /** Agent Ed25519 公钥 (Base64) */
+  publicKey: string;
+  /** Agent Ed25519 私钥 (Base64, 可选存储) */
+  privateKey?: string;
   /** 签发节点的 PeerId */
   peerId: string;
-  /** AgentId 签名（Base64） */
-  signature: string;
-  /** E2EE 公钥（用于 Challenge-Response 验证，可选） */
-  e2eePublicKey?: string;
+  /** Node 归属证明签名 (Base64) */
+  nodeSignature?: string;
+  /** 签发节点 ID */
+  nodeId?: string;
   /** Webhook 配置 */
   webhook?: AgentWebhook;
   /** Agent 支持的能力列表 */
@@ -112,8 +116,8 @@ export class AgentIdentityStore {
           continue;
         }
         
-        // 验证签名（如果有验证函数）
-        if (this.verifySignatureFn && !this.verifySignatureFn(identity.agentId, identity.signature, identity.peerId)) {
+        // 验证签名（如果有验证函数且有签名）
+        if (this.verifySignatureFn && identity.nodeSignature && !this.verifySignatureFn(identity.agentId, identity.nodeSignature, identity.peerId)) {
           this.logger.warn('Agent identity signature invalid, skipping', { file, agentId: identity.agentId });
           continue;
         }
@@ -137,14 +141,20 @@ export class AgentIdentityStore {
     
     const obj = identity as Record<string, unknown>;
     
-    // 必须字段
-    const requiredFields = ['agentId', 'name', 'peerId', 'signature', 'createdAt', 'lastActiveAt'];
+    // 必须字段（RFC008）
+    // nodeId 是可选的（在注册时由 Daemon 设置）
+    const requiredFields = ['agentId', 'name', 'publicKey', 'createdAt', 'lastActiveAt'];
     for (const field of requiredFields) {
       if (!obj[field]) return false;
     }
     
     // agentId 格式验证
     if (typeof obj.agentId !== 'string' || !obj.agentId.startsWith('agent:')) {
+      return false;
+    }
+    
+    // publicKey 格式验证（Base64）
+    if (typeof obj.publicKey !== 'string' || obj.publicKey.length === 0) {
       return false;
     }
     

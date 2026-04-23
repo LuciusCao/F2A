@@ -28,6 +28,8 @@ interface RegisterAgentBody {
   agentId?: string;
   /** Agent 名称(新注册时必需) */
   name?: string;
+  /** Agent Ed25519 公钥（RFC008: 新注册时必需，Base64 编码） */
+  publicKey?: string;
   /** Agent 能力列表 */
   capabilities?: Array<string | AgentCapability>;
   /** Webhook 配置(HTTP API 注册时必需) */
@@ -208,6 +210,8 @@ export class AgentHandler {
               success: true,
               restored: true,
               agent: restored,
+              nodeSignature: restored.nodeSignature, // RFC008: Node 归属证明签名
+              nodeId: restored.nodeId, // RFC008: 签发节点 ID
               token: agentToken,
             }));
             return;
@@ -258,9 +262,22 @@ export class AgentHandler {
           };
         });
 
-        // 注册新 Agent(节点签发 AgentId)
-        const registration = this.agentRegistry.register({
+        // 注册新 Agent（RFC008: 使用 Agent 的 publicKey）
+        // 需要使用 registerRFC008() 方法，而不是旧的 register()
+        if (!data.publicKey) {
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Missing required field: publicKey - RFC008 registration requires Agent Ed25519 public key',
+            code: 'INVALID_REQUEST',
+            hint: 'Use f2a agent init to create an identity with publicKey first',
+          }));
+          return;
+        }
+
+        const registration = this.agentRegistry.registerRFC008({
           name: data.name,
+          publicKey: data.publicKey,
           capabilities,
           webhook: data.webhook,
           metadata: data.metadata,
@@ -270,9 +287,11 @@ export class AgentHandler {
         const identity: AgentIdentity = {
           agentId: registration.agentId,
           name: registration.name,
+          publicKey: registration.publicKey || '', // RFC008: Agent Ed25519 公钥
+          // privateKey 不从 registration 获取，由 Agent 自己保存
           peerId: registration.peerId || '',
-          signature: registration.signature || '',
-          // e2eePublicKey: TODO - 需要从 F2A 获取
+          nodeSignature: registration.nodeSignature, // RFC008: Node 归属证明签名
+          nodeId: registration.nodeId, // RFC008: 签发节点 ID
           webhook: registration.webhook,
           capabilities: registration.capabilities,
           metadata: registration.metadata,
@@ -299,6 +318,8 @@ export class AgentHandler {
           success: true,
           restored: false,
           agent: registration,
+          nodeSignature: registration.nodeSignature, // RFC008: Node 归属证明签名
+          nodeId: registration.nodeId, // RFC008: 签发节点 ID
           token: agentToken,
         }));
       } catch (error) {
@@ -411,11 +432,11 @@ export class AgentHandler {
         }
         
         // 验证签名
-        if (!identity.e2eePublicKey) {
+        if (!identity.publicKey) {
           res.writeHead(400);
           res.end(JSON.stringify({
             success: false,
-            error: 'Identity missing e2eePublicKey',
+            error: 'Identity missing publicKey',
             code: 'MISSING_PUBLIC_KEY',
           }));
           return;
@@ -424,7 +445,7 @@ export class AgentHandler {
         const isValid = this.e2eeCrypto.verifySignature(
           data.challengeResponse.nonce,
           data.challengeResponse.nonceSignature,
-          identity.e2eePublicKey
+          identity.publicKey
         );
         
         if (!isValid) {
@@ -730,11 +751,11 @@ export class AgentHandler {
         }
 
         // 验证签名
-        if (!identity.e2eePublicKey) {
+        if (!identity.publicKey) {
           res.writeHead(400);
           res.end(JSON.stringify({
             success: false,
-            error: 'Identity missing e2eePublicKey',
+            error: 'Identity missing publicKey',
             code: 'MISSING_PUBLIC_KEY',
           }));
           return;
@@ -743,7 +764,7 @@ export class AgentHandler {
         const isValid = this.e2eeCrypto.verifySignature(
           data.challengeResponse.nonce,
           data.challengeResponse.nonceSignature,
-          identity.e2eePublicKey
+          identity.publicKey
         );
 
         if (!isValid) {
@@ -861,19 +882,19 @@ export class AgentHandler {
         }
 
         // 🔑 4️⃣ 验证 nonce 签名
-        if (!identity.e2eePublicKey) {
-          this.logger.error('Identity missing e2eePublicKey, cannot verify signature', {
+        if (!identity.publicKey) {
+          this.logger.error('Identity missing publicKey, cannot verify signature', {
             agentId: data.agentId?.slice(0, 16)
           });
           res.writeHead(400);
-          res.end(JSON.stringify({ success: false, error: 'Identity missing e2eePublicKey', code: 'MISSING_PUBLIC_KEY' }));
+          res.end(JSON.stringify({ success: false, error: 'Identity missing publicKey', code: 'MISSING_PUBLIC_KEY' }));
           return;
         }
 
         const isValid = this.e2eeCrypto.verifySignature(
           data.nonce,
           data.nonceSignature,
-          identity.e2eePublicKey
+          identity.publicKey
         );
 
         if (!isValid) {

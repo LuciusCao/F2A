@@ -6,7 +6,7 @@
 
 import { sendRequest } from './http-client.js';
 import { signChallenge } from '@f2a/network';
-import type { RFC008IdentityFile, Challenge } from '@f2a/network';
+import type { AgentIdentityFile, Challenge, ChallengeResponse } from '@f2a/network';
 
 /**
  * 发送需要 Challenge-Response 认证的请求
@@ -25,7 +25,7 @@ export async function sendWithChallengeResponse(
   method: string,
   path: string,
   payload: Record<string, unknown>,
-  identity: RFC008IdentityFile
+  identity: AgentIdentityFile
 ): Promise<Record<string, unknown>> {
   // 第一次请求
   const initialResult = await sendRequest(method, path, payload);

@@ -145,24 +145,24 @@ app.post('/f2a/webhook', (req, res) => {
 如果需要更改 webhook URL：
 
 ```bash
-# 修改 webhook
-f2a agent update --agent-id <agentId> --webhook <new-url>
-
-# 重新注册到 Daemon（使新 webhook 生效）
-f2a agent register --agent-id <agentId> --force
+# 修改 webhook（使用 register 命令重新注册）
+f2a agent register --agent-id <agentId> --webhook <new-url> --force
 ```
 
 ---
 
 ### Webhook 不填会怎样？
 
-`f2a agent init` **强制要求 webhook 参数**，因为：
+`f2a agent init` 时 webhook 参数是**可选的**：
+- 如果 init 时填写 webhook，会保存在身份文件中
+- 如果 init 时不填 webhook，后续可以在 `register` 时提供
 
+**但注意**：
 - 没有 webhook，Agent **无法接收消息**
 - 其他 Agent 发的消息无法送达
 - Agent 只能发送，不能接收
 
-如果暂时不知道 webhook URL，可以先填一个占位 URL，稍后用 `update` 命令修改。
+推荐流程：先 init 创建身份，再 register 时指定 webhook。
 
 ---
 
@@ -175,11 +175,11 @@ f2a init
 # 2. 启动 Daemon 服务
 f2a daemon start
 
-# 3. 创建 Agent 身份（必须指定 webhook）
-f2a agent init --name "my-agent" --webhook http://127.0.0.1:18789/f2a/webhook
+# 3. 创建 Agent 身份（webhook 可选）
+f2a agent init --name "my-agent"
 
-# 4. 注册 Agent 到 Daemon
-f2a agent register --agent-id <生成的-agentId>
+# 4. 注册 Agent 到 Daemon（指定 webhook）
+f2a agent register --agent-id <生成的-agentId> --webhook http://127.0.0.1:18789/f2a/webhook
 
 # 5. 发送消息
 f2a message send --agent-id <agentId> --to <目标-agentId> "Hello!"
@@ -210,17 +210,22 @@ f2a init --force   # 强制重新创建（覆盖现有身份）
 管理 Agent 身份和注册。
 
 ```bash
-# 创建 Agent 身份（必须指定 webhook）
-f2a agent init --name <name> --webhook <url> [options]
+# 创建 Agent 身份（webhook 可选）
+f2a agent init --name <name> [options]
 
 选项:
   --name <name>       Agent 名称（必填）
-  --webhook <url>     Webhook URL（必填，接收消息的 HTTP 端点）
+  --webhook <url>     Webhook URL（可选，可在 register 时指定）
   --capability <cap>  能力标签（可多次指定）
   --force             强制重新创建（覆盖现有身份）
 
-# 注册 Agent 到 Daemon
-f2a agent register --agent-id <agentId> [--force]
+# 注册 Agent 到 Daemon（指定 webhook）
+f2a agent register --agent-id <agentId> [--webhook <url>] [--force]
+
+选项:
+  --agent-id <id>     Agent ID（必填）
+  --webhook <url>     Webhook URL（可选，使用身份文件中的 webhook）
+  --force             强制重新注册
 
 # 列出已注册的 Agent
 f2a agent list
@@ -228,8 +233,8 @@ f2a agent list
 # 查看 Agent 状态
 f2a agent status --agent-id <agentId>
 
-# 更新 Agent 配置（修改 webhook 或名称）
-f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]
+# 更新 Agent 配置（只支持修改名称）
+f2a agent update --agent-id <agentId> --name <name>
 
 # 注销 Agent
 f2a agent unregister --agent-id <agentId>
@@ -238,18 +243,26 @@ f2a agent unregister --agent-id <agentId>
 **示例:**
 
 ```bash
-# 创建 OpenClaw Agent
+# 创建 Agent 身份（不指定 webhook）
+f2a agent init --name "assistant"
+
+# 创建 Agent 身份（指定 webhook）
 f2a agent init --name "assistant" --webhook http://127.0.0.1:18789/f2a/webhook
 
-# 创建 Hermes Agent
+# 创建带能力标签的 Agent
 f2a agent init --name "hermes-bot" --webhook http://127.0.0.1:3000/f2a/webhook --capability chat
 
-# 注册到 Daemon
+# 注册到 Daemon（使用 init 时的 webhook）
 f2a agent register --agent-id agent:abc123...
 
-# 修改 webhook
-f2a agent update --agent-id agent:abc123... --webhook http://new-server:8080/f2a/webhook
-f2a agent register --agent-id agent:abc123... --force
+# 注册到 Daemon（指定新的 webhook）
+f2a agent register --agent-id agent:abc123... --webhook http://new-server:8080/f2a/webhook
+
+# 修改名称
+f2a agent update --agent-id agent:abc123... --name "new-name"
+
+# 修改 webhook（使用 register 命令）
+f2a agent register --agent-id agent:abc123... --webhook http://new-server:8080/f2a/webhook --force
 
 # 查看状态
 f2a agent status --agent-id agent:abc123...

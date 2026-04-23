@@ -193,11 +193,11 @@ describe('AgentIdentityKeypair', () => {
       const kp = keypair.generateKeypair();
       const identityFile = keypair.createIdentityFile(kp, {
         nodeSignature: 'base64-encoded-signature',
-        nodePeerId: '12D3KooWTest'
+        nodeId: '12D3KooWTest'
       });
 
       expect(identityFile.nodeSignature).toBe('base64-encoded-signature');
-      expect(identityFile.nodePeerId).toBe('12D3KooWTest');
+      expect(identityFile.nodeId).toBe('12D3KooWTest');
     });
   });
 

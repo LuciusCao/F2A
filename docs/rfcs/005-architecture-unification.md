@@ -1,6 +1,6 @@
 # RFC 005: F2A 架构统一 - MessageRouter 提升到核心层
 
-> **Status**: Draft
+> **Status**: ✅ Completed
 > **Created**: 2026-04-15 10:22
 > **Author**: Discussion with user
 

@@ -11,7 +11,7 @@
 
 import { sendRequest } from './http-client.js';
 import { readIdentityByAgentId } from './init.js';
-import type { RFC008IdentityFile, Challenge, ChallengeResponse } from '@f2a/network';
+import type { AgentIdentityFile, Challenge, ChallengeResponse } from '@f2a/network';
 import { signChallenge } from '@f2a/network';
 import { isJsonMode, outputJson, outputError } from './output.js';
 
@@ -24,7 +24,7 @@ import { isJsonMode, outputJson, outputError } from './output.js';
  * 3. POST /api/v1/challenge/verify to verify and get agentToken
  */
 async function getAgentTokenViaChallenge(
-  identity: RFC008IdentityFile,
+  identity: AgentIdentityFile,
   toAgentId?: string
 ): Promise<string | undefined> {
   // 1. Request challenge

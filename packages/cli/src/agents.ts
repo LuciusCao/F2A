@@ -13,23 +13,27 @@ import { sendWithChallengeResponse } from './challenge-helper.js';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
 import { readIdentityByAgentId, AGENT_IDENTITIES_DIR } from './init.js';
-import type { RFC008IdentityFile, Challenge, ChallengeResponse } from '@f2a/network';
+import type { AgentIdentityFile, Challenge, ChallengeResponse } from '@f2a/network';
 import { signChallenge } from '@f2a/network';
 import { isJsonMode, outputJson, outputError } from './output.js';
 
 /**
- * 更新身份文件（添加 nodeSignature）
+ * 更新身份文件（添加 nodeSignature 和 webhook）
  */
 function updateIdentityWithNodeSignature(
   agentId: string,
-  identity: RFC008IdentityFile,
+  identity: AgentIdentityFile,
   nodeSignature: string,
-  nodePeerId: string
+  nodeId: string,
+  webhook?: { url: string }
 ): boolean {
   try {
     identity.nodeSignature = nodeSignature;
-    identity.nodePeerId = nodePeerId;
+    identity.nodeId = nodeId;
     identity.lastActiveAt = new Date().toISOString();
+    if (webhook) {
+      identity.webhook = webhook;
+    }
     
     const identityPath = join(AGENT_IDENTITIES_DIR, `${agentId}.json`);
     writeFileSync(identityPath, JSON.stringify(identity, null, 2), { mode: 0o600 });
@@ -41,7 +45,7 @@ function updateIdentityWithNodeSignature(
 
 /**
  * 注册 Agent
- * f2a agent register --agent-id <agentId> [--force]
+ * f2a agent register --agent-id <agentId> [--webhook <url>] [--force]
  * 
  * Challenge-Response 注册流程：
  * - 按 agentId 查找本地身份文件
@@ -52,6 +56,7 @@ export async function registerAgent(options: {
   /** Agent ID（必填） */
   agentId: string;
   force?: boolean;
+  webhook?: string;
 }): Promise<void> {
   if (!options.agentId) {
     if (isJsonMode()) {
@@ -73,7 +78,8 @@ export async function registerAgent(options: {
     }
     console.error('❌ Error: Identity file not found.');
     console.error(`   AgentId: ${options.agentId}`);
-    console.error('Please run: f2a agent init --name <name> --webhook <url>');
+    console.error('Please run: f2a agent init --name <name>');
+    console.error('         or: f2a agent register --agent-id <agentId> --webhook <url>');
     process.exit(1);
   }
 
@@ -83,13 +89,13 @@ export async function registerAgent(options: {
       outputJson({
         alreadyRegistered: true,
         agentId: identity.agentId,
-        nodePeerId: identity.nodePeerId || null
+        nodeId: identity.nodeId || null
       });
       return;
     }
     console.log('✅ Success: Agent is already registered.');
     console.log(`   AgentId: ${identity.agentId}`);
-    console.log(`   Node PeerId: ${identity.nodePeerId || 'N/A'}`);
+    console.log(`   Node ID: ${identity.nodeId || 'N/A'}`);
     console.log('   Use --force to re-register.');
     return;
   }
@@ -101,22 +107,27 @@ export async function registerAgent(options: {
       description: ''
     }));
 
+    // webhook 优先级：CLI 参数 > identity 文件
+    const webhookToUse = options.webhook 
+      ? { url: options.webhook } 
+      : identity.webhook;
+
     const requestBody = {
       agentId: identity.agentId,
       publicKey: identity.publicKey,
       name: identity.name || 'unnamed',
       capabilities,
-      webhook: identity.webhook,
+      webhook: webhookToUse,
     };
 
     const result = await sendRequest('POST', '/api/v1/agents', requestBody);
 
     if (result.success) {
       const nodeSignature = result.nodeSignature as string | undefined;
-      const nodePeerId = result.nodePeerId as string | undefined;
+      const nodeId = result.nodeId as string | undefined;
 
-      if (nodeSignature && nodePeerId) {
-        updateIdentityWithNodeSignature(options.agentId, identity, nodeSignature, nodePeerId);
+      if (nodeSignature && nodeId) {
+        updateIdentityWithNodeSignature(options.agentId, identity, nodeSignature, nodeId, webhookToUse);
       }
 
       if (isJsonMode()) {
@@ -125,8 +136,8 @@ export async function registerAgent(options: {
           agentId: identity.agentId,
           name: identity.name || null,
           capabilities: capabilities.map((c: { name: string }) => c.name),
-          webhook: identity.webhook?.url || null,
-          nodePeerId: nodePeerId || null
+          webhook: webhookToUse?.url || null,
+          nodeId: nodeId || null
         });
         return;
       }
@@ -137,11 +148,11 @@ export async function registerAgent(options: {
       if (capabilities.length > 0) {
         console.log(`   Capabilities: ${capabilities.map((c: { name: string }) => c.name).join(', ')}`);
       }
-      if (identity.webhook) {
-        console.log(`   Webhook: ${identity.webhook.url}`);
+      if (webhookToUse) {
+        console.log(`   Webhook: ${webhookToUse.url}`);
       }
-      if (nodePeerId) {
-        console.log(`   Node: ${nodePeerId.slice(0, 24)}...`);
+      if (nodeId) {
+        console.log(`   Node: ${nodeId.slice(0, 24)}...`);
       }
     } else {
       if (isJsonMode()) {
@@ -242,17 +253,18 @@ export async function listAgents(): Promise<void> {
 
 /**
  * 更新 Agent 配置（Challenge-Response 验证）
- * f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]
+ * f2a agent update --agent-id <agentId> [--name <name>]
  * 
  * 流程：
  * 1. 发送 PATCH 请求到 Daemon
  * 2. 如果返回 challenge，用私钥签名
  * 3. 发送带签名的请求完成更新
  * 4. 同时更新本地身份文件
+ * 
+ * 注意：webhook 更新请使用 register 命令（可重复调用）
  */
 export async function updateAgent(options: {
   agentId: string;
-  webhook?: string;
   name?: string;
 }): Promise<void> {
   if (!options.agentId) {
@@ -260,7 +272,7 @@ export async function updateAgent(options: {
       outputError('Missing required parameter: --agent-id', 'MISSING_AGENT_ID');
     } else {
       console.error('❌ Error: Missing required parameter --agent-id. The agent ID is required for updating agent configuration.');
-      console.error('Usage: f2a agent update --agent-id <agentId> [--webhook <url>] [--name <name>]');
+      console.error('Usage: f2a agent update --agent-id <agentId> [--name <name>]');
       process.exit(1);
     }
     return;
@@ -291,16 +303,13 @@ export async function updateAgent(options: {
   }
 
   // 检查是否有要更新的内容
-  const updates: string[] = [];
-  if (options.webhook) updates.push('webhook');
-  if (options.name) updates.push('name');
-
-  if (updates.length === 0) {
+  if (!options.name) {
     if (isJsonMode()) {
-      outputError('Nothing to update. Please provide --webhook or --name parameter', 'INVALID_PARAMETER');
+      outputError('Nothing to update. Please provide --name parameter', 'INVALID_PARAMETER');
     } else {
       console.log('⚠️  Warning: Nothing to update.');
-      console.error('Please provide --webhook or --name parameter.');
+      console.error('Please provide --name parameter.');
+      console.error('Hint: To update webhook, use: f2a agent register --agent-id <agentId> --webhook <url>');
       process.exit(1);
     }
     return;
@@ -310,14 +319,8 @@ export async function updateAgent(options: {
     // 构造更新 payload
     const updatePayload: Record<string, unknown> = {
       publicKey: identity.publicKey,
+      name: options.name,
     };
-
-    if (options.webhook) {
-      updatePayload.webhook = { url: options.webhook }; 
-    }
-    if (options.name) {
-      updatePayload.name = options.name;
-    }
 
     // 1. 发送 PATCH 请求
     const initialResult = await sendRequest('PATCH', `/api/v1/agents/${options.agentId}`, updatePayload);
@@ -354,14 +357,11 @@ export async function updateAgent(options: {
  */
 function handleUpdateResult(
   result: Record<string, unknown>,
-  identity: RFC008IdentityFile,
-  options: { agentId: string; webhook?: string; name?: string }
+  identity: AgentIdentityFile,
+  options: { agentId: string; name?: string }
 ): void {
   if (result.success) {
     // 更新本地身份文件
-    if (options.webhook) {
-      identity.webhook = { url: options.webhook }; 
-    }
     if (options.name) {
       identity.name = options.name;
     }
@@ -374,8 +374,7 @@ function handleUpdateResult(
       outputJson({
         updated: true,
         agentId: options.agentId,
-        name: options.name || identity.name || null,
-        webhook: options.webhook || identity.webhook?.url || null
+        name: options.name || identity.name || null
       });
       return;
     }
@@ -384,9 +383,6 @@ function handleUpdateResult(
     console.log(`   AgentId: ${options.agentId}`);
     if (options.name) {
       console.log(`   Name: ${options.name}`);
-    }
-    if (options.webhook) {
-      console.log(`   Webhook: ${options.webhook}`);
     }
     console.log('');
     console.log('💡 Daemon and local identity file have been synchronized.');

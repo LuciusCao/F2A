@@ -1,6 +1,6 @@
 /**
  * F2A CLI - Agent Init 命令
- * f2a agent init --name <name> --webhook <url>
+ * f2a agent init --name <name> [--webhook <url>]
  * 
  * 自动生成密钥对、计算 AgentId、保存到 ~/.f2a/agent-identities/<agentId>.json
  */
@@ -8,7 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { AgentIdentityKeypair, RFC008IdentityFile, Ed25519Keypair } from '@f2a/network';
+import { AgentIdentityKeypair, AgentIdentityFile, Ed25519Keypair } from '@f2a/network';
 import { isJsonMode, outputJson, outputError } from './output.js';
 
 /**
@@ -31,8 +31,8 @@ export const AGENT_IDENTITIES_DIR = join(F2A_DATA_DIR, 'agent-identities');
  */
 export async function initAgentIdentity(options: {
   name: string;
-  /** Webhook URL（必填，用于接收消息） */
-  webhook: string;
+  /** Webhook URL（可选，用于接收消息） */
+  webhook?: string;
   capabilities?: Array<{ name: string; version: string }>;
   force?: boolean;
 }): Promise<{
@@ -45,10 +45,6 @@ export async function initAgentIdentity(options: {
 
   if (!name) {
     return { success: false, error: 'Missing required --name parameter. The agent name is required for identity creation.' };
-  }
-
-  if (!webhook) {
-    return { success: false, error: 'Missing required --webhook parameter. The agent requires a webhook URL to receive messages.' };
   }
 
   try {
@@ -74,10 +70,10 @@ export async function initAgentIdentity(options: {
     }
 
     // 创建身份文件
-    const identityFile: RFC008IdentityFile = keypairManager.createIdentityFile(keypair, {
+    const identityFile: AgentIdentityFile = keypairManager.createIdentityFile(keypair, {
       name,
       capabilities,
-      webhook: { url: webhook },
+      webhook: webhook ? { url: webhook } : undefined,
       privateKeyEncrypted: false,
     });
 
@@ -131,7 +127,7 @@ export function listLocalIdentities(): Array<{ agentId: string; name: string; pa
  * @param agentId Agent ID (格式: agent:xxx)
  * @returns 身份文件内容或 null
  */
-export function readIdentityByAgentId(agentId: string): RFC008IdentityFile | null {
+export function readIdentityByAgentId(agentId: string): AgentIdentityFile | null {
   if (!agentId) {
     return null;
   }
@@ -143,7 +139,7 @@ export function readIdentityByAgentId(agentId: string): RFC008IdentityFile | nul
   }
 
   try {
-    return JSON.parse(readFileSync(identityPath, 'utf-8')) as RFC008IdentityFile;
+    return JSON.parse(readFileSync(identityPath, 'utf-8')) as AgentIdentityFile;
   } catch {
     return null;
   }
@@ -152,11 +148,11 @@ export function readIdentityByAgentId(agentId: string): RFC008IdentityFile | nul
 /**
  * CLI 入口：init 命令
  * 
- * f2a agent init --name <name> --webhook <url> [--capability <cap>]... [--force]
+ * f2a agent init --name <name> [--webhook <url>] [--capability <cap>]... [--force]
  */
 export async function cliInitAgent(options: {
   name: string;
-  webhook: string;
+  webhook?: string;
   capabilities?: string[];
   force?: boolean;
 }): Promise<void> {
@@ -177,7 +173,7 @@ export async function cliInitAgent(options: {
       outputJson({
         agentId: result.agentId,
         name: options.name,
-        webhook: options.webhook,
+        webhook: options.webhook || null,
         capabilities: parsedCapabilities || [],
         identityPath: result.identityFile
       });
@@ -186,7 +182,9 @@ export async function cliInitAgent(options: {
       console.log('');
       console.log(`   AgentId: ${result.agentId}`);
       console.log(`   Name: ${options.name}`);
-      console.log(`   Webhook: ${options.webhook}`);
+      if (options.webhook) {
+        console.log(`   Webhook: ${options.webhook}`);
+      }
       console.log('');
       console.log('📝 Please save the following information for your records:');
       console.log('   AgentId: ' + result.agentId);
@@ -202,7 +200,7 @@ export async function cliInitAgent(options: {
     } else {
       console.error(`❌ Initialization failed: ${result.error}`);
       console.error('');
-      console.error('Usage: f2a agent init --name <name> --webhook <url> [--force]');
+      console.error('Usage: f2a agent init --name <name> [--webhook <url>] [--force]');
       process.exit(1);
     }
   }
@@ -224,7 +222,7 @@ export async function showAgentStatus(agentId?: string): Promise<void> {
         outputJson([]);
       } else {
         console.log('📭 No local identity files found.');
-        console.log('Please run: f2a agent init --name <name> --webhook <url>');
+        console.log('Please run: f2a agent init --name <name>');
       }
       return;
     }
@@ -263,7 +261,7 @@ export async function showAgentStatus(agentId?: string): Promise<void> {
     outputJson({
       agentId: identity.agentId,
       name: identity.name || null,
-      nodeId: identity.nodePeerId || null,
+      nodeId: identity.nodeId || null,
       registered: !!identity.nodeSignature,
       webhook: identity.webhook?.url || null,
       capabilities: identity.capabilities || []
@@ -277,7 +275,7 @@ export async function showAgentStatus(agentId?: string): Promise<void> {
     
     if (identity.nodeSignature) {
       console.log(`Node Signature: ✅ Issued`);
-      console.log(`Node PeerId: ${identity.nodePeerId || 'N/A'}`);
+      console.log(`Node ID: ${identity.nodeId || 'N/A'}`);
     } else {
       console.log(`Node Signature: ⚪ Not issued`);
       console.log('   Use f2a agent register to register with Daemon');

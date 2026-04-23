@@ -127,7 +127,7 @@ describe('AgentRegistry - Persistence Format Conversion', () => {
 
       expect(persisted.publicKey).toBe(publicKey);
       expect(persisted.nodeSignature).toBeDefined();
-      expect(persisted.nodePeerId).toBeDefined();
+      expect(persisted.nodeId).toBeDefined();
       expect(persisted.webhook?.url).toBe('http://example.com/webhook');
       expect(persisted.metadata?.custom).toBe('data');
     });
@@ -150,7 +150,7 @@ describe('AgentRegistry - Persistence Format Conversion', () => {
           capabilities: [],
           publicKey,
           nodeSignature: 'test-node-sig',
-          nodePeerId: '12D3KooWNode',
+          nodeId: '12D3KooWNode',
           registeredAt: isoString,
           lastActiveAt: isoString,
         }],
@@ -388,7 +388,7 @@ describe('AgentRegistry - RFC008 Registration', () => {
       expect(registration.publicKey).toBe(publicKey);
       expect(registration.idFormat).toBe('new');
       expect(registration.nodeSignature).toBeDefined();
-      expect(registration.nodePeerId).toBe(mockPeerId);
+      expect(registration.nodeId).toBe(mockPeerId);
       expect(registration.registeredAt).toBeInstanceOf(Date);
     });
 
@@ -568,7 +568,7 @@ describe('AgentRegistry - restore', () => {
       name: 'restored-agent',
       publicKey,
       nodeSignature: 'node-sig',
-      nodePeerId: '12D3KooWNode',
+      nodeId: '12D3KooWNode',
       capabilities: [{ name: 'chat', version: '1.0' }],
       createdAt: '2026-04-20T10:00:00.000Z',
       lastActiveAt: '2026-04-20T15:00:00.000Z',

@@ -12,7 +12,7 @@ import { homedir } from 'os';
 import { Logger } from '@f2a/network';
 
 // Phase 1: 导出新增组件
-export { AgentRegistry, AgentRegistration, AgentRegistrationRequest } from './agent-registry.js';
+export { AgentRegistry, AgentRegistration, AgentRegistrationRequest, RFC008AgentRegistrationRequest } from './agent-registry.js';
 export { MessageRouter, RoutableMessage, MessageQueue } from './message-router.js';
 export { ControlServer, ControlServerOptions } from './control-server.js';
 

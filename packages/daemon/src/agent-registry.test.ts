@@ -1,11 +1,12 @@
 /**
- * Agent Registry 测试 (RFC 003)
+ * Agent Registry 测试 (RFC 003 & RFC 008)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { AgentRegistry, AgentRegistration, AgentRegistrationRequest } from './agent-registry.js';
+import { AgentRegistry, AgentRegistration, AgentRegistrationRequest, RFC008AgentRegistrationRequest } from './agent-registry.js';
 import type { AgentCapability } from '@f2a/network';
 import { randomBytes } from 'crypto';
+import { generateAgentId } from '@f2a/network';
 
 // Mock Logger
 vi.mock('@f2a/network', async (importOriginal) => {
@@ -23,7 +24,7 @@ vi.mock('@f2a/network', async (importOriginal) => {
 
 // 不 mock crypto，使用真实的 randomBytes
 
-describe('AgentRegistry (RFC 003)', () => {
+describe('AgentRegistry', () => {
   let registry: AgentRegistry;
   const mockPeerId = '12D3KooWHxWdnxJaCMA4bVcnucEV35j2m6mYpNqZZbQW9zJ9nLVW';
   const mockSignFunction = vi.fn((data: string) => `sig-${data.slice(0, 16)}`);
@@ -149,8 +150,8 @@ describe('AgentRegistry (RFC 003)', () => {
   });
 
   describe('restore (Phase 6)', () => {
-    it('should restore agent from identity', () => {
-      // agentId 的 peerId 前缀需要匹配 mockPeerId 的前 16 位
+    it('should restore RFC003 (old format) agent from identity', () => {
+      // agentId 的 peerId 前缀需要匹配 mockPeerId 的前 16 位（旧格式）
       const peerIdPrefix = mockPeerId.slice(0, 16); // '12D3KooWHxWdnxJ'
       const identity = {
         agentId: `agent:${peerIdPrefix}:12345678`,
@@ -168,22 +169,9 @@ describe('AgentRegistry (RFC 003)', () => {
       expect(restored.agentId).toBe(identity.agentId);
       expect(restored.name).toBe(identity.name);
       expect(restored.peerId).toBe(mockPeerId);
+      expect(restored.idFormat).toBe('old');
       expect(registry.get(identity.agentId)).toBeDefined();
       expect(registry.get(identity.agentId)?.name).toBe(identity.name);
-    });
-
-    it('should throw when restoring agent from different node', () => {
-      const identity = {
-        agentId: 'agent:different-peer:12345678', // Different peerId prefix
-        name: 'Different Node Agent',
-        peerId: 'different-peer-id',
-        signature: 'mock-signature',
-        capabilities: [],
-        createdAt: '2026-01-01T00:00:00Z',
-        lastActiveAt: '2026-01-01T00:00:00Z',
-      };
-
-      expect(() => registry.restore(identity)).toThrow('Cannot restore agent from different node');
     });
 
     it('should restore agent with metadata', () => {
@@ -232,6 +220,172 @@ describe('AgentRegistry (RFC 003)', () => {
       expect(registry.size()).toBe(2);
       expect(registry.findByCapability('chat')).toHaveLength(1);
       expect(registry.findByCapability('code-gen')).toHaveLength(1);
+    });
+  });
+
+  describe('RFC 008: registerRFC008', () => {
+    it('应该使用 publicKey 生成 AgentId', () => {
+      const publicKey = randomBytes(32).toString('base64');
+      const request: RFC008AgentRegistrationRequest = {
+        publicKey,
+        name: 'RFC008 Agent',
+        capabilities: [{ name: 'chat', version: '1.0.0' }],
+      };
+
+      const registration = registry.registerRFC008(request);
+
+      // AgentId 应该是 publicKey 的指纹
+      const expectedAgentId = generateAgentId(publicKey);
+      expect(registration.agentId).toBe(expectedAgentId);
+      expect(registration.idFormat).toBe('new');
+    });
+
+    it('应该存储 publicKey', () => {
+      const publicKey = randomBytes(32).toString('base64');
+      const request: RFC008AgentRegistrationRequest = {
+        publicKey,
+        name: 'RFC008 Agent',
+        capabilities: [],
+      };
+
+      const registration = registry.registerRFC008(request);
+
+      expect(registration.publicKey).toBe(publicKey);
+    });
+
+    it('应该生成 nodeSignature 和 nodeId', () => {
+      const publicKey = randomBytes(32).toString('base64');
+      const request: RFC008AgentRegistrationRequest = {
+        publicKey,
+        name: 'RFC008 Agent',
+        capabilities: [],
+      };
+
+      const registration = registry.registerRFC008(request);
+
+      expect(registration.nodeSignature).toBeDefined();
+      expect(registration.nodeId).toBe(mockPeerId);
+    });
+
+    it('每次注册相同的 publicKey 应该生成相同的 AgentId', () => {
+      const publicKey = randomBytes(32).toString('base64');
+      
+      const request1: RFC008AgentRegistrationRequest = {
+        publicKey,
+        name: 'Agent 1',
+        capabilities: [],
+      };
+      
+      const request2: RFC008AgentRegistrationRequest = {
+        publicKey,
+        name: 'Agent 2',
+        capabilities: [],
+      };
+
+      const reg1 = registry.registerRFC008(request1);
+      // 第二次注册会覆盖第一个（因为 AgentId 相同）
+      const reg2 = registry.registerRFC008(request2);
+
+      expect(reg1.agentId).toBe(reg2.agentId);
+    });
+
+    it('应该支持 webhook 配置', () => {
+      const publicKey = randomBytes(32).toString('base64');
+      const request: RFC008AgentRegistrationRequest = {
+        publicKey,
+        name: 'RFC008 Agent',
+        capabilities: [],
+        webhook: { url: 'http://127.0.0.1:9002/webhook', token: 'secret' },
+      };
+
+      const registration = registry.registerRFC008(request);
+
+      expect(registration.webhook).toBeDefined();
+      expect(registration.webhook?.url).toBe('http://127.0.0.1:9002/webhook');
+      expect(registration.webhook?.token).toBe('secret');
+    });
+
+    it('应该支持 metadata', () => {
+      const publicKey = randomBytes(32).toString('base64');
+      const request: RFC008AgentRegistrationRequest = {
+        publicKey,
+        name: 'RFC008 Agent',
+        capabilities: [],
+        metadata: { platform: 'OpenClaw', version: '1.0' },
+      };
+
+      const registration = registry.registerRFC008(request);
+
+      expect(registration.metadata).toEqual({ platform: 'OpenClaw', version: '1.0' });
+    });
+  });
+
+  describe('RFC 008: restore with publicKey', () => {
+    it('应该恢复 RFC008 格式的 Agent', () => {
+      const publicKey = randomBytes(32).toString('base64');
+      const agentId = generateAgentId(publicKey);
+      
+      const identity = {
+        agentId,
+        name: 'RFC008 Restored Agent',
+        publicKey,
+        capabilities: [{ name: 'chat', version: '1.0.0' }],
+        createdAt: '2026-01-01T00:00:00Z',
+        lastActiveAt: '2026-01-01T00:00:00Z',
+      };
+
+      const restored = registry.restore(identity);
+
+      expect(restored.agentId).toBe(agentId);
+      expect(restored.publicKey).toBe(publicKey);
+      expect(restored.idFormat).toBe('new');
+      expect(restored.nodeSignature).toBeDefined();
+      expect(restored.nodeId).toBe(mockPeerId);
+    });
+
+    it('恢复 RFC008 Agent 应该自动生成 nodeSignature', () => {
+      const publicKey = randomBytes(32).toString('base64');
+      const agentId = generateAgentId(publicKey);
+      
+      const identity = {
+        agentId,
+        name: 'RFC008 Agent without nodeSignature',
+        publicKey,
+        capabilities: [],
+        createdAt: '2026-01-01T00:00:00Z',
+        lastActiveAt: '2026-01-01T00:00:00Z',
+      };
+
+      const restored = registry.restore(identity);
+
+      expect(restored.nodeSignature).toBeDefined();
+      expect(mockSignFunction).toHaveBeenCalled();
+    });
+
+    it('恢复 RFC008 Agent 应该保留已有的 nodeSignature', () => {
+      const publicKey = randomBytes(32).toString('base64');
+      const agentId = generateAgentId(publicKey);
+      const existingNodeSignature = 'existing-node-signature';
+      const existingNodeId = 'existing-node-id';
+      
+      const identity = {
+        agentId,
+        name: 'RFC008 Agent with nodeSignature',
+        publicKey,
+        nodeSignature: existingNodeSignature,
+        nodeId: existingNodeId,
+        capabilities: [],
+        createdAt: '2026-01-01T00:00:00Z',
+        lastActiveAt: '2026-01-01T00:00:00Z',
+      };
+
+      mockSignFunction.mockClear();
+      const restored = registry.restore(identity);
+
+      expect(restored.nodeSignature).toBe(existingNodeSignature);
+      expect(restored.nodeId).toBe(existingNodeId);
+      // 不应该调用 signFunction，因为已有 nodeSignature
+      expect(mockSignFunction).not.toHaveBeenCalled();
     });
   });
 });

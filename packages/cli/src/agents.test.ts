@@ -83,7 +83,7 @@ describe('CLI Agent Commands', () => {
           success: true, 
           agent: { agentId: 'agent:test:123' }, 
           nodeSignature: 'node-sig',
-          nodePeerId: '12D3KooWnode...',
+          nodeId: '12D3KooWnode...',
         };
 
         mockResponse.on.mockImplementation((event: string, callback: Function) => {

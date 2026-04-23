@@ -2,12 +2,16 @@
  * Agent Registry
  * 管理注册到 Daemon 的 Agent 实例
  * 
- * RFC 003: AgentId 由节点签发，不能由用户自定义
+ * RFC 008: AgentId = 公钥指纹，Agent 自有密钥（推荐）
+ * RFC 003: AgentId 由节点签发（⚠️ 已废弃）
+ * 
+ * **重要**: 请使用 registerRFC008() 注册新 Agent
  */
 
 import { Logger } from '@f2a/network';
 import type { AgentCapability } from '@f2a/network';
 import { randomBytes } from 'crypto';
+import { generateAgentId, parseAgentId } from '@f2a/network';
 
 /**
  * 本地消息回调类型
@@ -34,18 +38,39 @@ export interface AgentWebhook {
 
 /**
  * Agent 注册信息
+ * 
+ * RFC 003 (旧格式): AgentId 由节点签发，signature 为节点签名
+ * RFC 008 (新格式): AgentId = 公钥指纹，publicKey 为 Agent 自有公钥
  */
 export interface AgentRegistration {
-  /** Agent 唯一标识符（节点签发）格式: agent:<PeerId前16位>:<随机8位> */
+  /** Agent 唯一标识符
+   *  旧格式 (RFC003): agent:<PeerId前16位>:<随机8位>
+   *  新格式 (RFC008): agent:<公钥指纹16位>
+   */
   agentId: string;
   /** Agent 显示名称（用户定义，可修改） */
   name: string;
   /** Agent 支持的能力列表 */
   capabilities: AgentCapability[];
-  /** 签发节点的 PeerId */
-  peerId: string;
-  /** AgentId 签名（Base64） */
-  signature: string;
+  /** 签发节点的 PeerId（旧格式必需） */
+  peerId?: string;
+  /** AgentId 签名（Base64）
+   *  旧格式: Node 签名
+   *  新格式: 可选，Node 签发的归属证明
+   */
+  signature?: string;
+  /** RFC 008: Agent 的 Ed25519 公钥 (Base64)
+   *  新格式必需，用于 Challenge-Response 验证
+   */
+  publicKey?: string;
+  /** RFC 008: Node 签发的归属证明 (Base64)
+   *  可选，用于跨节点验证 Agent 归属
+   */
+  nodeSignature?: string;
+  /** RFC 008: Node 的 PeerId（签发归属证明的节点） */
+  nodeId?: string;
+  /** AgentId 格式版本: 'old' (RFC003) 或 'new' (RFC008) */
+  idFormat?: 'old' | 'new';
   /** 注册时间 */
   registeredAt: Date;
   /** 最后活跃时间 */
@@ -60,6 +85,9 @@ export interface AgentRegistration {
 
 /**
  * Agent 注册请求（用户提供）
+ * 
+ * RFC 003 (旧格式): 用户提供 name + capabilities，节点签发 AgentId
+ * RFC 008 (新格式): 用户提供 publicKey，AgentId 由公钥指纹派生
  */
 export interface AgentRegistrationRequest {
   /** Agent 显示名称 */
@@ -72,6 +100,29 @@ export interface AgentRegistrationRequest {
   onMessage?: MessageCallback;
   /** Agent 元数据（可选） */
   metadata?: Record<string, unknown>;
+}
+
+/**
+ * RFC 008 Agent 注册请求（新格式）
+ * AgentId 由公钥指纹派生，需要提供 publicKey
+ */
+export interface RFC008AgentRegistrationRequest {
+  /** Agent 的 Ed25519 公钥 (Base64) */
+  publicKey: string;
+  /** Agent 显示名称 */
+  name: string;
+  /** Agent 支持的能力列表 */
+  capabilities: AgentCapability[];
+  /** Webhook 配置 */
+  webhook?: AgentWebhook;
+  /** 本地消息回调（可选） */
+  onMessage?: MessageCallback;
+  /** Agent 元数据（可选） */
+  metadata?: Record<string, unknown>;
+  /** Node 签发的归属证明（可选，注册后由 Daemon 签发） */
+  nodeSignature?: string;
+  /** Node 的 PeerId（可选） */
+  nodeId?: string;
 }
 
 /**
@@ -110,13 +161,20 @@ export class AgentRegistry {
   }
 
   /**
-   * 注册 Agent（节点签发 AgentId）
+   * 注册 Agent（节点签发 AgentId）- RFC003 旧格式
    * 
-   * 用户只提供 name 和 capabilities
-   * 节点生成并签名 AgentId
+   * ⚠️ **已废弃**: 请使用 `registerRFC008()` 注册新 Agent
+   * 
+   * RFC003 存在以下安全问题：
+   * - Agent 没有自己的密钥，无法自证身份
+   * - Token 存文件可被盗用
+   * 
+   * @deprecated 使用 `registerRFC008()` 替代
+   * @param request 注册请求
+   * @returns AgentRegistration
    */
   register(request: AgentRegistrationRequest): AgentRegistration {
-    // 生成 AgentId
+    // 生成 AgentId (旧格式)
     const agentId = this.generateAgentId();
     
     // 签名 AgentId
@@ -128,6 +186,7 @@ export class AgentRegistry {
       capabilities: request.capabilities,
       peerId: this.peerId,
       signature,
+      idFormat: 'old',
       registeredAt: new Date(),
       lastActiveAt: new Date(),
       webhook: request.webhook,
@@ -136,12 +195,64 @@ export class AgentRegistry {
     };
 
     this.agents.set(agentId, registration);
-    this.logger.info('Agent registered (node-issued)', {
+    this.logger.info('Agent registered (RFC003 node-issued)', {
       agentId,
       name: request.name,
       peerId: this.peerId,
       capabilities: request.capabilities.map(c => c.name),
       isLocal: !!request.onMessage,
+      idFormat: 'old',
+    });
+
+    return registration;
+  }
+
+  /**
+   * 注册 Agent（RFC008 新格式）
+   * 
+   * AgentId 由公钥指纹派生
+   * Agent 拥有自己的 Ed25519 密钥对，用于 Challenge-Response 验证
+   * 
+   * @param request RFC008 注册请求，包含 publicKey
+   * @returns AgentRegistration
+   */
+  registerRFC008(request: RFC008AgentRegistrationRequest): AgentRegistration {
+    // 从公钥计算 AgentId
+    const agentId = generateAgentId(request.publicKey);
+    
+    // 验证 AgentId 格式
+    const parsed = parseAgentId(agentId);
+    if (!parsed.valid || parsed.format !== 'new') {
+      throw new Error(`Invalid AgentId format from publicKey: ${agentId}`);
+    }
+
+    // Node 签发归属证明（可选）
+    const nodeSignature = request.nodeSignature || this.signAgentId(agentId);
+    const nodeId = request.nodeId || this.peerId;
+
+    const registration: AgentRegistration = {
+      agentId,
+      name: request.name,
+      capabilities: request.capabilities,
+      publicKey: request.publicKey,
+      nodeSignature,
+      nodeId,
+      idFormat: 'new',
+      registeredAt: new Date(),
+      lastActiveAt: new Date(),
+      webhook: request.webhook,
+      onMessage: request.onMessage,
+      metadata: request.metadata,
+    };
+
+    this.agents.set(agentId, registration);
+    this.logger.info('Agent registered (RFC008 self-identity)', {
+      agentId,
+      name: request.name,
+      publicKeyPreview: request.publicKey.slice(0, 16) + '...',
+      capabilities: request.capabilities.map(c => c.name),
+      isLocal: !!request.onMessage,
+      idFormat: 'new',
     });
 
     return registration;
@@ -328,56 +439,61 @@ export class AgentRegistry {
   }
 
   /**
-   * Phase 6: 从 AgentIdentity 恢复 Agent
-   * 用于重启后恢复持久化的 Agent 身份
+   * 恢复已有 Agent（从 identity 文件）
+   * 
+   * Phase 6: 支持身份恢复
+   * RFC008: 支持新格式 identity（包含 publicKey）
    */
   restore(identity: {
     agentId: string;
     name: string;
-    peerId: string;
-    signature: string;
-    webhook?: AgentWebhook;
+    peerId?: string;  // 旧格式必需，新格式可选
+    signature?: string;  // 旧格式必需，新格式可选
+    publicKey?: string;  // RFC008 新格式必需
+    nodeSignature?: string;  // RFC008 Node 归属证明
+    nodeId?: string;  // RFC008 Node PeerId
     capabilities: AgentCapability[];
+    webhook?: AgentWebhook;
     metadata?: Record<string, unknown>;
     createdAt: string;
     lastActiveAt: string;
+    e2eePublicKey?: string;  // 兼容旧 identity 文件
   }): AgentRegistration {
-    // 检查 identity 是否属于当前节点
-    const identityPeerIdPrefix = identity.agentId.split(':')[1];
-    const currentPeerIdPrefix = this.peerId.slice(0, 16);
+    // 自动检测 AgentId 格式
+    const parsed = parseAgentId(identity.agentId);
+    const idFormat = parsed.valid ? parsed.format : 'old';
     
-    if (identityPeerIdPrefix !== currentPeerIdPrefix) {
-      this.logger.warn('Cannot restore agent from different node', {
-        agentId: identity.agentId,
-        identityPeerIdPrefix,
-        currentPeerIdPrefix,
-      });
-      throw new Error('Cannot restore agent from different node');
-    }
-
-    // 构造 AgentRegistration
+    // RFC008: 如果缺少 nodeSignature/nodeId，自动签发
+    const nodeSignature = identity.nodeSignature || (idFormat === 'new' ? this.signAgentId(identity.agentId) : undefined);
+    const nodeId = identity.nodeId || (idFormat === 'new' ? this.peerId : undefined);
+    
     const registration: AgentRegistration = {
       agentId: identity.agentId,
       name: identity.name,
       capabilities: identity.capabilities,
       peerId: identity.peerId,
       signature: identity.signature,
+      publicKey: identity.publicKey,
+      nodeSignature,
+      nodeId,
+      idFormat,
       registeredAt: new Date(identity.createdAt),
       lastActiveAt: new Date(identity.lastActiveAt),
       webhook: identity.webhook,
       metadata: identity.metadata,
     };
-
-    // 添加到注册表
+    
     this.agents.set(identity.agentId, registration);
-
+    
     this.logger.info('Agent restored from identity', {
       agentId: identity.agentId,
       name: identity.name,
       peerId: identity.peerId,
-      capabilities: identity.capabilities.map(c => c.name),
+      idFormat,
+      hasPublicKey: !!identity.publicKey,
+      nodeSignatureGenerated: !identity.nodeSignature && idFormat === 'new',
     });
-
+    
     return registration;
   }
 }

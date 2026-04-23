@@ -45,7 +45,7 @@ export {
 } from './core/identity/index.js';
 export type {
   Ed25519Keypair,
-  RFC008IdentityFile,
+  AgentIdentityFile,
   ParsedAgentId,
   AgentIdValidationResult,
   Challenge,

@@ -253,6 +253,11 @@ async function registerToDaemon(api, config) {
 }
 ```
 
+> **注意**: webhook 配置在 Agent **register** 时设置，而非 init 时。
+> 详见 [RFC 008: Agent Self-Identity](./008-agent-self-identity.md) 的 CLI 命令设计。
+> - `f2a agent init` - 仅生成密钥对，不设置 webhook
+> - `f2a agent register --webhook` - 注册到 Daemon 并设置 webhook
+
 **完整实现代码**：
 
 ```typescript
@@ -1077,6 +1082,48 @@ handleVerifyAgent(req, res) {
 ---
 
 ## Agent 级 Webhook 设计 (2026-04-15 新增)
+
+### Webhook 设置时机说明
+
+> **重要**: webhook 配置在 Agent **register** 时设置，而非 init 时。
+> 此设计与 RFC008 的 Agent Self-Identity 模型一致。
+
+**设置时机对比**:
+
+| 阶段 | 操作 | 是否设置 webhook | 说明 |
+|------|------|------------------|------|
+| `f2a agent init` | 生成密钥对 | ❌ 不设置 | 仅创建身份，webhook 是运行时配置 |
+| `f2a agent register` | 注册到 Daemon | ✅ 设置 webhook | 指定消息接收端点 |
+| `f2a agent update` | 更新信息 | ❌ 不修改 webhook | 仅修改 name 等元数据 |
+
+**与 RFC008 的关联**:
+
+1. **身份生成与注册分离** (RFC008 核心):
+   - init: Agent 生成自有密钥对，获得 AgentId（公钥指纹）
+   - register: 向 Daemon 注册，设置 webhook URL
+
+2. **webhook 是运行时配置**:
+   - 不同环境可使用不同的 webhook URL
+   - 同一 Agent 可在不同设备注册不同 webhook
+   - webhook 变化不影响 AgentId（身份不变）
+
+3. **CLI 命令示例** (RFC008 定义):
+   ```bash
+   # init 不设置 webhook
+   f2a agent init --name "猫咕噜"
+   # 输出: AgentId: agent:a3b2c1d4e5f67890 (公钥指纹)
+   
+   # register 设置 webhook
+   f2a agent register --webhook "http://127.0.0.1:9002/webhook"
+   ```
+
+**RFC004 与 RFC008 的协作**:
+
+- RFC004 定义了 webhook 的数据结构 (`AgentWebhook`) 和路由机制
+- RFC008 定义了 webhook 的设置时机（register 时）和身份验证
+- 两者共同构成了完整的 Agent webhook 架构
+
+详见: [RFC 008: Agent Self-Identity](./008-agent-self-identity.md)
 
 ### 背景
 

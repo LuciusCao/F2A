@@ -96,9 +96,8 @@ export class F2AFactory {
       }
 
       const nodeId = nodeIdentityManager.getNodeId();
-      const nodePeerId = nodeIdentityManager.getPeerIdString();
 
-      if (!nodeId || !nodePeerId) {
+      if (!nodeId) {
         return failureFromError('NODE_IDENTITY_LOAD_FAILED', 'Failed to get node ID or peer ID');
       }
 
@@ -177,10 +176,10 @@ export class F2AFactory {
       });
 
       // Phase 1: 初始化 AgentRegistry 和 MessageRouter
-      // 使用 nodePeerId 和 F2A 实例的 signData 方法
+      // 使用 nodeId 和 F2A 实例的 signData 方法
       // Phase 3: 传递 dataDir 以支持持久化
       // P0 修复:使用异步工厂方法避免同步 I/O 阻塞
-      f2a.agentRegistry = await AgentRegistry.create(nodePeerId, f2a.signData.bind(f2a), { dataDir });
+      f2a.agentRegistry = await AgentRegistry.create(nodeId, f2a.signData.bind(f2a), { dataDir });
 
       // RFC 005: MessageRouter 接收 AgentRegistry 的内部 Map
       // 通过 getAgentRegistryMap() 获取(需在 AgentRegistry 中添加)

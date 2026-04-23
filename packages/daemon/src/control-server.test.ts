@@ -167,6 +167,18 @@ const createMockF2A = () => {
       lastActiveAt: new Date(),
       webhook: request.webhook,
     })),
+    registerRFC008: vi.fn().mockImplementation((request) => ({  // RFC008: 新注册方法
+      agentId: 'agent:67face05d98ab91f',  // RFC008: 公钥指纹格式
+      name: request.name,
+      capabilities: request.capabilities || [],
+      publicKey: request.publicKey,
+      nodeSignature: 'node-sig-mock-abc123',  // RFC008: Node 归属证明签名
+      nodeId: 'test-node-id-xyz789',  // RFC008: 签发节点 ID
+      idFormat: 'new',
+      registeredAt: new Date(),
+      lastActiveAt: new Date(),
+      webhook: request.webhook,
+    })),
     restore: vi.fn().mockReturnValue({
       agentId: 'agent:test-peer:abc123',
       name: 'TestAgent',
@@ -400,8 +412,8 @@ describe('ControlServer', () => {
     });
   });
 
-  describe('POST /api/v1/agents (RFC 003)', () => {
-    it('should register agent with node-issued AgentId', async () => {
+  describe('POST /api/v1/agents (RFC008)', () => {
+    it('should register agent with publicKey', async () => {
       mockRateLimiterAllow = true;
       await server.start();
       
@@ -411,6 +423,7 @@ describe('ControlServer', () => {
         url: '/api/v1/agents',
         body: { 
           name: '猫咕噜', 
+          publicKey: 'dGVzdHB1YmxpY2tleQ==', // RFC008: Agent Ed25519 公钥
           capabilities: ['chat'],
           webhook: { url: 'http://127.0.0.1:9002/f2a/webhook' }
         },
@@ -424,9 +437,10 @@ describe('ControlServer', () => {
       expect(res.writeHead).toHaveBeenCalledWith(201);
       const responseData = JSON.parse(res.end.mock.calls[0][0]);
       expect(responseData.success).toBe(true);
-      expect(responseData.agent.agentId).toMatch(/^agent:/);
+      expect(responseData.agent.agentId).toMatch(/^agent:/);  // RFC008: 公钥指纹格式
       expect(responseData.agent.name).toBe('猫咕噜');
-      expect(responseData.agent.signature).toBeDefined();
+      expect(responseData.agent.nodeSignature).toBeDefined();  // RFC008: Node 签发归属证明
+      expect(responseData.nodeSignature).toBeDefined();  // 响应中也返回 nodeSignature
       
       server.stop();
     });

@@ -20,16 +20,16 @@ const createMockLogger = () => ({
 });
 
 const createMockAgentRegistry = (): AgentRegistry => ({
-  register: vi.fn().mockReturnValue({
+  register: vi.fn().mockImplementation((opts: { name: string; webhook?: { url: string } }) => ({
     agentId: 'agent:test-peer:abc123',
-    name: 'TestAgent',
+    name: opts.name,
     capabilities: [],
     peerId: 'test-peer-id',
     signature: 'test-sig',
     registeredAt: new Date(),
     lastActiveAt: new Date(),
-    webhook: { url: 'http://test' },
-  }),
+    webhook: opts.webhook,
+  })),
   restore: vi.fn().mockReturnValue({
     agentId: 'agent:test-peer:abc123',
     name: 'TestAgent',
@@ -217,6 +217,71 @@ describe('AgentHandler - Error Response Code Field', () => {
       expect(data.success).toBe(false);
       expect(data.error).toContain('webhook.url');
       expect(data.code).toBe('INVALID_REQUEST');
+    });
+
+    it('deliveryMode: webhook 时缺少 webhook.url 应返回 400 + code: INVALID_REQUEST', async () => {
+      const req = createMockReq({
+        method: 'POST',
+        body: { name: 'TestAgent', capabilities: ['chat'], deliveryMode: 'webhook' },
+      });
+      const res = createMockRes();
+
+      await handler.handleRegisterAgent(req as IncomingMessage, res as ServerResponse);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      expect(res.writeHead).toHaveBeenCalledWith(400);
+      const data = getResponseData(res);
+      expect(data.success).toBe(false);
+      expect(data.error).toContain('webhook.url');
+      expect(data.code).toBe('INVALID_REQUEST');
+    });
+
+    it('deliveryMode: queue 时无 webhook 应返回 201 成功注册', async () => {
+      const req = createMockReq({
+        method: 'POST',
+        body: { name: 'QueueAgent', capabilities: ['chat'], deliveryMode: 'queue' },
+      });
+      const res = createMockRes();
+
+      await handler.handleRegisterAgent(req as IncomingMessage, res as ServerResponse);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      expect(res.writeHead).toHaveBeenCalledWith(201);
+      const data = getResponseData(res);
+      expect(data.success).toBe(true);
+      expect(data.agent.name).toBe('QueueAgent');
+      expect(mockMessageRouter.createQueue).toHaveBeenCalledWith(data.agent.agentId);
+    });
+
+    it('恢复已有身份时 deliveryMode: queue 无 webhook 应返回 200', async () => {
+      const agentId = 'agent:existing:queue123';
+      (mockIdentityStore.get as any).mockReturnValue({
+        agentId,
+        name: 'ExistingQueueAgent',
+        peerId: 'test-peer-id',
+        signature: 'test-sig',
+        capabilities: [],
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+      });
+
+      const req = createMockReq({
+        method: 'POST',
+        body: { agentId, deliveryMode: 'queue' },
+      });
+      const res = createMockRes();
+
+      await handler.handleRegisterAgent(req as IncomingMessage, res as ServerResponse);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      const data = getResponseData(res);
+      expect(data.success).toBe(true);
+      expect(data.restored).toBe(true);
+      expect(mockMessageRouter.createQueue).toHaveBeenCalledWith(agentId);
     });
 
     it('无效 JSON 应返回 400 + code: INVALID_JSON', async () => {

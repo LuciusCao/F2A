@@ -1,0 +1,50 @@
+{
+  "name": "@f2a/mcp-server",
+  "version": "0.1.0",
+  "description": "F2A MCP Server - Model Context Protocol bridge for F2A P2P Agent network",
+  "type": "module",
+  "main": "./dist/main.js",
+  "types": "./dist/main.d.ts",
+  "bin": {
+    "f2a-mcp-server": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf dist .tsbuildinfo"
+  },
+  "dependencies": {
+    "@f2a/network": "*",
+    "@f2a/cli": "*",
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "f2a",
+    "mcp",
+    "model-context-protocol",
+    "p2p",
+    "agent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LuciusCao/F2A.git",
+    "directory": "packages/mcp-server"
+  },
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md"
+  ]
+}

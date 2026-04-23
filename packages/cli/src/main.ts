@@ -82,9 +82,10 @@ Usage: f2a agent <subcommand> [options]
 
 Subcommands:
   init              Create Agent keypair and identity file
-                    f2a agent init --name <name> --webhook <url> [--capability <cap>]... [--force]
+                    f2a agent init --name <name> [--webhook <url>] [--capability <cap>]... [--force] [--no-webhook]
                     --name            Agent name (required)
-                    --webhook         Webhook URL (required, for receiving messages)
+                    --webhook         Webhook URL (optional, for receiving messages)
+                    --no-webhook      Create identity without webhook
                     --capability      Capability tags (multiple allowed)
                     --force           Force re-creation
                     Identity file saved to ~/.f2a/agent-identities/
@@ -110,8 +111,11 @@ Subcommands:
                     f2a agent verify --agent-id <agentId>
 
 Examples:
-  # Create identity
+  # Create identity with webhook
   f2a agent init --name "my-agent" --webhook http://localhost:3000/f2a/webhook
+
+  # Create identity without webhook
+  f2a agent init --name "my-agent" --no-webhook
   
   # Register to Daemon
   f2a agent register --agent-id agent:abc123...
@@ -318,17 +322,26 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
   switch (subcommand) {
     case 'init':
       const initOpts = parseArgs(restArgs);
-      // Collect all missing required parameters
-      const missingParams: string[] = [];
-      if (!initOpts.name) missingParams.push('--name');
-      if (!initOpts.webhook) missingParams.push('--webhook');
-      
-      if (missingParams.length > 0) {
+      // 只检查 name 为必填参数
+      if (!initOpts.name) {
         if (isJsonMode()) {
-          outputError(`Missing required parameters: ${missingParams.join(', ')}`, 'MISSING_PARAMETERS');
+          outputError('Missing required parameter: --name', 'MISSING_PARAMETERS');
         } else {
-          console.error(`❌ Missing required parameters: ${missingParams.join(', ')}`);
-          console.error('Usage: f2a agent init --name <name> --webhook <url> [--capability <cap>]...');
+          console.error('❌ Missing required parameter: --name');
+          console.error('Usage: f2a agent init --name <name> [--webhook <url>] [--capability <cap>]... [--no-webhook]');
+          process.exit(1);
+        }
+        return;
+      }
+
+      // 处理 --no-webhook 与 --webhook 的互斥关系
+      const noWebhook = initOpts['no-webhook'] === true;
+      const webhookValue = initOpts.webhook as string | undefined;
+      if (noWebhook && webhookValue) {
+        if (isJsonMode()) {
+          outputError('Cannot use both --webhook and --no-webhook', 'INVALID_PARAMETERS');
+        } else {
+          console.error('❌ Cannot use both --webhook and --no-webhook');
           process.exit(1);
         }
         return;
@@ -336,7 +349,7 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
       
       await cliInitAgent({
         name: initOpts.name as string,
-        webhook: initOpts.webhook as string,
+        webhook: noWebhook ? undefined : webhookValue,
         capabilities: Array.isArray(initOpts.capability)
           ? initOpts.capability as string[]
           : initOpts.capability

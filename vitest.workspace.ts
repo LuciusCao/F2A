@@ -11,4 +11,6 @@ export default defineWorkspace([
   },
   // Dashboard package - jsdom environment (has its own config)
   'packages/dashboard/vitest.config.ts',
+  // MCP Server package
+  'packages/mcp-server/vitest.config.ts',
 ]);

@@ -1,24 +1,25 @@
 {
   "compilerOptions": {
+    "composite": true,
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
+    "outDir": "./dist",
+    "rootDir": "./src",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true,
-    "outDir": "./dist"
+    "sourceMap": true
   },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts"],
   "references": [
-    { "path": "./packages/network" },
-    { "path": "./packages/cli" },
-    { "path": "./packages/daemon" },
-    { "path": "./packages/openclaw-f2a" },
-    { "path": "./packages/dashboard" },
-    { "path": "./packages/mcp-server" }
+    { "path": "../network" },
+    { "path": "../cli" }
   ]
 }

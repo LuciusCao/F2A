@@ -30,7 +30,9 @@ interface RegisterAgentBody {
   name?: string;
   /** Agent 能力列表 */
   capabilities?: Array<string | AgentCapability>;
-  /** Webhook 配置(HTTP API 注册时必需) */
+  /** 消息投递模式: webhook 推送或消息队列拉取 */
+  deliveryMode?: 'webhook' | 'queue';
+  /** Webhook 配置(HTTP API 注册时,webhook 模式下必需) */
   webhook?: { url: string; token?: string };
   /** Agent 元数据 */
   metadata?: Record<string, unknown>;
@@ -149,7 +151,7 @@ export class AgentHandler {
 
           this.pendingChallenges.set(data.agentId!, {
             nonce,
-            webhook: data.webhook!,
+            webhook: data.webhook,
             timestamp: Date.now()
           });
 
@@ -225,10 +227,11 @@ export class AgentHandler {
           return;
         }
 
-        // RFC 004: 通过 HTTP API 注册的 Agent 必须提供 webhook
+        // RFC 004: 通过 HTTP API 注册的 Agent 默认必须提供 webhook
+        // 例外: deliveryMode === 'queue' 时,Agent 通过消息队列拉取消息,无需 webhook
         // 原因:HTTP API 是跨进程调用,无法传递 onMessage 函数回调
         // 只有 webhook 才能让 daemon 推送消息给 agent
-        if (!data.webhook?.url) {
+        if (data.deliveryMode !== 'queue' && !data.webhook?.url) {
           res.writeHead(400);
           res.end(JSON.stringify({
             success: false,

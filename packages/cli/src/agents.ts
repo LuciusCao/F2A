@@ -56,6 +56,7 @@ export async function registerAgent(options: {
   /** Agent ID（必填） */
   agentId: string;
   force?: boolean;
+  /** Webhook URL（必填） */
   webhook?: string;
 }): Promise<void> {
   if (!options.agentId) {
@@ -63,7 +64,7 @@ export async function registerAgent(options: {
       outputError('Missing required parameter: --agent-id', 'MISSING_AGENT_ID');
     } else {
       console.error('❌ Error: Missing required parameter --agent-id. The agent ID is required for registration.');
-      console.error('Usage: f2a agent register --agent-id <agentId>');
+      console.error('Usage: f2a agent register --agent-id <agentId> --webhook <url>');
       process.exit(1);
     }
     return;
@@ -80,6 +81,24 @@ export async function registerAgent(options: {
     console.error(`   AgentId: ${options.agentId}`);
     console.error('Please run: f2a agent init --name <name>');
     console.error('         or: f2a agent register --agent-id <agentId> --webhook <url>');
+    process.exit(1);
+  }
+
+  // webhook 优先级：CLI 参数 > identity 文件
+  // Issue #143: register 必须有 webhook，用于 daemon 消息推送
+  const webhookToUse = options.webhook 
+    ? { url: options.webhook } 
+    : identity.webhook;
+
+  if (!webhookToUse?.url) {
+    if (isJsonMode()) {
+      outputError('Missing required parameter: --webhook. Register requires a webhook URL for daemon to push messages.', 'MISSING_WEBHOOK');
+      return;
+    }
+    console.error('❌ Error: Missing required parameter --webhook.');
+    console.error('   Register requires a webhook URL for daemon to push messages to the agent.');
+    console.error('Usage: f2a agent register --agent-id <agentId> --webhook <url>');
+    console.error('Example: f2a agent register --agent-id agent:abc123 --webhook http://localhost:3000/f2a/webhook');
     process.exit(1);
   }
 
@@ -106,11 +125,6 @@ export async function registerAgent(options: {
       version: '1.0.0',
       description: ''
     }));
-
-    // webhook 优先级：CLI 参数 > identity 文件
-    const webhookToUse = options.webhook 
-      ? { url: options.webhook } 
-      : identity.webhook;
 
     const requestBody = {
       agentId: identity.agentId,

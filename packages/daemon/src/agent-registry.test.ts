@@ -36,7 +36,7 @@ describe('AgentRegistry', () => {
 
   describe('RFC 003: AgentId 签发', () => {
     it('应该生成正确格式的 AgentId', () => {
-      const request = { name: '猫咕噜', capabilities: [{ name: 'chat', version: '1.0.0' }] };
+      const request = { name: '猫咕噜', capabilities: [{ name: 'chat', description: 'chat capability', tools: [] }] };
       const registration = registry.register(request);
 
       expect(registration.agentId).toMatch(/^agent:[a-zA-Z0-9]{16}:[a-f0-9]{8}$/);
@@ -60,11 +60,11 @@ describe('AgentRegistry', () => {
 
   describe('register', () => {
     it('应该成功注册 Agent', () => {
-      const request = { name: '猫咕噜', capabilities: [{ name: 'chat', version: '1.0.0' }] };
+      const request = { name: '猫咕噜', capabilities: [{ name: 'chat', description: 'chat capability', tools: [] }] };
       const registration = registry.register(request);
 
       expect(registration.name).toBe('猫咕噜');
-      expect(registration.peerId).toBe(mockPeerId);
+      expect(registration.nodeId).toBe(mockPeerId);
     });
 
     it('应该记录注册时间', () => {
@@ -115,8 +115,8 @@ describe('AgentRegistry', () => {
 
   describe('findByCapability', () => {
     it('应该找到具有特定能力的 Agent', () => {
-      registry.register({ name: 'Agent1', capabilities: [{ name: 'chat', version: '1.0.0' }] });
-      registry.register({ name: 'Agent2', capabilities: [{ name: 'code-gen', version: '1.0.0' }] });
+      registry.register({ name: 'Agent1', capabilities: [{ name: 'chat', description: 'chat capability', tools: [] }] });
+      registry.register({ name: 'Agent2', capabilities: [{ name: 'code-gen', description: 'code-gen capability', tools: [] }] });
       
       const chatAgents = registry.findByCapability('chat');
       expect(chatAgents).toHaveLength(1);
@@ -126,8 +126,8 @@ describe('AgentRegistry', () => {
 
   describe('getStats', () => {
     it('应该返回正确的统计', () => {
-      registry.register({ name: 'Agent1', capabilities: [{ name: 'chat', version: '1.0.0' }] });
-      registry.register({ name: 'Agent2', capabilities: [{ name: 'chat', version: '1.0.0' }] });
+      registry.register({ name: 'Agent1', capabilities: [{ name: 'chat', description: 'chat capability', tools: [] }] });
+      registry.register({ name: 'Agent2', capabilities: [{ name: 'chat', description: 'chat capability', tools: [] }] });
       
       const stats = registry.getStats();
       expect(stats.total).toBe(2);
@@ -159,7 +159,7 @@ describe('AgentRegistry', () => {
         peerId: mockPeerId,
         signature: 'mock-signature',
         webhook: { url: 'http://127.0.0.1:9002/f2a/webhook' },
-        capabilities: [{ name: 'chat', version: '1.0.0' }],
+        capabilities: [{ name: 'chat', description: 'chat capability', tools: [] }],
         createdAt: '2026-01-01T00:00:00Z',
         lastActiveAt: '2026-01-01T00:00:00Z',
       };
@@ -168,7 +168,7 @@ describe('AgentRegistry', () => {
 
       expect(restored.agentId).toBe(identity.agentId);
       expect(restored.name).toBe(identity.name);
-      expect(restored.peerId).toBe(mockPeerId);
+      expect(restored.nodeId).toBe(mockPeerId);
       expect(restored.idFormat).toBe('old');
       expect(registry.get(identity.agentId)).toBeDefined();
       expect(registry.get(identity.agentId)?.name).toBe(identity.name);
@@ -179,7 +179,7 @@ describe('AgentRegistry', () => {
       const identity = {
         agentId: `agent:${peerIdPrefix}:abc12345`,
         name: 'Agent with Metadata',
-        peerId: mockPeerId,
+        nodeId: mockPeerId,
         signature: 'mock-signature',
         capabilities: [],
         metadata: { platform: 'OpenClaw', version: '1.0' },
@@ -197,9 +197,9 @@ describe('AgentRegistry', () => {
       const identity1 = {
         agentId: `agent:${peerIdPrefix}:11111111`,
         name: 'Agent 1',
-        peerId: mockPeerId,
+        nodeId: mockPeerId,
         signature: 'sig1',
-        capabilities: [{ name: 'chat', version: '1.0.0' }],
+        capabilities: [{ name: 'chat', description: 'chat capability', tools: [] }],
         createdAt: '2026-01-01T00:00:00Z',
         lastActiveAt: '2026-01-01T00:00:00Z',
       };
@@ -207,9 +207,9 @@ describe('AgentRegistry', () => {
       const identity2 = {
         agentId: `agent:${peerIdPrefix}:22222222`,
         name: 'Agent 2',
-        peerId: mockPeerId,
+        nodeId: mockPeerId,
         signature: 'sig2',
-        capabilities: [{ name: 'code-gen', version: '1.0.0' }],
+        capabilities: [{ name: 'code-gen', description: 'code-gen capability', tools: [] }],
         createdAt: '2026-01-01T00:00:00Z',
         lastActiveAt: '2026-01-01T00:00:00Z',
       };
@@ -229,7 +229,7 @@ describe('AgentRegistry', () => {
       const request: RFC008AgentRegistrationRequest = {
         publicKey,
         name: 'RFC008 Agent',
-        capabilities: [{ name: 'chat', version: '1.0.0' }],
+        capabilities: [{ name: 'chat', description: 'chat capability', tools: [] }],
       };
 
       const registration = registry.registerRFC008(request);
@@ -329,7 +329,7 @@ describe('AgentRegistry', () => {
         agentId,
         name: 'RFC008 Restored Agent',
         publicKey,
-        capabilities: [{ name: 'chat', version: '1.0.0' }],
+        capabilities: [{ name: 'chat', description: 'chat capability', tools: [] }],
         createdAt: '2026-01-01T00:00:00Z',
         lastActiveAt: '2026-01-01T00:00:00Z',
       };

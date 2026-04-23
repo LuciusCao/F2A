@@ -36,14 +36,10 @@ export interface AgentIdentity {
   name: string;
   /** Agent Ed25519 公钥 (Base64) */
   publicKey: string;
-  /** Agent Ed25519 私钥 (Base64, 可选存储) */
-  privateKey?: string;
-  /** 签发节点的 PeerId */
-  peerId: string;
   /** Node 归属证明签名 (Base64) */
   nodeSignature?: string;
-  /** 签发节点 ID */
-  nodeId?: string;
+  /** 签发节点 ID（RFC008: 统一用 nodeId，不再用 peerId） */
+  nodeId: string;
   /** Webhook 配置 */
   webhook?: AgentWebhook;
   /** Agent 支持的能力列表 */
@@ -65,11 +61,11 @@ export class AgentIdentityStore {
   private identities: Map<string, AgentIdentity> = new Map();
   private logger: Logger;
   /** 用于验证签名的函数（可选） */
-  private verifySignatureFn?: (data: string, signature: string, peerId: string) => boolean;
+  private verifySignatureFn?: (data: string, signature: string, nodeId: string) => boolean;
 
   constructor(
     dataDir: string,
-    verifySignatureFn?: (data: string, signature: string, peerId: string) => boolean
+    verifySignatureFn?: (data: string, signature: string, nodeId: string) => boolean
   ) {
     this.agentIdentitiesDir = join(dataDir, 'agent-identities');
     this.logger = new Logger({ component: 'AgentIdentityStore' });
@@ -117,7 +113,7 @@ export class AgentIdentityStore {
         }
         
         // 验证签名（如果有验证函数且有签名）
-        if (this.verifySignatureFn && identity.nodeSignature && !this.verifySignatureFn(identity.agentId, identity.nodeSignature, identity.peerId)) {
+        if (this.verifySignatureFn && identity.nodeSignature && !this.verifySignatureFn(identity.agentId, identity.nodeSignature, identity.nodeId)) {
           this.logger.warn('Agent identity signature invalid, skipping', { file, agentId: identity.agentId });
           continue;
         }
@@ -281,10 +277,10 @@ export class AgentIdentityStore {
   }
 
   /**
-   * 按 PeerId 查找 Identity（同一节点的所有 Agent）
+   * 按 NodeId 查找 Identity（同一节点的所有 Agent）
    */
-  findByPeerId(peerId: string): AgentIdentity[] {
-    return this.findBy(identity => identity.peerId === peerId);
+  findByNodeId(nodeId: string): AgentIdentity[] {
+    return this.findBy(identity => identity.nodeId === nodeId);
   }
 
   /**

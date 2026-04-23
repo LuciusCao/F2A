@@ -31,12 +31,10 @@ function createMockIdentity(agentId?: string): AgentIdentity {
     agentId: agentId || 'agent:a1b2c3d4e5f6g7h8',
     name: 'Test Agent',
     publicKey: 'dGVzdC1wdWJsaWMta2V5LWJhc2U2NA==', // Base64 encoded test key
-    privateKey: 'dGVzdC1wcml2YXRlLWtleS1iYXNlNjQ=', // Base64 encoded test key
-    peerId: '12D3KooWtest...',
     nodeSignature: 'mock-node-signature',
     nodeId: 'node:test-node-id',
     webhook: { url: 'http://127.0.0.1:9002/f2a/webhook' },
-    capabilities: [{ name: 'chat', version: '1.0.0' }],
+    capabilities: [{ name: 'chat', description: 'chat capability', tools: [] }],
     createdAt: new Date().toISOString(),
     lastActiveAt: new Date().toISOString(),
   };
@@ -350,20 +348,20 @@ describe('AgentIdentityStore', () => {
     });
   });
 
-  describe('findByPeerId()', () => {
-    it('should find identities by peerId', async () => {
+  describe('findByNodeId()', () => {
+    it('should find identities by nodeId', async () => {
       const identity1 = createMockIdentity('agent:peer1:1111');
-      identity1.peerId = 'peer1';
+      identity1.nodeId = 'node1';
       const identity2 = createMockIdentity('agent:peer2:2222');
-      identity2.peerId = 'peer2';
+      identity2.nodeId = 'node2';
       const identity3 = createMockIdentity('agent:peer1:3333');
-      identity3.peerId = 'peer1';
+      identity3.nodeId = 'node1';
 
       await store.save(identity1);
       await store.save(identity2);
       await store.save(identity3);
 
-      const found = store.findByPeerId('peer1');
+      const found = store.findByNodeId('node1');
 
       expect(found.length).toBe(2);
       expect(found.some(i => i.agentId === identity1.agentId)).toBe(true);
@@ -374,9 +372,9 @@ describe('AgentIdentityStore', () => {
   describe('findByCapability()', () => {
     it('should find identities by capability', async () => {
       const identity1 = createMockIdentity('agent:xxx:1111');
-      identity1.capabilities = [{ name: 'chat', version: '1.0.0' }];
+      identity1.capabilities = [{ name: 'chat', description: 'chat capability', tools: [] }];
       const identity2 = createMockIdentity('agent:xxx:2222');
-      identity2.capabilities = [{ name: 'code-gen', version: '1.0.0' }];
+      identity2.capabilities = [{ name: 'code-gen', description: 'code-gen capability', tools: [] }];
 
       await store.save(identity1);
       await store.save(identity2);
@@ -390,8 +388,8 @@ describe('AgentIdentityStore', () => {
     it('should find identities with multiple capabilities', async () => {
       const identity = createMockIdentity();
       identity.capabilities = [
-        { name: 'chat', version: '1.0.0' },
-        { name: 'code-gen', version: '1.0.0' },
+        { name: 'chat', description: 'chat capability', tools: [] },
+        { name: 'code-gen', description: 'code-gen capability', tools: [] },
       ];
       await store.save(identity);
 
@@ -525,8 +523,9 @@ describe('AgentIdentityStore', () => {
         agentId: 'agent:test:1234',
         name: 'Test',
         publicKey: 'dGVzdC1wdWJsaWMta2V5',
-        peerId: 'test-peer',
+        nodeId: 'node:test-peer',
         nodeSignature: 'test-sig',
+        capabilities: [],
         createdAt: new Date().toISOString(),
         lastActiveAt: new Date().toISOString(),
         __proto__: { malicious: true },
@@ -556,7 +555,6 @@ describe('AgentIdentityStore', () => {
       
       // 验证新字段被正确保存和读取（具体值验证）
       expect(retrieved?.publicKey).toBe('dGVzdC1wdWJsaWMta2V5LWJhc2U2NA==');
-      expect(retrieved?.privateKey).toBe('dGVzdC1wcml2YXRlLWtleS1iYXNlNjQ=');
       expect(retrieved?.nodeSignature).toBe('mock-node-signature');
       expect(retrieved?.nodeId).toBe('node:test-node-id');
     });
@@ -565,7 +563,6 @@ describe('AgentIdentityStore', () => {
       const invalidIdentity = {
         agentId: 'agent:xxx',
         name: 'Invalid',
-        peerId: 'peer1',
         // 缺少 publicKey
         createdAt: new Date().toISOString(),
         lastActiveAt: new Date().toISOString(),
@@ -574,12 +571,12 @@ describe('AgentIdentityStore', () => {
       await expect(store.save(invalidIdentity)).rejects.toThrow('Invalid AgentIdentity structure');
     });
 
-    it('should allow missing optional fields (privateKey, nodeSignature, nodeId)', async () => {
+    it('should allow missing optional fields (nodeSignature)', async () => {
       const minimalIdentity: AgentIdentity = {
         agentId: 'agent:minimal:1111',
         name: 'Minimal Agent',
         publicKey: 'bWluaW1hbC1wdWJsaWMta2V5',
-        peerId: 'peer-minimal',
+        nodeId: 'node:minimal-node',
         capabilities: [],
         createdAt: new Date().toISOString(),
         lastActiveAt: new Date().toISOString(),
@@ -589,9 +586,8 @@ describe('AgentIdentityStore', () => {
 
       const retrieved = store.get(minimalIdentity.agentId);
       expect(retrieved?.publicKey).toBe('bWluaW1hbC1wdWJsaWMta2V5');
-      expect(retrieved?.privateKey).toBeUndefined();
       expect(retrieved?.nodeSignature).toBeUndefined();
-      expect(retrieved?.nodeId).toBeUndefined();
+      expect(retrieved?.nodeId).toBe('node:minimal-node');
     });
 
     it('should persist identity with new RFC008 fields to file', async () => {
@@ -606,7 +602,6 @@ describe('AgentIdentityStore', () => {
 
       // 验证文件内容包含所有 RFC008 字段
       expect(content.publicKey).toBe('dGVzdC1wdWJsaWMta2V5LWJhc2U2NA==');
-      expect(content.privateKey).toBe('dGVzdC1wcml2YXRlLWtleS1iYXNlNjQ=');
       expect(content.nodeId).toBe('node:rfc008-node');
       expect(content.nodeSignature).toBe('rfc008-signature-base64');
     });
@@ -616,7 +611,7 @@ describe('AgentIdentityStore', () => {
         agentId: 'agent:emptykey',
         name: 'Empty Key',
         publicKey: '', // 空 publicKey
-        peerId: 'peer1',
+        nodeId: 'node:test',
         capabilities: [],
         createdAt: new Date().toISOString(),
         lastActiveAt: new Date().toISOString(),
@@ -629,7 +624,7 @@ describe('AgentIdentityStore', () => {
       const invalidIdentity = {
         agentId: 'agent:noname',
         publicKey: 'c29tZS1rZXk=',
-        peerId: 'peer1',
+        nodeId: 'node:test',
         createdAt: new Date().toISOString(),
         lastActiveAt: new Date().toISOString(),
       } as AgentIdentity;

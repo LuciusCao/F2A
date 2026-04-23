@@ -201,7 +201,7 @@ export class AgentHandler {
             this.logger.info('Agent identity restored', {
               agentId: existingIdentity.agentId,
               name: existingIdentity.name,
-              peerId: existingIdentity.peerId,
+              nodeId: existingIdentity.nodeId,
               tokenPrefix: agentToken.slice(0, 8),
             });
 
@@ -288,10 +288,8 @@ export class AgentHandler {
           agentId: registration.agentId,
           name: registration.name,
           publicKey: registration.publicKey || '', // RFC008: Agent Ed25519 公钥
-          // privateKey 不从 registration 获取，由 Agent 自己保存
-          peerId: registration.peerId || '',
           nodeSignature: registration.nodeSignature, // RFC008: Node 归属证明签名
-          nodeId: registration.nodeId, // RFC008: 签发节点 ID
+          nodeId: registration.nodeId!, // RFC008: 签发节点 ID（registerRFC008 保证设置）
           webhook: registration.webhook,
           capabilities: registration.capabilities,
           metadata: registration.metadata,
@@ -309,7 +307,7 @@ export class AgentHandler {
         this.logger.info('Agent registered via API (node-issued)', {
           agentId: registration.agentId,
           name: registration.name,
-          peerId: registration.peerId,
+          nodeId: registration.nodeId,
           tokenPrefix: agentToken.slice(0, 8),
         });
 

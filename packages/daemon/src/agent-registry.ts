@@ -52,8 +52,6 @@ export interface AgentRegistration {
   name: string;
   /** Agent 支持的能力列表 */
   capabilities: AgentCapability[];
-  /** 签发节点的 PeerId（旧格式必需） */
-  peerId?: string;
   /** AgentId 签名（Base64）
    *  旧格式: Node 签名
    *  新格式: 可选，Node 签发的归属证明
@@ -184,7 +182,7 @@ export class AgentRegistry {
       agentId,
       name: request.name,
       capabilities: request.capabilities,
-      peerId: this.peerId,
+      nodeId: this.peerId, // RFC008: 统一用 nodeId
       signature,
       idFormat: 'old',
       registeredAt: new Date(),
@@ -198,7 +196,7 @@ export class AgentRegistry {
     this.logger.info('Agent registered (RFC003 node-issued)', {
       agentId,
       name: request.name,
-      peerId: this.peerId,
+      nodeId: this.peerId,
       capabilities: request.capabilities.map(c => c.name),
       isLocal: !!request.onMessage,
       idFormat: 'old',
@@ -464,14 +462,14 @@ export class AgentRegistry {
     const idFormat = parsed.valid ? parsed.format : 'old';
     
     // RFC008: 如果缺少 nodeSignature/nodeId，自动签发
+    // 注意: peerId 是旧格式遗留字段，需要转换为 nodeId
+    const nodeId = identity.nodeId || identity.peerId || (idFormat === 'new' ? this.peerId : undefined);
     const nodeSignature = identity.nodeSignature || (idFormat === 'new' ? this.signAgentId(identity.agentId) : undefined);
-    const nodeId = identity.nodeId || (idFormat === 'new' ? this.peerId : undefined);
     
     const registration: AgentRegistration = {
       agentId: identity.agentId,
       name: identity.name,
       capabilities: identity.capabilities,
-      peerId: identity.peerId,
       signature: identity.signature,
       publicKey: identity.publicKey,
       nodeSignature,
@@ -488,7 +486,7 @@ export class AgentRegistry {
     this.logger.info('Agent restored from identity', {
       agentId: identity.agentId,
       name: identity.name,
-      peerId: identity.peerId,
+      nodeId: identity.nodeId,
       idFormat,
       hasPublicKey: !!identity.publicKey,
       nodeSignatureGenerated: !identity.nodeSignature && idFormat === 'new',

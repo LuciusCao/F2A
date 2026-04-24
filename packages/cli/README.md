@@ -170,7 +170,7 @@ f2a agent register --agent-id <agentId> --webhook <new-url> --force
 
 ```bash
 # 1. 初始化节点身份
-f2a init
+f2a node init
 
 # 2. 启动 Daemon 服务
 f2a daemon start
@@ -194,15 +194,30 @@ f2a message send --agent-id <agentId> --to <目标-agentId> "Hello!"
 ```bash
 f2a --help        # 显示帮助
 f2a --version     # 显示版本
+f2a --json        # 以 JSON 格式输出结果
 ```
 
-### init - 初始化节点
+### node - P2P 节点管理
 
-创建 F2A 节点身份和基础配置文件。
+管理 F2A 节点身份和网络状态。
 
 ```bash
-f2a init           # 创建身份
-f2a init --force   # 强制重新创建（覆盖现有身份）
+# 初始化节点身份
+f2a node init           # 创建身份
+f2a node init --force   # 强制重新创建（覆盖现有身份）
+
+# 查看节点状态
+f2a node status
+
+# 查看连接的 P2P peers
+f2a node peers
+
+# 健康检查
+f2a node health
+
+# 发现网络中的 Agent
+f2a node discover
+f2a node discover --capability "chat"
 ```
 
 ### agent - Agent 管理
@@ -234,10 +249,13 @@ f2a agent list
 f2a agent status --agent-id <agentId>
 
 # 更新 Agent 配置（只支持修改名称）
-f2a agent update --agent-id <agentId> --name <name>
+f2a agent update --agent-id <agentId> [--name <name>]
 
 # 注销 Agent
 f2a agent unregister --agent-id <agentId>
+
+# 验证 Agent（Challenge-Response）
+f2a agent verify --agent-id <agentId>
 ```
 
 **示例:**
@@ -260,6 +278,9 @@ f2a agent register --agent-id agent:abc123... --webhook http://new-server:8080/f
 
 # 修改名称
 f2a agent update --agent-id agent:abc123... --name "new-name"
+
+# 验证 Agent
+f2a agent verify --agent-id agent:abc123...
 
 # 修改 webhook（使用 register 命令）
 f2a agent register --agent-id agent:abc123... --webhook http://new-server:8080/f2a/webhook --force
@@ -342,31 +363,7 @@ f2a identity export ./backup-2024-01-15.json
 f2a identity import ./backup-2024-01-15.json
 ```
 
-### discover - 发现 Agent
 
-发现网络中的其他 Agent。
-
-```bash
-# 发现所有 Agent
-f2a discover
-
-# 按能力筛选
-f2a discover --capability "chat"
-f2a discover --capability "task"
-```
-
-### 系统状态命令
-
-```bash
-# 查看系统状态
-f2a status
-
-# 查看 P2P peers
-f2a peers
-
-# 健康检查
-f2a health
-```
 
 ---
 

@@ -1817,4 +1817,4 @@ npm publish @f2a/openclaw-f2a@0.4.1
 
 - [RFC 003: AgentId 签发机制](./003-agentid-issuance.md)
 - [RFC 002: CLI Agent Architecture](./002-cli-agent-architecture.md)
-- [F2A Protocol](../F2A-PROTOCOL.md)
+- [消息协议](../protocols/message.md)

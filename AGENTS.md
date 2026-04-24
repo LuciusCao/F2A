@@ -159,17 +159,18 @@ node packages/cli/dist/main.js node init
 node packages/cli/dist/main.js daemon foreground
 
 # 或使用 CLI（它会通过 HTTP 与 Daemon 通信）
-f2a status
-f2a peers
+f2a node status
+f2a node peers
 ```
 
 ### 端口分配
 
 | 端口 | 服务 | 说明 |
 |------|------|------|
-| 9000 | P2P Network | libp2p 监听端口（可配置） |
 | 9001 | ControlServer | HTTP API（Agent 注册/消息/状态） |
 | 3000 | Dashboard | Vite 开发服务器（代理 /api 到 9001） |
+
+> **P2P 端口**：默认 `0`（由操作系统随机分配），可通过 `F2A_P2P_PORT` 指定固定端口（如 9000）。
 
 ---
 
@@ -317,7 +318,7 @@ return failureFromError('NETWORK_ALREADY_RUNNING', 'F2A already running');
 
 ```
 f2a node <init|status|peers|health|discover>
-f2a agent <init|register|list|unregister|status|update|verify>
+f2a agent <init|register|list|unregister|status|update>
 f2a message <send|list|clear>
 f2a daemon <start|stop|restart|status|foreground>
 f2a identity <status|export|import>
@@ -337,8 +338,8 @@ CLI 通过 HTTP 与本地 Daemon 通信（`http://localhost:9001`），不直接
 ├── node-identity.json             # 节点私钥（敏感）
 ├── agent-identities/
 │   └── agent:<指纹>.json          # Agent 身份文件
-├── f2a.log                        # 运行时日志
-└── logs/                          # 详细日志目录
+├── control-token                  # 自动生成的控制 Token
+└── f2a.log                        # 运行时日志
 ```
 
 ### 环境变量
@@ -351,7 +352,7 @@ CLI 通过 HTTP 与本地 Daemon 通信（`http://localhost:9001`），不直接
 | `F2A_AGENT_NAME` | - | Agent 显示名称 |
 | `F2A_SIGNATURE_KEY` | - | 请求签名密钥 |
 | `F2A_ALLOW_LOCAL_WEBHOOK` | false | 允许本地 IP webhook（开发） |
-| `F2A_DEBUG` | - | 设为 1 启用 CLI 调试日志 |
+| `F2A_DEBUG` | - | 设为 `1` 或 `true` 启用 CLI 调试日志 |
 | `BOOTSTRAP_PEERS` | - | 逗号分隔的引导节点地址 |
 
 ---

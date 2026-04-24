@@ -8,15 +8,41 @@
 
 ```typescript
 // 从主包导入（推荐）
-import { Logger, RateLimiter, Middleware, MiddlewareContext } from '@f2a/network';
+import {
+  Logger,
+  RateLimiter,
+  createRateLimitMiddleware,
+  Middleware,
+  MiddlewareContext,
+  MiddlewareResult,
+  createMessageSizeLimitMiddleware,
+  createMessageTypeFilterMiddleware,
+  createMessageLoggingMiddleware,
+  createMessageTransformMiddleware,
+  ensureError,
+  getErrorMessage,
+  toF2AError,
+  toF2AErrorFromUnknown,
+  RequestSigner,
+  isSignatureAvailable,
+  requireSignatureInProduction,
+  secureWipe,
+} from '@f2a/network';
 ```
 
-未导出的模块需要使用编译后的路径：
+以下模块**未导出到主包**，如需使用请通过直接路径导入：
 
 ```typescript
-// 直接路径导入
+// 直接路径导入（未导出到主包）
 import { AsyncLock } from '@f2a/network/dist/utils/async-lock.js';
 import { PeerTableManager } from '@f2a/network/dist/utils/peer-table-manager.js';
+import { MessageDispatcher } from '@f2a/network/dist/utils/message-dispatcher.js';
+import * as CapabilityScorer from '@f2a/network/dist/utils/capability-scorer.js';
+import {
+  validateF2AMessage,
+  validateAgentCapability,
+  validateTaskDelegateOptions,
+} from '@f2a/network/dist/utils/validation.js';
 ```
 
 ## 目录
@@ -221,27 +247,54 @@ class PeerTableManager {
   
   // 停止清理任务
   stopCleanupTask(): void;
-  
-  // 添加 Peer
-  async addPeer(peerId: string, info: PeerInfo): Promise<void>;
-  
-  // 获取 Peer
-  async getPeer(peerId: string): Promise<PeerInfo | undefined>;
-  
-  // 删除 Peer
-  async removePeer(peerId: string): Promise<boolean>;
-  
-  // 更新连接状态
-  async setConnected(peerId: string): Promise<void>;
-  async setDisconnected(peerId: string): Promise<void>;
-  
+
+  // 信任白名单管理
+  addTrustedPeer(peerId: string): void;
+  isTrusted(peerId: string): boolean;
+
+  // 锁管理（用于手动保护复合操作）
+  async acquireLock(timeoutMs?: number): Promise<void>;
+  releaseLock(): void;
+
+  // 原子操作（无需手动加锁）
+  getPeer(peerId: string): PeerInfo | undefined;
+  setPeer(peerId: string, info: PeerInfo): void;
+  hasPeer(peerId: string): boolean;
+  getSize(): number;
+
+  // 原子操作（内部自动加锁）
+  async updatePeer(
+    peerId: string,
+    updater: (peer: PeerInfo) => PeerInfo
+  ): Promise<PeerInfo | undefined>;
+  async upsertPeer(
+    peerId: string,
+    creator: () => PeerInfo,
+    updater: (peer: PeerInfo) => PeerInfo
+  ): Promise<PeerInfo>;
+  async deletePeer(peerId: string): Promise<boolean>;
+
+  // 连接索引管理
+  markConnected(peerId: string): void;
+  markDisconnected(peerId: string): void;
+  isConnected(peerId: string): boolean;
+  getConnectedPeers(): PeerInfo[];
+  getConnectedCount(): number;
+
   // 查询
-  async getConnectedPeers(): Promise<PeerInfo[]>;
-  async getAllPeers(): Promise<PeerInfo[]>;
-  async getPeerCount(): Promise<number>;
-  
+  getAllPeers(): PeerInfo[];
+  async getSnapshot(): Promise<Map<string, PeerInfo>>;
+
+  // 容量检查
+  isAtHighWatermark(): boolean;
+  isFull(): boolean;
+  getConfig(): { maxSize: number; cleanupIntervalMs: number; staleThresholdMs: number };
+
+  // 从 AgentInfo 更新 Peer 表
+  async upsertPeerFromAgentInfo(agentInfo: AgentInfo, peerId: string): Promise<void>;
+
   // 清理过期条目
-  async cleanupStalePeers(aggressive?: boolean): Promise<number>;
+  async cleanupStalePeers(aggressive?: boolean): Promise<void>;
 }
 ```
 
@@ -256,17 +309,29 @@ const peerTable = new PeerTableManager({
 // 启动自动清理
 peerTable.startCleanupTask();
 
-// 添加 Peer
-await peerTable.addPeer(peerId, {
+// 添加 Peer（直接设置，无需 await）
+peerTable.setPeer(peerId, {
   peerId,
-  displayName: 'Agent-001',
+  agentInfo: { id: 'agent:abc123...', name: 'Agent-001', version: '1.0.0', capabilities: [], multiaddrs: [] },
+  multiaddrs: [],
+  connected: false,
+  reputation: 50,
   lastSeen: Date.now(),
-  multiaddrs: ['/ip4/127.0.0.1/tcp/7070'],
 });
 
+// 标记为已连接
+peerTable.markConnected(peerId);
+
 // 查询
-const connected = await peerTable.getConnectedPeers();
-const all = await peerTable.getAllPeers();
+const connected = peerTable.getConnectedPeers();
+const all = peerTable.getAllPeers();
+const size = peerTable.getSize();
+
+// 原子更新
+await peerTable.updatePeer(peerId, (peer) => ({
+  ...peer,
+  lastSeen: Date.now(),
+}));
 
 // 停止清理
 peerTable.stopCleanupTask();
@@ -304,14 +369,11 @@ interface MessageDispatcherConfig {
 }
 
 interface MessageDispatcherCallbacks {
-  onDiscover?: (agentInfo, peerId, shouldRespond) => Promise<void>;
-  onCapabilityQuery?: (query, peerId) => Promise<void>;
-  onCapabilityResponse?: (agentInfo, peerId) => Promise<void>;
-  onTaskResponse?: (payload) => void;
-  onDecryptFailed?: (message, peerId) => Promise<void>;
-  onFreeMessage?: (message, peerId) => Promise<void>;
-  onError?: (error) => void;
-  sendMessage?: (peerId, message, encrypt) => Promise<{...}>;
+  onDiscover?: (agentInfo: AgentInfo, peerId: string, shouldRespond: boolean) => Promise<void>;
+  onDecryptFailed?: (message: F2AMessage, peerId: string) => Promise<void>;
+  onFreeMessage?: (message: F2AMessage, peerId: string) => Promise<void>;
+  onError?: (error: Error) => void;
+  sendMessage?: (peerId: string, message: F2AMessage, encrypt: boolean) => Promise<{ success: boolean; error?: { message: string } }>;
 }
 ```
 
@@ -319,33 +381,38 @@ interface MessageDispatcherCallbacks {
 
 ```typescript
 class MessageDispatcher {
-  constructor(config: MessageDispatcherConfig);
-  
+  constructor(e2eeCrypto: E2EECrypto, config?: MessageDispatcherConfig);
+
+  // 设置本地 Peer ID
+  setLocalPeerId(peerId: string): void;
+
   // 设置回调
   setCallbacks(callbacks: MessageDispatcherCallbacks): void;
-  
-  // 处理原始消息
-  async handleRawMessage(data: Uint8Array, peerId: string): Promise<void>;
-  
-  // 处理消息
+
+  // 设置 Peer 表管理器
+  setPeerTableManager(manager: PeerTableManager): void;
+
+  // 停止速率限制器
+  stop(): void;
+
+  // 处理消息（已验证格式后的消息对象）
   async handleMessage(message: F2AMessage, peerId: string): Promise<void>;
-  
-  // 发送消息
-  async sendMessage(peerId: string, message: F2AMessage, encrypt?: boolean): Promise<void>;
-  
+
   // 中间件
   useMiddleware(middleware: Middleware): void;
   removeMiddleware(name: string): boolean;
-  
-  // 设置加密器
-  setE2EECrypto(crypto: E2EECrypto): void;
+  listMiddlewares(): string[];
 }
 ```
 
 ### 使用示例
 
 ```typescript
-const dispatcher = new MessageDispatcher({
+import { MessageDispatcher } from '@f2a/network/dist/utils/message-dispatcher.js';
+import { E2EECrypto } from '@f2a/network';
+
+const e2ee = new E2EECrypto();
+const dispatcher = new MessageDispatcher(e2ee, {
   logger: new Logger({ component: 'Dispatcher' }),
   localPeerId: myPeerId,
 });
@@ -356,13 +423,13 @@ dispatcher.setCallbacks({
       // 响应发现请求
     }
   },
-  onTaskResponse: (payload) => {
-    // 处理任务响应
+  onFreeMessage: async (message, peerId) => {
+    // 处理自由消息
   },
 });
 
 // 处理消息
-await dispatcher.handleRawMessage(rawData, peerId);
+await dispatcher.handleMessage(message, peerId);
 ```
 
 ---
@@ -389,28 +456,33 @@ import { RateLimiter } from '@f2a/network/dist/utils/rate-limiter.js';
 
 ```typescript
 interface RateLimitConfig {
-  maxRequests?: number;  // 最大请求数（默认 100）
-  windowMs?: number;     // 时间窗口（默认 60000ms）
+  maxRequests: number;      // 最大请求数（必填）
+  windowMs: number;         // 时间窗口（毫秒，必填）
+  skipSuccessfulRequests?: boolean; // 是否跳过成功请求
+  burstMultiplier?: number; // 突发容量倍数（默认 1.5）
 }
 ```
 
 ### API
 
 ```typescript
-class RateLimiter {
-  constructor(config?: RateLimitConfig);
-  
+class RateLimiter implements Disposable {
+  constructor(config: RateLimitConfig);
+
   // 检查是否允许请求
-  check(key: string): boolean;
-  
-  // 获取剩余配额
-  getRemaining(key: string): number;
-  
+  allowRequest(key: string): boolean;
+
+  // 获取剩余令牌数
+  getRemainingTokens(key: string): number;
+
   // 重置计数
-  reset(key: string): void;
-  
-  // 清理所有记录
-  clear(): void;
+  reset(key?: string): void;
+
+  // 停止并清理资源
+  stop(): void;
+
+  // 检查是否已释放
+  isDisposed(): boolean;
 }
 ```
 
@@ -423,14 +495,17 @@ const limiter = new RateLimiter({
 });
 
 // 检查
-if (limiter.check(peerId)) {
+if (limiter.allowRequest(peerId)) {
   // 允许请求
   handleRequest();
 } else {
   // 拒绝请求
-  const remaining = limiter.getRemaining(peerId);  // 0
+  const remaining = limiter.getRemainingTokens(peerId);  // 0
   return error('Rate limit exceeded');
 }
+
+// 停止时释放资源
+limiter.stop();
 ```
 
 ---
@@ -463,27 +538,35 @@ import { MiddlewareManager } from '@f2a/network/dist/utils/middleware.js';
 
 ```typescript
 interface Middleware {
+  /** 中间件名称 */
   name: string;
-  priority?: number;  // 优先级（默认 0）
-  
-  // 前置处理
-  before?(context: MiddlewareContext): Promise<MiddlewareResult>;
-  
-  // 后置处理
-  after?(context: MiddlewareContext, result: unknown): Promise<MiddlewareResult>;
+  /** 执行优先级（数字越小优先级越高，默认 0） */
+  priority?: number;
+  /**
+   * 中间件类型
+   * - 'essential': 核心中间件，异常时中断链
+   * - 'optional': 可选中间件，异常时继续处理（默认）
+   */
+  type?: 'essential' | 'optional';
+  /** 处理函数 */
+  process(context: MiddlewareContext): Promise<MiddlewareResult> | MiddlewareResult;
 }
 
 interface MiddlewareContext {
+  /** 消息 */
   message: F2AMessage;
+  /** 发送方 Peer ID */
   peerId: string;
-  timestamp: number;
-  metadata?: Record<string, unknown>;
+  /** 发送方 Agent 信息 */
+  agentInfo?: AgentInfo;
+  /** 中间件元数据，用于在中间件间传递数据 */
+  metadata: Map<string, unknown>;
 }
 
-type MiddlewareResult = 
-  | { action: 'continue' }
-  | { action: 'return'; value?: unknown }
-  | { action: 'error'; error: Error };
+type MiddlewareResult =
+  | { action: 'continue'; context: MiddlewareContext }  // 继续处理
+  | { action: 'drop'; reason: string }                  // 丢弃消息
+  | { action: 'modify'; context: MiddlewareContext };   // 修改消息后继续
 ```
 
 ### 使用示例
@@ -492,21 +575,29 @@ type MiddlewareResult =
 // 创建日志中间件
 const loggingMiddleware: Middleware = {
   name: 'logging',
-  priority: 100,  // 高优先级，最先执行
-  
-  async before(context) {
+  priority: 50,
+  process(context) {
     console.log(`收到消息: ${context.message.type} from ${context.peerId}`);
-    return { action: 'continue' };
+    return { action: 'continue', context };
   },
-  
-  async after(context, result) {
-    console.log(`消息处理完成: ${context.message.id}`);
-    return { action: 'continue' };
+};
+
+// 创建黑名单过滤中间件
+const blacklistMiddleware: Middleware = {
+  name: 'BlacklistFilter',
+  priority: 100, // 高优先级，尽早过滤
+  type: 'essential',
+  process(context) {
+    if (blacklist.has(context.peerId)) {
+      return { action: 'drop', reason: `Peer ${context.peerId} is blacklisted` };
+    }
+    return { action: 'continue', context };
   },
 };
 
 // 注册
 dispatcher.useMiddleware(loggingMiddleware);
+dispatcher.useMiddleware(blacklistMiddleware);
 ```
 
 ---
@@ -528,30 +619,33 @@ import {
 
 ### API
 
-```typescript
-interface ValidationResult {
-  valid: boolean;
-  errors?: string[];
-}
+验证函数基于 Zod 实现，返回 `SafeParseReturnType` 结果：
 
-function validateF2AMessage(message: unknown): ValidationResult;
-function validateAgentCapability(capability: unknown): ValidationResult;
-function validateTaskDelegateOptions(options: unknown): ValidationResult;
+```typescript
+function validateF2AMessage(message: unknown): { success: boolean; data?: F2AMessage; error?: ZodError };
+function validateAgentCapability(capability: unknown): { success: boolean; data?: AgentCapability; error?: ZodError };
+function validateTaskDelegateOptions(options: unknown): { success: boolean; data?: TaskDelegateOptions; error?: ZodError };
+function validateF2AOptions(options: unknown): { success: boolean; data?: F2AOptions; error?: ZodError };
+function validateStructuredMessagePayload(payload: unknown): { success: boolean; data?: StructuredMessagePayload; error?: ZodError };
+function validateWebhookConfig(config: unknown): { success: boolean; data?: WebhookConfig; error?: ZodError };
 ```
 
 ### 使用示例
 
 ```typescript
 const result = validateF2AMessage(incomingMessage);
-if (!result.valid) {
-  logger.warn('无效消息', result.errors);
+if (!result.success) {
+  logger.warn('无效消息', result.error.errors);
   return;
 }
 
+// 验证通过后可安全访问 result.data
+const message = result.data;
+
 // 验证能力
 const capResult = validateAgentCapability(capability);
-if (!capResult.valid) {
-  throw new Error(capResult.errors?.join(', '));
+if (!capResult.success) {
+  throw new Error(capResult.error.errors.map(e => e.message).join(', '));
 }
 ```
 
@@ -574,14 +668,27 @@ import { getErrorMessage } from '@f2a/network/dist/utils/error-utils.js';
 ### API
 
 ```typescript
+// 确保返回 Error 对象
+function ensureError(error: unknown): Error;
+
 // 从错误对象获取消息
 function getErrorMessage(error: unknown): string;
 
-// 创建标准化错误
-function createError(code: string, message: string): Error;
+// 创建标准化 F2AError
+function toF2AError(
+  code: ErrorCode,
+  message: string,
+  cause?: Error,
+  details?: Record<string, unknown>
+): F2AError;
 
-// 检查是否为错误
-function isError(value: unknown): boolean;
+// 从 unknown 错误创建 F2AError（自动提取原始错误消息）
+function toF2AErrorFromUnknown(
+  code: ErrorCode,
+  message: string,
+  error: unknown,
+  details?: Record<string, unknown>
+): F2AError;
 ```
 
 ### 使用示例
@@ -614,27 +721,57 @@ import { RequestSigner } from '@f2a/network/dist/utils/signature.js';
 ### API
 
 ```typescript
-// 生成密钥对
-async function generateKeyPair(): Promise<{ publicKey: string; privateKey: string }>;
+interface SignatureConfig {
+  secretKey: string;
+  timestampTolerance?: number; // 默认 5 分钟
+}
 
-// 签名
-async function sign(data: string, privateKey: string): Promise<string>;
+interface SignedMessage {
+  payload: string;
+  timestamp: number;
+  signature: string;
+  nonce: string;
+}
 
-// 验证
-async function verify(data: string, signature: string, publicKey: string): Promise<boolean>;
+class RequestSigner implements Disposable {
+  constructor(config: SignatureConfig);
+  sign(payload: string): SignedMessage;
+  verify(message: SignedMessage): { valid: boolean; error?: string };
+  dispose(): void;
+  [Symbol.dispose](): void;
+}
+
+// 从环境变量加载签名配置
+function loadSignatureConfig(): SignatureConfig | null;
+function loadSignatureConfigSafe(): {
+  success: boolean;
+  config?: SignatureConfig;
+  error?: string;
+  warning?: string;
+  isProduction: boolean;
+};
+
+// 检查签名功能是否可用
+function isSignatureAvailable(): boolean;
+
+// 生产环境强制检查
+function requireSignatureInProduction(): void;
 ```
 
 ### 使用示例
 
 ```typescript
-const { publicKey, privateKey } = await generateKeyPair();
+const signer = new RequestSigner({ secretKey: 'my-secret-key' });
 
-const signature = await sign(message, privateKey);
+const signed = signer.sign(JSON.stringify(payload));
 
-const isValid = await verify(message, signature, publicKey);
-if (!isValid) {
-  throw new Error('签名验证失败');
+const result = signer.verify(signed);
+if (!result.valid) {
+  throw new Error(`签名验证失败: ${result.error}`);
 }
+
+// 释放资源
+signer.dispose();
 ```
 
 ---
@@ -656,70 +793,110 @@ import { secureWipe } from '@f2a/network/dist/utils/crypto-utils.js';
 ### API
 
 ```typescript
-class CryptoUtils {
-  // 生成随机 ID
-  static generateId(): string;
-  
-  // 哈希
-  static hash(data: string): string;
-  
-  // Base64 编码/解码
-  static toBase64(data: Uint8Array): string;
-  static fromBase64(str: string): Uint8Array;
-}
+// 验证字符串是否为有效的 Base64 格式
+function isValidBase64(str: unknown): str is string;
+
+// 安全清零 Uint8Array/Buffer
+function secureWipe(data: Uint8Array | Buffer | null | undefined): void;
 ```
 
 ---
 
 ## CapabilityScorer
 
-能力评分器。
+能力评分算法。
 
 ### 概述
 
-计算 Agent 能力匹配度分数。
+提供各维度的能力评分计算函数，基于量化指标评估 Agent 能力。
 
 ### 导入
 
 ```typescript
 // 直接路径导入（未导出到主包）
-import { CapabilityScorer } from '@f2a/network/dist/utils/capability-scorer.js';
+import {
+  scoreComputation,
+  scoreStorage,
+  scoreNetwork,
+  scoreSkills,
+  scoreReputation,
+  calculateOverallScore,
+  generateCapabilityVector,
+  calculateCapabilityScore,
+  cosineSimilarity,
+  applyDecay,
+  decaySkillProficiency,
+} from '@f2a/network/dist/utils/capability-scorer.js';
 ```
 
 ### API
 
 ```typescript
-class CapabilityScorer {
-  // 计算能力匹配分数（0-100）
-  calculateScore(agent: AgentInfo, requirements: string[]): number;
-  
-  // 找到最佳匹配 Agent
-  findBestMatch(agents: AgentInfo[], requirements: string[]): AgentInfo | null;
-  
-  // 排序 Agents
-  sortByMatch(agents: AgentInfo[], requirements: string[]): AgentInfo[];
-}
+// 各维度评分（0-100）
+function scoreComputation(metrics: ComputationMetrics): number;
+function scoreStorage(metrics: StorageMetrics): number;
+function scoreNetwork(metrics: NetworkMetrics): number;
+function scoreSkills(skills: SkillTag[]): number;
+function scoreReputation(metrics: ReputationMetrics): number;
+
+// 综合评分
+function calculateOverallScore(
+  dimensionScores: DimensionScores,
+  weights?: CapabilityWeights
+): number;
+
+// 计算完整能力评分
+function calculateCapabilityScore(
+  metrics: {
+    computation: ComputationMetrics;
+    storage: StorageMetrics;
+    network: NetworkMetrics;
+    skills: SkillTag[];
+    reputation: ReputationMetrics;
+  },
+  weights?: CapabilityWeights
+): CapabilityScore;
+
+// 生成能力向量（35 维）
+function generateCapabilityVector(
+  dimensionScores: DimensionScores,
+  skills?: SkillTag[]
+): CapabilityVector;
+
+// 余弦相似度
+function cosineSimilarity(vecA: number[], vecB: number[]): number;
+
+// 分数衰减
+function applyDecay(currentScore: number, decayRate: number, daysPassed: number): number;
+function decaySkillProficiency(
+  proficiency: 1 | 2 | 3 | 4 | 5,
+  decayRate: number,
+  daysPassed: number
+): 1 | 2 | 3 | 4 | 5;
 ```
 
 ### 使用示例
 
 ```typescript
-const scorer = new CapabilityScorer();
+const dimensionScores = {
+  computation: scoreComputation({ cpuScore: 2000, memoryMB: 8192, concurrencyLimit: 4, throughput: 50 }),
+  storage: scoreStorage({ availableGB: 500, storageType: 'ssd', readSpeedMBps: 300 }),
+  network: scoreNetwork({ bandwidthMbps: 100, latencyP95Ms: 50, stability: 0.95, directConnect: true }),
+  skill: scoreSkills(agent.skills),
+  reputation: scoreReputation({ score: 80, totalTasks: 100, successTasks: 95, nodeAgeDays: 30, avgResponseTimeMs: 2000 }),
+};
 
-// 计算分数
-const score = scorer.calculateScore(agent, ['code-generation', 'file-operation']);
+// 综合评分
+const overall = calculateOverallScore(dimensionScores);
 
-// 找最佳匹配
-const best = scorer.findBestMatch(availableAgents, ['web-browsing']);
-
-// 排序
-const sorted = scorer.sortByMatch(agents, ['data-analysis']);
+// 完整评分（含能力向量）
+const score = calculateCapabilityScore(metrics);
 ```
 
 ---
 
 ## 相关文档
 
-- [API 参考](api/API-REFERENCE.md)
-- [中间件指南](middleware-guide.md)
-- [架构文档](architecture-complete.md)
+- [API 参考](./api-reference.md)
+- [中间件指南](./middleware.md)
+- [架构文档](../architecture/complete.md)

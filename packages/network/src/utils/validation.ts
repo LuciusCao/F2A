@@ -100,6 +100,7 @@ export const NetworkMessageTypeSchema = z.enum([
   'PING',
   'PONG',
   'DECRYPT_FAILED',
+  'KEY_EXCHANGE',
 ]);
 
 // Layer 2: Agent 协议层（语义层）

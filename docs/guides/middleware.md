@@ -13,7 +13,6 @@ import {
   createMessageTypeFilterMiddleware,
   createMessageLoggingMiddleware,
   createMessageTransformMiddleware,
-  createRateLimitMiddleware,
 } from '@f2a/network';
 
 // 中间件类型定义
@@ -179,17 +178,13 @@ f2a.useMiddleware(
 
 ### 速率限制
 
-限制每个节点的请求频率：
-
-```typescript
-import { createRateLimitMiddleware } from '@f2a/network';
-
-// 每分钟最多 100 个请求
-f2a.useMiddleware(createRateLimitMiddleware(100));
-
-// 每 30 秒最多 50 个请求
-f2a.useMiddleware(createRateLimitMiddleware(50, 30000));
-```
+> 注：`createRateLimitMiddleware` 导出的是 HTTP 中间件，不属于消息中间件系统。消息层的速率限制由 `RateLimiter` 类在内部处理。
+>
+> 如需在 HTTP 层使用，请从 `@f2a/network` 导入 `createRateLimitMiddleware`：
+> ```typescript
+> import { createRateLimitMiddleware } from '@f2a/network';
+> // 返回 (req, res, next) => void 形式的 HTTP 中间件
+> ```
 
 ## 自定义中间件
 
@@ -461,6 +456,6 @@ const goodMiddleware: Middleware = {
 
 ## 相关文档
 
-- [信誉系统用户指南](./reputation-guide.md)
-- [F2A 协议文档](./F2A-PROTOCOL.md)
-- [安全设计](./security-design.md)
+- [API 参考](./api-reference.md)
+- [消息协议](../protocols/message.md)
+- [安全指南](./security.md)

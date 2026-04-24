@@ -83,7 +83,7 @@ HTTP 控制服务器，处理 API 请求。
 ```typescript
 import { ControlServer, ControlServerOptions } from '@f2a/daemon';
 
-const server = new ControlServer(f2a, port, token?, options?);
+const server = new ControlServer(f2a, port, tokenManager?, options?);
 await server.start();
 await server.stop();
 ```
@@ -164,22 +164,32 @@ const result = await auth.authenticate(token);
 
 Daemon 启动后，通过 HTTP API 进行交互：
 
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/status` | GET | 获取 Daemon 状态 |
-| `/agent/register` | POST | 注册 Agent |
-| `/agent/unregister` | POST | 注销 Agent |
-| `/agent/list` | GET | 列出已注册 Agent |
-| `/message/send` | POST | 发送消息 |
-| `/message/poll` | GET | 轮询消息 |
-| `/p2p/connect` | POST | 连接远端节点 |
-| `/p2p/peers` | GET | 获取连接的 Peers |
+| 端点 | 方法 | 描述 | 认证 |
+|------|------|------|------|
+| `/health` | GET | 健康检查 | 无需 |
+| `/status` | GET | 获取 Daemon 状态 | 需 Token |
+| `/peers` | GET | 获取连接的 Peers | 需 Token |
+| `/api/v1/agents` | GET | 列出已注册 Agent | 无需 |
+| `/api/v1/agents` | POST | 注册 Agent | 无需（有 webhook 验证） |
+| `/api/v1/agents/:agentId` | GET | 获取 Agent 信息 | 无需 |
+| `/api/v1/agents/:agentId` | PATCH | 更新 Agent | Challenge-Response |
+| `/api/v1/agents/:agentId` | DELETE | 注销 Agent | 需 Token |
+| `/api/v1/agents/:agentId/webhook` | PATCH | 更新 Agent webhook | 需 Token |
+| `/api/v1/agents/verify` | POST | Challenge-Response 验证 | 无需 |
+| `/api/v1/challenge` | POST | 生成 Challenge | 无需 |
+| `/api/v1/challenge/verify` | POST | 验证 Challenge 响应并获取 Token | 无需 |
+| `/api/v1/messages` | POST | 发送消息 | Agent Token |
+| `/api/v1/messages/:agentId` | GET | 获取 Agent 消息队列 | Agent Token |
+| `/api/v1/messages/:agentId` | DELETE | 清除消息 | Agent Token |
+| `/register-capability` | POST | 注册能力 | 需 Token |
+| `/agent/update` | POST | 更新 Agent 信息（旧版） | 需 Token |
+| `/control` | POST | 控制命令（status/peers/discover/send/register-capability） | 需 Token |
 
 ## 环境变量
 
 | 变量 | 描述 | 默认值 |
 |------|------|--------|
-| `F2A_DAEMON_PORT` | Daemon HTTP 端口 | `9001` |
+| `F2A_CONTROL_PORT` | Daemon HTTP 端口 | `9001` |
 | `F2A_DATA_DIR` | 数据存储目录 | `~/.f2a` |
 | `F2A_ALLOWED_ORIGINS` | CORS 允许的来源（逗号分隔） | `http://localhost` |
 | `F2A_STRICT_CORS` | 严格 CORS 模式 | `false` |

@@ -52,10 +52,10 @@ npm install @f2a/network
 ### 创建 F2A 实例
 
 ```typescript
-import { F2A } from '@f2a/network';
+import { F2AFactory } from '@f2a/network/core/f2a-factory.js';
 
-// 创建实例
-const f2a = await F2A.create({
+// 创建实例（现代方式，返回 Result<F2A>）
+const result = await F2AFactory.create({
   displayName: 'My Agent',
   agentType: 'openclaw',
   dataDir: './f2a-data',
@@ -65,11 +65,21 @@ const f2a = await F2A.create({
   },
 });
 
+if (!result.success) {
+  throw new Error(result.error.message);
+}
+
+const f2a = result.data;
+
 // 启动网络
 await f2a.start();
 
 console.log('PeerID:', f2a.peerId);
 console.log('AgentID:', f2a.getAgentId());
+
+// 向后兼容：F2A.create() 直接返回 F2A 实例（失败时抛出异常）
+// import { F2A } from '@f2a/network';
+// const f2a = await F2A.create({ ... });
 ```
 
 ### 注册能力
@@ -109,12 +119,9 @@ f2a.on('peer:message', (event) => {
   console.log(`Message from ${event.from}:`, event.content);
 });
 
-// 发送消息
+// 发送消息给指定 Peer
 const peerId = 'target-peer-id';
-await f2a.sendMessage(peerId, {
-  topic: 'chat',
-  content: 'Hello from F2A!',
-});
+await f2a.sendMessageToPeer(peerId, 'Hello from F2A!', 'chat');
 ```
 
 ### 事件监听
@@ -151,8 +158,14 @@ f2a.on('error', (error) => {
 主类，整合所有网络组件。
 
 ```typescript
-// 创建实例
+// 创建实例（向后兼容，失败时抛出异常）
 const f2a = await F2A.create(options: F2AOptions);
+
+// 现代方式：使用 F2AFactory.create() 返回 Result<F2A>
+// import { F2AFactory } from '@f2a/network/core/f2a-factory.js';
+// const result = await F2AFactory.create(options);
+// if (!result.success) throw new Error(result.error.message);
+// const f2a = result.data;
 
 // 生命周期
 await f2a.start(): Promise<Result<void>>;
@@ -171,7 +184,8 @@ await f2a.discoverAgents(capability?): Promise<AgentInfo[]>;
 f2a.getConnectedPeers(): AgentInfo[];
 
 // 消息
-await f2a.sendMessage(peerId, payload): Promise<void>;
+await f2a.sendMessageToPeer(peerId, content, topic?): Promise<Result<void>>;
+await f2a.sendMessage(fromAgentId, toAgentId, content, options?): Promise<Result<void>>;
 
 // 事件
 f2a.on('peer:message', callback);
@@ -254,32 +268,49 @@ interface SecurityConfig {
 
 ```typescript
 // 核心
-export { F2A } from './core/f2a.js';
+export { F2A, F2AFactory } from './core/f2a.js';
 export { P2PNetwork } from './core/p2p-network.js';
-export { TokenManager } from './core/token-manager.js';
-export { E2EECrypto } from './core/e2ee-crypto.js';
+export { TokenManager, defaultTokenManager } from './core/token-manager.js';
+export { E2EECrypto, defaultE2EECrypto } from './core/e2ee-crypto.js';
 
 // 身份管理
-export { NodeIdentityManager } from './core/identity/node-identity.js';
+export { NodeIdentityManager, isValidNodeId } from './core/identity/node-identity.js';
 export { AgentIdentityManager } from './core/identity/agent-identity.js';
 export { IdentityDelegator } from './core/identity/delegator.js';
+export {
+  AgentIdentityKeypair, generateAgentId, computeFingerprint,
+  parseAgentId, validateAgentId, isNewFormat, isOldFormat,
+  isValidAgentIdFormat, extractFingerprint, extractPeerIdPrefix,
+  generateChallenge, signChallenge, verifyChallengeResponse,
+  verifyChallengeResponseWithStore, ChallengeStore,
+  signSelfSignature, verifySelfSignature, computeAgentId,
+} from './core/identity/index.js';
 
 // 消息与路由
-export { AgentRegistry } from './core/agent-registry.js';
-export { MessageRouter } from './core/message-router.js';
+export { AgentRegistry, AgentRegistration } from './core/agent-registry.js';
+export { MessageRouter, RoutableMessage } from './core/message-router.js';
 
 // 信誉系统
 export { ReputationManager, REPUTATION_TIERS } from './core/reputation.js';
 export { ReviewCommittee } from './core/review-committee.js';
 export { AutonomousEconomy } from './core/autonomous-economy.js';
+export { ChainSignatureManager, InvitationManager, ChallengeManager } from './core/reputation-security.js';
 
 // 工具
 export { Logger } from './utils/logger.js';
-export { RateLimiter } from './utils/rate-limiter.js';
+export { RateLimiter, createRateLimitMiddleware } from './utils/rate-limiter.js';
+export { secureWipe } from './utils/crypto-utils.js';
+export { RequestSigner, loadSignatureConfig, loadSignatureConfigSafe, isSignatureAvailable, requireSignatureInProduction } from './utils/signature.js';
+export { createMessageSizeLimitMiddleware, createMessageTypeFilterMiddleware, createMessageLoggingMiddleware, createMessageTransformMiddleware } from './utils/middleware.js';
+export { ensureError, getErrorMessage, toF2AError, toF2AErrorFromUnknown } from './utils/error-utils.js';
 
-// 类型
-export type { F2AOptions, P2PNetworkConfig, SecurityConfig } from './config/types.js';
-export type { AgentInfo, AgentCapability, F2AMessage } from './types/index.js';
+// 类型与配置
+export type { F2AOptions, P2PNetworkConfig, SecurityConfig, SecurityLevel, RateLimitConfig, WebhookConfig, TaskDelegateOptions, LogLevel } from './config/types.js';
+export type { AgentInfo, AgentCapability, F2AMessage, Result } from './types/index.js';
+export {
+  DEFAULT_P2P_NETWORK_CONFIG, DEFAULT_SECURITY_CONFIG, DEFAULT_LOG_LEVEL, DEFAULT_F2A_OPTIONS,
+} from './config/defaults.js';
+export const VERSION = '...'; // 从 package.json 自动读取
 ```
 
 ## 相关包
@@ -333,12 +364,15 @@ npm run test:integration
 
 默认数据目录：`~/.f2a/` 或配置的 `dataDir`
 
-| 文件 | 内容 |
-|------|------|
+| 文件/目录 | 内容 |
+|-----------|------|
 | `node-identity.json` | Node 私钥和 PeerID |
-| `agent-identity.json` | Agent 身份和签名 |
-| `token.json` | Daemon 控制令牌 |
-| `reputation.json` | 信誉评分数据 |
+| `agent-identity.json` | Agent 身份和签名（旧格式兼容） |
+| `agent-identities/` | Agent 身份文件目录（RFC 008 新格式） |
+| `control-token` | Daemon 控制令牌 |
+| `config.json` | 用户配置 |
+| `f2a.log` | 运行时日志 |
+| `token-audit.log` | Token 使用审计日志 |
 
 ## License
 

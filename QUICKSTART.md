@@ -4,53 +4,70 @@
 
 ---
 
-## 1. 安装
+## 1. 安装与构建
 
 ```bash
-npm install -g @f2a/network
+# 克隆仓库后安装依赖并构建
+git clone <repo-url>
+cd F2A
+npm install
+npm run build
 ```
 
 ---
 
-## 2. 配置
+## 2. 初始化节点
 
 ```bash
-f2a configure
-```
+# 初始化节点身份（生成 Node ID 和默认配置）
+f2a node init
 
-按提示设置 Agent 名称即可。
-
----
-
-## 3. 启动
-
-```bash
-# 后台启动
-f2a daemon -d
-
-# 查看状态
-f2a status
+# 查看节点状态
+f2a node status
 ```
 
 ---
 
-## 4. 注册 Agent
+## 3. 启动 Daemon
 
 ```bash
-# 注册一个 Agent
-f2a agent register --name "我的Agent"
+# 后台启动 Daemon
+f2a daemon start
 
-# 查看已注册的 Agent
+# 或者前台启动（方便调试）
+f2a daemon foreground
+
+# 查看 Daemon 状态
+f2a daemon status
+```
+
+---
+
+## 4. 创建并注册 Agent
+
+```bash
+# 创建 Agent 身份（生成密钥对和身份文件）
+f2a agent init --name "我的Agent"
+
+# 查看已创建的 Agent
 f2a agent list
+
+# 将 Agent 注册到 Daemon（获取 Node 签名）
+f2a agent register --agent-id <agent-id>
 ```
+
+> `agent-id` 可在 `f2a agent list` 或 `~/.f2a/agent-identities/` 中找到。
 
 ---
 
 ## 5. 发送消息
 
 ```bash
-# 发送消息给其他 Agent
-f2a send --to <agent_id> "你好！"
+# 发送消息给指定 Agent
+f2a message send --agent-id <your-agent-id> --to <target-agent-id> "你好！"
+
+# 查看消息列表
+f2a message list --agent-id <your-agent-id>
 ```
 
 ---
@@ -58,5 +75,5 @@ f2a send --to <agent_id> "你好！"
 ## 更多信息
 
 - [完整文档](./README.md)
-- [API 参考](./docs/api/API-REFERENCE.md)
-- [架构设计](./docs/architecture-complete.md)
+- [API 参考](./docs/guides/api-reference.md)
+- [架构设计](./docs/architecture/complete.md)

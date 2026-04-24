@@ -40,13 +40,25 @@
 
 ### AgentId 格式
 
+支持两种格式（向后兼容）：
+
+**旧格式 (RFC 003, 已废弃)**:
 ```
 agent:<PeerId前16位>:<随机8位>
 
 示例: agent:12D3KooWabcd:1a2b3c4d
 ```
 
-**RFC 003**: AgentId 由节点签发，用户不能自定义。
+**新格式 (RFC 008, 推荐)**:
+```
+agent:<公钥指纹16位>
+
+示例: agent:a3b2c1d4e5f67890
+```
+
+- 旧格式由节点签发，无法自证身份
+- 新格式基于 Agent 自有 Ed25519 公钥指纹，Agent 可独立签名证明身份
+- 新格式是当前默认格式，旧格式仍被解析但不再用于新注册
 
 ---
 
@@ -57,7 +69,7 @@ agent:<PeerId前16位>:<随机8位>
 ```
 1. onMessage 本地回调 (同进程 Agent，同步)
       ↓ 失败则降级
-2. Webhook 推送 (远程 Agent，异步)
+2. Agent Webhook 推送 (向 Agent 配置的 URL 发送 HTTP 请求)
       ↓ 失败则降级
 3. 消息队列 (HTTP 轮询，fallback)
 ```
@@ -80,7 +92,8 @@ Agent A ──► Node 1 ──► P2P Network ──► Node 2 ──► Agent 
 |------|------|------|
 | **9000** | P2P Network | libp2p 监听端口 |
 | **9001** | ControlServer | HTTP API (Agent 注册/消息发送) |
-| **9002** | Webhook Server | 接收外部推送 (openclaw-f2a) |
+
+> **注意**: 端口 9002 曾是 openclaw-f2a 插件自建 Webhook Server 的默认端口，已于 Issue #140 移除。插件现通过 Gateway URL 接收消息，不再占用独立端口。Agent 的 webhook URL 由用户自行配置，可使用任意端口。
 
 ---
 
@@ -92,14 +105,15 @@ packages/
 ├── daemon/       # 后台服务 (AgentRegistry, MessageRouter, ControlServer)
 ├── cli/          # 命令行工具 (f2a command)
 ├── openclaw-f2a/ # OpenClaw 插件集成
-└── dashboard/    # Web 管理界面
+├── dashboard/    # Web 管理界面
+└── mcp-server/   # MCP 服务器集成
 ```
 
 ---
 
 ## 更多文档
 
-- [完整架构设计](./architecture-complete.md)
-- [API 参考](./api/API-REFERENCE.md)
+- [完整架构设计](./complete.md)
+- [API 参考](../guides/api-reference.md)
 - [RFC 文档](./rfcs/)
-- [快速开始](./QUICKSTART.md)
+- [快速开始](../../QUICKSTART.md)

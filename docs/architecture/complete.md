@@ -1,8 +1,8 @@
 # F2A 完整架构设计
 
-**版本**: 0.6.0  
-**日期**: 2026-04-20  
-**状态**: RFC 003/005/007/008 实现
+**版本**: 0.7.0  
+**日期**: 2026-04-24  
+**状态**: RFC 005/008/011 已实现，多 Agent 与迁移已支持
 
 ---
 
@@ -268,10 +268,13 @@ interface NodeIdentity {
 
 // Agent 身份 (独立)
 interface AgentIdentity {
-  agentId: string;          // Agent 唯一标识 (如: agent-aaa-xxx)
+  agentId: string;          // Agent 唯一标识
+                            // 旧格式: agent:<PeerId前16位>:<随机8位> (RFC003, 已废弃)
+                            // 新格式: agent:<公钥指纹16位> (RFC008, 推荐)
   name: string;             // 显示名称
-  privateKey: Uint8Array;   // Agent 签名私钥
-  publicKey: Uint8Array;    // Agent 签名公钥
+  privateKey: Uint8Array;   // Agent 签名私钥 (RFC008)
+  publicKey: Uint8Array;    // Agent 签名公钥 (RFC008)
+  selfSignature: string;    // Agent 自签名 (RFC011)
   createdAt: number;        // 创建时间
 }
 
@@ -328,11 +331,11 @@ interface AgentReputation {
 
 ## 当前实现 vs 正确架构
 
-### 当前实现 (简化版)
+### 历史实现 (已演进)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                     当前实现 (1:1 映射)                          │
+│                     历史实现 (1:1 映射)                          │
 │                                                                 │
 │   ┌─────────────────────────────────────────────────────────┐   │
 │   │              OpenClaw Gateway                            │   │
@@ -350,19 +353,19 @@ interface AgentReputation {
 │   │                                                          │   │
 │   └─────────────────────────────────────────────────────────┘   │
 │                                                                 │
-│   问题：                                                        │
-│   - 1 个 Node = 1 个 Agent                                      │
-│   - 信誉用 PeerID 作为键，而不是 AgentID                         │
-│   - Agent 无法迁移到其他 Node                                    │
+│   历史问题 (已解决)：                                            │
+│   - 1 个 Node = 1 个 Agent  ✅ 现为 1:N                         │
+│   - 信誉用 PeerID 作为键    ✅ 现绑定到 AgentID                  │
+│   - Agent 无法迁移          ✅ 现支持跨 Node 迁移                │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 正确架构 (1:N 映射)
+### 当前架构 (1:N 映射)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                     正确架构 (1:N 映射)                          │
+│                     当前架构 (1:N 映射) ✅ 已实现                 │
 │                                                                 │
 │   ┌─────────────────────────────────────────────────────────┐   │
 │   │              OpenClaw Gateway                            │   │
@@ -387,10 +390,12 @@ interface AgentReputation {
 │   │                                                          │   │
 │   └─────────────────────────────────────────────────────────┘   │
 │                                                                 │
-│   改进：                                                        │
-│   - 1 个 Node 支持 N 个 Agent                                   │
-│   - 信誉用 AgentID 作为键 ⭐                                    │
-│   - Agent 可以迁移到其他 Node (带信誉)                          │
+│   已实现改进：                                                   │
+│   - 1 个 Node 支持 N 个 Agent  ✅                                │
+│   - 信誉用 AgentID 作为键 ⭐     ✅                               │
+│   - Agent 可以迁移到其他 Node   ✅                               │
+│   - Agent 自有 Ed25519 密钥 (RFC008)  ✅                         │
+│   - Challenge-Response 认证 (RFC011)  ✅                         │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -401,32 +406,34 @@ interface AgentReputation {
 
 > **⚠️ 修订**: 以下迁移路径已合并到 [RFC 005: F2A 架构统一](./rfcs/005-architecture-unification.md)
 
-### Phase 1: 当前实现 (已完成)
+### Phase 1: 基础实现 (已完成)
 - 1 Node = 1 Agent
 - 信誉用 PeerID 作为键
 - 功能可用，但架构不完整
 
-### Phase 2: Agent 独立身份 (RFC 003)
-- 引入 AgentId
-- Agent 可以有自己的签名密钥
+### Phase 2: Agent 独立身份 (RFC 008)
+- 引入 Agent 自有 Ed25519 密钥对
+- AgentId = 公钥指纹 (`agent:<指纹16位>`)
 - 信誉键值从 PeerID 改为 AgentId
+- Agent 可自证身份，不可冒充
 
 ### Phase 3: 架构统一 (RFC 005)
-- **MessageRouter/AgentRegistry 移入 F2A 核心类**
-- 本地和远程消息走统一流程
-- P2PNetwork 只负责传输
+- **MessageRouter/AgentRegistry 移入 F2A 核心类** ✅
+- 本地和远程消息走统一流程 ✅
+- P2PNetwork 只负责传输 ✅
 
-### Phase 4: 多 Agent 支持
-- 一个 Node 可以注册多个 Agent
-- 消息路由根据 AgentID 分发
-- 每个 Agent 独立的信誉和能力
+### Phase 4: 多 Agent 支持 (已完成)
+- 一个 Node 可以注册多个 Agent ✅
+- 消息路由根据 AgentID 分发 ✅
+- 每个 Agent 独立的信誉和能力 ✅
 
-### Phase 5: Agent 迁移
-- Agent 可以从 Node A 迁移到 Node B
-- 信誉随 Agent 迁移
-- 信誉证明 (签名验证)
+### Phase 5: Agent 迁移 (已完成)
+- Agent 可以从 Node A 迁移到 Node B ✅
+- `IdentityDelegator.migrateAgent()` 实现跨 Node 重签名 ✅
+- 包含 Challenge-Response 所有权验证 ✅
+- 信誉随 Agent 迁移 ✅
 
-**详细实施计划**: 见 [memory/2026-04-15.md](../memory/2026-04-15.md) "RFC 任务规划" 章节
+**详细实施计划**: 见 [RFC 005 实现](./rfcs/005-architecture-unification.md) 与 [RFC 008 实现](./rfcs/008-agent-self-identity.md)
 
 ---
 

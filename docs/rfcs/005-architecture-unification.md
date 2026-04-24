@@ -434,4 +434,4 @@ expect(p2pNetwork.sendMessage).toHaveBeenCalledWith(
 
 - [RFC 003: AgentId 签发机制](./003-agentid-issuance.md)
 - [RFC 004: Webhook 插件架构](./004-webhook-plugin-architecture.md)
-- [SECURITY-IMPROVEMENTS.md](./SECURITY-IMPROVEMENTS.md)
+- [安全指南](../guides/security.md)

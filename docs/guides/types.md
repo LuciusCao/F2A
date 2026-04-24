@@ -29,22 +29,42 @@ src/types/
 
 ## 核心类型
 
-### Result<T, E>
+### Result<T>
 
 用于处理操作成功或失败的通用类型。
 
 ```typescript
 // 定义（来自 result.ts）
-type Result<T, E = Error> = 
-  | { ok: true; value: T }
-  | { ok: false; error: E };
+type Result<T> = 
+  | { success: true; data: T; error?: never }
+  | { success: false; error: F2AError; data?: never };
 
 // 创建成功结果
-function success<T>(value: T): Result<T>;
+function success<T>(data: T): Result<T>;
 
 // 创建失败结果  
-function failure<T>(error: Error): Result<T>;
-function failureFromError<T>(error: unknown): Result<T>;
+function failure<T>(error: F2AError): Result<T>;
+function failureFromError<T>(code: ErrorCode, message: string, cause?: Error): Result<T>;
+```
+
+**相关类型：**
+
+```typescript
+interface F2AError {
+  code: ErrorCode;
+  message: string;
+  details?: Record<string, unknown>;
+  cause?: Error;
+}
+
+type ErrorCode = 
+  | 'NETWORK_NOT_STARTED'
+  | 'NETWORK_ALREADY_RUNNING'
+  | 'PEER_NOT_FOUND'
+  | 'CONNECTION_FAILED'
+  | 'TIMEOUT'
+  | 'DHT_NOT_AVAILABLE'
+  // ... 更多错误码详见 result.ts
 ```
 
 **使用示例：**
@@ -53,28 +73,22 @@ function failureFromError<T>(error: unknown): Result<T>;
 import { success, failureFromError } from '@f2a/network';
 import type { Result } from '@f2a/network';
 
-async function connectToPeer(peerId: string): Result<void> {
+async function connectToPeer(peerId: string): Promise<Result<void>> {
   try {
     await libp2p.dial(peerId);
     return success(undefined);
   } catch (e) {
-    return failureFromError(e);
+    return failureFromError('CONNECTION_FAILED', 'Failed to connect to peer', e instanceof Error ? e : undefined);
   }
 }
 
 // 处理结果
 const result = await connectToPeer(peerId);
-if (result.ok) {
+if (result.success) {
   console.log('连接成功');
 } else {
-  console.error('连接失败:', result.error.message);
+  console.error('连接失败:', result.error.code, result.error.message);
 }
-
-// 使用 match 方法（如果可用）
-result.match({
-  ok: (value) => console.log('成功'),
-  err: (error) => console.error(error),
-});
 ```
 
 ---
@@ -541,5 +555,5 @@ function isEncryptedMessage(msg: F2AMessage): msg is EncryptedF2AMessage;
 ## 相关文档
 
 - [API 参考](api/API-REFERENCE.md)
-- [配置中心](../src/config/README.md)
-- [架构文档](architecture-complete.md)
+- [配置指南](./configuration.md)
+- [架构文档](../architecture/complete.md)

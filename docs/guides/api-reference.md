@@ -23,9 +23,27 @@
 主类，整合 P2P 网络、能力发现与任务委托。
 
 ```typescript
-import { F2A } from '@f2a/network';
+import { F2A, F2AFactory } from '@f2a/network';
 
-const f2a = new F2A({
+// 推荐：使用 F2AFactory.create() 获取 Result<F2A>
+const result = await F2AFactory.create({
+  displayName: 'MyAgent',
+  agentType: 'openclaw',
+  network: {
+    listenPort: 7070,
+    enableMDNS: true,
+    enableDHT: true,
+  },
+});
+
+if (!result.success) {
+  console.error('Failed to create F2A:', result.error.message);
+  process.exit(1);
+}
+const f2a = result.data;
+
+// 向后兼容：使用 F2A.create()（失败时抛出异常）
+const f2aLegacy = await F2A.create({
   displayName: 'MyAgent',
   agentType: 'openclaw',
   network: {
@@ -42,13 +60,13 @@ const f2a = new F2A({
 |------|------|--------|------|
 | `start()` | - | `Promise<Result<void>>` | 启动 P2P 网络和所有服务 |
 | `stop()` | - | `Promise<void>` | 停止网络和服务 |
-| `registerCapability(capability, handler)` | `AgentCapability`, `(params) => Promise<unknown>` | `void` | 注册能力及处理函数 |
+| `registerCapability(capability, handler)` | `AgentCapability`, `(params) => Promise<unknown>` | `Result<void>` | 注册能力及处理函数 |
 | `getCapabilities()` | - | `AgentCapability[]` | 获取已注册能力列表 |
 | `discoverAgents(capability?)` | `string?` | `Promise<AgentInfo[]>` | 发现具有指定能力的 Agent |
 | `getConnectedPeers()` | - | `AgentInfo[]` | 获取当前连接的 Peer |
 | `getAllPeers()` | - | `AgentInfo[]` | 获取所有已知 Peer |
-| `delegateTask(options)` | `TaskDelegateOptions` | `Promise<Result<TaskDelegateResult>>` | 委托任务给其他 Agent |
-| `sendTaskTo(peerId, taskType, description, params?)` | `string`, `string`, `string`, `Record<string, unknown>?` | `Promise<Result<unknown>>` | 直接向指定 Peer 发送任务 |
+| `sendMessage(fromAgentId, toAgentId, content, options?)` | `string`, `string`, `string \| Record<string, unknown>`, `{ type?, metadata? }?` | `Promise<Result<void>>` | 发送消息给指定 Agent（委托给 MessageService） |
+| `sendMessageToPeer(peerId, content, topic?)` | `string`, `string \| Record<string, unknown>`, `string?` | `Promise<Result<void>>` | 发送自由消息给特定 Peer（P2P 层） |
 | `useMiddleware(middleware)` | `Middleware` | `void` | 添加中间件 |
 | `removeMiddleware(name)` | `string` | `boolean` | 移除中间件 |
 | `listMiddlewares()` | - | `string[]` | 列出中间件 |
@@ -70,8 +88,8 @@ f2a.on('peer:discovered', (event) => {
   console.log('发现新 Peer:', event.agentInfo.displayName);
 });
 
-f2a.on('task:request', (event) => {
-  console.log('收到任务请求:', event.taskType);
+f2a.on('peer:message', (event) => {
+  console.log('收到消息:', event.content);
 });
 ```
 
@@ -113,9 +131,11 @@ await handler.handleMessage(message, peerId);
 | 方法 | 描述 |
 |------|------|
 | `handleMessage(message, peerId)` | 处理收到的 P2P 消息 |
-| `handleDiscover(payload, peerId)` | 处理发现消息 |
-| `handleCapabilityQuery(message, peerId)` | 处理能力查询 |
-| `handleTaskRequest(message, peerId)` | 处理任务请求 |
+| `handleDiscoverMessage(message, peerId, shouldRespond)` | 处理发现消息（DISCOVER / DISCOVER_RESP） |
+| `handleCapabilityQuery(payload, peerId)` | 处理能力查询（topic='capability.query'） |
+| `handleCapabilityResponse(payload, peerId)` | 处理能力响应（topic='capability.response'） |
+| `handleTaskResponse(payload)` | 处理任务响应（topic='task.response'） |
+| `handleAgentMessage(message, peerId)` | 处理 Agent 协议层消息（MESSAGE 类型） |
 
 ---
 
@@ -144,8 +164,8 @@ await sender.broadcast(message);
 
 | 方法 | 描述 |
 |------|------|
-| `send(peerId, message, encrypt?)` | 发送消息到指定 Peer |
-| `broadcast(message)` | 广播消息到全网 |
+| `send(peerId, message, encrypt?)` | 发送消息到指定 Peer，返回 `Promise<Result<void>>` |
+| `broadcast(message)` | 广播消息到全网，返回 `Promise<void>` |
 
 ---
 
@@ -167,8 +187,11 @@ queueManager.createQueue('agent:xxx:yyy', 50);
 // 获取消息
 const messages = queueManager.pollQueue('agent:xxx:yyy', 10);
 
-// 推送消息
-queueManager.pushMessage('agent:xxx:yyy', message);
+// 推送消息（需要先获取队列对象）
+const queue = queueManager.getQueue('agent:xxx:yyy');
+if (queue) {
+  queueManager.enqueue(queue, message);
+}
 ```
 
 | 方法 | 描述 |
@@ -177,8 +200,11 @@ queueManager.pushMessage('agent:xxx:yyy', message);
 | `deleteQueue(agentId)` | 删除队列 |
 | `getQueue(agentId)` | 获取队列信息 |
 | `pollQueue(agentId, limit?)` | 获取消息（不移除） |
-| `pushMessage(agentId, message)` | 推送消息到队列 |
-| `clearQueue(agentId, ids?)` | 清除指定消息 |
+| `enqueue(queue, message)` | 推送消息到指定队列对象 |
+| `popMessage(agentId)` | 从队列弹出一条消息 |
+| `clearMessages(agentId, messageIds?)` | 清除指定消息 |
+| `cleanupExpired(maxAgeMs)` | 清理过期消息 |
+| `getStats()` | 获取队列统计信息 |
 
 ---
 
@@ -197,8 +223,9 @@ const result = await pusher.forwardToAgentWebhook(message, targetAgent);
 
 | 方法 | 描述 |
 |------|------|
-| `forwardToAgentWebhook(message, agent)` | 转发消息到 Agent webhook |
-| `clearCache(agentId)` | 清除 webhook 服务缓存 |
+| `forwardToAgentWebhook(message, agent)` | 转发消息到 Agent webhook，返回 `Promise<{ success: boolean; error?: string }>` |
+| `clearWebhookCache(agentId)` | 清除指定 Agent 的 webhook 服务缓存 |
+| `clearAllWebhookCache()` | 清除所有 webhook 服务缓存 |
 
 ---
 
@@ -222,18 +249,33 @@ interface IAgentRegistry {
   // 注册
   register(request: AgentRegistrationRequest): AgentRegistration;
   registerRFC008(request: RFC008AgentRegistrationRequest): AgentRegistration;
+  registerAuto(request: AgentRegistrationRequest & { publicKey?: string }): AgentRegistration;
+  
+  // 注销
+  unregister(agentId: string): boolean;
   
   // 查询
   get(agentId: string): AgentRegistration | undefined;
+  getAgentFormat(agentId: string): 'old' | 'new' | 'invalid';
+  getAgentsMap(): Map<string, AgentRegistration>;
   list(): AgentRegistration[];
-  findByCapability(name: string): AgentRegistration[];
+  findByCapability(capabilityName: string): AgentRegistration[];
+  getPublicKey(agentId: string): string | undefined;
   
   // 更新
-  updateName(agentId, newName): boolean;
-  updateWebhook(agentId, webhook): boolean;
+  updateName(agentId: string, newName: string): boolean;
+  updateWebhook(agentId: string, webhook: AgentWebhook | undefined): boolean;
+  updateLastActive(agentId: string): void;
   
   // 验证
-  verifySignature(agentId, signature?, peerId?, publicKey?): boolean;
+  verifySignature(agentId: string, signature?: string, peerId?: string, publicKey?: string): boolean;
+  validatePublicKeyFingerprint(agentId: string, publicKey: string): boolean;
+  isNewFormatAgent(agentId: string): boolean;
+  isOldFormatAgent(agentId: string): boolean;
+  
+  // 统计与清理
+  getStats(): { total: number; capabilities: Record<string, number> };
+  cleanupInactive(maxInactiveMs: number): number;
   
   // 持久化
   saveAsync(): Promise<void>;
@@ -251,14 +293,40 @@ interface IMessageRouter {
   deleteQueue(agentId: string): void;
   getQueue(agentId: string): MessageQueue | undefined;
   
-  // 路由
+  // 同步路由
   route(message: RoutableMessage): boolean;
-  routeAsync(message: RoutableMessage): Promise<boolean>;
   broadcast(message: RoutableMessage): boolean;
+  
+  // 异步路由
+  routeAsync(message: RoutableMessage): Promise<boolean>;
+  routeRemote(message: RoutableMessage): Promise<Result<void>>;
+  broadcastAsync(message: RoutableMessage): Promise<boolean>;
+  
+  // 出站/入站路由 (RFC 005)
+  routeIncoming(payload: unknown, fromPeerId: string): Promise<void>;
+  routeOutgoing(message: RoutableMessage): Promise<Result<void>>;
   
   // 消息管理
   getMessages(agentId: string, limit?: number): RoutableMessage[];
-  clearMessages(agentId: string, ids?: string[]): number;
+  clearMessages(agentId: string, messageIds?: string[]): number;
+  
+  // 统计与清理
+  getStats(): { 
+    queues: number; 
+    totalMessages: number; 
+    queueStats: Record<string, { size: number; maxSize: number }> 
+  };
+  cleanupExpired(maxAgeMs: number): number;
+  
+  // Webhook 缓存
+  clearWebhookCache(agentId: string): void;
+  
+  // 配置更新
+  updateRegistry(registry: Map<string, AgentRegistration>): void;
+  setP2PNetwork(p2pNetwork: unknown): void;
+  
+  // Peer 查找
+  findPeerByAgentId(agentId: string): string | null;
 }
 ```
 
@@ -396,7 +464,16 @@ const score = reputation.getScore(peerId);
 Daemon 包提供后台服务，管理 Agent 注册、消息路由和 HTTP API。
 
 ```typescript
-import { F2ADaemon, AgentRegistry, MessageRouter, ControlServer } from '@f2a/daemon';
+import { 
+  F2ADaemon, 
+  ControlServer, 
+  AgentRegistry, 
+  MessageRouter, 
+  AgentIdentityStore, 
+  AgentTokenManager, 
+  AuthMiddleware, 
+  ChallengeHandler 
+} from '@f2a/daemon';
 ```
 
 ### F2ADaemon
@@ -605,10 +682,9 @@ await server.stop();
 | 方法 | 参数 | 返回值 | 描述 |
 |------|------|--------|------|
 | `start()` | - | `Promise<void>` | 启动 HTTP 服务 |
-| `stop()` | - | `Promise<void>` | 停止服务 |
+| `stop()` | - | `void` | 停止服务 |
 | `getAgentRegistry()` | - | `AgentRegistry` | 获取 Agent 注册表 |
 | `getMessageRouter()` | - | `MessageRouter` | 获取消息路由器 |
-| `getPort()` | - | `number` | 获取监听端口 |
 
 ---
 
@@ -627,23 +703,23 @@ curl http://localhost:9001/health
 # {"success": true, "status": "ok", "peerId": "16Qk..."}
 ```
 
-#### GET /api/agents
+#### GET /api/v1/agents
 
 列出所有注册的 Agent。
 
 ```bash
-curl http://localhost:9001/api/agents
+curl http://localhost:9001/api/v1/agents
 # [{"agentId": "agent:16Qk:a1b2c3d4", "name": "MyAgent", ...}]
 ```
 
-#### POST /api/agents
+#### POST /api/v1/agents
 
-注册 Agent。
+注册 Agent（RFC 008 新格式，需要提供 `publicKey`）。
 
 ```bash
-curl -X POST http://localhost:9001/api/agents \
+curl -X POST http://localhost:9001/api/v1/agents \
   -H "Content-Type: application/json" \
-  -d '{"name": "MyAgent", "capabilities": [...], "webhook": {"url": "http://localhost:9002/webhooks/f2a-message"}}'
+  -d '{"name": "MyAgent", "publicKey": "base64-ed25519-pubkey", "capabilities": [...], "webhook": {"url": "http://localhost:9002/webhooks/f2a-message"}}'
 # {"success": true, "agentId": "agent:16Qk:a1b2c3d4", ...}
 ```
 
@@ -651,47 +727,64 @@ curl -X POST http://localhost:9001/api/agents \
 ```typescript
 {
   name: string;                 // 必填
+  publicKey: string;            // 必填，RFC 008 Ed25519 公钥 (Base64)
   capabilities: AgentCapability[];
   webhook?: { url: string; token?: string; };
   metadata?: Record<string, unknown>;
 }
 ```
 
-#### GET /api/agents/:agentId
+#### GET /api/v1/agents/:agentId
 
 获取指定 Agent 信息。
 
 ```bash
-curl http://localhost:9001/api/agents/agent:16Qk:a1b2c3d4
+curl http://localhost:9001/api/v1/agents/agent:16Qk:a1b2c3d4
 # {"success": true, "agent": {...}}
 ```
 
-#### DELETE /api/agents/:agentId
+#### DELETE /api/v1/agents/:agentId
 
-注销 Agent。
+注销 Agent（需要认证）。
 
 ```bash
-curl -X DELETE http://localhost:9001/api/agents/agent:16Qk:a1b2c3d4
+curl -X DELETE http://localhost:9001/api/v1/agents/agent:16Qk:a1b2c3d4
 # {"success": true}
 ```
 
-#### PATCH /api/agents/:agentId/webhook
+#### PATCH /api/v1/agents/:agentId/webhook
 
-更新 Agent Webhook（RFC 004）。
+更新 Agent Webhook（RFC 004，需要认证）。
 
 ```bash
-curl -X PATCH http://localhost:9001/api/agents/agent:16Qk:a1b2c3d4/webhook \
+curl -X PATCH http://localhost:9001/api/v1/agents/agent:16Qk:a1b2c3d4/webhook \
   -H "Content-Type: application/json" \
   -d '{"url": "http://new-webhook:9002/webhooks/f2a-message", "token": "secret"}'
 # {"success": true}
 ```
 
-#### POST /api/messages
+#### PATCH /api/v1/agents/:agentId
 
-发送消息。
+更新 Agent 信息（Challenge-Response 验证）。
+
+#### POST /api/v1/agents/verify
+
+验证 Agent 身份（Challenge-Response）。
+
+#### POST /api/v1/challenge
+
+生成 Challenge（无需认证）。
+
+#### POST /api/v1/challenge/verify
+
+验证 Challenge 响应并获取 Token（无需认证）。
+
+#### POST /api/v1/messages
+
+发送消息（需要 Agent Token 认证）。
 
 ```bash
-curl -X POST http://localhost:9001/api/messages \
+curl -X POST http://localhost:9001/api/v1/messages \
   -H "Content-Type: application/json" \
   -d '{"fromAgentId": "agent:sender:...", "toAgentId": "agent:target:...", "content": "Hello!", "type": "message"}'
 # {"success": true, "messageId": "msg-001"}
@@ -708,21 +801,21 @@ curl -X POST http://localhost:9001/api/messages \
 }
 ```
 
-#### GET /api/messages/:agentId
+#### GET /api/v1/messages/:agentId
 
 获取 Agent 的消息队列。
 
 ```bash
-curl "http://localhost:9001/api/messages/agent:16Qk:a1b2c3d4?limit=10"
+curl "http://localhost:9001/api/v1/messages/agent:16Qk:a1b2c3d4?limit=10"
 # {"success": true, "messages": [...]}
 ```
 
-#### DELETE /api/messages/:agentId
+#### DELETE /api/v1/messages/:agentId
 
 清除消息队列。
 
 ```bash
-curl -X DELETE "http://localhost:9001/api/messages/agent:16Qk:a1b2c3d4?messageIds=msg-001,msg-002"
+curl -X DELETE "http://localhost:9001/api/v1/messages/agent:16Qk:a1b2c3d4?messageIds=msg-001,msg-002"
 # {"success": true, "cleared": 2}
 ```
 
@@ -832,20 +925,22 @@ DEFAULT_P2P_NETWORK_CONFIG = {
 
 ```typescript
 type F2AMessageType =
+  // 网络层协议（基础设施）
   | 'DISCOVER'          // 发现广播
   | 'DISCOVER_RESP'     // 发现响应
-  | 'CAPABILITY_QUERY'  // 查询能力
-  | 'CAPABILITY_RESPONSE' // 能力响应
-  | 'TASK_REQUEST'      // 任务请求
-  | 'TASK_RESPONSE'     // 任务响应
-  | 'TASK_DELEGATE'     // 任务转委托
+  | 'KEY_EXCHANGE'      // 公钥交换
   | 'DECRYPT_FAILED'    // 解密失败通知
   | 'PING'              // 心跳
   | 'PONG'              // 心跳响应
+  // Agent 协议层（语义层）
+  | 'MESSAGE'           // 通用消息（通过 topic 区分语义）
+  // 技能交换协议（可选扩展）
   | 'SKILL_ANNOUNCE'    // 技能公告
   | 'SKILL_QUERY'       // 技能查询
+  | 'SKILL_QUERY_RESPONSE' // 技能查询响应
   | 'SKILL_INVOKE'      // 技能调用
-  | 'MESSAGE';          // 自由消息
+  | 'SKILL_INVOKE_RESPONSE' // 技能调用响应
+  | 'SKILL_RESULT';     // 技能执行结果
 ```
 
 ### AgentInfo
@@ -898,11 +993,11 @@ interface TaskDelegateOptions {
 ```typescript
 interface F2AEvents {
   'network:started': (event: NetworkStartedEvent) => void;
+  'network:stopped': () => void;
   'peer:discovered': (event: PeerDiscoveredEvent) => void;
   'peer:connected': (event: PeerConnectedEvent) => void;
   'peer:disconnected': (event: PeerDisconnectedEvent) => void;
-  'task:request': (event: TaskRequestEvent) => void;
-  'task:response': (event: TaskResponseEvent) => void;
+  'peer:message': (event: MessageEvent) => void;
   'error': (error: Error) => void;
 }
 ```
@@ -968,30 +1063,34 @@ if (!result.valid) {
 
 ## Result 类型
 
-F2A 使用 `Result<T, E>` 类型处理错误：
+F2A 使用 `Result<T>` 类型处理错误：
 
 ```typescript
-import { success, failure, Result } from '@f2a/network/types';
+import { success, failure, failureFromError, Result } from '@f2a/network';
 
 // 成功
 const ok: Result<string> = success('value');
 
-// 失败
-const err: Result<string> = failure(new Error('error'));
+// 失败（使用 F2AError 对象）
+const err: Result<string> = failure({ code: 'INTERNAL_ERROR', message: 'error' });
+
+// 失败（使用错误码和消息）
+const err2: Result<string> = failureFromError('INTERNAL_ERROR', 'error');
 
 // 使用
-result.match({
-  ok: (value) => console.log(value),
-  err: (error) => console.error(error),
-});
+if (ok.success) {
+  console.log(ok.data);
+} else {
+  console.error(ok.error.code, ok.error.message);
+}
 ```
 
 ---
 
 ## 更多信息
 
-- [架构文档](../architecture-complete.md)
-- [中间件指南](../middleware-guide.md)
-- [信誉系统指南](../reputation-guide.md)
-- [消息协议](../message-protocol.md)
-- [RFC 文档](../rfc/)
+- [架构文档](../architecture/complete.md)
+- [中间件指南](./middleware.md)
+- [安全指南](./security.md)
+- [消息协议](../protocols/message.md)
+- [RFC 文档](../rfcs/)

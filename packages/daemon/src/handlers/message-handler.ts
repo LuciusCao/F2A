@@ -18,6 +18,7 @@ import type { AgentTokenManager } from '../agent-token-manager.js';
 
 /**
  * 发送消息请求体类型
+ * RFC 012: 添加 noReply 字段防止自发送循环
  */
 interface SendMessageBody {
   fromAgentId?: string;
@@ -25,6 +26,8 @@ interface SendMessageBody {
   content?: string;
   metadata?: Record<string, unknown>;
   type?: 'message' | 'task_request' | 'task_response' | 'announcement' | 'claim';
+  /** RFC 012: 标记消息不需要回复 (self-send 必须为 true) */
+  noReply?: boolean;
 }
 
 /**
@@ -141,13 +144,37 @@ export class MessageHandler {
 
           // === Token 验证完成 ===
 
+          // RFC 012: Self-send 保护（Daemon 层双重验证）
+          if (data.toAgentId && data.fromAgentId === data.toAgentId) {
+            if (!data.noReply) {
+              this.logger.warn('Self-send rejected: missing noReply flag', {
+                agentId: data.fromAgentId?.slice(0, 16),
+              });
+              res.writeHead(400);
+              res.end(JSON.stringify({
+                success: false,
+                error: 'Self-send requires noReply=true to prevent infinite loops',
+                code: 'SELF_SEND_NO_REPLY_REQUIRED',
+              }));
+              return;
+            }
+            this.logger.info('Self-send accepted with noReply flag', {
+              agentId: data.fromAgentId?.slice(0, 16),
+            });
+          }
+
           // 创建消息
+          // RFC 012: 将 noReply 放入 metadata，让接收方知道不需要回复
           const message: RoutableMessage = {
             messageId: randomUUID(),
             fromAgentId: data.fromAgentId,
             toAgentId: data.toAgentId,
             content: data.content,
-            metadata: data.metadata,
+            metadata: {
+              ...data.metadata,
+              // RFC 012: 标记消息不需要回复
+              noReply: data.noReply || false,
+            },
             type: data.type || 'message',
             createdAt: new Date(),
           };

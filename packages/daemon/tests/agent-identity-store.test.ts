@@ -9,7 +9,7 @@ import { tmpdir } from 'os';
 import { AgentIdentityStore, AgentIdentity, AgentWebhook } from '../src/agent-identity-store.js';
 import type { AgentCapability } from '@f2a/network';
 
-// Mock Logger
+// Mock Logger and verifySelfSignature
 vi.mock('@f2a/network', async (importOriginal) => {
   const actual = await importOriginal() as any;
   return {
@@ -20,6 +20,8 @@ vi.mock('@f2a/network', async (importOriginal) => {
       debug: vi.fn(),
       error: vi.fn(),
     })),
+    // RFC011: Mock verifySelfSignature to return true for tests
+    verifySelfSignature: vi.fn().mockReturnValue(true),
   };
 });
 
@@ -31,6 +33,7 @@ function createMockIdentity(agentId?: string): AgentIdentity {
     agentId: agentId || 'agent:a1b2c3d4e5f6g7h8',
     name: 'Test Agent',
     publicKey: 'dGVzdC1wdWJsaWMta2V5LWJhc2U2NA==', // Base64 encoded test key
+    selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==', // RFC011: Agent self-signature
     nodeSignature: 'mock-node-signature',
     nodeId: 'node:test-node-id',
     webhook: { url: 'http://127.0.0.1:9002/f2a/webhook' },
@@ -518,11 +521,12 @@ describe('AgentIdentityStore', () => {
     it('should filter dangerous keys in JSON.parse', () => {
       mkdirSync(agentIdentitiesDir, { recursive: true });
 
-      // 创建包含危险 key 的文件
+// 创建包含危险 key 的文件
       const maliciousContent = JSON.stringify({
         agentId: 'agent:test:1234',
         name: 'Test',
         publicKey: 'dGVzdC1wdWJsaWMta2V5',
+        selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==', // RFC011: required field
         nodeId: 'node:test-peer',
         nodeSignature: 'test-sig',
         capabilities: [],
@@ -576,6 +580,7 @@ describe('AgentIdentityStore', () => {
         agentId: 'agent:minimal:1111',
         name: 'Minimal Agent',
         publicKey: 'bWluaW1hbC1wdWJsaWMta2V5',
+        selfSignature: 'bWluaW1hbC1zZWxmLXNpZ25hdHVyZQ==', // RFC011: required
         nodeId: 'node:minimal-node',
         capabilities: [],
         createdAt: new Date().toISOString(),
@@ -611,6 +616,7 @@ describe('AgentIdentityStore', () => {
         agentId: 'agent:emptykey',
         name: 'Empty Key',
         publicKey: '', // 空 publicKey
+        selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==', // RFC011: required
         nodeId: 'node:test',
         capabilities: [],
         createdAt: new Date().toISOString(),

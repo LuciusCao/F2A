@@ -11,6 +11,16 @@ import type { AgentIdentityStore } from '../agent-identity-store.js';
 import type { AgentTokenManager } from '../agent-token-manager.js';
 import type { Logger } from '@f2a/network';
 
+// RFC011: Mock @f2a/network functions for Agent self-signature verification
+vi.mock('@f2a/network', async (importOriginal) => {
+  const actual = await importOriginal() as any;
+  return {
+    ...actual,
+    verifySelfSignature: vi.fn().mockReturnValue(true),
+    computeAgentId: vi.fn().mockReturnValue('agent:67face05d98ab91f'),
+  };
+});
+
 // Mock 依赖
 const createMockLogger = () => ({
   info: vi.fn(),
@@ -267,11 +277,12 @@ describe('AgentHandler - Error Response Code Field', () => {
     it('新注册 Agent 应返回 nodeSignature 和 nodeId 字段', async () => {
       const req = createMockReq({
         method: 'POST',
-        body: { 
-          name: 'TestAgent', 
+        body: {
+          name: 'TestAgent',
           publicKey: 'dGVzdHB1YmxpY2tleQ==', // RFC008: Agent Ed25519 公钥
-          capabilities: ['chat'], 
-          webhook: { url: 'http://test' } 
+          selfSignature: 'dGVzdHNlbGZzaWduYXR1cmU=', // RFC011: Agent self-signature
+          capabilities: ['chat'],
+          webhook: { url: 'http://test' }
         },
       });
       const res = createMockRes();

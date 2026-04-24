@@ -151,6 +151,10 @@ vi.mock('@f2a/network', async (importOriginal) => {
     AgentRegistry: MockAgentRegistry,
     MessageRouter: MockMessageRouter,
     getErrorMessage: vi.fn((e) => e?.message || 'Unknown error'),
+    // RFC011: Mock verifySelfSignature for Agent self-signature verification
+    verifySelfSignature: vi.fn().mockReturnValue(true),
+    // RFC011: Mock computeAgentId for agentId derivation from publicKey
+    computeAgentId: vi.fn().mockReturnValue('agent:test1234abcd'),
   };
 });
 
@@ -424,6 +428,7 @@ describe('ControlServer', () => {
         body: { 
           name: '猫咕噜', 
           publicKey: 'dGVzdHB1YmxpY2tleQ==', // RFC008: Agent Ed25519 公钥
+          selfSignature: 'dGVzdHNlbGZzaWduYXR1cmU=', // RFC011: Agent self-signature
           capabilities: ['chat'],
           webhook: { url: 'http://127.0.0.1:9002/f2a/webhook' }
         },

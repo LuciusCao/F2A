@@ -24,12 +24,15 @@ import type { Challenge, ChallengeResponse } from '@f2a/network';
 
 /**
  * Agent Identity 文件结构
+ * RFC011: 包含 selfSignature 字段
  */
 interface AgentIdentityFileData {
   agentId: string;
   name?: string;
   publicKey: string;
   privateKey?: string;
+  /** RFC011: Agent 自签名 (证明公钥所有权) */
+  selfSignature?: string;
   peerId?: string;
   signature?: string;
   nodeSignature?: string;
@@ -547,12 +550,15 @@ async function invokeAgent(
  * Agent Identity 结构（简化版）
  * Phase 4: 添加 token 字段
  * RFC008: 添加 privateKey 和 publicKey 字段
+ * RFC011: 添加 selfSignature 字段
  */
 interface AgentIdentityFile {
   agentId: string;
   name: string;
   peerId: string;
   signature: string;
+  /** RFC011: Agent 自签名 (证明公钥所有权) */
+  selfSignature?: string;
   /** Agent Ed25519 公钥 (Base64) - RFC008 */
   publicKey?: string;
   /** Agent Ed25519 私钥 (Base64) - RFC008 */

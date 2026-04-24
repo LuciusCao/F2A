@@ -1,8 +1,8 @@
 # RFC 013: Message Exit Mechanism
 
-> **Status**: Draft
+> **Status**: Implemented (Phase 1+2) - Phase 3 印象系统暂缓
 > **Created**: 2026-04-24
-> **Priority**: High (跑通 A2A 消息路径)
+> **Priority**: High (跑通 A2A 消息路径) ✅ 已完成
 > **Related**: RFC 012 (Self-send Protection), RFC 009 (Skills Auto-loading)
 
 ---
@@ -490,14 +490,18 @@ prompt: '收到 F2A 消息，原始 payload:
 - `packages/cli/src/messages.ts` - 默认值改为 noReply=true，Self-send 检测调整
 - `packages/daemon/src/handlers/message-handler.ts` - 默认值和检测逻辑调整
 
-### Phase 2: Skill 分发
+### Phase 2: Skill 分发 ✅ 已完成
 
-- [ ] 更新 `skills/f2a-messaging/SKILL.md`
-- [ ] 添加 reason 填写指南
-- [ ] 打包到 openclaw-f2a 插件
-- [ ] Agent 安装后自动获得引导
+- [x] 更新 `skills/f2a-messaging/SKILL.md`
+- [x] 添加 reason 填写指南
+- [x] 添加 Agent 判断是否需要回复的引导
+- [x] openclaw-f2a 插件已配置打包 skills 目录（`prepack` 脚本）
 
-### Phase 3: 印象系统
+**Agent 安装 openclaw-f2a 插件后自动获得引导**。
+
+### Phase 3: 印象系统 ⏸️ 暂缓
+
+印象系统需要独立 RFC 设计数据结构和存储机制，当前暂缓。
 
 - [ ] 设计 Impression 数据结构
 - [ ] 基于 noReplyReason 更新印象

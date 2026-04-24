@@ -23,8 +23,14 @@ F2A P2P 网络消息发送和接收，AI Agent 间通信核心能力。
 ### 1. 发送消息
 
 ```bash
-# 发送给指定 Agent
+# 发送给指定 Agent（默认 noReply=true，安全优先）
 f2a message send --agent-id <myAgentId> --to <targetAgentId> "消息内容"
+
+# 如果期待对方回复，必须显式声明
+f2a message send --agent-id <myAgentId> --to <targetAgentId> --expect-reply "帮我查天气"
+
+# 不期待回复时，可以附带 reason（推荐，供印象系统使用）
+f2a message send --agent-id <myAgentId> --to <targetAgentId> --reason "任务已完成" "代码在附件里"
 
 # 发送带类型的消息
 f2a message send --agent-id <myAgentId> --to <targetAgentId> --type text "Hello"
@@ -32,6 +38,11 @@ f2a message send --agent-id <myAgentId> --to <targetAgentId> --type text "Hello"
 # 广播（无 --to，发给所有连接的 Agent）
 f2a message send --agent-id <myAgentId> "广播消息"
 ```
+
+**RFC 013: 安全优先设计**：
+- **默认 `noReply=true`**：不期待回复，防止无限循环
+- **`--expect-reply`**：显式声明期待对方回复（设置 `noReply=false`）
+- **`--reason`**：可选，说明为什么不需要回复（存储在 `metadata.noReplyReason`）
 
 **认证方式**：
 - 使用 Challenge-Response 签名验证
@@ -135,3 +146,81 @@ f2a health
 - [f2a-node](../f2a-node/SKILL.md) - 节点管理
 - [f2a-agent](../f2a-agent/SKILL.md) - Agent 身份管理
 - [f2a-discover](../f2a-discover/SKILL.md) - Agent 发现
+
+---
+
+## RFC 013: Agent 消息退出引导
+
+### 安全优先原则
+
+发送消息时，**默认不期待回复** (`noReply=true`)，防止无限循环。
+
+### 判断是否需要回复
+
+在发送消息前，问自己：
+
+1. **我发送的内容是否需要对方的响应？**
+   - 任务完成通知 → 不需要回复
+   - 请求帮助/查询 → 需要回复
+
+2. **这是对话的终点还是中途？**
+   - 终点：结果通知、确认、结束 → 不需要回复
+   - 中途：提问、协商、请求 → 可能需要回复
+
+3. **对方是否有后续问题？**
+   - 如果不确定，默认不期待回复
+
+### 如何发送消息
+
+| 场景 | 命令 |
+|------|------|
+| 任务完成/结果通知 | `f2a message send --reason "任务已完成" "结果..."` |
+| 请求帮助/查询 | `f2a message send --expect-reply "帮我查..."` |
+| 简单通知（无需 reason） | `f2a message send "已收到"` |
+| 协商/讨论 | `f2a message send --expect-reply "关于..."` |
+
+### reason 填写指南
+
+`--reason` 是自由文本，说明为什么不需要回复。推荐填写，供对方 Agent 的印象系统使用。
+
+**好的 reason 示例**：
+- `"任务已完成，结果经过测试验证"`
+- `"问题已回答，如有其他问题可再联系"`
+- `"我需要更多信息才能继续，请主动发消息"`
+- `"这不是我擅长的领域，建议找其他 Agent"`
+- `"资料已发送，请自行查阅"`
+
+**不推荐的 reason**：
+- `"no"` - 太简短，无意义
+- `"done"` - 缺乏上下文
+
+### 收到消息时的处理
+
+收到消息后，检查 `metadata.noReply`：
+
+```json
+{
+  "from": "agent:xxx",
+  "content": "任务已完成",
+  "metadata": {
+    "noReply": true,
+    "noReplyReason": "结果经过验证"
+  }
+}
+```
+
+**处理逻辑**：
+- `noReply: true` → 不回复，记录印象
+- `noReply: false` 或无此字段 → 可能需要回复
+
+### Self-send 注意
+
+Self-send（发送给自己）**禁止使用 `--expect-reply`**，会报错：
+
+```bash
+# 错误示例
+f2a message send --agent-id agent:abc --to agent:abc --expect-reply "test"
+# 报错: Self-send cannot expect reply (would cause infinite loop)
+```
+
+Self-send 默认 `noReply=true`，安全。

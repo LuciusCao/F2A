@@ -471,7 +471,7 @@ export class AgentRegistry {
     const registration: AgentRegistration = {
       agentId: identity.agentId,
       name: identity.name,
-      capabilities: identity.capabilities,
+      capabilities: identity.capabilities || [],  // 默认空数组，兼容旧 identity 文件
       peerId: identity.peerId,
       signature: identity.signature,
       publicKey: identity.publicKey,
@@ -710,7 +710,9 @@ export class AgentRegistry {
     const capabilities: Record<string, number> = {};
 
     for (const agent of agents) {
-      for (const cap of agent.capabilities) {
+      // 防御性检查：capabilities 可能不存在（旧 identity 文件）
+      const agentCaps = agent.capabilities || [];
+      for (const cap of agentCaps) {
         capabilities[cap.name] = (capabilities[cap.name] || 0) + 1;
       }
     }

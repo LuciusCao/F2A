@@ -69,7 +69,11 @@ async function getAgentTokenViaChallenge(
 
 /**
  * Send message
- * f2a message send --agent-id <agentId> --to <agentId> [--type <type>] <content>
+ * f2a message send --agent-id <agentId> --to <agentId> [--type <type>] [--no-reply] <content>
+ *
+ * RFC 012: Self-send protection
+ * - If --agent-id equals --to (self-send), --no-reply is REQUIRED
+ * - This prevents infinite message loops
  */
 export async function sendMessage(options: {
   /** Agent ID (required) */
@@ -78,8 +82,10 @@ export async function sendMessage(options: {
   content: string;
   type?: 'message' | 'task_request' | 'task_response' | 'announcement' | 'claim';
   metadata?: Record<string, unknown>;
+  /** RFC 012: Mark message as not expecting reply (required for self-send) */
+  noReply?: boolean;
 }): Promise<void> {
-  const { agentId, toAgentId, content, type, metadata } = options;
+  const { agentId, toAgentId, content, type, metadata, noReply } = options;
 
   if (!agentId) {
     if (isJsonMode()) {
@@ -98,6 +104,27 @@ export async function sendMessage(options: {
     } else {
       console.error('❌ Error: Missing message content.');
       console.error('Usage: f2a message send --agent-id <agentId> --to <agentId> "content"');
+      process.exit(1);
+    }
+    return;
+  }
+
+  // RFC 012: Self-send protection
+  // If agentId equals toAgentId, must provide --no-reply to prevent infinite loops
+  if (toAgentId && agentId === toAgentId && !noReply) {
+    if (isJsonMode()) {
+      outputError(
+        'Self-send requires --no-reply flag to prevent infinite loops',
+        'SELF_SEND_NO_REPLY_REQUIRED'
+      );
+    } else {
+      console.error('❌ Error: Self-send (sending to yourself) requires --no-reply flag.');
+      console.error('   This prevents infinite message loops where you receive and reply to your own messages.');
+      console.error('');
+      console.error('   Usage: f2a message send --agent-id <agentId> --to <agentId> --no-reply "content"');
+      console.error('');
+      console.error('   Example (loopback test):');
+      console.error('   f2a message send --agent-id agent:abc123 --to agent:abc123 --no-reply "ping test"');
       process.exit(1);
     }
     return;
@@ -130,12 +157,14 @@ export async function sendMessage(options: {
       process.exit(1);
     }
 
+    // RFC 012: Include noReply in payload
     const messagePayload = {
       fromAgentId: agentId,
       toAgentId,
       content,
       type: type || 'message',
       metadata,
+      noReply: noReply || false,
     };
 
     const result = await sendRequest(

@@ -144,10 +144,11 @@ Usage: f2a message <subcommand> [options]
 
 Subcommands:
   send              Send message to Agent
-                    f2a message send --agent-id <agentId> --to <agent_id> [--type <type>] "content"
+                    f2a message send --agent-id <agentId> --to <agent_id> [--type <type>] [--no-reply] "content"
                     --agent-id        Agent ID (required)
                     --to              Recipient Agent ID (optional, broadcasts if omitted)
                     --type            Message type: message, task_request, task_response, announcement, claim
+                    --no-reply        RFC 012: Mark message as not expecting reply (required for self-send)
 
   list              View message queue
                     f2a message list --agent-id <agentId> [--unread] [--limit <n>]
@@ -160,6 +161,7 @@ Subcommands:
 Examples:
   f2a message send --agent-id agent:abc123... --to agent:xyz789... "Hello"
   f2a message send --agent-id agent:abc123... "Broadcast message"
+  f2a message send --agent-id agent:abc123... --to agent:abc123... --no-reply "Self-test (no reply)"
   f2a message list --agent-id agent:abc123... --unread
 `);
 }
@@ -264,6 +266,12 @@ Examples:
 /**
  * 解析命令行参数
  */
+/**
+ * 布尔参数列表（这些参数不接受值，只作为标志）
+ * RFC 012: 添加 --no-reply
+ */
+const BOOLEAN_FLAGS = ['no-reply', 'force', 'unread', 'json'];
+
 function parseArgs(args: string[]): Record<string, string | string[] | boolean> {
   const result: Record<string, string | string[] | boolean> = {};
   let i = 0;
@@ -273,7 +281,11 @@ function parseArgs(args: string[]): Record<string, string | string[] | boolean> 
 
     if (arg.startsWith('--')) {
       const key = arg.slice(2);
-      if (i + 1 < args.length && !args[i + 1].startsWith('--')) {
+      // RFC 012: 检查是否是布尔标志参数
+      if (BOOLEAN_FLAGS.includes(key)) {
+        result[key] = true;
+        i += 1;
+      } else if (i + 1 < args.length && !args[i + 1].startsWith('--')) {
         const value = args[i + 1];
         // 处理重复参数（如 --capability）
         if (result[key] !== undefined) {
@@ -446,6 +458,8 @@ async function handleMessageCommand(subArgs: string[]): Promise<void> {
         toAgentId: sendOpts.to as string | undefined,
         content: sendOpts.content as string,
         type: sendOpts.type as 'message' | 'task_request' | 'task_response' | 'announcement' | 'claim' | undefined,
+        // RFC 012: Parse --no-reply flag for self-send protection
+        noReply: sendOpts['no-reply'] as boolean | undefined,
       });
       break;
 

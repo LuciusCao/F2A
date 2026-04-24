@@ -81,11 +81,12 @@ describe('CLI Identity Commands', () => {
           version: '1.0',
           exportedAt: new Date().toISOString(),
           agent: {
-            id: 'test-agent-id',
+            agentId: 'agent:test1234abcd',
             name: 'test-agent',
             capabilities: [],
             nodeId: 'test-node-id',
             publicKey: 'dGVzdC1wdWJsaWMta2V5',
+            selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
             signature: 'dGVzdC1zaWduYXR1cmU=',
             createdAt: new Date().toISOString(),
             privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
@@ -231,7 +232,7 @@ describe('CLI Identity Commands', () => {
           version: '1.0',
           exportedAt: new Date().toISOString(),
           agent: {
-            id: 'test-agent-id',
+            agentId: 'agent:test1234abcd',
             name: 'test-agent'
             // Missing nodeId, publicKey, signature, privateKey
           }
@@ -255,11 +256,12 @@ describe('CLI Identity Commands', () => {
           version: '1.0',
           exportedAt: new Date().toISOString(),
           agent: {
-            id: 'test-agent-id',
+            agentId: 'agent:test1234abcd',
             name: 'test-agent',
             capabilities: [],
             nodeId: 'test-node-id',
             publicKey: 'dGVzdC1wdWJsaWMta2V5',
+            selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
             signature: 'dGVzdC1zaWduYXR1cmU=',
             createdAt: new Date().toISOString(),
             expiresAt: pastDate.toISOString(),
@@ -285,11 +287,12 @@ describe('CLI Identity Commands', () => {
           version: '1.0',
           exportedAt: new Date().toISOString(),
           agent: {
-            id: 'test-agent-id',
+            agentId: 'agent:test1234abcd',
             name: 'test-agent',
             capabilities: ['capability1', 'capability2'],
             nodeId: 'test-node-id',
             publicKey: 'dGVzdC1wdWJsaWMta2V5',
+            selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
             signature: 'dGVzdC1zaWduYXR1cmU=',
             createdAt: new Date().toISOString(),
             expiresAt: futureDate.toISOString(),
@@ -310,7 +313,7 @@ describe('CLI Identity Commands', () => {
           
           // Verify content
           const savedData = JSON.parse(readFileSync(agentFile, 'utf-8'));
-          expect(savedData.id).toBe('test-agent-id');
+          expect(savedData.agentId).toBe('agent:test1234abcd');
           expect(savedData.name).toBe('test-agent');
         }
       });
@@ -321,11 +324,12 @@ describe('CLI Identity Commands', () => {
           version: '1.0',
           exportedAt: new Date().toISOString(),
           agent: {
-            id: 'test-agent-id',
+            agentId: 'agent:test1234abcd',
             name: 'test-agent',
             capabilities: [],
             nodeId: 'test-node-id',
             publicKey: 'dGVzdC1wdWJsaWMta2V5',
+            selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
             signature: 'dGVzdC1zaWduYXR1cmU=',
             createdAt: new Date().toISOString(),
             privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
@@ -347,11 +351,12 @@ describe('CLI Identity Commands', () => {
           version: '1.0',
           exportedAt: new Date().toISOString(),
           agent: {
-            id: 'test-agent-id',
+            agentId: 'agent:test1234abcd',
             name: 'test-agent',
             capabilities: [],
             nodeId: 'test-node-id',
             publicKey: 'dGVzdC1wdWJsaWMta2V5',
+            selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
             signature: 'dGVzdC1zaWduYXR1cmU=',
             createdAt: new Date().toISOString(),
             privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
@@ -390,11 +395,12 @@ describe('CLI Identity Commands', () => {
             privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
           },
           agent: {
-            id: 'combined-agent-id',
+            agentId: 'agent:test1234abcd',
             name: 'combined-agent',
             capabilities: [],
             nodeId: existingNodeId, // Match node nodeId
             publicKey: 'dGVzdC1wdWJsaWMta2V5',
+            selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
             signature: 'dGVzdC1zaWduYXR1cmU=',
             createdAt: new Date().toISOString(),
             expiresAt: futureDate.toISOString(),
@@ -469,11 +475,12 @@ describe('importIdentityInternal edge cases', () => {
       version: '1.0',
       exportedAt: new Date().toISOString(),
       agent: {
-        id: 'test-agent-id',
+        agentId: 'agent:test1234abcd',
         name: 'test-agent',
         capabilities: [],
         nodeId: 'test-node-id',
         publicKey: 'dGVzdC1wdWJsaWMta2V5',
+        selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
         signature: 'dGVzdC1zaWduYXR1cmU=',
         createdAt: new Date().toISOString(),
         privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
@@ -506,11 +513,12 @@ describe('importIdentityInternal edge cases', () => {
     // Create existing Agent Identity
     const existingAgentFile = join(testDir, 'agent-identity.json');
     const existingAgentData = {
-      id: 'existing-agent-id',
+      agentId: 'agent:existing1234',
       name: 'existing-agent',
       capabilities: ['existing-cap'],
       nodeId: 'existing-node-id',
       publicKey: 'ZXhpc3RpbmctcHVibGljLWtleQ==',
+      selfSignature: 'ZXhpc3Rpbmctc2VsZi1zaWduYXR1cmU=',
       signature: 'ZXhpc3Rpbmctc2lnbmF0dXJl',
       createdAt: new Date().toISOString(),
       privateKey: 'ZXhpc3RpbmctcHJpdmF0ZS1rZXk='
@@ -523,7 +531,7 @@ describe('importIdentityInternal edge cases', () => {
       version: '1.0',
       exportedAt: new Date().toISOString(),
       agent: {
-        id: 'invalid-agent-id'
+        agentId: 'agent:invalid1234'
         // Missing required fields
       }
     }), 'utf-8');
@@ -532,7 +540,7 @@ describe('importIdentityInternal edge cases', () => {
     
     // Import failed, but existing data should be preserved
     const savedData = JSON.parse(readFileSync(existingAgentFile, 'utf-8'));
-    expect(savedData.id).toBe('existing-agent-id');
+    expect(savedData.agentId).toBe('agent:existing1234');
     expect(savedData.name).toBe('existing-agent');
   });
 });
@@ -589,11 +597,12 @@ describe('validateImportPath (via importIdentityInternal)', () => {
       version: '1.0',
       exportedAt: new Date().toISOString(),
       agent: {
-        id: 'home-agent-id',
+        agentId: 'agent:home1234abcd',
         name: 'home-agent',
         capabilities: [],
         nodeId: 'home-node-id',
         publicKey: 'dGVzdC1wdWJsaWMta2V5',
+        selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
         signature: 'dGVzdC1zaWduYXR1cmU=',
         createdAt: new Date().toISOString(),
         privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
@@ -614,11 +623,12 @@ describe('validateImportPath (via importIdentityInternal)', () => {
       version: '1.0',
       exportedAt: new Date().toISOString(),
       agent: {
-        id: 'temp-agent-id',
+        agentId: 'agent:temp1234abcd',
         name: 'temp-agent',
         capabilities: [],
         nodeId: 'temp-node-id',
         publicKey: 'dGVzdC1wdWJsaWMta2V5',
+        selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
         signature: 'dGVzdC1zaWduYXR1cmU=',
         createdAt: new Date().toISOString(),
         privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
@@ -638,11 +648,12 @@ describe('validateImportPath (via importIdentityInternal)', () => {
       version: '1.0',
       exportedAt: new Date().toISOString(),
       agent: {
-        id: 'cwd-agent-id',
+        agentId: 'agent:cwd1234abcd',
         name: 'cwd-agent',
         capabilities: [],
         nodeId: 'cwd-node-id',
         publicKey: 'dGVzdC1wdWJsaWMta2V5',
+        selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
         signature: 'dGVzdC1zaWduYXR1cmU=',
         createdAt: new Date().toISOString(),
         privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
@@ -669,11 +680,12 @@ describe('validateImportPath (via importIdentityInternal)', () => {
       version: '1.0',
       exportedAt: new Date().toISOString(),
       agent: {
-        id: 'traversal-agent-id',
+        agentId: 'agent:traversal1234',
         name: 'traversal-agent',
         capabilities: [],
         nodeId: 'traversal-node-id',
         publicKey: 'dGVzdC1wdWJsaWMta2V5',
+        selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
         signature: 'dGVzdC1zaWduYXR1cmU=',
         createdAt: new Date().toISOString(),
         privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
@@ -796,11 +808,12 @@ describe('importAgentIdentity edge cases', () => {
         version: '1.0',
         exportedAt: new Date().toISOString(),
         agent: {
-          id: 'agent-no-node-id',
+          agentId: 'agent:nonode1234abcd',
           name: 'agent-no-node',
           capabilities: [],
           nodeId: 'agent-node-id',
           publicKey: 'dGVzdC1wdWJsaWMta2V5',
+          selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
           signature: 'dGVzdC1zaWduYXR1cmU=',
           createdAt: new Date().toISOString(),
           privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
@@ -830,11 +843,12 @@ describe('importAgentIdentity edge cases', () => {
         version: '1.0',
         exportedAt: new Date().toISOString(),
         agent: {
-          id: 'cross-node-agent-id',
+          agentId: 'agent:crossnode1234',
           name: 'cross-node-agent',
           capabilities: [],
           nodeId: 'different-node-id', // Different from local
           publicKey: 'dGVzdC1wdWJsaWMta2V5',
+          selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
           signature: 'dGVzdC1zaWduYXR1cmU=',
           createdAt: new Date().toISOString(),
           privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
@@ -857,11 +871,12 @@ describe('importAgentIdentity edge cases', () => {
         version: '1.0',
         exportedAt: new Date().toISOString(),
         agent: {
-          id: 'force-import-agent-id',
+          agentId: 'agent:forceimport34',
           name: 'force-import-agent',
           capabilities: [],
           nodeId: 'force-import-node-id',
           publicKey: 'dGVzdC1wdWJsaWMta2V5',
+          selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
           signature: 'dGVzdC1zaWduYXR1cmU=',
           createdAt: new Date().toISOString(),
           privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
@@ -887,11 +902,12 @@ describe('importAgentIdentity edge cases', () => {
         version: '1.0',
         exportedAt: new Date().toISOString(),
         agent: {
-          id: 'expired-agent-id',
+          agentId: 'agent:expired1234ab',
           name: 'expired-agent',
           capabilities: [],
           nodeId: 'expired-agent-node-id',
           publicKey: 'dGVzdC1wdWJsaWMta2V5',
+          selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
           signature: 'dGVzdC1zaWduYXR1cmU=',
           createdAt: new Date().toISOString(),
           expiresAt: pastDate.toISOString(),
@@ -916,11 +932,12 @@ describe('importAgentIdentity edge cases', () => {
         version: '1.0',
         exportedAt: new Date().toISOString(),
         agent: {
-          id: 'valid-expiry-agent-id',
+          agentId: 'agent:validexpiry12',
           name: 'valid-expiry-agent',
           capabilities: ['test-cap'],
           nodeId: 'valid-expiry-node-id',
           publicKey: 'dGVzdC1wdWJsaWMta2V5',
+          selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
           signature: 'dGVzdC1zaWduYXR1cmU=',
           createdAt: new Date().toISOString(),
           expiresAt: futureDate.toISOString(),
@@ -947,6 +964,7 @@ describe('importAgentIdentity edge cases', () => {
           name: 'no-id-agent',
           nodeId: 'node-id',
           publicKey: 'dGVzdC1wdWJsaWMta2V5',
+          selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
           signature: 'dGVzdC1zaWduYXR1cmU=',
           privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
         }
@@ -967,9 +985,10 @@ describe('importAgentIdentity edge cases', () => {
         version: '1.0',
         exportedAt: new Date().toISOString(),
         agent: {
-          id: 'no-name-agent-id',
+          agentId: 'agent:noname1234ab',
           nodeId: 'node-id',
           publicKey: 'dGVzdC1wdWJsaWMta2V5',
+          selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
           signature: 'dGVzdC1zaWduYXR1cmU=',
           privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
         }
@@ -990,10 +1009,11 @@ describe('importAgentIdentity edge cases', () => {
         version: '1.0',
         exportedAt: new Date().toISOString(),
         agent: {
-          id: 'no-private-agent-id',
+          agentId: 'agent:noprivate1234',
           name: 'no-private-agent',
           nodeId: 'node-id',
           publicKey: 'dGVzdC1wdWJsaWMta2V5',
+          selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
           signature: 'dGVzdC1zaWduYXR1cmU='
         }
       }), 'utf-8');
@@ -1149,11 +1169,12 @@ describe('importIdentity CLI entry point', () => {
       version: '1.0',
       exportedAt: new Date().toISOString(),
       agent: {
-        id: 'cli-import-agent-id',
+        agentId: 'agent:cliimport1234',
         name: 'cli-import-agent',
         capabilities: [],
         nodeId: 'cli-import-node-id',
         publicKey: 'dGVzdC1wdWJsaWMta2V5',
+        selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
         signature: 'dGVzdC1zaWduYXR1cmU=',
         createdAt: new Date().toISOString(),
         privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
@@ -1177,11 +1198,12 @@ describe('importIdentity CLI entry point', () => {
       version: '1.0',
       exportedAt: new Date().toISOString(),
       agent: {
-        id: 'needs-confirm-agent-id',
+        agentId: 'agent:needsconfirm',
         name: 'needs-confirm-agent',
         capabilities: [],
         nodeId: 'needs-confirm-node-id',
         publicKey: 'dGVzdC1wdWJsaWMta2V5',
+        selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
         signature: 'dGVzdC1zaWduYXR1cmU=',
         createdAt: new Date().toISOString(),
         privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='
@@ -1232,11 +1254,12 @@ describe('importIdentity CLI entry point', () => {
       version: '1.0',
       exportedAt: new Date().toISOString(),
       agent: {
-        id: 'complete-agent-id',
+        agentId: 'agent:complete1234',
         name: 'complete-agent',
         capabilities: [],
         nodeId: 'complete-node-id',
         publicKey: 'dGVzdC1wdWJsaWMta2V5',
+        selfSignature: 'dGVzdC1zZWxmLXNpZ25hdHVyZQ==',
         signature: 'dGVzdC1zaWduYXR1cmU=',
         createdAt: new Date().toISOString(),
         privateKey: 'dGVzdC1wcml2YXRlLWtleQ=='

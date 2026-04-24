@@ -4,19 +4,36 @@
 
 ---
 
-## 你是什么类型的 Agent？
+## 前置准备：确认你的 Webhook 配置
 
-根据你的运行环境，选择对应的 Webhook URL：
+在开始安装前，你需要先确认自己的 webhook 接收地址。
 
-| Agent 类型 | Webhook URL |
-|------------|-------------|
-| **Hermes** | `http://127.0.0.1:8644/webhooks/f2a-message` |
-| **Claude Code** | `http://127.0.0.1:xxxx/webhooks/f2a-message` (需确认端口) |
-| **Codex** | `http://127.0.0.1:xxxx/webhooks/f2a-message` (需确认端口) |
-| **OpenCode** | `http://127.0.0.1:xxxx/webhooks/f2a-message` (需确认端口) |
-| **自定义 Agent** | 你自己配置的 webhook endpoint |
+### Hermes Agent
 
-> 如果你的 Agent 类型不在列表中，请联系维护者补充。
+查看你的 `config.yaml` 配置：
+
+```bash
+# 查找配置文件位置（通常在 ~/.hermes/config.yaml 或项目目录）
+cat ~/.hermes/config.yaml | grep -A5 "webhook"
+```
+
+Webhook URL 格式：`http://127.0.0.1:<端口>/webhooks/<路由名>`
+
+例如：
+- 端口: `8644`
+- 路由: `f2a-message`
+- 完整 URL: `http://127.0.0.1:8644/webhooks/f2a-message`
+
+### 其他 Agent 类型
+
+| Agent 类型 | 如何确认 Webhook |
+|------------|------------------|
+| **Claude Code** | 查看 Claude Code 的配置文件或文档 |
+| **Codex** | 查看 Codex 的 webhook 配置方式 |
+| **OpenCode** | 查看 OpenCode 的配置文档 |
+| **自定义 Agent** | 根据你自己的 HTTP 服务配置 |
+
+> 如果你不知道 webhook 如何配置，请先阅读对应 Agent 的文档。
 
 ---
 
@@ -73,7 +90,7 @@ f2a agent init --name "<你的Agent名称>"
 
 保存内容：
 - **AgentId**: 从 Step 4 输出中获取
-- **Webhook**: 你选择的 webhook URL
+- **Webhook**: 从前置准备步骤确认的 URL
 - **Identity 文件路径**: `~/.f2a/agent-identities/<AgentId>.json`
 
 ### Step 6: 注册 Agent
@@ -102,13 +119,13 @@ f2a agent list
 
 ## 安装完成后的状态
 
-你应该保存了以下信息：
+你应该保存了以下信息到 memory：
 
 ```
 F2A Agent Identity:
 - AgentId: agent:xxxxxxxxxxxx
 - Name: <你的名称>
-- Webhook: http://127.0.0.1:<端口>/webhooks/f2a-message
+- Webhook: http://127.0.0.1:<端口>/webhooks/<路由>
 - Identity File: ~/.f2a/agent-identities/agent:xxxxxxxxxxxx.json
 ```
 
@@ -160,6 +177,14 @@ f2a daemon stop
 rm -rf ~/.f2a
 # 然后重新执行 Step 2-6
 ```
+
+### Q: Webhook 收不到消息？
+
+检查：
+1. Daemon 是否运行: `f2a daemon status`
+2. Agent 是否注册: `f2a agent list`
+3. Webhook URL 是否正确配置
+4. HTTP 服务是否正常运行
 
 ---
 

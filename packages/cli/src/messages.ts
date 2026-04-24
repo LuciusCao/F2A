@@ -69,11 +69,16 @@ async function getAgentTokenViaChallenge(
 
 /**
  * Send message
- * f2a message send --agent-id <agentId> --to <agentId> [--type <type>] [--no-reply] <content>
+ * f2a message send --agent-id <agentId> --to <agentId> [--type <type>] [--expect-reply] [--reason <text>] <content>
  *
  * RFC 012: Self-send protection
- * - If --agent-id equals --to (self-send), --no-reply is REQUIRED
+ * - If --agent-id equals --to (self-send), --expect-reply is FORBIDDEN
  * - This prevents infinite message loops
+ *
+ * RFC 013: Safe by default
+ * - Default noReply=true (don't expect reply)
+ * - Use --expect-reply to explicitly request a reply
+ * - Use --reason to provide optional reason for noReply
  */
 export async function sendMessage(options: {
   /** Agent ID (required) */
@@ -82,10 +87,14 @@ export async function sendMessage(options: {
   content: string;
   type?: 'message' | 'task_request' | 'task_response' | 'announcement' | 'claim';
   metadata?: Record<string, unknown>;
-  /** RFC 012: Mark message as not expecting reply (required for self-send) */
+  /** RFC 012: Mark message as not expecting reply (deprecated, use expectReply instead) */
   noReply?: boolean;
+  /** RFC 013: Explicitly declare expecting a reply (sets noReply=false) */
+  expectReply?: boolean;
+  /** RFC 013: Optional reason for not expecting reply (stored in metadata.noReplyReason) */
+  reason?: string;
 }): Promise<void> {
-  const { agentId, toAgentId, content, type, metadata, noReply } = options;
+  const { agentId, toAgentId, content, type, metadata, noReply, expectReply, reason } = options;
 
   if (!agentId) {
     if (isJsonMode()) {
@@ -109,22 +118,23 @@ export async function sendMessage(options: {
     return;
   }
 
-  // RFC 012: Self-send protection
-  // If agentId equals toAgentId, must provide --no-reply to prevent infinite loops
-  if (toAgentId && agentId === toAgentId && !noReply) {
+  // RFC 013: Self-send protection (updated from RFC 012)
+  // If agentId equals toAgentId and expectReply is true, reject to prevent infinite loops
+  // Self-send always uses noReply=true, so expecting a reply is forbidden
+  if (toAgentId && agentId === toAgentId && expectReply) {
     if (isJsonMode()) {
       outputError(
-        'Self-send requires --no-reply flag to prevent infinite loops',
-        'SELF_SEND_NO_REPLY_REQUIRED'
+        'Self-send cannot expect reply (would cause infinite loop). You used --expect-reply, but self-send always uses noReply=true',
+        'SELF_SEND_EXPECT_REPLY_FORBIDDEN'
       );
     } else {
-      console.error('❌ Error: Self-send (sending to yourself) requires --no-reply flag.');
-      console.error('   This prevents infinite message loops where you receive and reply to your own messages.');
+      console.error('❌ Error: Self-send cannot expect reply (would cause infinite loop).');
+      console.error('   You used --expect-reply, but self-send always uses noReply=true.');
       console.error('');
-      console.error('   Usage: f2a message send --agent-id <agentId> --to <agentId> --no-reply "content"');
+      console.error('   Self-send is allowed only for loopback testing without expecting a response.');
       console.error('');
       console.error('   Example (loopback test):');
-      console.error('   f2a message send --agent-id agent:abc123 --to agent:abc123 --no-reply "ping test"');
+      console.error('   f2a message send --agent-id agent:abc123 --to agent:abc123 "ping test"');
       process.exit(1);
     }
     return;
@@ -157,14 +167,23 @@ export async function sendMessage(options: {
       process.exit(1);
     }
 
-    // RFC 012: Include noReply in payload
+    // RFC 013: Calculate noReply based on expectReply
+    // Safe by default: noReply=true (don't expect reply)
+    // If expectReply=true, then noReply=false (expecting a reply)
+    // If expectReply is not set, noReply=true (default, safe)
+    // If noReply is explicitly set (legacy), respect it
+    const actualNoReply = noReply !== undefined ? noReply : !expectReply;
+
+    // RFC 012/013: Include noReply in payload
+    // RFC 013: Include noReplyReason at top level (not in metadata)
     const messagePayload = {
       fromAgentId: agentId,
       toAgentId,
       content,
       type: type || 'message',
       metadata,
-      noReply: noReply || false,
+      noReply: actualNoReply,
+      noReplyReason: reason,
     };
 
     const result = await sendRequest(

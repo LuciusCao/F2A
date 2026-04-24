@@ -144,11 +144,13 @@ Usage: f2a message <subcommand> [options]
 
 Subcommands:
   send              Send message to Agent
-                    f2a message send --agent-id <agentId> --to <agent_id> [--type <type>] [--no-reply] "content"
+                    f2a message send --agent-id <agentId> --to <agent_id> [--type <type>] [--expect-reply] [--reason <text>] "content"
                     --agent-id        Agent ID (required)
                     --to              Recipient Agent ID (optional, broadcasts if omitted)
                     --type            Message type: message, task_request, task_response, announcement, claim
-                    --no-reply        RFC 012: Mark message as not expecting reply (required for self-send)
+                    --expect-reply    RFC 013: Explicitly declare expecting a reply (sets noReply=false)
+                    --reason          RFC 013: Reason for not expecting reply (optional, stored in metadata.noReplyReason)
+                    --no-reply        RFC 013: Deprecated, kept for compatibility (no effect, defaults to noReply=true)
 
   list              View message queue
                     f2a message list --agent-id <agentId> [--unread] [--limit <n>]
@@ -161,8 +163,9 @@ Subcommands:
 Examples:
   f2a message send --agent-id agent:abc123... --to agent:xyz789... "Hello"
   f2a message send --agent-id agent:abc123... "Broadcast message"
-  f2a message send --agent-id agent:abc123... --to agent:abc123... --no-reply "Self-test (no reply)"
-  f2a message list --agent-id agent:abc123... --unread
+  f2a message send --agent-id agent:abc123... --to agent:xyz789... --expect-reply "Task request (expecting reply)"
+  f2a message send --agent-id agent:abc123... --to agent:xyz789... --reason "Task completed" "Result notification"
+  # Note: --no-reply is deprecated, messages default to noReply=true
 `);
 }
 
@@ -269,8 +272,9 @@ Examples:
 /**
  * 布尔参数列表（这些参数不接受值，只作为标志）
  * RFC 012: 添加 --no-reply
+ * RFC 013: 添加 --expect-reply
  */
-const BOOLEAN_FLAGS = ['no-reply', 'force', 'unread', 'json'];
+const BOOLEAN_FLAGS = ['no-reply', 'expect-reply', 'force', 'unread', 'json'];
 
 function parseArgs(args: string[]): Record<string, string | string[] | boolean> {
   const result: Record<string, string | string[] | boolean> = {};
@@ -453,13 +457,19 @@ async function handleMessageCommand(subArgs: string[]): Promise<void> {
   switch (subcommand) {
     case 'send':
       const sendOpts = parseArgs(restArgs);
+      // RFC 013: Pass expectReply flag to sendMessage
+      // sendMessage handles the noReply calculation internally
       await sendMessage({
         agentId: sendOpts['agent-id'] as string,
         toAgentId: sendOpts.to as string | undefined,
         content: sendOpts.content as string,
         type: sendOpts.type as 'message' | 'task_request' | 'task_response' | 'announcement' | 'claim' | undefined,
-        // RFC 012: Parse --no-reply flag for self-send protection
+        // RFC 012: --no-reply flag (legacy, for backward compatibility)
         noReply: sendOpts['no-reply'] as boolean | undefined,
+        // RFC 013: --expect-reply flag (new, takes precedence over --no-reply)
+        expectReply: sendOpts['expect-reply'] as boolean | undefined,
+        // RFC 013: --reason flag (optional reason for noReply)
+        reason: sendOpts.reason as string | undefined,
       });
       break;
 

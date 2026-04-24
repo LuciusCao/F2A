@@ -19,6 +19,8 @@ import type { AgentTokenManager } from '../agent-token-manager.js';
 /**
  * 发送消息请求体类型
  * RFC 012: 添加 noReply 字段防止自发送循环
+ * RFC 013: 添加 expectReply 字段，默认 noReply=true
+ * RFC 013: 添加 noReplyReason 字段，提供不期待回复的原因
  */
 interface SendMessageBody {
   fromAgentId?: string;
@@ -26,8 +28,12 @@ interface SendMessageBody {
   content?: string;
   metadata?: Record<string, unknown>;
   type?: 'message' | 'task_request' | 'task_response' | 'announcement' | 'claim';
-  /** RFC 012: 标记消息不需要回复 (self-send 必须为 true) */
+  /** RFC 013: 明确请求回复（默认 false，即默认不期待回复） */
+  expectReply?: boolean;
+  /** RFC 012: 标记消息不需要回复（已弃用，建议使用 expectReply） */
   noReply?: boolean;
+  /** RFC 013: 可选的不期待回复的原因（自由文本） */
+  noReplyReason?: string;
 }
 
 /**
@@ -144,27 +150,37 @@ export class MessageHandler {
 
           // === Token 验证完成 ===
 
-          // RFC 012: Self-send 保护（Daemon 层双重验证）
+          // RFC 013: 计算最终的 noReply 值
+          // 优先使用 expectReply，若未指定则使用 noReply（向后兼容）
+          // 默认：noReply=true（即默认不期待回复）
+          const finalNoReply = data.expectReply !== undefined
+            ? !data.expectReply  // expectReply=true → noReply=false; expectReply=false → noReply=true
+            : (data.noReply ?? true);  // 向后兼容：未指定 expectReply 时用 noReply，默认 true
+
+          // RFC 013: Self-send 保护逻辑
+          // 如果 expectReply=true 且 self-send，拒绝请求（会导致无限循环）
           if (data.toAgentId && data.fromAgentId === data.toAgentId) {
-            if (!data.noReply) {
-              this.logger.warn('Self-send rejected: missing noReply flag', {
+            if (data.expectReply === true) {
+              this.logger.warn('Self-send rejected: expectReply=true would cause infinite loop', {
                 agentId: data.fromAgentId?.slice(0, 16),
               });
               res.writeHead(400);
               res.end(JSON.stringify({
                 success: false,
-                error: 'Self-send requires noReply=true to prevent infinite loops',
-                code: 'SELF_SEND_NO_REPLY_REQUIRED',
+                error: 'Self-send cannot expect reply (would cause infinite loop)',
+                code: 'SELF_SEND_EXPECT_REPLY',
               }));
               return;
             }
-            this.logger.info('Self-send accepted with noReply flag', {
+            this.logger.info('Self-send accepted (noReply mode)', {
               agentId: data.fromAgentId?.slice(0, 16),
             });
           }
 
           // 创建消息
-          // RFC 012: 将 noReply 放入 metadata，让接收方知道不需要回复
+          // RFC 013: 将 noReply 放入 metadata，让接收方知道不需要回复
+          // RFC 013: 将 noReplyReason 放入 metadata，提供不期待回复的原因
+          // 使用计算后的 finalNoReply 值
           const message: RoutableMessage = {
             messageId: randomUUID(),
             fromAgentId: data.fromAgentId,
@@ -172,8 +188,10 @@ export class MessageHandler {
             content: data.content,
             metadata: {
               ...data.metadata,
-              // RFC 012: 标记消息不需要回复
-              noReply: data.noReply || false,
+              // RFC 013: 标记消息是否需要回复（默认 true = 不需要回复）
+              noReply: finalNoReply,
+              // RFC 013: 可选的不期待回复的原因
+              noReplyReason: data.noReplyReason,
             },
             type: data.type || 'message',
             createdAt: new Date(),

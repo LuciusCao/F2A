@@ -95,18 +95,19 @@ export class IdentityDelegator {
       const exportedAgent = result.data;
 
       this.logger.info('Created and signed agent identity', {
-        agentId: exportedAgent.id,
+        agentId: exportedAgent.agentId,
         agentName: exportedAgent.name,
         nodeId
       });
 
       return success({
         agentIdentity: {
-          id: exportedAgent.id,
+          agentId: exportedAgent.agentId,
           name: exportedAgent.name,
+          publicKey: exportedAgent.publicKey,
+          selfSignature: exportedAgent.selfSignature,
           capabilities: exportedAgent.capabilities,
           nodeId: exportedAgent.nodeId,
-          publicKey: exportedAgent.publicKey,
           signature: exportedAgent.signature,
           createdAt: exportedAgent.createdAt,
           expiresAt: exportedAgent.expiresAt
@@ -137,7 +138,7 @@ export class IdentityDelegator {
         const expiresAt = new Date(agentIdentity.expiresAt);
         if (expiresAt < new Date()) {
           this.logger.warn('Agent identity has expired', {
-            agentId: agentIdentity.id,
+            agentId: agentIdentity.agentId,
             expiresAt: agentIdentity.expiresAt
           });
           // P1-3: 返回 failure 而非 success(false)
@@ -165,7 +166,7 @@ export class IdentityDelegator {
 
       // 重建签名载荷
       const payload = AgentIdentityManager.createSignaturePayload(
-        agentIdentity.id,
+        agentIdentity.agentId,
         agentIdentity.name,
         agentIdentity.capabilities,
         agentIdentity.nodeId,
@@ -201,7 +202,7 @@ export class IdentityDelegator {
     } catch (error) {
       // P3-3 修复: 记录错误详情后再返回
       this.logger.error('Failed to verify agent signature', {
-        agentId: agentIdentity.id,
+        agentId: agentIdentity.agentId,
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined
       });
@@ -297,7 +298,7 @@ export class IdentityDelegator {
       // 检查未来时间
       if (timeDiff > 0) {
         this.logger.warn('Agent migration rejected: challenge timestamp is in the future', {
-          agentId: agentIdentity.id,
+          agentId: agentIdentity.agentId,
           challengeTimestamp: challengeTimestamp.toISOString(),
           now: now.toISOString()
         });
@@ -310,7 +311,7 @@ export class IdentityDelegator {
       // 检查过期（timeDiff 是负数）
       if (-timeDiff > maxAgeMs) {
         this.logger.warn('Agent migration rejected: challenge expired', {
-          agentId: agentIdentity.id,
+          agentId: agentIdentity.agentId,
           challengeAge: Math.floor(-timeDiff / 1000) + 's'
         });
         return failure({
@@ -339,7 +340,7 @@ export class IdentityDelegator {
         isValidOwnership = ed25519.verify(proofOfOwnership, challengeBytes, publicKeyBytes);
       } catch (verifyError) {
         this.logger.warn('Agent migration rejected: signature verification failed', {
-          agentId: agentIdentity.id,
+          agentId: agentIdentity.agentId,
           error: verifyError instanceof Error ? verifyError.message : String(verifyError)
         });
         return failure({
@@ -350,7 +351,7 @@ export class IdentityDelegator {
       
       if (!isValidOwnership) {
         this.logger.warn('Agent migration rejected: invalid ownership proof', {
-          agentId: agentIdentity.id
+          agentId: agentIdentity.agentId
         });
         return failure({
           code: 'AGENT_MIGRATION_UNAUTHORIZED',
@@ -360,7 +361,7 @@ export class IdentityDelegator {
       
       // 更新 Node ID
       const updatedPayload = AgentIdentityManager.createSignaturePayload(
-        agentIdentity.id,
+        agentIdentity.agentId,
         agentIdentity.name,
         agentIdentity.capabilities,
         newNodeId, // 新的 Node ID
@@ -384,7 +385,7 @@ export class IdentityDelegator {
       };
 
       this.logger.info('Migrated agent to new node', {
-        agentId: agentIdentity.id,
+        agentId: agentIdentity.agentId,
         oldNodeId: agentIdentity.nodeId,
         newNodeId
       });
@@ -433,7 +434,7 @@ export class IdentityDelegator {
     // 并行验证
     const verifyPromises = agents.map(async (agent) => {
       const result = await this.verifyAgent(agent, getNodePublicKey);
-      return { id: agent.id, valid: result.success ? result.data : false };
+      return { id: agent.agentId, valid: result.success ? result.data : false };
     });
 
     const verifyResults = await Promise.all(verifyPromises);
@@ -492,7 +493,7 @@ export class IdentityDelegator {
       
       if (agentIdentity.nodeId !== currentNodeId) {
         this.logger.warn('Agent renewal rejected: nodeId mismatch', {
-          agentId: agentIdentity.id,
+          agentId: agentIdentity.agentId,
           agentNodeId: agentIdentity.nodeId,
           currentNodeId
         });
@@ -504,7 +505,7 @@ export class IdentityDelegator {
       
       // 创建新的签名载荷（更新过期时间）
       const newPayload = AgentIdentityManager.createSignaturePayload(
-        agentIdentity.id,
+        agentIdentity.agentId,
         agentIdentity.name,
         agentIdentity.capabilities,
         agentIdentity.nodeId,
@@ -527,7 +528,7 @@ export class IdentityDelegator {
       };
 
       this.logger.info('Renewed agent identity', {
-        agentId: agentIdentity.id,
+        agentId: agentIdentity.agentId,
         newExpiresAt: newExpiresAt.toISOString()
       });
 

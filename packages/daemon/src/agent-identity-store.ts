@@ -12,7 +12,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'fs';
 import { promises as fs } from 'fs';
 import { join } from 'path';
-import { Logger } from '@f2a/network';
+import { Logger, verifySelfSignature } from '@f2a/network';
 import type { AgentCapability } from '@f2a/network';
 
 /**
@@ -26,8 +26,10 @@ export interface AgentWebhook {
 }
 
 /**
- * Agent Identity 文件结构 (RFC008)
+ * Agent Identity 文件结构 (RFC008 + RFC011)
  * 存储在 ~/.f2a/agent-identities/<agentId>.json
+ * 
+ * RFC011: 新增 selfSignature 字段（Agent 对自己的公钥签名）
  */
 export interface AgentIdentity {
   /** Agent ID (格式: agent:<公钥指纹16位>) */
@@ -36,6 +38,8 @@ export interface AgentIdentity {
   name: string;
   /** Agent Ed25519 公钥 (Base64) */
   publicKey: string;
+  /** RFC011: Agent 自签名 (Base64) - Agent 对自己的公钥签名 */
+  selfSignature: string;
   /** Node 归属证明签名 (Base64) */
   nodeSignature?: string;
   /** 签发节点 ID（RFC008: 统一用 nodeId，不再用 peerId） */
@@ -84,6 +88,8 @@ export class AgentIdentityStore {
 
   /**
    * 启动时加载所有 Agent Identity 文件
+   * 
+   * RFC011: 验证 selfSignature（Agent 对自己的公钥签名）
    */
   loadAll(): void {
     this.ensureDir();
@@ -112,9 +118,30 @@ export class AgentIdentityStore {
           continue;
         }
         
-        // 验证签名（如果有验证函数且有签名）
+        // RFC011: 验证 selfSignature（必需）
+        if (identity.selfSignature) {
+          const selfSigValid = verifySelfSignature(
+            identity.agentId,
+            identity.publicKey,
+            identity.selfSignature
+          );
+          if (!selfSigValid) {
+            this.logger.warn('Agent identity selfSignature invalid, skipping', { 
+              file, 
+              agentId: identity.agentId 
+            });
+            continue;
+          }
+          this.logger.debug('Agent identity selfSignature verified', { agentId: identity.agentId });
+        } else {
+          // RFC011: selfSignature 是必需的
+          this.logger.warn('Agent identity missing selfSignature, skipping', { file });
+          continue;
+        }
+        
+        // 验证 nodeSignature（如果有验证函数且有签名）
         if (this.verifySignatureFn && identity.nodeSignature && !this.verifySignatureFn(identity.agentId, identity.nodeSignature, identity.nodeId)) {
-          this.logger.warn('Agent identity signature invalid, skipping', { file, agentId: identity.agentId });
+          this.logger.warn('Agent identity nodeSignature invalid, skipping', { file, agentId: identity.agentId });
           continue;
         }
         
@@ -131,15 +158,18 @@ export class AgentIdentityStore {
 
   /**
    * 验证 Identity 结构完整性
+   * 
+   * RFC011: selfSignature 是必需字段
    */
   private validateIdentityStructure(identity: unknown): boolean {
     if (!identity || typeof identity !== 'object') return false;
     
     const obj = identity as Record<string, unknown>;
     
-    // 必须字段（RFC008）
+    // 必须字段（RFC008 + RFC011）
     // nodeId 是可选的（在注册时由 Daemon 设置）
-    const requiredFields = ['agentId', 'name', 'publicKey', 'createdAt', 'lastActiveAt'];
+    // RFC011: selfSignature 是必需的
+    const requiredFields = ['agentId', 'name', 'publicKey', 'selfSignature', 'createdAt', 'lastActiveAt'];
     for (const field of requiredFields) {
       if (!obj[field]) return false;
     }
@@ -151,6 +181,11 @@ export class AgentIdentityStore {
     
     // publicKey 格式验证（Base64）
     if (typeof obj.publicKey !== 'string' || obj.publicKey.length === 0) {
+      return false;
+    }
+    
+    // selfSignature 格式验证（Base64）
+    if (typeof obj.selfSignature !== 'string' || obj.selfSignature.length === 0) {
       return false;
     }
     

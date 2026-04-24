@@ -53,6 +53,14 @@ export type {
   ChallengeVerificationResult
 } from './core/identity/index.js';
 
+// RFC 011: Agent Identity Verification Chain 导出
+export {
+  signSelfSignature,
+  verifySelfSignature,
+  computeAgentId,
+} from './core/identity/index.js';
+export type { IdentityVerificationResult } from './core/identity/index.js';
+
 // Daemon 组件在 packages/daemon 中独立提供
 
 // Agent Registry 和 Message Router（RFC 003/005）

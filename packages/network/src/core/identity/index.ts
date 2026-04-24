@@ -89,3 +89,20 @@ export type {
   ChallengeResponse,
   ChallengeVerificationResult
 } from './challenge.js';
+
+// RFC 011: Agent Identity Verification Chain 导出
+export {
+  createSelfSignaturePayload,
+  createNodeSignaturePayload,
+  signSelfSignature,
+  signNodeSignature,
+  verifySelfSignature,
+  verifyNodeSignature,
+  verifyNodeSignatureRaw,
+  verifyAgentIdentity,
+  generateIdentityKeyPair,
+  computeAgentId,
+  encodeBase64,
+  decodeBase64
+} from './identity-signature.js';
+export type { IdentityVerificationResult } from './identity-signature.js';

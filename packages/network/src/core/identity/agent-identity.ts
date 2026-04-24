@@ -14,11 +14,11 @@
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { randomUUID } from 'crypto';
 import { generateKeyPair } from '@libp2p/crypto/keys';
 import { Logger } from '../../utils/logger.js';
 import { success, failure, failureFromError, Result } from '../../types/index.js';
 import { secureWipe } from '../../utils/crypto-utils.js';
+import { computeAgentId, signSelfSignature } from './identity-signature.js';
 import type {
   AgentIdentity,
   AgentIdentityOptions,
@@ -72,7 +72,7 @@ export class AgentIdentityManager {
    * 创建签名载荷
    */
   static createSignaturePayload(
-    id: string,
+    agentId: string,
     name: string,
     capabilities: string[],
     nodeId: string,
@@ -81,7 +81,7 @@ export class AgentIdentityManager {
     expiresAt?: string
   ): AgentSignaturePayload {
     return {
-      id,
+      agentId,
       name,
       capabilities,
       nodeId,
@@ -98,7 +98,7 @@ export class AgentIdentityManager {
    * 
    * **格式稳定性保证**:
    * - 签名载荷按固定顺序序列化，确保签名一致性
-   * - 字段顺序: id, name, capabilities(排序后), nodeId, publicKey, createdAt, expiresAt(可选)
+   * - 字段顺序: agentId, name, capabilities(排序后), nodeId, publicKey, createdAt, expiresAt(可选)
    * - capabilities 数组按字母顺序排序，确保不同顺序的输入产生相同的签名
    * - 字段之间使用冒号 ':' 分隔
    * - 此格式在 v1.x 版本中保持稳定，未来变更将使用版本号区分
@@ -109,7 +109,7 @@ export class AgentIdentityManager {
   static serializePayloadForSignature(payload: AgentSignaturePayload): string {
     // 按固定顺序序列化，确保签名一致性
     const parts = [
-      payload.id,
+      payload.agentId,
       payload.name,
       payload.capabilities.sort().join(','),
       payload.nodeId,
@@ -181,15 +181,26 @@ export class AgentIdentityManager {
 
       // 生成 Agent 密钥对 (Ed25519)
       const agentPrivateKey = await generateKeyPair('Ed25519');
-      // 使用 .raw 获取原始公钥字节（32 字节）
-      const agentPublicKeyBytes = agentPrivateKey.publicKey.raw;
-      const agentPrivateKeyBytes = agentPrivateKey.raw;
+      // libp2p PrivateKey.raw 是 64 字节（扩展私钥格式）
+      // 存储时保持完整 64 字节格式，以便与 libp2p privateKeyFromRaw 兼容
+      const rawBytes = agentPrivateKey.raw;  // 64 字节完整私钥
+      const agentPublicKeyBytes = agentPrivateKey.publicKey.raw;  // 公钥是 32 字节
+      const publicKeyBase64 = Buffer.from(agentPublicKeyBytes).toString('base64');
+      const privateKeyBase64 = Buffer.from(rawBytes).toString('base64');  // 存储 64 字节
+      
+      // 对于 selfSignature，需要取前 32 字节作为 seed
+      const seedBytes = rawBytes.slice(0, 32);
+      const seedBase64 = Buffer.from(seedBytes).toString('base64');
 
-      // 生成 Agent ID
-      const agentId = options.id || randomUUID();
+      // RFC011: 从公钥计算 Agent ID (格式: agent:<16位指纹>)
+      const agentId = computeAgentId(publicKeyBase64);
       const now = new Date();
       const createdAt = now.toISOString();
       const expiresAt = options.expiresAt?.toISOString();
+
+      // RFC011: 生成 selfSignature (Agent 对自己的公钥签名)
+      // 使用 32 字节 seed 进行签名（@noble/curves 格式）
+      const selfSignature = signSelfSignature(agentId, publicKeyBase64, seedBase64);
 
       // 创建签名载荷
       const payload = AgentIdentityManager.createSignaturePayload(
@@ -197,7 +208,7 @@ export class AgentIdentityManager {
         options.name,
         options.capabilities || [],
         nodeId,
-        Buffer.from(agentPublicKeyBytes).toString('base64'),
+        publicKeyBase64,
         createdAt,
         expiresAt
       );
@@ -211,31 +222,32 @@ export class AgentIdentityManager {
 
       // 创建 Agent Identity
       this.agentIdentity = {
-        id: agentId,
+        agentId,
         name: options.name,
+        publicKey: publicKeyBase64,
+        selfSignature,
         capabilities: options.capabilities || [],
         nodeId,
-        publicKey: Buffer.from(agentPublicKeyBytes).toString('base64'),
         signature: Buffer.from(signature).toString('base64'),
         createdAt,
         expiresAt
       };
 
-      // 存储私钥
-      this.agentPrivateKey = new Uint8Array(agentPrivateKeyBytes);
+      // 存储私钥（完整的 64 字节格式）
+      this.agentPrivateKey = new Uint8Array(rawBytes);
 
       // 保存到文件
       await this.saveAgentIdentity();
 
       this.logger.info('Created new agent identity', {
-        agentId: this.agentIdentity.id,
+        agentId: this.agentIdentity.agentId,
         name: this.agentIdentity.name,
         nodeId: this.agentIdentity.nodeId
       });
 
       return success({
         ...this.agentIdentity,
-        privateKey: Buffer.from(this.agentPrivateKey).toString('base64')
+        privateKey: privateKeyBase64
       });
     } catch (error) {
       return failureFromError('AGENT_IDENTITY_CREATE_FAILED', 'Failed to create agent identity', error as Error);
@@ -283,8 +295,8 @@ export class AgentIdentityManager {
         const persisted: PersistedAgentIdentity = JSON.parse(data);
         
         // 验证必要字段
-        if (!persisted.id || !persisted.name || !persisted.nodeId || 
-            !persisted.publicKey || !persisted.signature || !persisted.privateKey) {
+        if (!persisted.agentId || !persisted.name || !persisted.nodeId || 
+            !persisted.publicKey || !persisted.selfSignature || !persisted.signature || !persisted.privateKey) {
           return failure({
             code: 'AGENT_IDENTITY_CORRUPTED',
             message: 'Agent identity file is corrupted: missing required fields.'
@@ -292,11 +304,12 @@ export class AgentIdentityManager {
         }
         
         this.agentIdentity = {
-          id: persisted.id,
+          agentId: persisted.agentId,
           name: persisted.name,
+          publicKey: persisted.publicKey,
+          selfSignature: persisted.selfSignature,
           capabilities: persisted.capabilities,
           nodeId: persisted.nodeId,
-          publicKey: persisted.publicKey,
           signature: persisted.signature,
           createdAt: persisted.createdAt,
           expiresAt: persisted.expiresAt
@@ -307,13 +320,13 @@ export class AgentIdentityManager {
         // P2-6: 检查 Agent 身份是否已过期
         if (this.isExpired()) {
           this.logger.warn('Loaded agent identity is expired', {
-            agentId: this.agentIdentity.id,
+            agentId: this.agentIdentity.agentId,
             expiresAt: this.agentIdentity.expiresAt
           });
         }
         
         this.logger.info('Loaded existing agent identity', {
-          agentId: this.agentIdentity.id,
+          agentId: this.agentIdentity.agentId,
           name: this.agentIdentity.name
         });
         
@@ -374,7 +387,7 @@ export class AgentIdentityManager {
       
       // 重建签名载荷
       const payload = AgentIdentityManager.createSignaturePayload(
-        agentIdentity.id,
+        agentIdentity.agentId,
         agentIdentity.name,
         agentIdentity.capabilities,
         agentIdentity.nodeId,
@@ -395,7 +408,7 @@ export class AgentIdentityManager {
       // P3-2: 添加 DEBUG 日志，便于问题排查
       // 注意：静态方法使用静态 logger
       AgentIdentityManager.staticLogger.debug('Signature verification failed', {
-        agentId: agentIdentity.id,
+        agentId: agentIdentity.agentId,
         error: error instanceof Error ? error.message : String(error)
       });
       return false;
@@ -416,7 +429,7 @@ export class AgentIdentityManager {
    * 获取 Agent ID
    */
   getAgentId(): string | null {
-    return this.agentIdentity?.id || null;
+    return this.agentIdentity?.agentId || null;
   }
 
   /**
@@ -483,7 +496,7 @@ export class AgentIdentityManager {
     await this.saveAgentIdentity();
     
     this.logger.info('Updated agent signature', {
-      agentId: this.agentIdentity.id,
+      agentId: this.agentIdentity.agentId,
       newNodeId: newNodeId || this.agentIdentity.nodeId
     });
   }

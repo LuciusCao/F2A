@@ -704,7 +704,7 @@ async function importAgentIdentity(
 ): Promise<Result<AgentImportInternalResult>> {
   try {
     // Validate required fields
-    if (!agentData.id || !agentData.name || !agentData.nodeId || 
+    if (!agentData.agentId || !agentData.name || !agentData.nodeId || 
         !agentData.publicKey || !agentData.signature || !agentData.privateKey) {
       return failure(createError(
         'AGENT_IDENTITY_CORRUPTED',
@@ -749,11 +749,12 @@ async function importAgentIdentity(
               
               const verifyResult = await delegator.verifyAgent(
                 {
-                  id: agentData.id,
+                  agentId: agentData.agentId,
                   name: agentData.name,
                   capabilities: agentData.capabilities,
                   nodeId: agentData.nodeId,
                   publicKey: agentData.publicKey,
+                  selfSignature: agentData.selfSignature,
                   signature: agentData.signature,
                   createdAt: agentData.createdAt,
                   expiresAt: agentData.expiresAt
@@ -804,7 +805,7 @@ async function importAgentIdentity(
         confirmed: false,
         requiresConfirmation: true,
         warning: signatureWarning,
-        agentId: agentData.id,
+        agentId: agentData.agentId,
         nodeId: agentData.nodeId
       });
     }
@@ -812,7 +813,7 @@ async function importAgentIdentity(
     // P2-8: Security audit log
     if (isCrossNodeImport) {
       logger.warn('P2-8: Cross-node agent identity import', {
-        agentId: agentData.id.slice(0, 8),
+        agentId: agentData.agentId.slice(0, 8),
         sourceNodeId: agentData.nodeId.slice(0, 8),
         importFilePath: importFilePath.slice(0, 32) + '...'
       });
@@ -827,7 +828,7 @@ async function importAgentIdentity(
     
     // P2-8: Security audit log
     logger.info('P2-8: Agent identity imported successfully', {
-      agentId: agentData.id.slice(0, 8),
+      agentId: agentData.agentId.slice(0, 8),
       nodeId: agentData.nodeId.slice(0, 8),
       crossNode: isCrossNodeImport,
       signatureValid

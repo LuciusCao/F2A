@@ -12,6 +12,7 @@
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { sha256 } from '@noble/hashes/sha256';
 import { Logger } from '../../utils/logger.js';
+import { signSelfSignature } from './identity-signature.js';
 
 /**
  * Ed25519 密钥对
@@ -24,7 +25,9 @@ export interface Ed25519Keypair {
 }
 
 /**
- * Agent Identity File 格式 (RFC008 定义)
+ * Agent Identity File 格式 (RFC008 + RFC011 定义)
+ * 
+ * RFC011: 新增 selfSignature 字段（Agent 对自己的公钥签名）
  */
 export interface AgentIdentityFile {
   /** Agent ID (格式: agent:{fingerprint}) */
@@ -35,6 +38,8 @@ export interface AgentIdentityFile {
   privateKey: string;
   /** 私钥是否加密 */
   privateKeyEncrypted: boolean;
+  /** RFC011: Agent 自签名 (Base64) - Agent 对自己的公钥签名 */
+  selfSignature: string;
   /** Node 签发的归属证明 (Base64) */
   nodeSignature?: string;
   /** 签发节点的 NodeId (值等同 libp2p PeerId) */
@@ -238,11 +243,13 @@ export class AgentIdentityKeypair {
   }
 
   /**
-   * 创建 RFC008 格式的身份文件结构
+   * 创建 RFC008 + RFC011 格式的身份文件结构
+   * 
+   * RFC011: 自动生成 selfSignature（Agent 对自己的公钥签名）
    *
    * @param keypair 密钥对
    * @param options 可选配置
-   * @returns RFC008 身份文件结构
+   * @returns RFC008 + RFC011 身份文件结构
    */
   createIdentityFile(
     keypair: Ed25519Keypair,
@@ -253,16 +260,26 @@ export class AgentIdentityKeypair {
       nodeSignature?: string;
       nodeId?: string;
       webhook?: { url: string };
+      /** RFC011: 跳过 selfSignature 生成（用于恢复已有身份） */
+      skipSelfSignature?: boolean;
+      /** RFC011: 使用已有的 selfSignature（用于恢复身份） */
+      selfSignature?: string;
     } = {}
   ): AgentIdentityFile {
     const agentId = this.computeAgentId(keypair.publicKey);
     const now = new Date().toISOString();
+
+    // RFC011: 生成 selfSignature（除非已有签名或明确跳过）
+    const selfSignature = options.selfSignature || 
+      (options.skipSelfSignature ? '' : 
+        signSelfSignature(agentId, keypair.publicKey, keypair.privateKey));
 
     return {
       agentId,
       publicKey: keypair.publicKey,
       privateKey: keypair.privateKey,
       privateKeyEncrypted: options.privateKeyEncrypted ?? false,
+      selfSignature,
       nodeSignature: options.nodeSignature,
       nodeId: options.nodeId,
       name: options.name,

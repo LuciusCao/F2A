@@ -1,6 +1,13 @@
 /**
  * Identity manager type definitions
+ * RFC011: Agent Identity Verification Chain
  */
+
+import {
+  verifySelfSignature,
+  verifyNodeSignatureRaw,
+  IdentityVerificationResult
+} from './identity-signature.js';
 
 /** AES-256-GCM parameters */
 export const AES_KEY_SIZE = 32;
@@ -187,25 +194,87 @@ export interface AgentIdentityOptions {
 
 /**
  * Agent Identity 数据结构
- * 这是 Agent 的完整身份信息，包含签名
+ * RFC011: Agent Identity Verification Chain
+ * 
+ * 这是 Agent 的完整身份信息，包含签名链：
+ * - selfSignature: Agent 自己对自己的公钥签名（证明公钥所有权）
+ * - signature/nodeSignature: Node 对 Agent 的签名（证明委派关系）
  */
 export interface AgentIdentity {
-  /** Agent ID (UUID) */
-  id: string;
+  /** Agent ID (格式: agent:<16位公钥指纹>, RFC008) */
+  agentId: string;
   /** Agent 名称 */
   name: string;
-  /** 能力标签列表 */
+  /** Agent Ed25519 公钥 (base64) */
+  publicKey: string;
+  /** RFC011: Agent 自签名 (base64) - Agent 对自己的公钥签名 */
+  selfSignature: string;
+  /** Agent 能力标签列表 */
   capabilities: string[];
   /** 所属 Node ID */
   nodeId: string;
-  /** Agent Ed25519 公钥 (base64) */
-  publicKey: string;
-  /** Node 对 Agent 的签名 (base64) */
+  /** Node 对 Agent 的签名 (base64) - 别名 nodeSignature */
   signature: string;
   /** 创建时间 (ISO string) */
   createdAt: string;
   /** 过期时间 (ISO string, 可选) */
   expiresAt?: string;
+}
+
+/**
+ * 验证完整的 Agent Identity
+ * 
+ * @param identity - Agent Identity 对象
+ * @param nodePublicKey - Node 公钥 (Uint8Array)，用于验证 nodeSignature
+ * @returns 验证结果
+ */
+export function verifyFullAgentIdentity(
+  identity: AgentIdentity,
+  nodePublicKey?: Uint8Array
+): IdentityVerificationResult {
+  // 1. 验证 selfSignature（必需）
+  const selfSigValid = verifySelfSignature(
+    identity.agentId,
+    identity.publicKey,
+    identity.selfSignature
+  );
+  
+  if (!selfSigValid) {
+    return {
+      valid: false,
+      error: 'selfSignature verification failed',
+      details: { selfSignatureValid: false }
+    };
+  }
+  
+  // 2. 如果提供了 Node 公钥，验证 nodeSignature
+  if (nodePublicKey && identity.nodeId) {
+    const nodeSigValid = verifyNodeSignatureRaw(
+      identity.agentId,
+      identity.publicKey,
+      identity.nodeId,
+      identity.signature,
+      nodePublicKey
+    );
+    
+    if (!nodeSigValid) {
+      return {
+        valid: false,
+        error: 'nodeSignature verification failed',
+        details: { selfSignatureValid: true, nodeSignatureValid: false }
+      };
+    }
+    
+    return {
+      valid: true,
+      details: { selfSignatureValid: true, nodeSignatureValid: true }
+    };
+  }
+  
+  return {
+    valid: true,
+    details: { selfSignatureValid: true, nodeSignatureValid: undefined }
+  };
 }
 
 /**
@@ -229,10 +298,11 @@ export interface ExportedAgentIdentity extends AgentIdentity {
 
 /**
  * Agent 签名载荷（用于签名验证）
+ * RFC011: 已更新字段名 id → agentId
  */
 export interface AgentSignaturePayload {
-  /** Agent ID */
-  id: string;
+  /** Agent ID (格式: agent:<16位公钥指纹>) */
+  agentId: string;
   /** Agent 名称 */
   name: string;
   /** 能力标签 */

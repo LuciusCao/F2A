@@ -127,7 +127,7 @@ export class F2AFactory {
         lastSeen: Date.now(),
         multiaddrs: [],
         // RFC008: Agent ID 可选，由 CLI f2a agent init 创建
-        agentId: agentIdentity?.id,
+        agentId: agentIdentity?.agentId,
         // RFC008: 加密公钥优先使用 Agent 的，如果没有则使用 Node 的 E2EE 公钥
         encryptionPublicKey: agentIdentity?.publicKey || nodeIdentityManager.getE2EEPublicKeyBase64() || undefined
       };

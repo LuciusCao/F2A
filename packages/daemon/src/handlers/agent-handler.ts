@@ -14,7 +14,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomBytes } from 'crypto';
-import { Logger, getErrorMessage, E2EECrypto } from '@f2a/network';
+import { Logger, getErrorMessage, E2EECrypto, verifySelfSignature, computeAgentId } from '@f2a/network';
 import type { AgentRegistry, AgentRegistration, MessageRouter, AgentCapability } from '@f2a/network';
 import type { AgentIdentityStore, AgentIdentity } from '../agent-identity-store.js';
 import type { AgentTokenManager } from '../agent-token-manager.js';
@@ -22,6 +22,8 @@ import type { AgentHandlerDeps, Challenge } from '../types/handlers.js';
 
 /**
  * 注册 Agent 请求体类型
+ * 
+ * RFC011: 新增 selfSignature 字段（Agent 对自己的公钥签名）
  */
 interface RegisterAgentBody {
   /** Agent ID(恢复身份时提供) */
@@ -30,6 +32,8 @@ interface RegisterAgentBody {
   name?: string;
   /** Agent Ed25519 公钥（RFC008: 新注册时必需，Base64 编码） */
   publicKey?: string;
+  /** RFC011: Agent 自签名（Base64）- Agent 对自己的公钥签名 */
+  selfSignature?: string;
   /** Agent 能力列表 */
   capabilities?: Array<string | AgentCapability>;
   /** Webhook 配置(HTTP API 注册时必需) */
@@ -262,7 +266,7 @@ export class AgentHandler {
           };
         });
 
-        // 注册新 Agent（RFC008: 使用 Agent 的 publicKey）
+        // 注册新 Agent（RFC008 + RFC011: 使用 Agent 的 publicKey 和 selfSignature）
         // 需要使用 registerRFC008() 方法，而不是旧的 register()
         if (!data.publicKey) {
           res.writeHead(400);
@@ -275,6 +279,41 @@ export class AgentHandler {
           return;
         }
 
+        // RFC011: 验证 selfSignature（必需）
+        if (!data.selfSignature) {
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Missing required field: selfSignature - RFC011 registration requires Agent self-signature',
+            code: 'INVALID_REQUEST',
+            hint: 'Use f2a agent init to create an identity with selfSignature first',
+          }));
+          return;
+        }
+
+        // RFC011: 验证 selfSignature 是否有效
+        const agentIdFromPublicKey = computeAgentId(data.publicKey);
+        const selfSigValid = verifySelfSignature(
+          agentIdFromPublicKey,
+          data.publicKey,
+          data.selfSignature
+        );
+
+        if (!selfSigValid) {
+          res.writeHead(400);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Invalid selfSignature - signature does not match publicKey',
+            code: 'INVALID_SELF_SIGNATURE',
+            hint: 'Ensure selfSignature was created using the correct privateKey',
+          }));
+          return;
+        }
+
+        this.logger.info('Agent selfSignature verified', {
+          agentId: agentIdFromPublicKey,
+        });
+
         const registration = this.agentRegistry.registerRFC008({
           name: data.name,
           publicKey: data.publicKey,
@@ -283,11 +322,12 @@ export class AgentHandler {
           metadata: data.metadata,
         });
 
-        // 🔑 Phase 6: 保存 identity 文件
+        // 🔑 Phase 6: 保存 identity 文件（包含 selfSignature）
         const identity: AgentIdentity = {
           agentId: registration.agentId,
           name: registration.name,
           publicKey: registration.publicKey || '', // RFC008: Agent Ed25519 公钥
+          selfSignature: data.selfSignature, // RFC011: Agent 自签名
           nodeSignature: registration.nodeSignature, // RFC008: Node 归属证明签名
           nodeId: registration.nodeId!, // RFC008: 签发节点 ID（registerRFC008 保证设置）
           webhook: registration.webhook,

@@ -126,9 +126,22 @@ export async function registerAgent(options: {
       description: ''
     }));
 
+    // RFC011: 检查 selfSignature 是否存在
+    if (!identity.selfSignature) {
+      if (isJsonMode()) {
+        outputError('Identity file missing selfSignature. Please recreate identity with: f2a agent init --name <name>', 'MISSING_SELF_SIGNATURE');
+        return;
+      }
+      console.error('❌ Error: Identity file missing selfSignature.');
+      console.error('   AgentId: ' + options.agentId);
+      console.error('   Please recreate identity with: f2a agent init --name <name>');
+      process.exit(1);
+    }
+
     const requestBody = {
       agentId: identity.agentId,
       publicKey: identity.publicKey,
+      selfSignature: identity.selfSignature, // RFC011: Agent 自签名
       name: identity.name || 'unnamed',
       capabilities,
       webhook: webhookToUse,

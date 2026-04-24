@@ -9,6 +9,7 @@ import { tmpdir } from 'os';
 import { NodeIdentityManager } from './node-identity.js';
 import { AgentIdentityManager } from './agent-identity.js';
 import { IdentityDelegator } from './delegator.js';
+import type { AgentIdentity } from './types.js';
 
 describe('NodeIdentityManager', () => {
   let tempDir: string;
@@ -263,7 +264,7 @@ describe('AgentIdentityManager', () => {
       if (!result.success) return;
 
       const agent = result.data;
-      expect(agent.id).toBeDefined();
+      expect(agent.agentId).toBeDefined();
       expect(agent.name).toBe('TestAgent');
       expect(agent.capabilities).toContain('test');
       expect(agent.capabilities).toContain('demo');
@@ -289,7 +290,9 @@ describe('AgentIdentityManager', () => {
 
       expect(result.success).toBe(true);
       if (!result.success) return;
-      expect(result.data.id).toBe(customId);
+      expect(result.data.agentId).toBeDefined();
+      // Note: Custom ID is no longer supported - agentId is computed from publicKey
+      // expect(result.data.agentId).toBe(customId);
     });
 
     it('should create agent with expiration', async () => {
@@ -333,7 +336,7 @@ describe('AgentIdentityManager', () => {
       
       expect(result2.success).toBe(true);
       if (!result2.success) return;
-      expect(result2.data.id).toBe(result1.data!.id);
+      expect(result2.data.agentId).toBe(result1.data!.agentId);
       expect(result2.data.name).toBe('TestAgent');
     });
 
@@ -502,7 +505,7 @@ describe('AgentIdentityManager', () => {
       
       const exported = agentManager.exportAgentIdentity();
       expect(exported).not.toBeNull();
-      expect(exported!.id).toBeDefined();
+      expect(exported!.agentId).toBeDefined();
       expect(exported!.name).toBe('ExportableAgent');
       expect(exported!.privateKey).toBeDefined();
       expect(exported!.nodeId).toBe(nodeId);
@@ -586,7 +589,7 @@ describe('IdentityDelegator', () => {
       if (!result.success) return;
 
       const { agentIdentity, agentPrivateKey } = result.data;
-      expect(agentIdentity.id).toBeDefined();
+      expect(agentIdentity.agentId).toBeDefined();
       expect(agentIdentity.name).toBe('DelegatedAgent');
       expect(agentIdentity.capabilities).toEqual(['task1', 'task2']);
       expect(agentIdentity.nodeId).toBe(nodeManager.getNodeId());
@@ -1056,7 +1059,7 @@ describe('migrateAgent', () => {
     expect(migrateResult.success).toBe(true);
     if (!migrateResult.success) return;
     expect(migrateResult.data.agentIdentity.nodeId).toBe(newNodeId);
-    expect(migrateResult.data.agentIdentity.id).toBe(agentIdentity.id);
+    expect(migrateResult.data.agentIdentity.agentId).toBe(agentIdentity.agentId);
     expect(migrateResult.data.agentIdentity.name).toBe(agentIdentity.name);
   });
 });
@@ -1235,8 +1238,8 @@ describe('batchVerify and revokeAgent', () => {
 
     expect(results.size).toBe(2);
     // 验证返回了结果
-    expect(results.has(agent1Result.data.agentIdentity.id)).toBe(true);
-    expect(results.has(agent2Result.data.agentIdentity.id)).toBe(true);
+    expect(results.has(agent1Result.data.agentIdentity.agentId)).toBe(true);
+    expect(results.has(agent2Result.data.agentIdentity.agentId)).toBe(true);
   });
 
   it('should return false for unknown node in batch verify', async () => {
@@ -1244,13 +1247,14 @@ describe('batchVerify and revokeAgent', () => {
     
     // 创建一个伪造的 Agent（来自未知 Node）
     const fakeAgent: AgentIdentity = {
-      id: 'fake-agent-id',
+      agentId: 'agent:fake-agent-id',
       name: 'FakeAgent',
+      publicKey: 'aW52YWxpZC1wdWJsaWMta2V5',
+      selfSignature: 'aW52YWxpZC1zZWxmLXNpZ25hdHVyZQ==',
       capabilities: [],
       nodeId: 'unknown-node-id', // 未知 Node
-      publicKey: 'aW52YWxpZC1wdWJsaWMta2V5',
-      createdAt: new Date().toISOString(),
-      signature: 'aW52YWxpZC1zaWduYXR1cmU='
+      signature: 'aW52YWxpZC1zaWduYXR1cmU=',
+      createdAt: new Date().toISOString()
     };
 
     const getNodePublicKey = async (nodeId: string) => {
@@ -1264,7 +1268,7 @@ describe('batchVerify and revokeAgent', () => {
     const results = await delegator.batchVerify([fakeAgent], getNodePublicKey);
 
     expect(results.size).toBe(1);
-    expect(results.get(fakeAgent.id)).toBe(false); // 未知 Node 应返回 false
+    expect(results.get(fakeAgent.agentId)).toBe(false); // 未知 Node 应返回 false
   });
 
   it('should revoke agent successfully', async () => {

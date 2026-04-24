@@ -401,7 +401,8 @@ export class ControlServer {
     }
     
     // GET /api/v1/messages/:agentId - 获取 Agent 的消息队列
-    const getMessagesMatch = req.url?.match(/^\/api\/v1\/messages\/([^\/]+)$/);
+    // 注意：URL 可能包含查询参数（如 ?limit=50），需要排除查询部分
+    const getMessagesMatch = req.url?.match(/^\/api\/v1\/messages\/([^\/?]+)(?:\?|$)/);
     if (req.method === 'GET' && getMessagesMatch) {
       this.messageHandler.handleGetMessages(decodeURIComponent(getMessagesMatch[1]), req, res);
       return;

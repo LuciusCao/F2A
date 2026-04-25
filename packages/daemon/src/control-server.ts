@@ -21,6 +21,7 @@ import { RateLimiter } from '@f2a/network';
 import { getErrorMessage } from '@f2a/network';
 import { E2EECrypto } from '@f2a/network';
 import { AgentRegistry, MessageRouter } from '@f2a/network';
+import { MessageStore } from '@f2a/network';
 import { AgentIdentityStore } from './agent-identity-store.js';
 import { AgentTokenManager } from './agent-token-manager.js';
 import { AgentHandler } from './handlers/agent-handler.js';
@@ -100,6 +101,7 @@ export class ControlServer {
   // Phase 1: Agent 注册表和消息路由器
   private agentRegistry: AgentRegistry;
   private messageRouter: MessageRouter;
+  private messageStore: MessageStore;
   // Phase 6: Agent Identity Manager
   private identityStore: AgentIdentityStore;
   // Phase 7: E2EECrypto 用于签名验证
@@ -137,6 +139,9 @@ export class ControlServer {
     // 避免创建独立实例导致数据不一致
     this.agentRegistry = f2a.getAgentRegistry();
     this.messageRouter = f2a.getMessageRouter();
+    this.messageStore = new MessageStore({
+      dbPath: join(this.dataDir, 'messages.db'),
+    });
     
     // Phase 6: 初始化 Identity Manager（daemon 特有的 Agent 身份持久化）
     this.identityStore = new AgentIdentityStore(this.dataDir);
@@ -183,6 +188,7 @@ export class ControlServer {
       agentRegistry: this.agentRegistry,
       f2a: this.f2a,
       agentTokenManager: this.agentTokenManager,
+      messageStore: this.messageStore,
       logger: this.logger,
     });
 
@@ -277,6 +283,7 @@ export class ControlServer {
     }
     // 清理速率限制器资源
     this.rateLimiter.stop();
+    this.messageStore.close();
     this.logger.info('Stopped');
   }
 
@@ -405,6 +412,13 @@ export class ControlServer {
     const getMessagesMatch = req.url?.match(/^\/api\/v1\/messages\/([^\/?]+)(?:\?|$)/);
     if (req.method === 'GET' && getMessagesMatch) {
       this.messageHandler.handleGetMessages(decodeURIComponent(getMessagesMatch[1]), req, res);
+      return;
+    }
+
+    // GET /api/v1/conversations/:agentId - 获取 Agent 的会话摘要列表
+    const getConversationsMatch = req.url?.match(/^\/api\/v1\/conversations\/([^\/?]+)(?:\?|$)/);
+    if (req.method === 'GET' && getConversationsMatch) {
+      this.messageHandler.handleListConversations(decodeURIComponent(getConversationsMatch[1]), req, res);
       return;
     }
     

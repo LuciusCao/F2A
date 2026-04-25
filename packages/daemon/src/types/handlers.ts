@@ -14,6 +14,7 @@ import type {
   AgentRegistry,
   AgentRegistration,
   MessageRouter,
+  MessageStore,
   F2A,
   E2EECrypto,
   ChallengeStore
@@ -97,6 +98,7 @@ export interface MessageHandlerDeps extends HandlerDeps {
   agentRegistry: AgentRegistry;
   f2a: F2A;
   agentTokenManager: AgentTokenManager;
+  messageStore?: MessageStore;
 }
 
 /**

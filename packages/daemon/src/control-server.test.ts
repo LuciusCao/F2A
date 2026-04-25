@@ -416,6 +416,35 @@ describe('ControlServer', () => {
     });
   });
 
+  describe('GET /api/v1/conversations/:agentId', () => {
+    it('should route conversations request to message handler', async () => {
+      mockRateLimiterAllow = true;
+      mockF2A.getAgentRegistry().get.mockReturnValue({
+        agentId: 'agent:test-peer:abc123',
+        name: 'TestAgent',
+      });
+      await server.start();
+
+      const handler = lastMockServer._handler;
+      const req = createMockReq({
+        method: 'GET',
+        url: '/api/v1/conversations/agent%3Atest-peer%3Aabc123?limit=10',
+      });
+      const res = createMockRes();
+
+      handler(req, res);
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      const responseData = JSON.parse(res.end.mock.calls[0][0]);
+      expect(responseData.success).toBe(true);
+      expect(responseData.agentId).toBe('agent:test-peer:abc123');
+      expect(Array.isArray(responseData.conversations)).toBe(true);
+
+      server.stop();
+    });
+  });
+
   describe('POST /api/v1/agents (RFC008)', () => {
     it('should register agent with publicKey', async () => {
       mockRateLimiterAllow = true;

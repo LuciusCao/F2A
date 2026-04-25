@@ -9,6 +9,7 @@ import { MessageHandler } from './message-handler.js';
 import type { MessageRouter, AgentRegistry, F2A } from '@f2a/network';
 import type { AgentTokenManager } from '../agent-token-manager.js';
 import type { Logger } from '@f2a/network';
+import type { MessageStore } from '@f2a/network';
 
 // Mock 依赖
 const createMockLogger = () => ({
@@ -87,6 +88,18 @@ const createMockMessageRouter = (): MessageRouter => ({
   unsubscribe: vi.fn(),
 });
 
+const createMockMessageStore = (): MessageStore => ({
+  add: vi.fn().mockResolvedValue(undefined),
+  getRecent: vi.fn().mockResolvedValue([]),
+  getByAgent: vi.fn().mockResolvedValue([]),
+  getByConversation: vi.fn().mockResolvedValue([]),
+  getByMessageId: vi.fn().mockResolvedValue(undefined),
+  listConversations: vi.fn().mockResolvedValue([]),
+  clear: vi.fn().mockResolvedValue(undefined),
+  close: vi.fn(),
+  getStats: vi.fn().mockReturnValue({ count: 0 }),
+} as unknown as MessageStore);
+
 const createMockF2A = (): F2A => ({
   peerId: 'test-peer-id',
   agentInfo: {
@@ -162,6 +175,7 @@ describe('MessageHandler - Error Response Code Field', () => {
   let mockRegistry: ReturnType<typeof createMockAgentRegistry>;
   let mockTokenManager: ReturnType<typeof createMockAgentTokenManager>;
   let mockMessageRouter: ReturnType<typeof createMockMessageRouter>;
+  let mockMessageStore: ReturnType<typeof createMockMessageStore>;
   let mockF2A: ReturnType<typeof createMockF2A>;
   let mockLogger: ReturnType<typeof createMockLogger>;
 
@@ -170,6 +184,7 @@ describe('MessageHandler - Error Response Code Field', () => {
     mockRegistry = createMockAgentRegistry();
     mockTokenManager = createMockAgentTokenManager();
     mockMessageRouter = createMockMessageRouter();
+    mockMessageStore = createMockMessageStore();
     mockF2A = createMockF2A();
     mockLogger = createMockLogger();
 
@@ -178,6 +193,7 @@ describe('MessageHandler - Error Response Code Field', () => {
       agentRegistry: mockRegistry,
       f2a: mockF2A,
       agentTokenManager: mockTokenManager,
+      messageStore: mockMessageStore,
       logger: mockLogger,
     });
   });
@@ -470,6 +486,85 @@ describe('MessageHandler - Error Response Code Field', () => {
       const data = getResponseData(res);
       expect(data.success).toBe(true);
       expect(data.messageId).toBeDefined();
+    });
+
+    it('成功发送消息时应生成 conversationId 并持久化历史', async () => {
+      const req = createMockReq({
+        method: 'POST',
+        body: {
+          fromAgentId: 'agent:test-peer:abc123',
+          toAgentId: 'agent:test-peer:xyz789',
+          content: 'Hello with history',
+        },
+        headers: { authorization: 'agent-test-token' },
+      });
+      (mockRegistry.get as any).mockReturnValue({ agentId: 'test', name: 'Test' });
+      (mockTokenManager.verifyForAgent as any).mockReturnValue({ valid: true });
+      (mockMessageRouter.routeAsync as any).mockResolvedValue(true);
+      const res = createMockRes();
+
+      await handler.handleSendMessage(req as IncomingMessage, res as ServerResponse);
+
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      const data = getResponseData(res);
+      expect(data.success).toBe(true);
+      expect(data.conversationId).toMatch(/^conv-/);
+      expect(data.historyPersisted).toBe(true);
+      expect(mockMessageStore.add).toHaveBeenCalledWith(expect.objectContaining({
+        id: data.messageId,
+        from: 'agent:test-peer:abc123',
+        to: 'agent:test-peer:xyz789',
+        type: 'message',
+        conversationId: data.conversationId,
+        agentId: 'agent:test-peer:abc123',
+        peerAgentId: 'agent:test-peer:xyz789',
+        direction: 'outbound',
+      }));
+      expect(mockMessageStore.add).toHaveBeenCalledWith(expect.objectContaining({
+        id: `${data.messageId}:inbound:agent:test-peer:xyz789`,
+        from: 'agent:test-peer:abc123',
+        to: 'agent:test-peer:xyz789',
+        type: 'message',
+        conversationId: data.conversationId,
+        agentId: 'agent:test-peer:xyz789',
+        peerAgentId: 'agent:test-peer:abc123',
+        direction: 'inbound',
+      }));
+    });
+
+    it('replyToMessageId 命中历史时应沿用原 conversationId', async () => {
+      (mockMessageStore.getByMessageId as any).mockResolvedValue({
+        id: 'msg-original',
+        conversationId: 'conv-existing',
+      });
+      const req = createMockReq({
+        method: 'POST',
+        body: {
+          fromAgentId: 'agent:test-peer:abc123',
+          toAgentId: 'agent:test-peer:xyz789',
+          content: 'Reply with history',
+          replyToMessageId: 'msg-original',
+        },
+        headers: { authorization: 'agent-test-token' },
+      });
+      (mockRegistry.get as any).mockReturnValue({ agentId: 'test', name: 'Test' });
+      (mockTokenManager.verifyForAgent as any).mockReturnValue({ valid: true });
+      (mockMessageRouter.routeAsync as any).mockResolvedValue(true);
+      const res = createMockRes();
+
+      await handler.handleSendMessage(req as IncomingMessage, res as ServerResponse);
+
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      const data = getResponseData(res);
+      expect(data.conversationId).toBe('conv-existing');
+      expect(mockMessageStore.add).toHaveBeenCalledWith(expect.objectContaining({
+        conversationId: 'conv-existing',
+        replyToMessageId: 'msg-original',
+      }));
     });
 
     // RFC 013: noReply 默认值测试
@@ -773,6 +868,79 @@ describe('MessageHandler - Error Response Code Field', () => {
       expect(data.agentId).toBe('agent:test-peer:abc123');
       expect(data.messages).toHaveLength(2);
       expect(data.count).toBe(2);
+    });
+
+    it('指定 conversationId 时应返回历史消息', async () => {
+      (mockRegistry.get as any).mockReturnValue({
+        agentId: 'agent:test-peer:abc123',
+        name: 'TestAgent',
+      });
+      (mockMessageStore.getByConversation as any).mockResolvedValue([
+        { id: 'msg-1', conversationId: 'conv-1', content: 'Hello' },
+      ]);
+      const req = createMockReq({ url: '/api/v1/messages/agent:test-peer:abc123?conversationId=conv-1&limit=10' });
+      const res = createMockRes();
+
+      handler.handleGetMessages('agent:test-peer:abc123', req as IncomingMessage, res as ServerResponse);
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(mockMessageStore.getByConversation).toHaveBeenCalledWith(
+        'agent:test-peer:abc123',
+        'conv-1',
+        10
+      );
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      const data = getResponseData(res);
+      expect(data.success).toBe(true);
+      expect(data.messages).toHaveLength(1);
+      expect(data.source).toBe('history');
+    });
+  });
+
+  describe('GET /api/v1/conversations/:agentId - 获取会话列表', () => {
+    it('Agent 不存在应返回 404 + code: AGENT_NOT_FOUND', async () => {
+      (mockRegistry.get as any).mockReturnValue(undefined);
+      const req = createMockReq({ url: '/api/v1/conversations/agent:nonexistent' });
+      const res = createMockRes();
+
+      handler.handleListConversations('agent:nonexistent', req as IncomingMessage, res as ServerResponse);
+
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(res.writeHead).toHaveBeenCalledWith(404);
+      const data = getResponseData(res);
+      expect(data.success).toBe(false);
+      expect(data.error).toBe('Agent not found');
+      expect(data.code).toBe('AGENT_NOT_FOUND');
+    });
+
+    it('Agent 存在应返回会话摘要列表', async () => {
+      (mockRegistry.get as any).mockReturnValue({
+        agentId: 'agent:test-peer:abc123',
+        name: 'TestAgent',
+      });
+      (mockMessageStore.listConversations as any).mockResolvedValue([
+        {
+          conversationId: 'conv-1',
+          peerAgentId: 'agent:test-peer:xyz789',
+          lastMessageAt: 2000,
+          messageCount: 2,
+          lastSummary: 'hello',
+        },
+      ]);
+      const req = createMockReq({ url: '/api/v1/conversations/agent:test-peer:abc123?limit=10' });
+      const res = createMockRes();
+
+      handler.handleListConversations('agent:test-peer:abc123', req as IncomingMessage, res as ServerResponse);
+
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(mockMessageStore.listConversations).toHaveBeenCalledWith('agent:test-peer:abc123', 10);
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      const data = getResponseData(res);
+      expect(data.success).toBe(true);
+      expect(data.conversations).toHaveLength(1);
+      expect(data.count).toBe(1);
     });
   });
 

@@ -232,6 +232,81 @@ describe('MessageStore', () => {
     });
   });
 
+  describe('conversation queries', () => {
+    it('应该保存并按 conversationId 查询消息', async () => {
+      await store.add(createMessageRecord(
+        'msg-1',
+        'agent:alice',
+        'agent:bob',
+        'message',
+        Date.now(),
+        'hello',
+        { content: 'hello' },
+        {
+          conversationId: 'conv-1',
+          replyToMessageId: undefined,
+          direction: 'outbound',
+          agentId: 'agent:alice',
+          peerAgentId: 'agent:bob',
+          metadata: { noReply: false }
+        }
+      ));
+
+      const messages = await store.getByConversation('agent:alice', 'conv-1');
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0].conversationId).toBe('conv-1');
+      expect(messages[0].agentId).toBe('agent:alice');
+      expect(messages[0].peerAgentId).toBe('agent:bob');
+      expect(messages[0].metadata).toBe(JSON.stringify({ noReply: false }));
+    });
+
+    it('应该返回 Agent 的会话摘要列表', async () => {
+      await store.add(createMessageRecord(
+        'msg-1',
+        'agent:alice',
+        'agent:bob',
+        'message',
+        1000,
+        'first',
+        { content: 'first' },
+        {
+          conversationId: 'conv-1',
+          direction: 'outbound',
+          agentId: 'agent:alice',
+          peerAgentId: 'agent:bob'
+        }
+      ));
+      await store.add(createMessageRecord(
+        'msg-2',
+        'agent:bob',
+        'agent:alice',
+        'message',
+        2000,
+        'second',
+        { content: 'second' },
+        {
+          conversationId: 'conv-1',
+          direction: 'inbound',
+          agentId: 'agent:alice',
+          peerAgentId: 'agent:bob'
+        }
+      ));
+
+      const conversations = await store.listConversations('agent:alice');
+
+      expect(conversations).toEqual([
+        {
+          conversationId: 'conv-1',
+          peerAgentId: 'agent:bob',
+          lastMessageAt: 2000,
+          messageCount: 2,
+          lastSummary: 'second'
+        }
+      ]);
+    });
+  });
+
   describe('clear', () => {
     it('应该清空所有消息记录', async () => {
       for (let i = 0; i < 10; i++) {

@@ -93,8 +93,23 @@ export async function sendMessage(options: {
   expectReply?: boolean;
   /** RFC 013: Optional reason for not expecting reply (stored in metadata.noReplyReason) */
   reason?: string;
+  /** Phase 1: Conversation ID */
+  conversationId?: string;
+  /** Phase 1: Reply target message ID */
+  replyToMessageId?: string;
 }): Promise<void> {
-  const { agentId, toAgentId, content, type, metadata, noReply, expectReply, reason } = options;
+  const {
+    agentId,
+    toAgentId,
+    content,
+    type,
+    metadata,
+    noReply,
+    expectReply,
+    reason,
+    conversationId,
+    replyToMessageId
+  } = options;
 
   if (!agentId) {
     if (isJsonMode()) {
@@ -184,6 +199,8 @@ export async function sendMessage(options: {
       metadata,
       noReply: actualNoReply,
       noReplyReason: reason,
+      conversationId,
+      replyToMessageId,
     };
 
     const result = await sendRequest(
@@ -194,6 +211,193 @@ export async function sendMessage(options: {
     );
 
     handleSendResult(result, agentId, toAgentId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (isJsonMode()) {
+      outputError(`Cannot connect to Daemon: ${message}`, 'DAEMON_NOT_RUNNING');
+      return;
+    }
+    console.error(`❌ Error: Cannot connect to Daemon: ${message}`);
+    console.error('Please ensure Daemon is running: f2a daemon start');
+    process.exit(1);
+  }
+}
+
+/**
+ * List conversations
+ * f2a message conversations --agent-id <agentId> [--limit <n>]
+ */
+export async function listConversations(options: {
+  agentId: string;
+  limit?: number;
+}): Promise<void> {
+  if (!options.agentId) {
+    if (isJsonMode()) {
+      outputError('Missing required --agent-id parameter', 'MISSING_AGENT_ID');
+    } else {
+      console.error('❌ Error: Missing required --agent-id parameter.');
+      console.error('Usage: f2a message conversations --agent-id <agentId>');
+      process.exit(1);
+    }
+    return;
+  }
+
+  const limit = options.limit || 50;
+
+  try {
+    const result = await sendRequest('GET', `/api/v1/conversations/${options.agentId}?limit=${limit}`);
+
+    if (result.success) {
+      const conversations = (result.conversations || []) as Array<{
+        conversationId: string;
+        peerAgentId: string;
+        lastMessageAt: number;
+        messageCount: number;
+        lastSummary?: string;
+      }>;
+
+      if (isJsonMode()) {
+        outputJson({
+          conversations,
+          count: conversations.length,
+        });
+        return;
+      }
+
+      if (conversations.length === 0) {
+        console.log('📭 No conversations found.');
+        return;
+      }
+
+      console.log(`💬 Conversations (${conversations.length}):`);
+      console.log('');
+      for (const conversation of conversations) {
+        const time = new Date(conversation.lastMessageAt).toLocaleString('en-US');
+        console.log(`${conversation.conversationId} ↔ ${conversation.peerAgentId}`);
+        console.log(`   Messages: ${conversation.messageCount} | Last: ${time}`);
+        if (conversation.lastSummary) {
+          console.log(`   ${conversation.lastSummary}`);
+        }
+        console.log('');
+      }
+    } else {
+      if (isJsonMode()) {
+        outputError(`Failed to list conversations: ${result.error}`, 'CONVERSATIONS_FAILED');
+        return;
+      }
+      console.error(`❌ Error: Failed to list conversations: ${result.error}`);
+      process.exit(1);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (isJsonMode()) {
+      outputError(`Cannot connect to Daemon: ${message}`, 'DAEMON_NOT_RUNNING');
+      return;
+    }
+    console.error(`❌ Error: Cannot connect to Daemon: ${message}`);
+    console.error('Please ensure Daemon is running: f2a daemon start');
+    process.exit(1);
+  }
+}
+
+/**
+ * Get conversation thread
+ * f2a message thread --agent-id <agentId> --conversation-id <conversationId> [--limit <n>]
+ */
+export async function getThread(options: {
+  agentId: string;
+  conversationId: string;
+  limit?: number;
+}): Promise<void> {
+  if (!options.agentId) {
+    if (isJsonMode()) {
+      outputError('Missing required --agent-id parameter', 'MISSING_AGENT_ID');
+    } else {
+      console.error('❌ Error: Missing required --agent-id parameter.');
+      console.error('Usage: f2a message thread --agent-id <agentId> --conversation-id <conversationId>');
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (!options.conversationId) {
+    if (isJsonMode()) {
+      outputError('Missing required --conversation-id parameter', 'MISSING_CONVERSATION_ID');
+    } else {
+      console.error('❌ Error: Missing required --conversation-id parameter.');
+      console.error('Usage: f2a message thread --agent-id <agentId> --conversation-id <conversationId>');
+      process.exit(1);
+    }
+    return;
+  }
+
+  const limit = options.limit || 50;
+
+  try {
+    const result = await sendRequest(
+      'GET',
+      `/api/v1/messages/${options.agentId}?limit=${limit}&conversationId=${options.conversationId}`
+    );
+
+    if (result.success) {
+      const messages = (result.messages || []) as Array<{
+        id?: string;
+        messageId?: string;
+        from?: string;
+        to?: string;
+        fromAgentId?: string;
+        toAgentId?: string;
+        content?: string;
+        payload?: string;
+        type?: string;
+        timestamp?: number;
+        createdAt?: string;
+      }>;
+
+      if (isJsonMode()) {
+        outputJson({
+          messages,
+          count: messages.length,
+        });
+        return;
+      }
+
+      if (messages.length === 0) {
+        console.log('📭 No messages found in this conversation.');
+        return;
+      }
+
+      console.log(`🧵 Thread ${options.conversationId} (${messages.length}):`);
+      console.log('');
+      for (const msg of messages) {
+        const from = msg.fromAgentId || msg.from || 'unknown';
+        const to = msg.toAgentId || msg.to || 'unknown';
+        const time = msg.createdAt
+          ? new Date(msg.createdAt).toLocaleString('en-US')
+          : msg.timestamp
+            ? new Date(msg.timestamp).toLocaleString('en-US')
+            : '';
+        let content = msg.content || '';
+        if (!content && msg.payload) {
+          try {
+            const payload = JSON.parse(msg.payload) as { content?: string };
+            content = payload.content || msg.payload;
+          } catch {
+            content = msg.payload;
+          }
+        }
+        console.log(`[${msg.type || 'message'}] ${from} → ${to} (${time})`);
+        console.log(`   ${content}`);
+        console.log('');
+      }
+    } else {
+      if (isJsonMode()) {
+        outputError(`Failed to get thread: ${result.error}`, 'THREAD_FAILED');
+        return;
+      }
+      console.error(`❌ Error: Failed to get thread: ${result.error}`);
+      process.exit(1);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (isJsonMode()) {

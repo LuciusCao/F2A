@@ -471,6 +471,270 @@ describe('MessageHandler - Error Response Code Field', () => {
       expect(data.success).toBe(true);
       expect(data.messageId).toBeDefined();
     });
+
+    // RFC 013: noReply 默认值测试
+    it('未指定 expectReply 或 noReply 时，应默认 noReply=true（安全默认值）', async () => {
+      const req = createMockReq({
+        method: 'POST',
+        body: {
+          fromAgentId: 'agent:test-peer:abc123',
+          toAgentId: 'agent:test-peer:xyz789',
+          content: 'Hello rfc013',
+          // 未指定 expectReply 或 noReply
+        },
+        headers: { authorization: 'agent-test-token' },
+      });
+      (mockRegistry.get as any).mockReturnValue({ agentId: 'test', name: 'Test' });
+      (mockTokenManager.verifyForAgent as any).mockReturnValue({ valid: true });
+      
+      // 捕获 routeAsync 接收的消息
+      let capturedMessage: any = null;
+      (mockMessageRouter.routeAsync as any).mockImplementation((msg: any) => {
+        capturedMessage = msg;
+        return Promise.resolve(true);
+      });
+      
+      const res = createMockRes();
+
+      await handler.handleSendMessage(req as IncomingMessage, res as ServerResponse);
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      // 验证消息 metadata 中 noReply=true
+      expect(capturedMessage).not.toBeNull();
+      expect(capturedMessage.metadata.noReply).toBe(true);
+    });
+
+    // RFC 013: expectReply=true 设置 noReply=false
+    it('expectReply=true 应设置 noReply=false（期待回复）', async () => {
+      const req = createMockReq({
+        method: 'POST',
+        body: {
+          fromAgentId: 'agent:test-peer:abc123',
+          toAgentId: 'agent:test-peer:xyz789',
+          content: 'Hello expecting reply',
+          expectReply: true,
+        },
+        headers: { authorization: 'agent-test-token' },
+      });
+      (mockRegistry.get as any).mockReturnValue({ agentId: 'test', name: 'Test' });
+      (mockTokenManager.verifyForAgent as any).mockReturnValue({ valid: true });
+      
+      let capturedMessage: any = null;
+      (mockMessageRouter.routeAsync as any).mockImplementation((msg: any) => {
+        capturedMessage = msg;
+        return Promise.resolve(true);
+      });
+      
+      const res = createMockRes();
+
+      await handler.handleSendMessage(req as IncomingMessage, res as ServerResponse);
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      // 验证消息 metadata 中 noReply=false
+      expect(capturedMessage).not.toBeNull();
+      expect(capturedMessage.metadata.noReply).toBe(false);
+    });
+
+    // RFC 013: expectReply=false 设置 noReply=true
+    it('expectReply=false 应设置 noReply=true（明确不期待回复）', async () => {
+      const req = createMockReq({
+        method: 'POST',
+        body: {
+          fromAgentId: 'agent:test-peer:abc123',
+          toAgentId: 'agent:test-peer:xyz789',
+          content: 'Hello not expecting reply',
+          expectReply: false,
+        },
+        headers: { authorization: 'agent-test-token' },
+      });
+      (mockRegistry.get as any).mockReturnValue({ agentId: 'test', name: 'Test' });
+      (mockTokenManager.verifyForAgent as any).mockReturnValue({ valid: true });
+      
+      let capturedMessage: any = null;
+      (mockMessageRouter.routeAsync as any).mockImplementation((msg: any) => {
+        capturedMessage = msg;
+        return Promise.resolve(true);
+      });
+      
+      const res = createMockRes();
+
+      await handler.handleSendMessage(req as IncomingMessage, res as ServerResponse);
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      // 验证消息 metadata 中 noReply=true
+      expect(capturedMessage).not.toBeNull();
+      expect(capturedMessage.metadata.noReply).toBe(true);
+    });
+
+    // RFC 013: noReplyReason 字段传递和存储
+    it('noReplyReason 字段应正确传递到 metadata', async () => {
+      const testReason = '这是一条通知消息，无需回复';
+      const req = createMockReq({
+        method: 'POST',
+        body: {
+          fromAgentId: 'agent:test-peer:abc123',
+          toAgentId: 'agent:test-peer:xyz789',
+          content: 'Notification message',
+          noReplyReason: testReason,
+        },
+        headers: { authorization: 'agent-test-token' },
+      });
+      (mockRegistry.get as any).mockReturnValue({ agentId: 'test', name: 'Test' });
+      (mockTokenManager.verifyForAgent as any).mockReturnValue({ valid: true });
+      
+      let capturedMessage: any = null;
+      (mockMessageRouter.routeAsync as any).mockImplementation((msg: any) => {
+        capturedMessage = msg;
+        return Promise.resolve(true);
+      });
+      
+      const res = createMockRes();
+
+      await handler.handleSendMessage(req as IncomingMessage, res as ServerResponse);
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      // 验证消息 metadata 中包含 noReplyReason
+      expect(capturedMessage).not.toBeNull();
+      expect(capturedMessage.metadata.noReplyReason).toBe(testReason);
+      // 默认 noReply=true
+      expect(capturedMessage.metadata.noReply).toBe(true);
+    });
+
+    // RFC 013: Self-send + expectReply 检测（应返回 400 错误）
+    it('Self-send + expectReply=true 应返回 400 + code: SELF_SEND_EXPECT_REPLY', async () => {
+      const req = createMockReq({
+        method: 'POST',
+        body: {
+          fromAgentId: 'agent:test-peer:abc123',
+          toAgentId: 'agent:test-peer:abc123', // Self-send
+          content: 'Self send test',
+          expectReply: true, // 期待回复 - 应被拒绝
+        },
+        headers: { authorization: 'agent-test-token' },
+      });
+      (mockRegistry.get as any).mockReturnValue({ agentId: 'agent:test-peer:abc123', name: 'Test' });
+      (mockTokenManager.verifyForAgent as any).mockReturnValue({ valid: true });
+      
+      const res = createMockRes();
+
+      await handler.handleSendMessage(req as IncomingMessage, res as ServerResponse);
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(res.writeHead).toHaveBeenCalledWith(400);
+      const data = getResponseData(res);
+      expect(data.success).toBe(false);
+      expect(data.error).toContain('Self-send cannot expect reply');
+      expect(data.code).toBe('SELF_SEND_EXPECT_REPLY');
+    });
+
+    // RFC 013: Self-send 不带 expectReply 可以成功（默认 noReply=true）
+    it('Self-send 不带 expectReply 应成功发送（默认 noReply=true）', async () => {
+      const req = createMockReq({
+        method: 'POST',
+        body: {
+          fromAgentId: 'agent:test-peer:abc123',
+          toAgentId: 'agent:test-peer:abc123', // Self-send
+          content: 'Self loopback test',
+          // 未指定 expectReply，默认 noReply=true
+        },
+        headers: { authorization: 'agent-test-token' },
+      });
+      (mockRegistry.get as any).mockReturnValue({ agentId: 'agent:test-peer:abc123', name: 'Test' });
+      (mockTokenManager.verifyForAgent as any).mockReturnValue({ valid: true });
+      
+      let capturedMessage: any = null;
+      (mockMessageRouter.routeAsync as any).mockImplementation((msg: any) => {
+        capturedMessage = msg;
+        return Promise.resolve(true);
+      });
+      
+      const res = createMockRes();
+
+      await handler.handleSendMessage(req as IncomingMessage, res as ServerResponse);
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      const data = getResponseData(res);
+      expect(data.success).toBe(true);
+      // 验证消息 metadata 中 noReply=true
+      expect(capturedMessage).not.toBeNull();
+      expect(capturedMessage.metadata.noReply).toBe(true);
+      
+      // 验证 logger 记录了 self-send accepted
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('Self-send accepted'),
+        expect.any(Object)
+      );
+    });
+
+    // RFC 013: 向后兼容测试 - 使用旧版 noReply 参数
+    it('向后兼容：指定 noReply=false 应生效（旧版参数）', async () => {
+      const req = createMockReq({
+        method: 'POST',
+        body: {
+          fromAgentId: 'agent:test-peer:abc123',
+          toAgentId: 'agent:test-peer:xyz789',
+          content: 'Legacy noReply test',
+          noReply: false, // 旧版参数
+        },
+        headers: { authorization: 'agent-test-token' },
+      });
+      (mockRegistry.get as any).mockReturnValue({ agentId: 'test', name: 'Test' });
+      (mockTokenManager.verifyForAgent as any).mockReturnValue({ valid: true });
+      
+      let capturedMessage: any = null;
+      (mockMessageRouter.routeAsync as any).mockImplementation((msg: any) => {
+        capturedMessage = msg;
+        return Promise.resolve(true);
+      });
+      
+      const res = createMockRes();
+
+      await handler.handleSendMessage(req as IncomingMessage, res as ServerResponse);
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      // 验证消息 metadata 中 noReply=false
+      expect(capturedMessage).not.toBeNull();
+      expect(capturedMessage.metadata.noReply).toBe(false);
+    });
+
+    // RFC 013: 向后兼容测试 - expectReply 优先级高于 noReply
+    it('expectReply 优先级高于 noReply', async () => {
+      const req = createMockReq({
+        method: 'POST',
+        body: {
+          fromAgentId: 'agent:test-peer:abc123',
+          toAgentId: 'agent:test-peer:xyz789',
+          content: 'Priority test',
+          noReply: true, // 旧版参数设为 true
+          expectReply: true, // 新版参数设为 true，应优先使用
+        },
+        headers: { authorization: 'agent-test-token' },
+      });
+      (mockRegistry.get as any).mockReturnValue({ agentId: 'test', name: 'Test' });
+      (mockTokenManager.verifyForAgent as any).mockReturnValue({ valid: true });
+      
+      let capturedMessage: any = null;
+      (mockMessageRouter.routeAsync as any).mockImplementation((msg: any) => {
+        capturedMessage = msg;
+        return Promise.resolve(true);
+      });
+      
+      const res = createMockRes();
+
+      await handler.handleSendMessage(req as IncomingMessage, res as ServerResponse);
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      expect(res.writeHead).toHaveBeenCalledWith(200);
+      // expectReply=true 应导致 noReply=false（优先级高于旧版 noReply=true）
+      expect(capturedMessage).not.toBeNull();
+      expect(capturedMessage.metadata.noReply).toBe(false);
+    });
   });
 
   describe('GET /api/v1/messages/:agentId - 获取消息队列', () => {

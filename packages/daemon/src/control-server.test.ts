@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ControlServer } from './control-server.js';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { randomUUID } from 'crypto';
+import { MessageStore } from '@f2a/network';
+import { mkdirSync } from 'fs';
 
 // Track mock server instances
 let lastMockServer: any = null;
@@ -203,7 +206,8 @@ const createMockF2A = () => {
     load: vi.fn(),
   };
   
-  const mockMessageRouter = {
+  const messageRouterListeners = new Map<string, Function[]>();
+  const mockMessageRouter: any = {
     route: vi.fn().mockResolvedValue({ success: true }),
     routeLocal: vi.fn().mockResolvedValue({ success: true }),
     routeRemote: vi.fn().mockResolvedValue({ success: true }),
@@ -211,6 +215,18 @@ const createMockF2A = () => {
     getQueue: vi.fn(),
     clearQueue: vi.fn(),
     sendMessage: vi.fn().mockResolvedValue({ success: true }),
+    on: vi.fn((event: string, handler: Function) => {
+      const listeners = messageRouterListeners.get(event) || [];
+      listeners.push(handler);
+      messageRouterListeners.set(event, listeners);
+      return mockMessageRouter;
+    }),
+    emit: vi.fn((event: string, ...args: unknown[]) => {
+      for (const handler of messageRouterListeners.get(event) || []) {
+        handler(...args);
+      }
+      return true;
+    }),
   };
   
   // P0 修复：添加 identityManager mock
@@ -273,6 +289,7 @@ const createMockF2A = () => {
 describe('ControlServer', () => {
   let mockF2A: any;
   let server: ControlServer;
+  let testDataDir: string;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -283,7 +300,9 @@ describe('ControlServer', () => {
     // P0: Reset mockImplementation on registry.get (vi.clearAllMocks doesn't clear mockImplementation)
     mockF2A.getAgentRegistry().get.mockReset();
     mockF2A.getMessageRouter().route.mockReset();
-    server = new ControlServer(mockF2A, 9001, undefined, { dataDir: join(tmpdir(), 'f2a-test') });
+    testDataDir = join(tmpdir(), `f2a-test-${randomUUID()}`);
+    mkdirSync(testDataDir, { recursive: true });
+    server = new ControlServer(mockF2A, 9001, undefined, { dataDir: testDataDir });
   });
 
   afterEach(() => {
@@ -442,6 +461,43 @@ describe('ControlServer', () => {
       expect(Array.isArray(responseData.conversations)).toBe(true);
 
       server.stop();
+    });
+  });
+
+  describe('P2P inbound history', () => {
+    it('should persist message:received events as inbound conversation history', async () => {
+      const router = mockF2A.getMessageRouter();
+
+      router.emit('message:received', {
+        messageId: 'msg-p2p-inbound',
+        fromAgentId: 'agent:remote',
+        toAgentId: 'agent:test-peer:abc123',
+        content: 'hello from p2p',
+        type: 'message',
+        createdAt: new Date('2026-04-25T00:00:00.000Z'),
+        metadata: {
+          conversationId: 'conv-p2p',
+          replyToMessageId: 'msg-parent',
+        },
+      });
+
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      const store = new MessageStore({ dbPath: join(testDataDir, 'messages.db') });
+      const messages = await store.getByConversation('agent:test-peer:abc123', 'conv-p2p', 10);
+      store.close();
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        id: 'msg-p2p-inbound',
+        from: 'agent:remote',
+        to: 'agent:test-peer:abc123',
+        conversationId: 'conv-p2p',
+        replyToMessageId: 'msg-parent',
+        agentId: 'agent:test-peer:abc123',
+        peerAgentId: 'agent:remote',
+        direction: 'inbound',
+      });
     });
   });
 

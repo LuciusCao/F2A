@@ -11,6 +11,7 @@
  */
 
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
+import { randomUUID } from 'crypto';
 import { homedir } from 'os';
 import { join } from 'path';
 import { existsSync, readFileSync } from 'fs';
@@ -21,7 +22,8 @@ import { RateLimiter } from '@f2a/network';
 import { getErrorMessage } from '@f2a/network';
 import { E2EECrypto } from '@f2a/network';
 import { AgentRegistry, MessageRouter } from '@f2a/network';
-import { MessageStore } from '@f2a/network';
+import { MessageStore, createMessageRecord } from '@f2a/network';
+import type { RoutableMessage } from '@f2a/network';
 import { AgentIdentityStore } from './agent-identity-store.js';
 import { AgentTokenManager } from './agent-token-manager.js';
 import { AgentHandler } from './handlers/agent-handler.js';
@@ -191,6 +193,7 @@ export class ControlServer {
       messageStore: this.messageStore,
       logger: this.logger,
     });
+    this.setupInboundMessageHistoryPersistence();
 
     this.systemHandler = new SystemHandler({
       f2a: this.f2a,
@@ -245,6 +248,66 @@ export class ControlServer {
    */
   getMessageRouter(): MessageRouter {
     return this.messageRouter;
+  }
+
+  /**
+   * 订阅 P2P 入站路由事件，将远程消息持久化到本地会话历史。
+   */
+  private setupInboundMessageHistoryPersistence(): void {
+    this.messageRouter.on('message:received', (message) => {
+      void this.persistInboundMessageHistory(message);
+    });
+  }
+
+  /**
+   * 持久化 P2P 入站消息。历史写入失败不影响路由投递。
+   */
+  private async persistInboundMessageHistory(message: RoutableMessage): Promise<void> {
+    if (!message.toAgentId) {
+      return;
+    }
+
+    try {
+      const metadata = message.metadata || {};
+      const conversationId = typeof metadata.conversationId === 'string'
+        ? metadata.conversationId
+        : `conv-${randomUUID()}`;
+      const replyToMessageId = typeof metadata.replyToMessageId === 'string'
+        ? metadata.replyToMessageId
+        : undefined;
+
+      await this.messageStore.add(createMessageRecord(
+        message.messageId,
+        message.fromAgentId,
+        message.toAgentId,
+        message.type,
+        message.createdAt.getTime(),
+        message.content.slice(0, 200),
+        {
+          content: message.content,
+          type: message.type,
+          metadata,
+          messageId: message.messageId,
+        },
+        {
+          conversationId,
+          replyToMessageId,
+          direction: 'inbound',
+          agentId: message.toAgentId,
+          peerAgentId: message.fromAgentId,
+          metadata: {
+            ...metadata,
+            messageId: message.messageId,
+          },
+          createdAt: message.createdAt.getTime(),
+        }
+      ));
+    } catch (error) {
+      this.logger.warn('Failed to persist inbound message history', {
+        messageId: message.messageId,
+        error: getErrorMessage(error),
+      });
+    }
   }
 
   /**

@@ -14,7 +14,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomBytes } from 'crypto';
-import { Logger, getErrorMessage, E2EECrypto, verifySelfSignature, computeAgentId } from '@f2a/network';
+import { Logger, getErrorMessage, E2EECrypto, verifySelfSignature, generateAgentId } from '@f2a/network';
 import type { AgentRegistry, AgentRegistration, MessageRouter, AgentCapability } from '@f2a/network';
 import type { AgentIdentityStore, AgentIdentity } from '../agent-identity-store.js';
 import type { AgentTokenManager } from '../agent-token-manager.js';
@@ -292,7 +292,7 @@ export class AgentHandler {
         }
 
         // RFC011: 验证 selfSignature 是否有效
-        const agentIdFromPublicKey = computeAgentId(data.publicKey);
+        const agentIdFromPublicKey = generateAgentId(data.publicKey);
         const selfSigValid = verifySelfSignature(
           agentIdFromPublicKey,
           data.publicKey,

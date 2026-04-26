@@ -305,6 +305,51 @@ describe('MessageStore', () => {
         }
       ]);
     });
+
+    it('时间戳相同时会话摘要不应因 JOIN 产生重复行', async () => {
+      await store.add(createMessageRecord(
+        'msg-1',
+        'agent:alice',
+        'agent:bob',
+        'message',
+        1000,
+        'first',
+        { content: 'first' },
+        {
+          conversationId: 'conv-1',
+          direction: 'outbound',
+          agentId: 'agent:alice',
+          peerAgentId: 'agent:bob'
+        }
+      ));
+      await store.add(createMessageRecord(
+        'msg-2',
+        'agent:bob',
+        'agent:alice',
+        'message',
+        1000,
+        'second',
+        { content: 'second' },
+        {
+          conversationId: 'conv-1',
+          direction: 'inbound',
+          agentId: 'agent:alice',
+          peerAgentId: 'agent:bob'
+        }
+      ));
+
+      const conversations = await store.listConversations('agent:alice');
+
+      expect(conversations).toEqual([
+        {
+          conversationId: 'conv-1',
+          peerAgentId: 'agent:bob',
+          lastMessageAt: 1000,
+          messageCount: 2,
+          lastSummary: 'second'
+        }
+      ]);
+    });
   });
 
   describe('clear', () => {

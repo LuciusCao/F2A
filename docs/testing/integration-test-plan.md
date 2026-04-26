@@ -31,6 +31,12 @@ Conversation Layer 的最小集成验证应覆盖以下链路：
 
 该测试不启动真实 P2P 网络。它验证的是当前分支最关键的跨模块契约：HTTP API、Agent 注册、Agent Token、MessageRouter 本地投递、MessageStore 持久化，以及 Daemon 重启后的历史读取。
 
+## 历史写入失败语义
+
+`POST /api/v1/messages` 的主职责是投递消息，历史持久化是附加能力。当前约定是：消息已经成功路由，但 SQLite 历史写入失败时，接口仍返回 `success: true`，同时返回 `historyPersisted: false`。
+
+调用方看到 `historyPersisted: false` 时应将消息视为“已投递但不可保证可回放”。CLI 或上层 Agent 应提示用户会话历史可能缺失，并可按业务需要重试发送、记录本地补偿日志，或稍后通过 `GET /api/v1/messages/:agentId?conversationId=...` 确认历史是否可查。
+
 ## 建议测试文件布局
 
 ```text

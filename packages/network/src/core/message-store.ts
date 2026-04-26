@@ -187,6 +187,8 @@ export class MessageStore implements IMessageStore {
       CREATE INDEX IF NOT EXISTS idx_messages_agent_id ON messages(agent_id);
       CREATE INDEX IF NOT EXISTS idx_messages_peer_agent_id ON messages(peer_agent_id);
       CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+      CREATE INDEX IF NOT EXISTS idx_messages_agent_conversation_peer_time
+        ON messages(agent_id, conversation_id, peer_agent_id, timestamp);
     `);
   }
 
@@ -353,28 +355,44 @@ export class MessageStore implements IMessageStore {
    */
   async listConversations(agentId: string, limit: number = 50): Promise<ConversationSummary[]> {
     const stmt = this.db.prepare(`
+      WITH conversation_stats AS (
+        SELECT
+          conversation_id,
+          peer_agent_id,
+          MAX(timestamp) as lastMessageAt,
+          COUNT(*) as messageCount
+        FROM messages
+        WHERE agent_id = ? AND conversation_id IS NOT NULL
+        GROUP BY conversation_id, peer_agent_id
+      ),
+      latest_message AS (
+        SELECT
+          conversation_id,
+          peer_agent_id,
+          summary,
+          ROW_NUMBER() OVER (
+            PARTITION BY conversation_id, peer_agent_id
+            ORDER BY timestamp DESC, rowid DESC
+          ) as rowNumber
+        FROM messages
+        WHERE agent_id = ? AND conversation_id IS NOT NULL
+      )
       SELECT
-        conversation_id as conversationId,
-        peer_agent_id as peerAgentId,
-        MAX(timestamp) as lastMessageAt,
-        COUNT(*) as messageCount,
-        (
-          SELECT m2.summary
-          FROM messages m2
-          WHERE m2.agent_id = messages.agent_id
-            AND m2.conversation_id = messages.conversation_id
-            AND m2.peer_agent_id = messages.peer_agent_id
-          ORDER BY m2.timestamp DESC
-          LIMIT 1
-        ) as lastSummary
-      FROM messages
-      WHERE agent_id = ? AND conversation_id IS NOT NULL
-      GROUP BY conversation_id, peer_agent_id
-      ORDER BY lastMessageAt DESC
+        cs.conversation_id as conversationId,
+        cs.peer_agent_id as peerAgentId,
+        cs.lastMessageAt,
+        cs.messageCount,
+        lm.summary as lastSummary
+      FROM conversation_stats cs
+      LEFT JOIN latest_message lm
+        ON lm.conversation_id = cs.conversation_id
+       AND lm.peer_agent_id = cs.peer_agent_id
+       AND lm.rowNumber = 1
+      ORDER BY cs.lastMessageAt DESC
       LIMIT ?
     `);
 
-    const rows = stmt.all(agentId, limit) as Array<{
+    const rows = stmt.all(agentId, agentId, limit) as Array<{
       conversationId: string;
       peerAgentId: string;
       lastMessageAt: number;

@@ -696,6 +696,340 @@ Requester 发布任务
 
 ---
 
+## 8. 身份局限性分析 (RFC008/011 补充)
+
+> **添加日期**: 2026-04-26
+> **背景**: RFC008 实现后，分析了"纯密码学身份"模型的局限性
+
+### 8.1 当前身份系统的能力
+
+RFC008/011 实现的身份系统（AgentId = 公钥指纹 + Ed25519 密钥对）：
+
+| 能证明 | 不能证明 |
+|--------|---------|
+| ✅ 消息来自持有该私钥的实体 | ❌ Agent 是谁创建的（人类？AI 自动？） |
+| ✅ AgentId 不能被篡改（改了就不是同一个 Agent） | ❌ Agent 的"真实性"（是真实系统还是冒充） |
+| ✅ 操作不可伪造（必须有私钥签名） | ❌ Agent 的社会身份（name 只是 label） |
+
+类比：像 Bitcoin 地址 —— **谁有钱包就是谁**，但不知道"谁是谁"。
+
+### 8.2 身份局限性带来的问题
+
+#### 问题 1: Sybil Attack (女巫攻击) 🔴 严重
+
+```
+攻击者 → 创建 100 个 Agent → 操纵投票/评审/信誉
+```
+
+**影响**：
+- 信誉系统失效（一人刷分）
+- 投票系统失效（一人多票）
+- 评审机制失效（一人控制评审委员会）
+
+**当前状态**：无防护（RFC001 的邀请制方案已搁置）
+
+#### 问题 2: 信誉洗白 🔴 严重
+
+```
+Agent A (信誉 30) → 做坏事 → 丢弃身份
+Agent A → 创建新 Agent B (信誉 70) → 重新开始
+```
+
+**影响**：
+- 无法追溯历史行为
+- 恶意行为无法累积惩罚
+- "换马甲"成本为零
+
+**当前状态**：无防护
+
+#### 问题 3: 冒充攻击 🟡 中等
+
+```
+攻击者创建 Agent → name 写 "OpenClaw 官方" → 欺骗用户
+```
+
+**影响**：
+- 无法验证"官方身份"
+- name 只是 label，没有背书
+
+**当前状态**：无防护
+
+#### 问题 4: 跨网络信誉无法携带 🟡 中等
+
+```
+Agent A 在 Node X 上信誉 80 → 迁移到 Node Y → 信誉从零？
+```
+
+**问题**：
+- 信誉绑定到 Node 还是 Agent？
+- 其他 Node 如何相信这个信誉分？
+
+**当前状态**：未设计
+
+#### 问题 5: Agent 与人类的关系无法证明 🟡 中等
+
+```
+Agent A 发消息 → 接收方不知道：
+  - 这是人类授权的？
+  - 还是自动脚本？
+  - 还是恶意程序？
+```
+
+**影响**：
+- 无法区分"可信 Agent"和"脚本攻击"
+- 没有问责机制
+
+**当前状态**：无防护
+
+### 8.3 问题严重程度汇总
+
+| 问题 | 严重程度 | 是否有方案 | 状态 |
+|------|---------|-----------|------|
+| Sybil Attack | 🔴 严重 | 邀请制背书（§4.4） | RFC001 搁置，未实现 |
+| 信誉洗白 | 🔴 严重 | 无 | 未设计 |
+| 冒充攻击 | 🟡 中等 | Web of Trust | 未设计 |
+| 跨网络信誉 | 🟡 中等 | 可携带信誉 | 未设计 |
+| 人类背书 | 🟡 中等 | 人类签名 Agent | 未设计 |
+
+### 8.4 当前 F2A 的适用范围
+
+基于以上分析，**当前 F2A 身份系统**的适用范围：
+
+| 场景 | 适用性 | 说明 |
+|------|--------|------|
+| 私有网络 / 小规模协作 | ✅ 适用 | 参与者已知，信任关系已建立 |
+| 实验环境 / 研究原型 | ✅ 适用 | 不涉及真实经济/信誉 |
+| 企业内部 Agent 网络 | ✅ 适用 | 可通过企业身份系统背书 |
+| 公网 / 大规模网络 | ⚠️ 不适用 | 需要 Sybil 防护、信誉系统 |
+| 经济系统 / 真实交易 | ❌ 不适用 | 需要问责机制、法律追溯 |
+
+**结论**：RFC008/011 的身份系统是**密码学基础层**，适用于可信环境。
+若要扩展到公网/经济场景，需要额外的**信任层**（邀请制、Web of Trust、人类背书等）。
+
+### 8.5 可能的解决方案
+
+> **状态**: 设计草案，未实现
+> **创建日期**: 2026-04-26
+
+#### 方案概览：分层信任模型
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 0: 密码学身份 (RFC008/011) ✅ 已实现                  │
+│  AgentId = 公钥指纹 + 私钥签名                                │
+│  → 证明：操作来自持有密钥的实体                               │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 1: Node 背书 (已有 nodeSignature)                     │
+│  Node 签发 Agent → 证明 Agent 运行在该 Node 上               │
+│  → 防护：一个 Node 只能有 N 个 Agent（Sybil 限制）           │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 2: Agent 信任网络 (新设计)                            │
+│  高信誉 Agent 邀请新 Agent → 连带责任                        │
+│  → 防护：Sybil、信誉洗白                                     │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 3: 人类/实体背书 (可选)                               │
+│  人类用自己的密钥签名 Agent → 证明 Agent 属于谁              │
+│  → 防护：冒充攻击、问责                                      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 方案 1: Sybil 防护 - Node 级限制
+
+**优先级**: P0 (低复杂度)
+**解决问题**: Sybil Attack（部分防护）
+
+**原理**：一个物理 Node 只能注册有限数量的 Agent
+
+```typescript
+// 在 AgentRegistry 中添加限制
+const SYBIL_LIMITS = {
+  maxAgentsPerNode: 10,        // 一个 Node 最多 10 个 Agent
+  requireNodeSignature: true,  // 必须有 nodeSignature（已有）
+};
+
+// 注册时验证
+function validateAgentRegistration(nodeId: string, existingCount: number): boolean {
+  return existingCount < SYBIL_LIMITS.maxAgentsPerNode;
+}
+```
+
+**效果**：
+- 创建 Agent 需要 Node 签名（已有机制）
+- Node 有签名配额限制
+- 攻击者需要控制更多 Node 才能创建更多 Agent
+
+**优点**：简单，基于现有机制，改动小
+**缺点**：攻击者可以创建更多 Node（需要 Layer 2 配合）
+
+---
+
+#### 方案 2: 信誉洗白防护 - Agent 创建成本
+
+**优先级**: P1 (中等复杂度)
+**解决问题**: Sybil Attack、信誉洗白
+
+**原理**：创建新 Agent 需要消耗信誉或需要邀请
+
+```typescript
+interface AgentCreationRequest {
+  creatorAgentId?: string;       // 创建者 AgentId（如果有）
+  invitationSignature?: string;  // 邀请者签名
+  publicKey: string;
+  name: string;
+}
+
+interface AgentCreationRules {
+  // 方案 A: 自创建（无邀请者）
+  selfCreated: {
+    initialReputation: 30,       // 初始信誉低（受限者级别）
+    maxPerNode: 3,               // 每个 Node 最多自创建 3 个
+  };
+  
+  // 方案 B: 被邀请（有邀请者）
+  invited: {
+    minInviterReputation: 60,    // 邀请者信誉 ≥ 60
+    initialReputationMultiplier: 0.5,  // 初始信誉 = 邀请者 × 0.5
+    maxInvitations: 5,           // 每个 Agent 最多邀请 5 个
+    jointLiability: true,        // 连带责任
+    jointPenaltyRatio: 0.3,      // 邀请者承担 30% 惩罚
+  };
+}
+```
+
+**效果**：
+- 自创建 Agent 初始信誉 30（受限者级别，无法参与评审）
+- 被邀请 Agent 初始信誉更高，但邀请者承担连带责任
+- "换马甲"后信誉从低开始，无法立即获得高权限
+- 作恶后邀请者也受罚，增加邀请谨慎度
+
+**优点**：防护 Sybil 和信誉洗白，建立信任网络
+**缺点**：需要维护邀请关系和连带责任机制
+
+---
+
+#### 方案 3: 冒充防护 - 背书签名链
+
+**优先级**: P2 (中等复杂度)
+**解决问题**: 冒充攻击
+
+**原理**：Agent 可以被其他实体签名背书，证明其身份声明
+
+```typescript
+interface Endorsement {
+  agentId: string;
+  endorserId: string;           // 背书者 ID
+  endorserType: 'agent' | 'human' | 'organization';
+  endorserPublicKey: string;
+  endorsementSignature: string; // 背书者签名
+  claim: string;                // 背书声明（如 "OpenClaw 官方 Agent"）
+  timestamp: number;
+  expiresAt?: number;           // 可选过期时间
+}
+
+// 示例：OpenClaw 官方背书
+const openclawEndorsement: Endorsement = {
+  agentId: "agent:a3b2c1d4...",
+  endorserId: "organization:openclaw",
+  endorserType: "organization",
+  claim: "OpenClaw Official Agent",
+  endorsementSignature: "...",
+};
+```
+
+**验证流程**：
+```
+1. Agent 声称自己是 "OpenClaw 官方"
+2. Agent 提供背书签名（OpenClaw 组织签名）
+3. 接收方验证：
+   - 背书者公钥是否属于 OpenClaw
+   - 签名是否有效
+   - 声明是否匹配
+```
+
+**效果**：
+- 官方/组织可以签名背书 Agent
+- 用户验证背书确认身份真实性
+- name 只是 label，背书才是证明
+
+**优点**：不改变现有身份系统，可选验证
+**缺点**：需要维护背书者公钥信任列表
+
+---
+
+#### 方案 4: 人类背书 - 可选层
+
+**优先级**: P3 (高复杂度)
+**解决问题**: Agent 与人类关系、问责机制
+
+**原理**：人类用自己的密钥签名 Agent，证明 Agent 属于谁
+
+```typescript
+interface HumanEndorsement {
+  agentId: string;
+  humanPublicKey: string;       // 人类的 Ed25519 公钥
+  humanSignature: string;       // 人类签名 Agent 公钥
+  relationship: 'owner' | 'creator' | 'authorized';
+  
+  // 可选：社交账号绑定（增加可信度）
+  socialBinding?: {
+    platform: 'twitter' | 'github' | 'email' | 'domain';
+    handle: string;
+    verificationProof: string;  // 平台验证证明
+  };
+  
+  timestamp: number;
+}
+```
+
+**使用场景**：
+```
+人类 A → 创建 Agent → 签名背书 → Agent 行为绑定到人类 A
+→ Agent 作恶 → 追溯到人类 A → 问责
+```
+
+**社交绑定验证**：
+```
+1. 人类声称自己 Twitter 是 @alice
+2. 人类在 Twitter 发一条签名消息作为证明
+3. 验证者检查 Twitter 消息 + 签名 → 确认绑定
+```
+
+**效果**：
+- Agent 可以证明"我属于某个人类"
+- 人类承担 Agent 行为的责任
+- 可追溯、可问责
+
+**优点**：建立 Agent 与人类的关系，支持问责
+**缺点**：复杂度高，涉及社交平台验证、隐私问题
+
+---
+
+#### 方案优先级汇总
+
+| 优先级 | 方案 | 解决的问题 | 复杂度 | 状态 |
+|--------|------|-----------|--------|------|
+| **P0** | Node 级 Sybil 限制 | Sybil（部分） | 低 | 草案 |
+| **P1** | Agent 创建成本（邀请制） | Sybil、信誉洗白 | 中 | 草案 |
+| **P2** | 背书签名链 | 冒充攻击 | 中 | 草案 |
+| **P3** | 人类背书（可选） | 问责、人类关系 | 高 | 草案 |
+
+#### 实施建议
+
+**阶段 1**（最小改动）：实现 P0
+- 在 AgentRegistry 添加 `maxAgentsPerNode` 限制
+- 注册时验证 Node 配额
+
+**阶段 2**（核心防护）：实现 P1
+- 添加邀请制机制
+- 维护邀请关系表
+- 实现连带责任惩罚
+
+**阶段 3**（可选增强）：根据需求选择 P2/P3
+- 如果需要官方身份验证 → 实现 P2
+- 如果需要问责机制 → 实现 P3
+
+---
+
 ## 参考资料
 
 - [Ethereum Reputation Systems](https://ethresear.ch/t/reputation-systems/5193)
@@ -711,3 +1045,5 @@ Requester 发布任务
 | 2026-03-04 | 0.1 | 初始草案 |
 | 2026-03-04 | 0.2 | 添加安全机制：链式签名、邀请制、挑战机制 |
 | 2026-03-04 | 0.3 | 添加最小网络模型（3节点）、信誉衰减、动态评审人数 |
+| 2026-04-26 | 0.4 | 添加 §8 身份局限性分析，明确当前设计的适用范围和限制 |
+| 2026-04-26 | 0.5 | 添加 §8.5 可能的解决方案（分层信任模型、P0-P3 四个方案草案） |

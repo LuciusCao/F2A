@@ -679,8 +679,8 @@ export class MessageRouter extends EventEmitter<MessageRouterEvents> {
 
     if (targetAgent) {
       // 目标 Agent 在本地
-      // 使用 routeAsync 进行完整路由(包含 webhook)
-      const routed = await this.routeAsync(routableMessage);
+      // 入站消息的发送方通常是远程 Agent，不要求其在本地注册表存在。
+      const routed = await this.routeIncomingToLocalAgent(routableMessage, targetAgent);
       if (routed) {
         this.logger.info('Incoming message routed to local Agent', {
           messageId: routableMessage.messageId,
@@ -708,6 +708,77 @@ export class MessageRouter extends EventEmitter<MessageRouterEvents> {
         agentId: message.toAgentId,
       });
     }
+  }
+
+  /**
+   * 路由远程入站消息到本地 Agent。
+   *
+   * 与 routeAsync() 不同，这里不校验 fromAgentId 是否在本地注册表中；
+   * 远程发送方身份应由 P2P/AgentId 验证链路负责。
+   */
+  private async routeIncomingToLocalAgent(
+    message: RoutableMessage,
+    targetAgent: AgentRegistration
+  ): Promise<boolean> {
+    const { toAgentId, fromAgentId } = message;
+
+    if (!toAgentId) {
+      return false;
+    }
+
+    if (targetAgent.onMessage) {
+      try {
+        targetAgent.onMessage({
+          messageId: message.messageId,
+          fromAgentId: message.fromAgentId,
+          toAgentId,
+          content: message.content,
+          type: message.type,
+          createdAt: message.createdAt,
+        });
+        this.logger.debug('Incoming message delivered via local callback', {
+          messageId: message.messageId,
+          toAgentId,
+          fromAgentId,
+        });
+        return true;
+      } catch (err) {
+        this.logger.error('Incoming local callback error', {
+          toAgentId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    if (targetAgent.webhook?.url) {
+      const webhookResult = await this.webhookPusher.forwardToAgentWebhook(message, targetAgent);
+      if (webhookResult.success) {
+        this.logger.info('Incoming message forwarded to Agent webhook', {
+          messageId: message.messageId,
+          toAgentId,
+          webhookUrl: targetAgent.webhook.url,
+        });
+        return true;
+      }
+      this.logger.warn('Incoming Agent webhook forwarding failed, falling back to queue', {
+        toAgentId,
+        error: webhookResult.error,
+      });
+    }
+
+    const queue = this.queueManager.getQueue(toAgentId);
+    if (!queue) {
+      this.logger.warn('Incoming target agent queue not found', { toAgentId });
+      return false;
+    }
+
+    this.queueManager.enqueue(queue, message);
+    this.logger.debug('Incoming message routed to queue', {
+      messageId: message.messageId,
+      toAgentId,
+      fromAgentId,
+    });
+    return true;
   }
 
   /**

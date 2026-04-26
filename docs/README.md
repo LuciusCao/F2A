@@ -18,6 +18,7 @@
 | **协议规格** | [消息协议](protocols/message.md) | 两层协议设计、消息类型定义 |
 | | [mDNS 发现](protocols/mdns.md) | mDNS/DNS-SD 自动发现规格 |
 | **设计参考** | [A2A 借鉴](design/a2a-lessons.md) | Google A2A 协议借鉴思路 |
+| | [Agent Social Roadmap](design/agent-social-roadmap.md) | F2A Social Layer 演进路线 |
 | **RFC** | [RFC 目录](rfcs/) | 规范提案文档 |
 
 ---
@@ -70,7 +71,8 @@ docs/
 │   ├── message.md               # 消息协议
 │   └── mdns.md                  # mDNS 发现协议
 ├── design/                      # 设计参考
-│   └── a2a-lessons.md           # A2A 协议借鉴
+│   ├── a2a-lessons.md           # A2A 协议借鉴
+│   └── agent-social-roadmap.md  # Agent Social Layer 演进路线
 ├── rfcs/                        # RFC 规范文档
 │   ├── 001-reputation-system.md
 │   ├── 002-cli-agent-architecture.md

@@ -29,7 +29,37 @@ export interface MessageRecord {
   /** 消息摘要（可选） */
   summary?: string;
   /** JSON 序列化的 payload（可选） */
-  payload?: string;
+  payload?: string | null;
+  /** 会话 ID（可选） */
+  conversationId?: string;
+  /** 回复的消息 ID（可选） */
+  replyToMessageId?: string;
+  /** 本地视角下的消息方向 */
+  direction?: 'inbound' | 'outbound' | 'local';
+  /** 本地视角 Agent ID */
+  agentId?: string;
+  /** 对方 Agent ID */
+  peerAgentId?: string;
+  /** JSON 序列化的 metadata（可选） */
+  metadata?: string;
+  /** 创建时间（毫秒，兼容 timestamp） */
+  createdAt?: number;
+}
+
+/**
+ * 会话摘要
+ */
+export interface ConversationSummary {
+  /** 会话 ID */
+  conversationId: string;
+  /** 对方 Agent ID */
+  peerAgentId: string;
+  /** 最后一条消息时间 */
+  lastMessageAt: number;
+  /** 消息数量 */
+  messageCount: number;
+  /** 最后一条消息摘要 */
+  lastSummary?: string;
 }
 
 /**
@@ -42,6 +72,12 @@ export interface IMessageStore {
   getRecent(limit?: number): Promise<MessageRecord[]>;
   /** 获取与特定 Agent 相关的消息记录 */
   getByAgent(agentId: string, limit?: number): Promise<MessageRecord[]>;
+  /** 获取指定会话的消息记录 */
+  getByConversation(agentId: string, conversationId: string, limit?: number): Promise<MessageRecord[]>;
+  /** 获取指定消息 */
+  getByMessageId(messageId: string): Promise<MessageRecord | undefined>;
+  /** 获取 Agent 的会话摘要列表 */
+  listConversations(agentId: string, limit?: number): Promise<ConversationSummary[]>;
   /** 清空所有消息记录 */
   clear(): Promise<void>;
   /** 关闭数据库连接 */
@@ -137,6 +173,59 @@ export class MessageStore implements IMessageStore {
       CREATE INDEX IF NOT EXISTS idx_messages_to ON messages("to");
       CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(type);
     `);
+
+    this.ensureColumn('messages', 'conversation_id', 'TEXT');
+    this.ensureColumn('messages', 'reply_to_message_id', 'TEXT');
+    this.ensureColumn('messages', 'direction', 'TEXT');
+    this.ensureColumn('messages', 'agent_id', 'TEXT');
+    this.ensureColumn('messages', 'peer_agent_id', 'TEXT');
+    this.ensureColumn('messages', 'metadata', 'TEXT');
+    this.ensureColumn('messages', 'created_at', 'INTEGER');
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
+      CREATE INDEX IF NOT EXISTS idx_messages_agent_id ON messages(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_messages_peer_agent_id ON messages(peer_agent_id);
+      CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+      CREATE INDEX IF NOT EXISTS idx_messages_agent_conversation_peer_time
+        ON messages(agent_id, conversation_id, peer_agent_id, timestamp);
+    `);
+  }
+
+  /**
+   * 幂等补充列，用于兼容旧 messages.db
+   */
+  private ensureColumn(tableName: string, columnName: string, columnType: string): void {
+    const columns = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+    if (columns.some(column => column.name === columnName)) {
+      return;
+    }
+    this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnType}`);
+  }
+
+  /**
+   * 将数据库行转换为 MessageRecord，避免旧调用方看到 null 扩展字段
+   */
+  private rowToRecord(row: Record<string, unknown>): MessageRecord {
+    const record: MessageRecord = {
+      id: row.id as string,
+      from: row.from as string,
+      to: row.to as string,
+      type: row.type as string,
+      timestamp: row.timestamp as number,
+    };
+
+    if (row.summary !== null && row.summary !== undefined) record.summary = row.summary as string;
+    if (row.payload !== undefined) record.payload = row.payload as string | null;
+    if (row.conversation_id !== null && row.conversation_id !== undefined) record.conversationId = row.conversation_id as string;
+    if (row.reply_to_message_id !== null && row.reply_to_message_id !== undefined) record.replyToMessageId = row.reply_to_message_id as string;
+    if (row.direction !== null && row.direction !== undefined) record.direction = row.direction as MessageRecord['direction'];
+    if (row.agent_id !== null && row.agent_id !== undefined) record.agentId = row.agent_id as string;
+    if (row.peer_agent_id !== null && row.peer_agent_id !== undefined) record.peerAgentId = row.peer_agent_id as string;
+    if (row.metadata !== null && row.metadata !== undefined) record.metadata = row.metadata as string;
+    if (row.created_at !== null && row.created_at !== undefined) record.createdAt = row.created_at as number;
+
+    return record;
   }
 
   /**
@@ -145,8 +234,12 @@ export class MessageStore implements IMessageStore {
    */
   async add(message: MessageRecord): Promise<void> {
     const stmt = this.db.prepare(`
-      INSERT INTO messages (id, "from", "to", type, timestamp, summary, payload)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (
+        id, "from", "to", type, timestamp, summary, payload,
+        conversation_id, reply_to_message_id, direction, agent_id, peer_agent_id,
+        metadata, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -156,7 +249,14 @@ export class MessageStore implements IMessageStore {
       message.type,
       message.timestamp,
       message.summary || null,
-      message.payload || null
+      message.payload || null,
+      message.conversationId || null,
+      message.replyToMessageId || null,
+      message.direction || null,
+      message.agentId || null,
+      message.peerAgentId || null,
+      message.metadata || null,
+      message.createdAt || message.timestamp
     );
 
     // 检查是否需要清理
@@ -181,8 +281,8 @@ export class MessageStore implements IMessageStore {
       LIMIT ?
     `);
 
-    const rows = stmt.all(limit) as MessageRecord[];
-    return rows;
+    const rows = stmt.all(limit) as Array<Record<string, unknown>>;
+    return rows.map(row => this.rowToRecord(row));
   }
 
   /**
@@ -192,15 +292,121 @@ export class MessageStore implements IMessageStore {
    */
   async getByAgent(agentId: string, limit: number = 100): Promise<MessageRecord[]> {
     const stmt = this.db.prepare(`
-      SELECT id, "from", "to", type, timestamp, summary, payload
+      SELECT id, "from", "to", type, timestamp, summary, payload,
+             conversation_id, reply_to_message_id, direction, agent_id,
+             peer_agent_id, metadata, created_at
       FROM messages
-      WHERE "from" = ? OR "to" = ?
+      WHERE "from" = ? OR "to" = ? OR agent_id = ?
       ORDER BY timestamp DESC
       LIMIT ?
     `);
 
-    const rows = stmt.all(agentId, agentId, limit) as MessageRecord[];
-    return rows;
+    const rows = stmt.all(agentId, agentId, agentId, limit) as Array<Record<string, unknown>>;
+    return rows.map(row => this.rowToRecord(row));
+  }
+
+  /**
+   * 获取指定会话的消息记录
+   * @param agentId 本地视角 Agent ID
+   * @param conversationId 会话 ID
+   * @param limit 限制数量（默认 100）
+   */
+  async getByConversation(
+    agentId: string,
+    conversationId: string,
+    limit: number = 100
+  ): Promise<MessageRecord[]> {
+    const stmt = this.db.prepare(`
+      SELECT id, "from", "to", type, timestamp, summary, payload,
+             conversation_id, reply_to_message_id, direction, agent_id,
+             peer_agent_id, metadata, created_at
+      FROM messages
+      WHERE agent_id = ? AND conversation_id = ?
+      ORDER BY timestamp ASC
+      LIMIT ?
+    `);
+
+    const rows = stmt.all(agentId, conversationId, limit) as Array<Record<string, unknown>>;
+    return rows.map(row => this.rowToRecord(row));
+  }
+
+  /**
+   * 获取指定消息
+   * @param messageId 消息 ID
+   */
+  async getByMessageId(messageId: string): Promise<MessageRecord | undefined> {
+    const stmt = this.db.prepare(`
+      SELECT id, "from", "to", type, timestamp, summary, payload,
+             conversation_id, reply_to_message_id, direction, agent_id,
+             peer_agent_id, metadata, created_at
+      FROM messages
+      WHERE id = ?
+      LIMIT 1
+    `);
+
+    const row = stmt.get(messageId) as Record<string, unknown> | undefined;
+    return row ? this.rowToRecord(row) : undefined;
+  }
+
+  /**
+   * 获取 Agent 的会话摘要列表
+   * @param agentId 本地视角 Agent ID
+   * @param limit 限制数量（默认 50）
+   */
+  async listConversations(agentId: string, limit: number = 50): Promise<ConversationSummary[]> {
+    const stmt = this.db.prepare(`
+      WITH conversation_stats AS (
+        SELECT
+          conversation_id,
+          peer_agent_id,
+          MAX(timestamp) as lastMessageAt,
+          COUNT(*) as messageCount
+        FROM messages
+        WHERE agent_id = ? AND conversation_id IS NOT NULL
+        GROUP BY conversation_id, peer_agent_id
+      ),
+      latest_message AS (
+        SELECT
+          conversation_id,
+          peer_agent_id,
+          summary,
+          ROW_NUMBER() OVER (
+            PARTITION BY conversation_id, peer_agent_id
+            ORDER BY timestamp DESC, rowid DESC
+          ) as rowNumber
+        FROM messages
+        WHERE agent_id = ? AND conversation_id IS NOT NULL
+      )
+      SELECT
+        cs.conversation_id as conversationId,
+        cs.peer_agent_id as peerAgentId,
+        cs.lastMessageAt,
+        cs.messageCount,
+        lm.summary as lastSummary
+      FROM conversation_stats cs
+      LEFT JOIN latest_message lm
+        ON lm.conversation_id = cs.conversation_id
+       AND lm.peer_agent_id = cs.peer_agent_id
+       AND lm.rowNumber = 1
+      ORDER BY cs.lastMessageAt DESC
+      LIMIT ?
+    `);
+
+    const rows = stmt.all(agentId, agentId, limit) as Array<{
+      conversationId: string;
+      peerAgentId: string;
+      lastMessageAt: number;
+      messageCount: number;
+      lastSummary: string | null;
+    }>;
+
+    return rows.map(row => ({
+      conversationId: row.conversationId,
+      peerAgentId: row.peerAgentId,
+      lastMessageAt: row.lastMessageAt,
+      messageCount: row.messageCount,
+      ...(row.lastSummary !== null ? { lastSummary: row.lastSummary } : {})
+    }));
   }
 
   /**
@@ -314,7 +520,16 @@ export function createMessageRecord(
   type: string,
   timestamp: number,
   summary?: string,
-  payload?: unknown
+  payload?: unknown,
+  options?: {
+    conversationId?: string;
+    replyToMessageId?: string;
+    direction?: 'inbound' | 'outbound' | 'local';
+    agentId?: string;
+    peerAgentId?: string;
+    metadata?: unknown;
+    createdAt?: number;
+  }
 ): MessageRecord {
   return {
     id,
@@ -323,6 +538,13 @@ export function createMessageRecord(
     type,
     timestamp,
     summary,
-    payload: payload ? JSON.stringify(payload) : undefined
+    payload: payload ? JSON.stringify(payload) : undefined,
+    conversationId: options?.conversationId,
+    replyToMessageId: options?.replyToMessageId,
+    direction: options?.direction,
+    agentId: options?.agentId,
+    peerAgentId: options?.peerAgentId,
+    metadata: options?.metadata ? JSON.stringify(options.metadata) : undefined,
+    createdAt: options?.createdAt
   };
 }

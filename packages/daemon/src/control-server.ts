@@ -11,6 +11,7 @@
  */
 
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
+import { randomUUID } from 'crypto';
 import { homedir } from 'os';
 import { join } from 'path';
 import { existsSync, readFileSync } from 'fs';
@@ -21,6 +22,8 @@ import { RateLimiter } from '@f2a/network';
 import { getErrorMessage } from '@f2a/network';
 import { E2EECrypto } from '@f2a/network';
 import { AgentRegistry, MessageRouter } from '@f2a/network';
+import { MessageStore, createMessageRecord } from '@f2a/network';
+import type { RoutableMessage } from '@f2a/network';
 import { AgentIdentityStore } from './agent-identity-store.js';
 import { AgentTokenManager } from './agent-token-manager.js';
 import { AgentHandler } from './handlers/agent-handler.js';
@@ -100,6 +103,7 @@ export class ControlServer {
   // Phase 1: Agent 注册表和消息路由器
   private agentRegistry: AgentRegistry;
   private messageRouter: MessageRouter;
+  private messageStore: MessageStore;
   // Phase 6: Agent Identity Manager
   private identityStore: AgentIdentityStore;
   // Phase 7: E2EECrypto 用于签名验证
@@ -137,6 +141,9 @@ export class ControlServer {
     // 避免创建独立实例导致数据不一致
     this.agentRegistry = f2a.getAgentRegistry();
     this.messageRouter = f2a.getMessageRouter();
+    this.messageStore = new MessageStore({
+      dbPath: join(this.dataDir, 'messages.db'),
+    });
     
     // Phase 6: 初始化 Identity Manager（daemon 特有的 Agent 身份持久化）
     this.identityStore = new AgentIdentityStore(this.dataDir);
@@ -183,8 +190,10 @@ export class ControlServer {
       agentRegistry: this.agentRegistry,
       f2a: this.f2a,
       agentTokenManager: this.agentTokenManager,
+      messageStore: this.messageStore,
       logger: this.logger,
     });
+    this.setupInboundMessageHistoryPersistence();
 
     this.systemHandler = new SystemHandler({
       f2a: this.f2a,
@@ -242,6 +251,66 @@ export class ControlServer {
   }
 
   /**
+   * 订阅 P2P 入站路由事件，将远程消息持久化到本地会话历史。
+   */
+  private setupInboundMessageHistoryPersistence(): void {
+    this.messageRouter.on('message:received', (message) => {
+      void this.persistInboundMessageHistory(message);
+    });
+  }
+
+  /**
+   * 持久化 P2P 入站消息。历史写入失败不影响路由投递。
+   */
+  private async persistInboundMessageHistory(message: RoutableMessage): Promise<void> {
+    if (!message.toAgentId) {
+      return;
+    }
+
+    try {
+      const metadata = message.metadata || {};
+      const conversationId = typeof metadata.conversationId === 'string'
+        ? metadata.conversationId
+        : `conv-${randomUUID()}`;
+      const replyToMessageId = typeof metadata.replyToMessageId === 'string'
+        ? metadata.replyToMessageId
+        : undefined;
+
+      await this.messageStore.add(createMessageRecord(
+        message.messageId,
+        message.fromAgentId,
+        message.toAgentId,
+        message.type,
+        message.createdAt.getTime(),
+        message.content.slice(0, 200),
+        {
+          content: message.content,
+          type: message.type,
+          metadata,
+          messageId: message.messageId,
+        },
+        {
+          conversationId,
+          replyToMessageId,
+          direction: 'inbound',
+          agentId: message.toAgentId,
+          peerAgentId: message.fromAgentId,
+          metadata: {
+            ...metadata,
+            messageId: message.messageId,
+          },
+          createdAt: message.createdAt.getTime(),
+        }
+      ));
+    } catch (error) {
+      this.logger.warn('Failed to persist inbound message history', {
+        messageId: message.messageId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  /**
    * 启动控制服务器
    */
   start(): Promise<void> {
@@ -277,6 +346,7 @@ export class ControlServer {
     }
     // 清理速率限制器资源
     this.rateLimiter.stop();
+    this.messageStore.close();
     this.logger.info('Stopped');
   }
 
@@ -405,6 +475,13 @@ export class ControlServer {
     const getMessagesMatch = req.url?.match(/^\/api\/v1\/messages\/([^\/?]+)(?:\?|$)/);
     if (req.method === 'GET' && getMessagesMatch) {
       this.messageHandler.handleGetMessages(decodeURIComponent(getMessagesMatch[1]), req, res);
+      return;
+    }
+
+    // GET /api/v1/conversations/:agentId - 获取 Agent 的会话摘要列表
+    const getConversationsMatch = req.url?.match(/^\/api\/v1\/conversations\/([^\/?]+)(?:\?|$)/);
+    if (req.method === 'GET' && getConversationsMatch) {
+      this.messageHandler.handleListConversations(decodeURIComponent(getConversationsMatch[1]), req, res);
       return;
     }
     

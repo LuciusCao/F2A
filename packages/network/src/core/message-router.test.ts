@@ -315,6 +315,25 @@ describe('MessageRouter', () => {
       expect(queue?.messages[0].content).toBe('incoming message');
     });
 
+    it('should route incoming message when remote sender is not locally registered', async () => {
+      agentRegistry.delete('agent:remote');
+
+      const payload = {
+        messageId: 'msg-remote-unregistered',
+        fromAgentId: 'agent:remote',
+        toAgentId: 'agent:receiver',
+        content: 'remote sender should not need local registration',
+        type: 'message',
+      };
+
+      await router.routeIncoming(payload, '12D3KooWRemotePeer');
+
+      const queue = router.getQueue('agent:receiver');
+      expect(queue?.messages.length).toBe(1);
+      expect(queue?.messages[0].messageId).toBe('msg-remote-unregistered');
+      expect(queue?.messages[0].fromAgentId).toBe('agent:remote');
+    });
+
     it('should emit message:received event on success', async () => {
       const handler = vi.fn();
       router.on('message:received', handler);

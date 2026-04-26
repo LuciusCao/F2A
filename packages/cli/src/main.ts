@@ -23,7 +23,7 @@ import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { listAgents, registerAgent, unregisterAgent, updateAgent } from './agents.js';
-import { sendMessage, getMessages, clearMessages } from './messages.js';
+import { sendMessage, getMessages, clearMessages, listConversations, getThread } from './messages.js';
 import { startForeground, startBackground, stopDaemon, restartDaemon, showStatus } from './daemon.js';
 import { showIdentityStatus, exportIdentity, importIdentityInternal } from './identity.js';
 import { cliInitAgent, showAgentStatus } from './init.js';
@@ -60,7 +60,7 @@ Commands:
   node       P2P node management (init, status, peers, health, discover)
 
   agent      Agent management (init, register, list, unregister, status, update)
-  message    Message management (send, list, clear)
+  message    Message management (send, list, conversations, thread, clear)
   daemon     Daemon management (start, stop, restart, status, foreground)
   identity   Identity management (status, export, import)
 
@@ -144,18 +144,26 @@ Usage: f2a message <subcommand> [options]
 
 Subcommands:
   send              Send message to Agent
-                    f2a message send --agent-id <agentId> --to <agent_id> [--type <type>] [--expect-reply] [--reason <text>] "content"
+                    f2a message send --agent-id <agentId> --to <agent_id> [--type <type>] [--expect-reply] [--reason <text>] [--conversation-id <id>] [--reply-to <messageId>] "content"
                     --agent-id        Agent ID (required)
                     --to              Recipient Agent ID (optional, broadcasts if omitted)
                     --type            Message type: message, task_request, task_response, announcement, claim
                     --expect-reply    RFC 013: Explicitly declare expecting a reply (sets noReply=false)
                     --reason          RFC 013: Reason for not expecting reply (optional, stored in metadata.noReplyReason)
+                    --conversation-id Phase 1: Continue an existing conversation
+                    --reply-to        Phase 1: Reply to a specific message ID
                     --no-reply        RFC 013: Deprecated, kept for compatibility (no effect, defaults to noReply=true)
 
   list              View message queue
                     f2a message list --agent-id <agentId> [--unread] [--limit <n>]
                     --unread  Show only unread messages
                     --limit   Limit count
+
+  conversations     View conversation list
+                    f2a message conversations --agent-id <agentId> [--limit <n>]
+
+  thread            View one conversation thread
+                    f2a message thread --agent-id <agentId> --conversation-id <conversationId> [--limit <n>]
 
   clear             Clear messages
                     f2a message clear --agent-id <agentId>
@@ -165,6 +173,8 @@ Examples:
   f2a message send --agent-id agent:abc123... "Broadcast message"
   f2a message send --agent-id agent:abc123... --to agent:xyz789... --expect-reply "Task request (expecting reply)"
   f2a message send --agent-id agent:abc123... --to agent:xyz789... --reason "Task completed" "Result notification"
+  f2a message conversations --agent-id agent:abc123...
+  f2a message thread --agent-id agent:abc123... --conversation-id conv-abc...
   # Note: --no-reply is deprecated, messages default to noReply=true
 `);
 }
@@ -470,6 +480,9 @@ async function handleMessageCommand(subArgs: string[]): Promise<void> {
         expectReply: sendOpts['expect-reply'] as boolean | undefined,
         // RFC 013: --reason flag (optional reason for noReply)
         reason: sendOpts.reason as string | undefined,
+        // Phase 1: conversation threading
+        conversationId: sendOpts['conversation-id'] as string | undefined,
+        replyToMessageId: sendOpts['reply-to'] as string | undefined,
       });
       break;
 
@@ -479,6 +492,23 @@ async function handleMessageCommand(subArgs: string[]): Promise<void> {
         agentId: listOpts['agent-id'] as string,
         unread: listOpts.unread as boolean,
         limit: listOpts.limit ? parseInt(listOpts.limit as string, 10) : undefined,
+      });
+      break;
+
+    case 'conversations':
+      const conversationsOpts = parseArgs(restArgs);
+      await listConversations({
+        agentId: conversationsOpts['agent-id'] as string,
+        limit: conversationsOpts.limit ? parseInt(conversationsOpts.limit as string, 10) : undefined,
+      });
+      break;
+
+    case 'thread':
+      const threadOpts = parseArgs(restArgs);
+      await getThread({
+        agentId: threadOpts['agent-id'] as string,
+        conversationId: threadOpts['conversation-id'] as string,
+        limit: threadOpts.limit ? parseInt(threadOpts.limit as string, 10) : undefined,
       });
       break;
 

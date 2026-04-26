@@ -11,10 +11,11 @@
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID } from 'crypto';
-import { Logger, getErrorMessage } from '@f2a/network';
+import { Logger, getErrorMessage, createMessageRecord } from '@f2a/network';
 import type { MessageRouter, RoutableMessage, AgentRegistry, F2A } from '@f2a/network';
 import type { MessageHandlerDeps } from '../types/handlers.js';
 import type { AgentTokenManager } from '../agent-token-manager.js';
+import type { MessageStore } from '@f2a/network';
 
 /**
  * 发送消息请求体类型
@@ -34,6 +35,10 @@ interface SendMessageBody {
   noReply?: boolean;
   /** RFC 013: 可选的不期待回复的原因（自由文本） */
   noReplyReason?: string;
+  /** Phase 1: 会话 ID */
+  conversationId?: string;
+  /** Phase 1: 回复的消息 ID */
+  replyToMessageId?: string;
 }
 
 /**
@@ -49,6 +54,7 @@ export class MessageHandler {
   private f2a: F2A;
   private logger: Logger;
   private agentTokenManager: AgentTokenManager;
+  private messageStore?: MessageStore;
 
   constructor(deps: MessageHandlerDeps) {
     this.messageRouter = deps.messageRouter;
@@ -56,6 +62,112 @@ export class MessageHandler {
     this.f2a = deps.f2a;
     this.logger = deps.logger;
     this.agentTokenManager = deps.agentTokenManager;
+    this.messageStore = deps.messageStore;
+  }
+
+  /**
+   * 解析会话 ID：显式 conversationId > replyTo 历史 > 新会话
+   */
+  private async resolveConversationId(data: SendMessageBody): Promise<string> {
+    if (data.conversationId) {
+      return data.conversationId;
+    }
+
+    if (data.replyToMessageId && this.messageStore) {
+      const original = await this.messageStore.getByMessageId(data.replyToMessageId);
+      if (original?.conversationId) {
+        return original.conversationId;
+      }
+    }
+
+    return `conv-${randomUUID()}`;
+  }
+
+  /**
+   * 持久化消息历史。历史写入失败不阻断投递。
+   */
+  private async persistMessageForAgent(
+    message: RoutableMessage,
+    conversationId: string,
+    agentId: string,
+    peerAgentId: string,
+    direction: 'inbound' | 'outbound' | 'local',
+    replyToMessageId?: string
+  ): Promise<void> {
+    const id = direction === 'outbound' || direction === 'local'
+      ? message.messageId
+      : `${message.messageId}:inbound:${agentId}`;
+
+    await this.messageStore!.add(createMessageRecord(
+      id,
+      message.fromAgentId,
+      message.toAgentId || '',
+      message.type,
+      message.createdAt.getTime(),
+      message.content.slice(0, 200),
+      {
+        content: message.content,
+        type: message.type,
+        metadata: message.metadata,
+        messageId: message.messageId,
+      },
+      {
+        conversationId,
+        replyToMessageId,
+        direction,
+        agentId,
+        peerAgentId,
+        metadata: {
+          ...message.metadata,
+          messageId: message.messageId,
+        },
+        createdAt: message.createdAt.getTime(),
+      }
+    ));
+  }
+
+  private async persistMessage(message: RoutableMessage, conversationId: string, replyToMessageId?: string): Promise<boolean> {
+    if (!this.messageStore) {
+      return false;
+    }
+
+    try {
+      if (!message.toAgentId || message.fromAgentId === message.toAgentId) {
+        await this.persistMessageForAgent(
+          message,
+          conversationId,
+          message.fromAgentId,
+          message.toAgentId || '',
+          'local',
+          replyToMessageId
+        );
+        return true;
+      }
+
+      await this.persistMessageForAgent(
+        message,
+        conversationId,
+        message.fromAgentId,
+        message.toAgentId,
+        'outbound',
+        replyToMessageId
+      );
+      await this.persistMessageForAgent(
+        message,
+        conversationId,
+        message.toAgentId,
+        message.fromAgentId,
+        'inbound',
+        replyToMessageId
+      );
+      return true;
+    } catch (error) {
+      this.logger.warn('Failed to persist message history', {
+        messageId: message.messageId,
+        error: getErrorMessage(error),
+      });
+      return false;
+    }
   }
 
   /**
@@ -181,13 +293,17 @@ export class MessageHandler {
           // RFC 013: 将 noReply 放入 metadata，让接收方知道不需要回复
           // RFC 013: 将 noReplyReason 放入 metadata，提供不期待回复的原因
           // 使用计算后的 finalNoReply 值
+          const conversationId = await this.resolveConversationId(data);
+          const messageId = randomUUID();
           const message: RoutableMessage = {
-            messageId: randomUUID(),
+            messageId,
             fromAgentId: data.fromAgentId,
             toAgentId: data.toAgentId,
             content: data.content,
             metadata: {
               ...data.metadata,
+              conversationId,
+              replyToMessageId: data.replyToMessageId,
               // RFC 013: 标记消息是否需要回复（默认 true = 不需要回复）
               noReply: finalNoReply,
               // RFC 013: 可选的不期待回复的原因
@@ -212,6 +328,11 @@ export class MessageHandler {
 
             const routed = await this.messageRouter.routeAsync(message);
             if (routed) {
+              const historyPersisted = await this.persistMessage(
+                message,
+                conversationId,
+                data.replyToMessageId
+              );
               this.logger.debug('Message routed', {
                 messageId: message.messageId,
                 fromAgentId: data.fromAgentId,
@@ -221,6 +342,8 @@ export class MessageHandler {
               res.end(JSON.stringify({
                 success: true,
                 messageId: message.messageId,
+                conversationId,
+                historyPersisted,
               }));
             } else {
               res.writeHead(500);
@@ -233,10 +356,17 @@ export class MessageHandler {
           } else {
             // 广播消息
             const broadcasted = await this.messageRouter.broadcastAsync(message);
+            const historyPersisted = await this.persistMessage(
+              message,
+              conversationId,
+              data.replyToMessageId
+            );
             res.writeHead(200);
             res.end(JSON.stringify({
               success: true,
               messageId: message.messageId,
+              conversationId,
+              historyPersisted,
               broadcasted,
             }));
           }
@@ -288,6 +418,40 @@ export class MessageHandler {
     // 解析查询参数
     const url = new URL(req.url || '', `http://localhost`);
     const limit = parseInt(url.searchParams.get('limit') || '50', 10);
+    const conversationId = url.searchParams.get('conversationId') || undefined;
+    const peerAgentId = url.searchParams.get('peerAgentId') || undefined;
+
+    if ((conversationId || peerAgentId) && this.messageStore) {
+      (async () => {
+        try {
+          const messages = conversationId
+            ? await this.messageStore!.getByConversation(agentId, conversationId, limit)
+            : (await this.messageStore!.getByAgent(agentId, limit))
+                .filter(message => message.peerAgentId === peerAgentId);
+
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            success: true,
+            agentId,
+            messages,
+            count: messages.length,
+            source: 'history',
+          }));
+        } catch (error) {
+          this.logger.error('Failed to get message history', {
+            agentId,
+            error: getErrorMessage(error),
+          });
+          res.writeHead(500);
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Failed to get message history',
+            code: 'MESSAGE_HISTORY_FAILED',
+          }));
+        }
+      })();
+      return;
+    }
 
     // 获取消息
     const messages = this.messageRouter.getMessages(agentId, limit);
@@ -299,6 +463,61 @@ export class MessageHandler {
       messages,
       count: messages.length,
     }));
+  }
+
+  /**
+   * 获取 Agent 的会话摘要列表
+   * GET /api/v1/conversations/:agentId
+   */
+  handleListConversations(agentId: string, req: IncomingMessage, res: ServerResponse): void {
+    if (!this.agentRegistry.get(agentId)) {
+      res.writeHead(404);
+      res.end(JSON.stringify({
+        success: false,
+        error: 'Agent not found',
+        code: 'AGENT_NOT_FOUND',
+      }));
+      return;
+    }
+
+    if (!this.messageStore) {
+      res.writeHead(500);
+      res.end(JSON.stringify({
+        success: false,
+        error: 'Message history store not configured',
+        code: 'MESSAGE_HISTORY_FAILED',
+      }));
+      return;
+    }
+
+    this.agentRegistry.updateLastActive(agentId);
+
+    const url = new URL(req.url || '', `http://localhost`);
+    const limit = parseInt(url.searchParams.get('limit') || '50', 10);
+
+    (async () => {
+      try {
+        const conversations = await this.messageStore!.listConversations(agentId, limit);
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          success: true,
+          agentId,
+          conversations,
+          count: conversations.length,
+        }));
+      } catch (error) {
+        this.logger.error('Failed to list conversations', {
+          agentId,
+          error: getErrorMessage(error),
+        });
+        res.writeHead(500);
+        res.end(JSON.stringify({
+          success: false,
+          error: 'Failed to list conversations',
+          code: 'MESSAGE_HISTORY_FAILED',
+        }));
+      }
+    })();
   }
 
   /**

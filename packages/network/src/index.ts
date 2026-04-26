@@ -68,6 +68,8 @@ export { AgentRegistry, AgentRegistration } from './core/agent-registry.js';
 export type { AgentRegistryOptions, AgentWebhook, MessageCallback } from './core/agent-registry.js';
 export { MessageRouter, RoutableMessage } from './core/message-router.js';
 export type { MessageQueue, MessageRouterEvents } from './core/message-router.js';
+export { MessageStore, createMessageRecord } from './core/message-store.js';
+export type { ConversationSummary, MessageRecord } from './core/message-store.js';
 
 // 信誉系统 (Phase 1-4)
 export { ReputationManager, REPUTATION_TIERS } from './core/reputation.js';

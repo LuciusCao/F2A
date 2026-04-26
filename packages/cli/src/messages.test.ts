@@ -7,7 +7,7 @@ process.exit = vi.fn() as any;
 process.env.F2A_CONTROL_TOKEN = '***';
 process.env.F2A_CONTROL_PORT = '9001';
 
-import { sendMessage, getMessages, clearMessages } from './messages.js';
+import { sendMessage, getMessages, clearMessages, listConversations, getThread } from './messages.js';
 import { request, RequestOptions } from 'http';
 import { isJsonMode, outputJson, outputError } from './output.js';
 
@@ -296,6 +296,37 @@ describe('CLI Messages Commands', () => {
         expect(payload.noReplyReason).toBe(testReason);
         // 默认情况下 noReply=true
         expect(payload.noReply).toBe(true);
+      });
+
+      it('conversationId 和 replyToMessageId 应传递到 payload', async () => {
+        const responseData = { success: true, messageId: 'msg:conversation', conversationId: 'conv-1' };
+
+        mockResponse.on.mockImplementation((event: string, callback: Function) => {
+          if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
+          if (event === 'end') callback();
+        });
+
+        let capturedBody: string | null = null;
+        (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
+          mockRequest.write.mockImplementation((data: string) => {
+            capturedBody = data;
+          });
+          callback(mockResponse);
+          return mockRequest;
+        });
+
+        await sendMessage({
+          agentId: 'agent:test:123',
+          toAgentId: 'agent:receiver:456',
+          content: 'conversation message',
+          conversationId: 'conv-1',
+          replyToMessageId: 'msg-original',
+        });
+
+        expect(capturedBody).not.toBeNull();
+        const payload = JSON.parse(capturedBody!);
+        expect(payload.conversationId).toBe('conv-1');
+        expect(payload.replyToMessageId).toBe('msg-original');
       });
 
       // 测试 Self-send + --expect-reply 报错
@@ -650,6 +681,86 @@ describe('CLI Messages Commands', () => {
         
         consoleErrorSpy.mockRestore();
       });
+    });
+  });
+
+  describe('conversation history', () => {
+    it('listConversations should call conversations API and output JSON', async () => {
+      const responseData = {
+        success: true,
+        conversations: [
+          {
+            conversationId: 'conv-1',
+            peerAgentId: 'agent:peer:456',
+            lastMessageAt: 2000,
+            messageCount: 2,
+            lastSummary: 'hello',
+          },
+        ],
+        count: 1,
+      };
+
+      mockResponse.on.mockImplementation((event: string, callback: Function) => {
+        if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
+        if (event === 'end') callback();
+      });
+
+      let capturedPath = '';
+      (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
+        capturedPath = options.path as string;
+        callback(mockResponse);
+        return mockRequest;
+      });
+
+      (isJsonMode as any).mockReturnValue(true);
+
+      await listConversations({ agentId: 'agent:test:123', limit: 20 });
+
+      expect(capturedPath).toBe('/api/v1/conversations/agent:test:123?limit=20');
+      expect(outputJson).toHaveBeenCalledWith({
+        conversations: responseData.conversations,
+        count: 1,
+      });
+
+      (isJsonMode as any).mockReturnValue(false);
+    });
+
+    it('getThread should call messages API with conversationId and output JSON', async () => {
+      const responseData = {
+        success: true,
+        messages: [
+          {
+            id: 'msg-1',
+            conversationId: 'conv-1',
+            content: 'hello',
+          },
+        ],
+        count: 1,
+      };
+
+      mockResponse.on.mockImplementation((event: string, callback: Function) => {
+        if (event === 'data') callback(Buffer.from(JSON.stringify(responseData)));
+        if (event === 'end') callback();
+      });
+
+      let capturedPath = '';
+      (request as any).mockImplementation((options: RequestOptions, callback: Function) => {
+        capturedPath = options.path as string;
+        callback(mockResponse);
+        return mockRequest;
+      });
+
+      (isJsonMode as any).mockReturnValue(true);
+
+      await getThread({ agentId: 'agent:test:123', conversationId: 'conv-1', limit: 20 });
+
+      expect(capturedPath).toBe('/api/v1/messages/agent:test:123?limit=20&conversationId=conv-1');
+      expect(outputJson).toHaveBeenCalledWith({
+        messages: responseData.messages,
+        count: 1,
+      });
+
+      (isJsonMode as any).mockReturnValue(false);
     });
   });
 });

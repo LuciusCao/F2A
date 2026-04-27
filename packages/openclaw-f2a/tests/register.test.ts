@@ -8,6 +8,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { registerToDaemon, unregisterFromDaemon } from '../src/plugin';
 import type { OpenClawPluginApi, ApiLogger, WebhookConfig } from '../src/types';
 
@@ -278,6 +280,35 @@ describe('registerToDaemon (Issue #140 Refactored)', () => {
 
     expect(result.success).toBe(false);
     expect(mockApi.logger?.error).toHaveBeenCalled();
+  });
+});
+
+describe('OpenClaw F2A plugin config schema', () => {
+  it('declares multi-agent onboarding configuration', () => {
+    const manifestPath = join(__dirname, '..', 'openclaw.plugin.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+
+    expect(manifest.configSchema.properties.runtimeId).toBeDefined();
+    expect(manifest.configSchema.properties.agents).toEqual(expect.objectContaining({
+      type: 'array'
+    }));
+    expect(manifest.configSchema.properties.agents.items.properties.openclawAgentId).toEqual(expect.objectContaining({
+      type: 'string'
+    }));
+  });
+
+  it('allows WebhookConfig to describe multiple OpenClaw agents', () => {
+    const config: WebhookConfig = {
+      webhookPath: '/f2a/webhook',
+      runtimeId: 'local-openclaw',
+      agents: [
+        { openclawAgentId: 'research', name: 'Research Agent', capabilities: ['research'] },
+        { openclawAgentId: 'coding', f2aAgentId: 'agent:abc123', capabilities: ['code'] }
+      ]
+    };
+
+    expect(config.agents).toHaveLength(2);
+    expect(config.agents?.[0].openclawAgentId).toBe('research');
   });
 });
 

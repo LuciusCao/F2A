@@ -28,6 +28,7 @@ import { startForeground, startBackground, stopDaemon, restartDaemon, showStatus
 import { showIdentityStatus, exportIdentity, importIdentityInternal } from './identity.js';
 import { cliInitAgent, showAgentStatus } from './init.js';
 import { nodeInit, nodeStatus, nodePeers, nodeHealth, nodeDiscover } from './node.js';
+import { cliOnboardAgent } from './onboard.js';
 import { setJsonMode, isJsonMode, outputJson, outputError } from './output.js';
 
 // ESM 环境下获取 __dirname
@@ -81,6 +82,17 @@ F2A Agent Management
 Usage: f2a agent <subcommand> [options]
 
 Subcommands:
+  onboard           Agent-first onboarding for a runtime-hosted agent slot
+                    f2a agent onboard --runtime <openclaw|hermes|other> --runtime-id <id> --runtime-agent-id <id> --name <name> [--agent-id <agentId>] [--webhook <url>] [--capability <cap>]... [--force]
+                    --runtime         Runtime type (required)
+                    --runtime-id      Runtime instance ID (required)
+                    --runtime-agent-id Runtime-local Agent slot ID (required)
+                    --name            Agent profile display name (required)
+                    --agent-id        Existing F2A Agent ID to bind (optional)
+                    --webhook         Webhook URL for receiving messages
+                    --capability      Capability tags (multiple allowed)
+                    --force           Force re-onboarding
+
   init              Create Agent keypair and identity file
                     f2a agent init --name <name> [--webhook <url>] [--capability <cap>]... [--force]
                     --name            Agent name (required)
@@ -115,6 +127,10 @@ Subcommands:
 Examples:
   # Create identity (without webhook)
   f2a agent init --name "my-agent"
+
+  # Onboard two local runtime agents
+  f2a agent onboard --runtime other --runtime-id local-test --runtime-agent-id agent-a --name "Agent A" --webhook http://127.0.0.1:9101/f2a/webhook
+  f2a agent onboard --runtime other --runtime-id local-test --runtime-agent-id agent-b --name "Agent B" --webhook http://127.0.0.1:9102/f2a/webhook
   
   # Create identity (with webhook)
   f2a agent init --name "my-agent" --webhook http://localhost:3000/f2a/webhook
@@ -338,7 +354,7 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
     if (isJsonMode()) {
       outputJson({
         command: 'agent',
-        subcommands: ['init', 'register', 'list', 'unregister', 'status', 'update'],
+        subcommands: ['onboard', 'init', 'register', 'list', 'unregister', 'status', 'update'],
         usage: 'f2a agent <subcommand> [options]'
       });
     } else {
@@ -351,6 +367,41 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
   const restArgs = subArgs.slice(1);
 
   switch (subcommand) {
+    case 'onboard':
+      const onboardOpts = parseArgs(restArgs);
+      const missingOnboardParams: string[] = [];
+      if (!onboardOpts.runtime) missingOnboardParams.push('--runtime');
+      if (!onboardOpts['runtime-id']) missingOnboardParams.push('--runtime-id');
+      if (!onboardOpts['runtime-agent-id']) missingOnboardParams.push('--runtime-agent-id');
+      if (!onboardOpts.name) missingOnboardParams.push('--name');
+
+      if (missingOnboardParams.length > 0) {
+        if (isJsonMode()) {
+          outputError(`Missing required parameters: ${missingOnboardParams.join(', ')}`, 'MISSING_PARAMETERS');
+        } else {
+          console.error(`❌ Missing required parameters: ${missingOnboardParams.join(', ')}`);
+          console.error('Usage: f2a agent onboard --runtime <openclaw|hermes|other> --runtime-id <id> --runtime-agent-id <id> --name <name> [--webhook <url>]');
+          process.exit(1);
+        }
+        return;
+      }
+
+      await cliOnboardAgent({
+        runtimeType: onboardOpts.runtime as 'openclaw' | 'hermes' | 'other',
+        runtimeId: onboardOpts['runtime-id'] as string,
+        runtimeAgentId: onboardOpts['runtime-agent-id'] as string,
+        name: onboardOpts.name as string,
+        agentId: onboardOpts['agent-id'] as string | undefined,
+        webhook: onboardOpts.webhook as string | undefined,
+        capabilities: Array.isArray(onboardOpts.capability)
+          ? onboardOpts.capability as string[]
+          : onboardOpts.capability
+            ? [onboardOpts.capability as string]
+            : undefined,
+        force: onboardOpts.force as boolean,
+      });
+      break;
+
     case 'init':
       const initOpts = parseArgs(restArgs);
       // Collect all missing required parameters

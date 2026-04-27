@@ -148,6 +148,8 @@ const DEFAULT_CONFIG: Required<WebhookConfig> = {
   controlPort: 9001,
   agentName: 'OpenClaw Agent',
   agentCapabilities: ['chat', 'task'],
+  runtimeId: 'local-openclaw',
+  agents: [],
   autoRegister: true,
   registerRetryInterval: 5000,
   registerMaxRetries: 3,

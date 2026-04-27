@@ -96,6 +96,19 @@ export interface OpenClawPluginApi {
 /**
  * Webhook plugin configuration
  */
+export interface F2AOpenClawAgentConfig {
+  /** OpenClaw agents.list[].id */
+  openclawAgentId: string;
+  /** Existing F2A Agent ID to bind. If omitted, F2A creates a new identity. */
+  f2aAgentId?: string;
+  /** F2A profile display name */
+  name?: string;
+  /** F2A capabilities for this Agent */
+  capabilities?: string[];
+  /** Optional per-Agent webhook path override */
+  webhookPath?: string;
+}
+
 export interface WebhookConfig {
   /** Webhook endpoint path */
   webhookPath?: string;
@@ -111,6 +124,10 @@ export interface WebhookConfig {
   agentName?: string;
   /** Agent capabilities */
   agentCapabilities?: string[];
+  /** Runtime instance ID */
+  runtimeId?: string;
+  /** Agent-first multi-Agent onboarding targets */
+  agents?: F2AOpenClawAgentConfig[];
   /** Auto-register to Daemon on start */
   autoRegister?: boolean;
   /** Retry interval for registration (milliseconds) */

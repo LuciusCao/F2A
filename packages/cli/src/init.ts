@@ -21,6 +21,10 @@ export const F2A_DATA_DIR = join(homedir(), '.f2a');
  */
 export const AGENT_IDENTITIES_DIR = join(F2A_DATA_DIR, 'agent-identities');
 
+export function getAgentIdentitiesDir(dataDir = F2A_DATA_DIR): string {
+  return join(dataDir, 'agent-identities');
+}
+
 /**
  * 初始化 Agent 身份
  * 
@@ -31,6 +35,7 @@ export const AGENT_IDENTITIES_DIR = join(F2A_DATA_DIR, 'agent-identities');
  */
 export async function initAgentIdentity(options: {
   name: string;
+  dataDir?: string;
   /** Webhook URL（可选，用于接收消息） */
   webhook?: string;
   capabilities?: Array<{ name: string; version: string }>;
@@ -41,7 +46,7 @@ export async function initAgentIdentity(options: {
   identityFile?: string;
   error?: string;
 }> {
-  const { name, webhook, capabilities, force } = options;
+  const { name, dataDir = F2A_DATA_DIR, webhook, capabilities, force } = options;
 
   if (!name) {
     return { success: false, error: 'Missing required --name parameter. The agent name is required for identity creation.' };
@@ -53,12 +58,13 @@ export async function initAgentIdentity(options: {
     const agentId = keypairManager.computeAgentId(keypair.publicKey);
 
     // 确保目录存在
-    if (!existsSync(AGENT_IDENTITIES_DIR)) {
-      mkdirSync(AGENT_IDENTITIES_DIR, { recursive: true });
+    const agentIdentitiesDir = getAgentIdentitiesDir(dataDir);
+    if (!existsSync(agentIdentitiesDir)) {
+      mkdirSync(agentIdentitiesDir, { recursive: true });
     }
 
     // 身份文件路径: ~/.f2a/agent-identities/<agentId>.json
-    const identityPath = join(AGENT_IDENTITIES_DIR, `${agentId}.json`);
+    const identityPath = join(agentIdentitiesDir, `${agentId}.json`);
 
     // 检查是否已存在
     if (existsSync(identityPath) && !force) {
@@ -127,12 +133,12 @@ export function listLocalIdentities(): Array<{ agentId: string; name: string; pa
  * @param agentId Agent ID (格式: agent:xxx)
  * @returns 身份文件内容或 null
  */
-export function readIdentityByAgentId(agentId: string): AgentIdentityFile | null {
+export function readIdentityByAgentId(agentId: string, dataDir = F2A_DATA_DIR): AgentIdentityFile | null {
   if (!agentId) {
     return null;
   }
 
-  const identityPath = join(AGENT_IDENTITIES_DIR, `${agentId}.json`);
+  const identityPath = join(getAgentIdentitiesDir(dataDir), `${agentId}.json`);
 
   if (!existsSync(identityPath)) {
     return null;

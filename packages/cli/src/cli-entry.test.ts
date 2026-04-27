@@ -64,6 +64,7 @@ describe('CLI Entry Functionality', () => {
       const result = await runCli(['agent', '--help']);
 
       expect(result.stdout).toContain('Agent Management');
+      expect(result.stdout).toContain('onboard');
       expect(result.stdout).toContain('list');
       expect(result.stdout).toContain('register');
       expect(result.stdout).toContain('unregister');

@@ -57,6 +57,36 @@ Determine your OpenClaw runtime Agent id.
 
 Use the id assigned to you in OpenClaw `agents.list[].id`. If you cannot inspect that id, use `default` for the first local test.
 
+Before you use an OpenClaw webhook URL, verify that the OpenClaw F2A plugin is installed and enabled.
+
+Required condition:
+
+```text
+The OpenClaw runtime must have @f2a/openclaw-f2a installed.
+The plugin must register the /f2a/webhook route through OpenClaw Gateway.
+```
+
+The relevant OpenClaw plugin config should look like this:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-f2a": {
+        "enabled": true,
+        "config": {
+          "webhookPath": "/f2a/webhook",
+          "controlPort": 9001,
+          "runtimeId": "local-openclaw"
+        }
+      }
+    }
+  }
+}
+```
+
+If `@f2a/openclaw-f2a` is not installed or the route is not enabled, do not claim webhook delivery is ready. You can still connect your identity, but you should use message queue polling until the plugin is installed.
+
 Connect yourself:
 
 ```bash
@@ -120,6 +150,34 @@ If HERMES_HOME is ~/.hermes/profiles/<profileName>:
   runtimeAgentId = <profileName>
 ```
 
+Before you use a Hermes webhook URL, verify that your Hermes `config.yaml` defines the webhook receiver. F2A does not create the Hermes webhook listener for you.
+
+For the default Hermes profile, check:
+
+```text
+~/.hermes/config.yaml
+```
+
+For a named Hermes profile, check:
+
+```text
+~/.hermes/profiles/<profileName>/config.yaml
+```
+
+The Hermes config must expose a local webhook endpoint that matches the URL you pass to `f2a agent connect`. If your config uses a different port or path, use that exact URL in `--webhook`.
+
+Example intent:
+
+```yaml
+webhook:
+  enabled: true
+  host: 127.0.0.1
+  port: 9200
+  path: /f2a/webhook
+```
+
+If Hermes webhook is not configured, you can still connect your identity and poll messages with `f2a message list --agent-id <your-agent-id>`.
+
 For the default Hermes profile:
 
 ```bash
@@ -168,8 +226,6 @@ The output shape is:
   }
 }
 ```
-
-Note: if your Hermes runtime does not have a webhook receiver yet, you can still use F2A by polling your message queue with `f2a message list --agent-id <your-agent-id>`. The webhook URL is the delivery address registered with F2A for future push delivery.
 
 ## Confirm Your Connection
 

@@ -1,10 +1,10 @@
-# Agent-First Onboarding 实施计划
+# Agent-First Connect 实施计划
 
 > **给 Agentic 工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或当前会话逐任务执行。步骤使用 checkbox（`- [ ]`）语法跟踪。
 
-**目标：** 支持本机两个 runtime-hosted Agent 各自完成 F2A onboarding，并能使用现有消息命令互相对话。
+**目标：** 支持本机两个 runtime-hosted Agent 各自完成 F2A connect，并能使用现有消息命令互相对话。
 
-**架构：** 新增 CLI 侧 runtime binding 存储与 `f2a agent onboard` 命令。`onboard` 组合现有 `agent init` 与 `agent register` 语义：按 `(runtimeType, runtimeId, runtimeAgentId)` 查找绑定，没有绑定就创建或复用 AgentIdentity，然后注册到 daemon 并保存 binding。OpenClaw/Hermes 适配先落到可复用 CLI 与存储边界，插件多 Agent 路由作为后续任务接入。
+**架构：** 新增 CLI 侧 runtime binding 存储与 `f2a agent connect` 命令。`connect` 组合现有 `agent init` 与 `agent register` 语义：按 `(runtimeType, runtimeId, runtimeAgentId)` 查找绑定，没有绑定就创建或复用 AgentIdentity，然后注册到 daemon 并保存 binding。OpenClaw/Hermes 适配先落到可复用 CLI 与存储边界，插件多 Agent 路由作为后续任务接入。
 
 **技术栈：** TypeScript ES Modules, Node.js fs/path/os, Vitest, existing `@f2a/network` AgentIdentityKeypair, existing CLI HTTP client.
 
@@ -112,11 +112,11 @@ export function resolveHermesRuntimeAgentId(hermesHome: string | undefined, home
 
 预期: PASS。
 
-### Task 2: Agent Onboard 核心流程
+### Task 2: Agent Connect 核心流程
 
 **文件：**
-- 创建: `packages/cli/src/onboard.ts`
-- 测试: `packages/cli/src/onboard.test.ts`
+- 创建: `packages/cli/src/connect.ts`
+- 测试: `packages/cli/src/connect.test.ts`
 - 修改: `packages/cli/src/init.ts`
 
 - [ ] **Step 1: 写失败测试**
@@ -126,7 +126,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { onboardAgent } from './onboard.js';
+import { connectAgent } from './connect.js';
 import { loadRuntimeBinding } from './runtime-bindings.js';
 
 vi.mock('./http-client.js', () => ({
@@ -139,11 +139,11 @@ vi.mock('./http-client.js', () => ({
   }))
 }));
 
-describe('onboardAgent', () => {
+describe('connectAgent', () => {
   let dataDir: string;
 
   beforeEach(() => {
-    dataDir = mkdtempSync(join(tmpdir(), 'f2a-onboard-'));
+    dataDir = mkdtempSync(join(tmpdir(), 'f2a-connect-'));
   });
 
   afterEach(() => {
@@ -151,7 +151,7 @@ describe('onboardAgent', () => {
   });
 
   it('creates identity, registers it, and stores runtime binding', async () => {
-    const result = await onboardAgent({
+    const result = await connectAgent({
       dataDir,
       runtimeType: 'other',
       runtimeId: 'local-test',
@@ -175,7 +175,7 @@ describe('onboardAgent', () => {
   });
 
   it('returns existing binding without creating a new agent when not forced', async () => {
-    const first = await onboardAgent({
+    const first = await connectAgent({
       dataDir,
       runtimeType: 'other',
       runtimeId: 'local-test',
@@ -184,7 +184,7 @@ describe('onboardAgent', () => {
       webhook: 'http://127.0.0.1:9101/f2a/webhook'
     });
 
-    const second = await onboardAgent({
+    const second = await connectAgent({
       dataDir,
       runtimeType: 'other',
       runtimeId: 'local-test',
@@ -194,23 +194,23 @@ describe('onboardAgent', () => {
     });
 
     expect(second.agentId).toBe(first.agentId);
-    expect(second.alreadyOnboarded).toBe(true);
+    expect(second.alreadyConnected).toBe(true);
   });
 });
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
 
-运行: `npm test --workspace @f2a/cli -- onboard.test.ts`
+运行: `npm test --workspace @f2a/cli -- connect.test.ts`
 
-预期: FAIL，因为 `onboard.ts` 尚不存在。
+预期: FAIL，因为 `connect.ts` 尚不存在。
 
 - [ ] **Step 3: 写最小实现**
 
-实现 `onboardAgent(options)`：
+实现 `connectAgent(options)`：
 
 ```typescript
-export interface OnboardAgentOptions {
+export interface ConnectAgentOptions {
   dataDir?: string;
   runtimeType: RuntimeType;
   runtimeId: string;
@@ -242,7 +242,7 @@ export async function initAgentIdentity(options: InitOptions & { dataDir?: strin
 
 - [ ] **Step 4: 运行测试确认通过**
 
-运行: `npm test --workspace @f2a/cli -- onboard.test.ts runtime-bindings.test.ts`
+运行: `npm test --workspace @f2a/cli -- connect.test.ts runtime-bindings.test.ts`
 
 预期: PASS。
 
@@ -254,20 +254,20 @@ export async function initAgentIdentity(options: InitOptions & { dataDir?: strin
 
 - [ ] **Step 1: 写失败测试**
 
-在 `main.test.ts` 增加用例，mock `./onboard.js`：
+在 `main.test.ts` 增加用例，mock `./connect.js`：
 
 ```typescript
-vi.mock('./onboard.js', () => ({
-  cliOnboardAgent: vi.fn(async () => undefined)
+vi.mock('./connect.js', () => ({
+  cliConnectAgent: vi.fn(async () => undefined)
 }));
 
-it('routes f2a agent onboard to cliOnboardAgent', async () => {
-  const { cliOnboardAgent } = await import('./onboard.js');
+it('routes f2a agent connect to cliConnectAgent', async () => {
+  const { cliConnectAgent } = await import('./connect.js');
   process.argv = [
     'node',
     'f2a',
     'agent',
-    'onboard',
+    'connect',
     '--runtime',
     'other',
     '--runtime-id',
@@ -284,7 +284,7 @@ it('routes f2a agent onboard to cliOnboardAgent', async () => {
 
   await import('./main.js');
 
-  expect(cliOnboardAgent).toHaveBeenCalledWith({
+  expect(cliConnectAgent).toHaveBeenCalledWith({
     runtimeType: 'other',
     runtimeId: 'local-test',
     runtimeAgentId: 'agent-a',
@@ -301,29 +301,29 @@ it('routes f2a agent onboard to cliOnboardAgent', async () => {
 
 运行: `npm test --workspace @f2a/cli -- main.test.ts`
 
-预期: FAIL，因为 `agent onboard` 尚未路由。
+预期: FAIL，因为 `agent connect` 尚未路由。
 
 - [ ] **Step 3: 写最小实现**
 
 修改 `packages/cli/src/main.ts`：
 
-- import `cliOnboardAgent`。
-- `showAgentHelp()` 加 `onboard`。
-- JSON help subcommands 加 `onboard`。
-- `handleAgentCommand()` 增加 `case 'onboard'`。
+- import `cliConnectAgent`。
+- `showAgentHelp()` 加 `connect`。
+- JSON help subcommands 加 `connect`。
+- `handleAgentCommand()` 增加 `case 'connect'`。
 - 校验 `--runtime`, `--runtime-id`, `--runtime-agent-id`, `--name`。
 - 将 `--capability` 重复参数映射为 string array。
 
 - [ ] **Step 4: 运行测试确认通过**
 
-运行: `npm test --workspace @f2a/cli -- main.test.ts onboard.test.ts runtime-bindings.test.ts`
+运行: `npm test --workspace @f2a/cli -- main.test.ts connect.test.ts runtime-bindings.test.ts`
 
 预期: PASS。
 
 ### Task 4: 本机双 Agent 对话验证脚本
 
 **文件：**
-- 创建: `docs/testing/local-two-agent-onboarding.md`
+- 创建: `docs/testing/local-two-agent-connect.md`
 
 - [ ] **Step 1: 写验证文档草稿**
 
@@ -333,7 +333,7 @@ it('routes f2a agent onboard to cliOnboardAgent', async () => {
 npm run build
 f2a daemon start
 
-node packages/cli/dist/main.js agent onboard \
+node packages/cli/dist/main.js agent connect \
   --runtime other \
   --runtime-id local-test \
   --runtime-agent-id agent-a \
@@ -341,7 +341,7 @@ node packages/cli/dist/main.js agent onboard \
   --webhook http://127.0.0.1:9101/f2a/webhook \
   --capability chat
 
-node packages/cli/dist/main.js agent onboard \
+node packages/cli/dist/main.js agent connect \
   --runtime other \
   --runtime-id local-test \
   --runtime-agent-id agent-b \
@@ -366,7 +366,7 @@ node packages/cli/dist/main.js message list --agent-id <agent-b-id>
 
 - [ ] **Step 3: CLI 测试确认**
 
-运行: `npm test --workspace @f2a/cli -- onboard.test.ts runtime-bindings.test.ts main.test.ts`
+运行: `npm test --workspace @f2a/cli -- connect.test.ts runtime-bindings.test.ts main.test.ts`
 
 预期: PASS。
 
@@ -379,7 +379,7 @@ node packages/cli/dist/main.js message list --agent-id <agent-b-id>
 
 - [ ] **Step 1: 写失败测试**
 
-在 register 测试中增加配置解析用例，预期 `agents[]` 配置可被类型接受，并生成两个 onboarding target。
+在 register 测试中增加配置解析用例，预期 `agents[]` 配置可被类型接受，并生成两个 connect target。
 
 ```typescript
 const config = {
@@ -429,7 +429,7 @@ agents?: F2AOpenClawAgentConfig[];
 
 ## Completion Criteria
 
-- `f2a agent onboard` 可以为两个不同 `runtimeAgentId` 创建两个不同 Agent。
+- `f2a agent connect` 可以为两个不同 `runtimeAgentId` 创建两个不同 Agent。
 - 两个 Agent 的 runtime bindings 分别保存在 `~/.f2a/runtime-bindings/...`。
 - 两个 Agent 注册到 daemon 后可用现有 `message send/list` 互相传递消息。
 - Hermes 默认 profile 规则在 storage helper 中有测试覆盖。

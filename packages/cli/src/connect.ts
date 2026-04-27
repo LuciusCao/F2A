@@ -1,5 +1,5 @@
 /**
- * Agent-first onboarding CLI flow.
+ * Agent-first connect CLI flow.
  *
  * 将一个 runtime-hosted agent slot 绑定到 F2A AgentIdentity，并注册到 daemon。
  */
@@ -22,7 +22,7 @@ import {
 import { isJsonMode, outputError, outputJson } from './output.js';
 import type { AgentIdentityFile } from '@f2a/network';
 
-export interface OnboardAgentOptions {
+export interface ConnectAgentOptions {
   dataDir?: string;
   runtimeType: RuntimeType;
   runtimeId: string;
@@ -34,11 +34,11 @@ export interface OnboardAgentOptions {
   force?: boolean;
 }
 
-export interface OnboardAgentResult {
+export interface ConnectAgentResult {
   success: boolean;
   agentId?: string;
   binding?: RuntimeAgentBinding;
-  alreadyOnboarded?: boolean;
+  alreadyConnected?: boolean;
   error?: string;
 }
 
@@ -64,7 +64,7 @@ function updateIdentityAfterRegistration(
   writeFileSync(identityPath, JSON.stringify(identity, null, 2), { mode: 0o600 });
 }
 
-async function resolveIdentity(options: Required<Pick<OnboardAgentOptions, 'dataDir' | 'name'>> & OnboardAgentOptions): Promise<AgentIdentityFile> {
+async function resolveIdentity(options: Required<Pick<ConnectAgentOptions, 'dataDir' | 'name'>> & ConnectAgentOptions): Promise<AgentIdentityFile> {
   if (options.agentId) {
     const existing = readIdentityByAgentId(options.agentId, options.dataDir);
     if (!existing) {
@@ -92,7 +92,7 @@ async function resolveIdentity(options: Required<Pick<OnboardAgentOptions, 'data
   return identity;
 }
 
-export async function onboardAgent(options: OnboardAgentOptions): Promise<OnboardAgentResult> {
+export async function connectAgent(options: ConnectAgentOptions): Promise<ConnectAgentResult> {
   const dataDir = options.dataDir || F2A_DATA_DIR;
   const existingBinding = await loadRuntimeBinding(dataDir, {
     runtimeType: options.runtimeType,
@@ -105,7 +105,7 @@ export async function onboardAgent(options: OnboardAgentOptions): Promise<Onboar
       success: true,
       agentId: existingBinding.agentId,
       binding: existingBinding,
-      alreadyOnboarded: true
+      alreadyConnected: true
     };
   }
 
@@ -167,29 +167,29 @@ export async function onboardAgent(options: OnboardAgentOptions): Promise<Onboar
   }
 }
 
-export async function cliOnboardAgent(options: Omit<OnboardAgentOptions, 'dataDir'>): Promise<void> {
-  const result = await onboardAgent(options);
+export async function cliConnectAgent(options: Omit<ConnectAgentOptions, 'dataDir'>): Promise<void> {
+  const result = await connectAgent(options);
 
   if (!result.success) {
     if (isJsonMode()) {
-      outputError(result.error || 'Onboarding failed', 'ONBOARD_FAILED');
+      outputError(result.error || 'Connect failed', 'CONNECT_FAILED');
       return;
     }
-    console.error(`❌ Onboarding failed: ${result.error || 'unknown error'}`);
+    console.error(`❌ Connect failed: ${result.error || 'unknown error'}`);
     process.exit(1);
   }
 
   if (isJsonMode()) {
     outputJson({
-      onboarded: true,
-      alreadyOnboarded: !!result.alreadyOnboarded,
+      connected: true,
+      alreadyConnected: !!result.alreadyConnected,
       agentId: result.agentId,
       binding: result.binding || null
     });
     return;
   }
 
-  console.log(result.alreadyOnboarded ? '✅ Agent already onboarded.' : '✅ Agent onboarded successfully.');
+  console.log(result.alreadyConnected ? '✅ Agent already connected.' : '✅ Agent connected successfully.');
   console.log(`   AgentId: ${result.agentId}`);
   if (result.binding) {
     console.log(`   Runtime: ${result.binding.runtimeType}/${result.binding.runtimeId}/${result.binding.runtimeAgentId}`);

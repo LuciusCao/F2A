@@ -284,7 +284,7 @@ describe('registerToDaemon (Issue #140 Refactored)', () => {
 });
 
 describe('OpenClaw F2A plugin config schema', () => {
-  it('declares multi-agent onboarding configuration', () => {
+  it('declares multi-agent connect configuration', () => {
     const manifestPath = join(__dirname, '..', 'openclaw.plugin.json');
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
 

@@ -126,7 +126,7 @@ export interface WebhookConfig {
   agentCapabilities?: string[];
   /** Runtime instance ID */
   runtimeId?: string;
-  /** Agent-first multi-Agent onboarding targets */
+  /** Agent-first multi-Agent connect targets */
   agents?: F2AOpenClawAgentConfig[];
   /** Auto-register to Daemon on start */
   autoRegister?: boolean;

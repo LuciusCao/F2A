@@ -1,6 +1,6 @@
-# Local Two-Agent Onboarding Verification
+# Local Two-Agent Connect Verification
 
-This guide verifies the Agent-first onboarding flow on one machine with two local runtime-hosted Agents.
+This guide verifies the Agent-first connect flow on one machine with two local runtime-hosted Agents.
 
 The scenario uses `runtime=other` so it does not require OpenClaw or Hermes to be installed. It proves the F2A core behavior that OpenClaw/Hermes adapters will use:
 
@@ -29,10 +29,10 @@ For foreground debugging:
 node packages/cli/dist/main.js daemon foreground
 ```
 
-## 3. Onboard Agent A
+## 3. Connect Agent A
 
 ```bash
-node packages/cli/dist/main.js --json agent onboard \
+node packages/cli/dist/main.js --json agent connect \
   --runtime other \
   --runtime-id local-test \
   --runtime-agent-id agent-a \
@@ -43,10 +43,10 @@ node packages/cli/dist/main.js --json agent onboard \
 
 Record the returned `data.agentId` as `AGENT_A`.
 
-## 4. Onboard Agent B
+## 4. Connect Agent B
 
 ```bash
-node packages/cli/dist/main.js --json agent onboard \
+node packages/cli/dist/main.js --json agent connect \
   --runtime other \
   --runtime-id local-test \
   --runtime-agent-id agent-b \

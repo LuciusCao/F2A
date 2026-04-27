@@ -45,7 +45,7 @@
       },
       "agents": {
         "type": "array",
-        "description": "Agent-first 多 Agent onboarding 配置。每个条目绑定一个 OpenClaw agents.list[].id 到一个 F2A Agent。",
+        "description": "Agent-first 多 Agent connect 配置。每个条目绑定一个 OpenClaw agents.list[].id 到一个 F2A Agent。",
         "items": {
           "type": "object",
           "additionalProperties": false,

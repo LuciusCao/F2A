@@ -38,6 +38,44 @@
         "default": ["chat", "task"],
         "description": "Agent 能力列表"
       },
+      "runtimeId": {
+        "type": "string",
+        "default": "local-openclaw",
+        "description": "OpenClaw runtime 实例 ID"
+      },
+      "agents": {
+        "type": "array",
+        "description": "Agent-first 多 Agent connect 配置。每个条目绑定一个 OpenClaw agents.list[].id 到一个 F2A Agent。",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["openclawAgentId"],
+          "properties": {
+            "openclawAgentId": {
+              "type": "string",
+              "description": "OpenClaw agents.list[].id"
+            },
+            "f2aAgentId": {
+              "type": "string",
+              "description": "已有 F2A AgentId。省略时创建新的 F2A Agent。"
+            },
+            "name": {
+              "type": "string",
+              "description": "F2A Agent 展示名称"
+            },
+            "capabilities": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "该 Agent 的 F2A 能力列表"
+            },
+            "webhookPath": {
+              "type": "string",
+              "description": "可选的 Agent 专属 webhook path"
+            }
+          }
+        },
+        "default": []
+      },
       "autoRegister": {
         "type": "boolean",
         "default": true,

@@ -1,4 +1,4 @@
-# Agent-First Onboarding Design
+# Agent-First Connect Design
 
 > Date: 2026-04-27
 > Status: Draft for review
@@ -6,7 +6,7 @@
 
 ## Summary
 
-F2A should model onboarding around the Agent, not around a host runtime such as OpenClaw or Hermes. OpenClaw, Hermes, and other callers are runtime containers that can carry one or many Agents. They help an Agent come online, receive messages, and execute work, but they are not the owner of the Agent identity.
+F2A should model the connect flow around the Agent, not around a host runtime such as OpenClaw or Hermes. OpenClaw, Hermes, and other callers are runtime containers that can carry one or many Agents. They help an Agent come online, receive messages, and execute work, but they are not the owner of the Agent identity.
 
 This design refines RFC 014 with a product-level rule:
 
@@ -194,7 +194,7 @@ Proposed plugin configuration:
 
 Rules:
 
-- If `agents[]` is configured, each entry becomes one F2A onboarding target.
+- If `agents[]` is configured, each entry becomes one F2A connect target.
 - If `f2aAgentId` is provided, bind that existing Agent identity.
 - If `f2aAgentId` is omitted, create a new F2A Agent for that OpenClaw agent.
 - If `agents[]` is omitted, the plugin may use the OpenClaw default agent as a single compatibility target, but it must not scan and reuse the latest F2A identity.
@@ -272,7 +272,7 @@ Rules:
 Other runtimes must provide a stable runtime-local agent id:
 
 ```bash
-f2a agent onboard \
+f2a agent connect \
   --runtime other \
   --runtime-id my-runtime \
   --runtime-agent-id worker-1 \
@@ -280,14 +280,14 @@ f2a agent onboard \
   --webhook http://127.0.0.1:9100/f2a/webhook/worker-1
 ```
 
-If a runtime cannot provide a stable id, F2A should refuse automatic onboarding unless the user explicitly passes one.
+If a runtime cannot provide a stable id, F2A should refuse automatic connect unless the user explicitly passes one.
 
 ## CLI Design
 
 New command:
 
 ```bash
-f2a agent onboard \
+f2a agent connect \
   --runtime <openclaw|hermes|other> \
   --runtime-id <id> \
   --runtime-agent-id <id> \
@@ -319,7 +319,7 @@ Existing commands remain:
 The daemon should continue accepting `POST /api/v1/agents` for compatibility. A future API can add:
 
 ```http
-POST /api/v1/agents/onboard
+POST /api/v1/agents/connect
 ```
 
 The request should include logical identity, profile, and runtime binding sections:
@@ -393,7 +393,7 @@ Migration path:
 ## Recommended Implementation Order
 
 1. Add runtime binding types and storage helpers.
-2. Add `f2a agent onboard`.
+2. Add `f2a agent connect`.
 3. Update OpenClaw plugin config schema to support `agents[]`.
 4. Replace OpenClaw latest-identity selection with binding lookup.
 5. Add Hermes binding resolver for default profile and named profiles.

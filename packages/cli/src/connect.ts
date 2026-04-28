@@ -20,7 +20,7 @@ import {
   type RuntimeType
 } from './runtime-bindings.js';
 import { isJsonMode, outputError, outputJson } from './output.js';
-import type { AgentIdentityFile } from '@f2a/network';
+import { parseAgentId, type AgentIdentityFile } from '@f2a/network';
 
 export interface ConnectAgentOptions {
   dataDir?: string;
@@ -66,6 +66,11 @@ function updateIdentityAfterRegistration(
 
 async function resolveIdentity(options: Required<Pick<ConnectAgentOptions, 'dataDir' | 'name'>> & ConnectAgentOptions): Promise<AgentIdentityFile> {
   if (options.agentId) {
+    const parsed = parseAgentId(options.agentId);
+    if (!parsed.valid) {
+      throw new Error(`Invalid agentId format: ${parsed.error || options.agentId}`);
+    }
+
     const existing = readIdentityByAgentId(options.agentId, options.dataDir);
     if (!existing) {
       throw new Error(`Identity file not found for ${options.agentId}`);

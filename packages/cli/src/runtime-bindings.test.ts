@@ -84,4 +84,9 @@ describe('runtime-bindings', () => {
   it('uses Hermes profile name when HERMES_HOME points at profiles directory', () => {
     expect(resolveHermesRuntimeAgentId('/Users/alice/.hermes/profiles/coder', '/Users/alice')).toBe('coder');
   });
+
+  it('accepts mixed path separators when resolving Hermes profile name', () => {
+    expect(resolveHermesRuntimeAgentId('/Users/alice/.hermes\\profiles\\coder', '/Users/alice')).toBe('coder');
+    expect(resolveHermesRuntimeAgentId('C:\\Users\\alice\\.hermes/profiles/research', 'C:\\Users\\alice')).toBe('research');
+  });
 });

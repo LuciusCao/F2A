@@ -6,7 +6,7 @@
 
 import { existsSync } from 'fs';
 import { mkdir, readFile, writeFile } from 'fs/promises';
-import { dirname, join, normalize, sep } from 'path';
+import { dirname, join, normalize } from 'path';
 import { homedir } from 'os';
 
 export type RuntimeType = 'openclaw' | 'hermes' | 'other';
@@ -67,25 +67,29 @@ export async function loadRuntimeBinding(
   }
 }
 
+function normalizeForRuntimeMatch(path: string): string {
+  return normalize(path).replace(/\\/g, '/').replace(/\/+$/g, '');
+}
+
 export function resolveHermesRuntimeAgentId(hermesHome?: string, homeDir = homedir()): string {
   if (!hermesHome) {
     return 'default';
   }
 
-  const normalizedHome = normalize(homeDir);
-  const normalizedHermesHome = normalize(hermesHome);
-  const defaultHermesHome = normalize(join(normalizedHome, '.hermes'));
+  const normalizedHome = normalizeForRuntimeMatch(homeDir);
+  const normalizedHermesHome = normalizeForRuntimeMatch(hermesHome);
+  const defaultHermesHome = normalizeForRuntimeMatch(join(normalizedHome, '.hermes'));
 
   if (normalizedHermesHome === defaultHermesHome) {
     return 'default';
   }
 
-  const profilesPrefix = `${defaultHermesHome}${sep}profiles${sep}`;
+  const profilesPrefix = `${defaultHermesHome}/profiles/`;
   if (normalizedHermesHome.startsWith(profilesPrefix)) {
     const rest = normalizedHermesHome.slice(profilesPrefix.length);
-    const profileName = rest.split(sep)[0];
+    const profileName = rest.split('/')[0];
     return profileName || 'default';
   }
 
-  return normalizedHermesHome.split(sep).filter(Boolean).at(-1) || 'default';
+  return normalizedHermesHome.split('/').filter(Boolean).at(-1) || 'default';
 }

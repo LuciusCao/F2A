@@ -71,6 +71,16 @@ describe('CLI Entry Functionality', () => {
       expect(result.code).toBe(0);
     });
 
+    it('should show agent connect help without requiring connect parameters', async () => {
+      const result = await runCli(['agent', 'connect', '--help']);
+
+      expect(result.stdout).toContain('Agent Connect');
+      expect(result.stdout).toContain('--runtime');
+      expect(result.stdout).toContain('--runtime-agent-id');
+      expect(result.stderr).not.toContain('Missing required parameters');
+      expect(result.code).toBe(0);
+    });
+
     it('should show daemon subcommand help', async () => {
       const result = await runCli(['daemon', '--help']);
 

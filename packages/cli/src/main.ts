@@ -150,6 +150,35 @@ Examples:
 }
 
 /**
+ * 显示 agent connect 帮助
+ */
+function showAgentConnectHelp(): void {
+  console.log(`
+F2A Agent Connect
+
+Usage:
+  f2a agent connect --runtime <openclaw|hermes|other> --runtime-id <id> --runtime-agent-id <id> --name <name> [options]
+
+Required:
+  --runtime          Runtime type: openclaw, hermes, or other
+  --runtime-id       Runtime instance ID, for example local-openclaw or local-hermes
+  --runtime-agent-id Runtime-local Agent slot ID, for example default or a profile name
+  --name             Agent profile display name
+
+Options:
+  --agent-id         Existing F2A Agent ID to bind
+  --webhook          Webhook URL for future inbound delivery
+  --capability       Capability tag, repeatable
+  --force            Re-connect and overwrite the runtime binding
+  --json             Output machine-readable JSON
+
+Examples:
+  f2a agent connect --runtime openclaw --runtime-id local-openclaw --runtime-agent-id default --name "OpenClaw Agent" --webhook http://127.0.0.1:18789/f2a/webhook --json
+  f2a agent connect --runtime hermes --runtime-id local-hermes --runtime-agent-id default --name "Hermes Agent" --json
+`);
+}
+
+/**
  * 显示 message 子命令帮助
  */
 function showMessageHelp(): void {
@@ -368,6 +397,20 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
 
   switch (subcommand) {
     case 'connect':
+      if (restArgs.length === 0 || restArgs[0] === '--help' || restArgs[0] === '-h') {
+        if (isJsonMode()) {
+          outputJson({
+            command: 'agent connect',
+            usage: 'f2a agent connect --runtime <openclaw|hermes|other> --runtime-id <id> --runtime-agent-id <id> --name <name> [options]',
+            required: ['runtime', 'runtime-id', 'runtime-agent-id', 'name'],
+            options: ['agent-id', 'webhook', 'capability', 'force', 'json']
+          });
+        } else {
+          showAgentConnectHelp();
+        }
+        return;
+      }
+
       const connectOpts = parseArgs(restArgs);
       const missingConnectParams: string[] = [];
       if (!connectOpts.runtime) missingConnectParams.push('--runtime');

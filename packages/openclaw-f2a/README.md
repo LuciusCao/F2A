@@ -29,14 +29,26 @@ npm install @f2a/openclaw-f2a
   "plugins": {
     "entries": {
       "openclaw-f2a": {
+        "enabled": true,
         "config": {
           "webhookPath": "/f2a/webhook",
           "webhookToken": "your-secure-token",
           "agentTimeout": 60000,
           "controlPort": 9001,
-          "agentName": "OpenClaw Agent",
-          "agentCapabilities": ["chat", "task"],
-          "autoRegister": true
+          "runtimeId": "local-openclaw",
+          "autoRegister": false,
+          "agents": [
+            {
+              "openclawAgentId": "coder",
+              "name": "OpenClaw Coder",
+              "capabilities": ["chat", "code"]
+            },
+            {
+              "openclawAgentId": "researcher",
+              "name": "OpenClaw Researcher",
+              "capabilities": ["chat", "research"]
+            }
+          ]
         }
       }
     }
@@ -54,9 +66,13 @@ npm install @f2a/openclaw-f2a
 | `controlPort` | number | `9001` | F2A Daemon 控制端口 |
 | `agentName` | string | `'OpenClaw Agent'` | Agent 名称 |
 | `agentCapabilities` | string[] | `['chat', 'task']` | Agent 能力列表 |
-| `autoRegister` | boolean | `true` | 启动时自动注册到 Daemon |
+| `runtimeId` | string | `local-openclaw` | OpenClaw Gateway runtime 实例 ID |
+| `agents` | array | `[]` | Gateway 内的 OpenClaw Agent 列表，`openclawAgentId` 对应 `agents.list[].id` |
+| `autoRegister` | boolean | `false` | 启动时自动注册到 Daemon；Agent-first onboarding 建议保持 `false` |
 
-> **注意**: 自 v0.5.0 起，插件不再使用单独的 HTTP 端口，而是通过 OpenClaw Gateway 的 `registerHttpRoute` API 注册 HTTP 路由。Webhook URL 默认为 `http://127.0.0.1:18789/f2a/webhook`（Gateway 默认端口）。
+> **注意**: 自 v0.5.0 起，插件不再使用单独的 HTTP 端口，而是通过 OpenClaw Gateway 的 `registerHttpRoute` API 注册 HTTP 路由。Agent-first onboarding 应使用 per-Agent webhook URL：`http://127.0.0.1:18789/f2a/webhook/agents/<openclawAgentId>`（Gateway 默认端口）。
+>
+> Agent-first onboarding 建议设置 `autoRegister: false`，由每个 Agent 自己运行 `f2a agent connect` 创建或复用 F2A 身份。
 
 ## 使用方式
 
@@ -81,8 +97,16 @@ f2a daemon start
 
 插件通过 OpenClaw Gateway 的 HTTP 路由接收消息：
 
-- **全局 Webhook**: `POST http://127.0.0.1:18789/f2a/webhook`
-- **Agent 特定 Webhook**: `POST http://127.0.0.1:18789/f2a/webhook/agent:<id_prefix>`
+- **Agent Webhook**: `POST http://127.0.0.1:18789/f2a/webhook/agents/<openclawAgentId>`
+
+例如：
+
+```text
+POST http://127.0.0.1:18789/f2a/webhook/agents/coder
+POST http://127.0.0.1:18789/f2a/webhook/agents/researcher
+```
+
+一个 OpenClaw Gateway 托管多个 Agent 时，每个 Agent 必须使用自己的 webhook URL。单个共享 `/f2a/webhook` 无法区分目标 OpenClaw Agent。
 
 Gateway 自动处理：
 - Rate limiting
@@ -122,7 +146,7 @@ api.registerHttpRoute({
 });
 ```
 
-Gateway 负责基础的 HTTP 处理，插件只处理 F2A 特有的业务逻辑。
+Gateway 负责基础的 HTTP 处理，插件只处理 F2A 特有的业务逻辑。实际消息投递请求应发送到 `/f2a/webhook/agents/<openclawAgentId>`。
 
 ### Agent 身份恢复
 

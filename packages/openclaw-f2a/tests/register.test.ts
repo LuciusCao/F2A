@@ -232,8 +232,8 @@ describe('registerToDaemon (Issue #140 Refactored)', () => {
         // Verify payload
         const body = JSON.parse(opts?.body || '{}');
         
-        // Issue #140: Webhook URL uses Gateway URL (18789), not webhookPort (9002)
-        expect(body.webhook.url).toBe('http://127.0.0.1:18789/f2a/webhook');
+        // Agent-first webhook URL uses Gateway URL plus a runtime-local Agent route.
+        expect(body.webhook.url).toBe('http://127.0.0.1:18789/f2a/webhook/agents/default');
         expect(body.webhook.token).toBe('secret-token');
         expect(body.name).toBe('My Custom Agent');
         expect(body.capabilities).toEqual([

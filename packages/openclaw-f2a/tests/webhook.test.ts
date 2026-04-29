@@ -185,7 +185,7 @@ describe('F2A Webhook Plugin (Issue #140 Refactored)', () => {
         createMockRequest(JSON.stringify({ from: 'agent:test-peer', content: 'hello' })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -213,7 +213,7 @@ describe('F2A Webhook Plugin (Issue #140 Refactored)', () => {
 
       const mockReq = {
         method: 'GET',
-        url: '/f2a/webhook',
+        url: '/f2a/webhook/agents/default',
         headers: {}
       } as any;
 
@@ -241,7 +241,7 @@ describe('F2A Webhook Plugin (Issue #140 Refactored)', () => {
         createMockRequest(JSON.stringify({ from: 'agent:test', content: 'hello' })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -269,7 +269,7 @@ describe('F2A Webhook Plugin (Issue #140 Refactored)', () => {
         createMockRequest(JSON.stringify({ from: 'agent:test', content: 'hello' })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: { authorization: 'Bearer secret-token' }
         }
       );
@@ -298,7 +298,7 @@ describe('F2A Webhook Plugin (Issue #140 Refactored)', () => {
         createMockRequest('invalid json'),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -326,7 +326,7 @@ describe('F2A Webhook Plugin (Issue #140 Refactored)', () => {
         createMockRequest(JSON.stringify({ content: 'hello' })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -357,7 +357,7 @@ describe('F2A Webhook Plugin (Issue #140 Refactored)', () => {
         })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -372,11 +372,11 @@ describe('F2A Webhook Plugin (Issue #140 Refactored)', () => {
 
       expect(mockRes.statusCode).toBe(200);
       
-      // Should extract agentId from the from object
+      // Should route to the runtime-local OpenClaw Agent id from the URL.
       expect(mockApi.runtime.subagent?.run).toHaveBeenCalledWith(
         expect.objectContaining({
           message: 'hello from object',
-          sessionKey: expect.stringContaining('agent:12d3kooWte')
+          sessionKey: expect.stringContaining('default')
         })
       );
     });
@@ -397,7 +397,7 @@ describe('F2A Webhook Plugin (Issue #140 Refactored)', () => {
         })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -418,8 +418,11 @@ describe('F2A Webhook Plugin (Issue #140 Refactored)', () => {
       );
     });
 
-    it('should handle agent-specific webhook path', async () => {
-      const mockApi = createMockApi({ webhookToken: '' });
+    it('should route per-agent webhook requests by openclawAgentId', async () => {
+      const mockApi = createMockApi({
+        webhookToken: '',
+        agents: [{ openclawAgentId: 'coder', name: 'Coder Agent' }]
+      });
       const { default: register } = await import('../src/plugin');
 
       register(mockApi);
@@ -434,7 +437,7 @@ describe('F2A Webhook Plugin (Issue #140 Refactored)', () => {
         })),
         {
           method: 'POST',
-          url: '/f2a/webhook/agent:specific123',
+          url: '/f2a/webhook/agents/coder',
           headers: {}
         }
       );
@@ -449,12 +452,78 @@ describe('F2A Webhook Plugin (Issue #140 Refactored)', () => {
 
       expect(mockRes.statusCode).toBe(200);
       
-      // Should use agent ID prefix as session key
       expect(mockApi.runtime.subagent?.run).toHaveBeenCalledWith(
         expect.objectContaining({
-          sessionKey: expect.stringContaining('specific123')
+          sessionKey: expect.stringContaining('coder')
         })
       );
+    });
+
+    it('should reject unknown configured openclawAgentId', async () => {
+      const mockApi = createMockApi({
+        webhookToken: '',
+        agents: [{ openclawAgentId: 'coder', name: 'Coder Agent' }]
+      });
+      const { default: register } = await import('../src/plugin');
+
+      register(mockApi);
+
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      const handler = routeCall.handler;
+
+      const mockReq = Object.assign(
+        createMockRequest(JSON.stringify({
+          from: 'agent:test-peer',
+          content: 'hello to unknown agent'
+        })),
+        {
+          method: 'POST',
+          url: '/f2a/webhook/agents/researcher',
+          headers: {}
+        }
+      );
+
+      const mockRes = {
+        statusCode: 0,
+        end: vi.fn()
+      } as any;
+
+      await handler(mockReq, mockRes);
+
+      expect(mockRes.statusCode).toBe(404);
+      expect(mockApi.runtime.subagent?.run).not.toHaveBeenCalled();
+    });
+
+    it('should reject global webhook path for agent-first delivery', async () => {
+      const mockApi = createMockApi({ webhookToken: '' });
+      const { default: register } = await import('../src/plugin');
+
+      register(mockApi);
+
+      const routeCall = mockApi.registerHttpRoute?.mock.calls[0][0];
+      const handler = routeCall.handler;
+
+      const mockReq = Object.assign(
+        createMockRequest(JSON.stringify({
+          from: 'agent:test-peer',
+          content: 'hello to global path'
+        })),
+        {
+          method: 'POST',
+          url: '/f2a/webhook',
+          headers: {}
+        }
+      );
+
+      const mockRes = {
+        statusCode: 0,
+        end: vi.fn()
+      } as any;
+
+      await handler(mockReq, mockRes);
+
+      expect(mockRes.statusCode).toBe(404);
+      expect(mockApi.runtime.subagent?.run).not.toHaveBeenCalled();
     });
   });
 
@@ -475,7 +544,7 @@ describe('F2A Webhook Plugin (Issue #140 Refactored)', () => {
         })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -517,7 +586,7 @@ describe('F2A Webhook Plugin (Issue #140 Refactored)', () => {
         })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -551,7 +620,7 @@ describe('F2A Webhook Plugin (Issue #140 Refactored)', () => {
         })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -600,7 +669,7 @@ describe('F2A Webhook Plugin (Issue #140 Refactored)', () => {
         createMockRequest(JSON.stringify({ from: 'agent:test', content: 'hello' })),
         {
           method: 'POST',
-          url: '/f2a/webhook',  // Use default path
+          url: '/f2a/webhook/agents/default',  // Use default path
           headers: { 'x-f2a-token': 'my-secret-token' }
         }
       );

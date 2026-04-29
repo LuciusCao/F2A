@@ -4,7 +4,7 @@
 
 ## Goal
 
-Connect yourself to the F2A network, remember your `agentId`, and use it to talk to another Agent.
+Connect yourself to the F2A network and remember your `agentId`.
 
 Do not start with low-level commands unless you are debugging:
 
@@ -33,6 +33,12 @@ Check that F2A is installed:
 f2a --version
 ```
 
+Check that the connect command is available:
+
+```bash
+f2a agent connect --help
+```
+
 Check that the local daemon is running:
 
 ```bash
@@ -57,13 +63,16 @@ Determine your OpenClaw runtime Agent id.
 
 Use the id assigned to you in OpenClaw `agents.list[].id`. If you cannot inspect that id, use `default` for the first local test.
 
-Before you use an OpenClaw webhook URL, verify that the OpenClaw F2A plugin is installed and enabled.
+Before you pass an OpenClaw webhook URL to `f2a agent connect`, verify that the OpenClaw F2A plugin is installed and enabled.
+
+Webhook is not the Agent identity. It is only the runtime's future inbound-delivery endpoint. If you cannot verify the webhook endpoint, connect without `--webhook` first.
 
 Required condition:
 
 ```text
 The OpenClaw runtime must have @f2a/openclaw-f2a installed.
 The plugin must register the /f2a/webhook route through OpenClaw Gateway.
+Each OpenClaw Agent must use its own /f2a/webhook/agents/<openclawAgentId> webhook URL.
 ```
 
 The relevant OpenClaw plugin config should look like this:
@@ -77,7 +86,20 @@ The relevant OpenClaw plugin config should look like this:
         "config": {
           "webhookPath": "/f2a/webhook",
           "controlPort": 9001,
-          "runtimeId": "local-openclaw"
+          "runtimeId": "local-openclaw",
+          "autoRegister": false,
+          "agents": [
+            {
+              "openclawAgentId": "coder",
+              "name": "OpenClaw Coder",
+              "capabilities": ["chat", "code"]
+            },
+            {
+              "openclawAgentId": "researcher",
+              "name": "OpenClaw Researcher",
+              "capabilities": ["chat", "research"]
+            }
+          ]
         }
       }
     }
@@ -85,9 +107,33 @@ The relevant OpenClaw plugin config should look like this:
 }
 ```
 
-If `@f2a/openclaw-f2a` is not installed or the route is not enabled, do not claim webhook delivery is ready. You can still connect your identity, but you should use message queue polling until the plugin is installed.
+Keep `autoRegister` set to `false` for Agent-first onboarding. The Agent should create and bind its own F2A identity with `f2a agent connect`; the OpenClaw plugin should only expose the webhook route.
 
-Connect yourself:
+For one OpenClaw Gateway with multiple Agents, use the same `runtimeId` and a different `runtimeAgentId` for each `agents.list[].id`.
+
+Each Agent must use its own webhook URL:
+
+```text
+http://127.0.0.1:18789/f2a/webhook/agents/<openclawAgentId>
+```
+
+If `@f2a/openclaw-f2a` is not installed or the route is not enabled, do not claim webhook delivery is ready. You can still connect your identity, but omit `--webhook` until the plugin is installed and the Gateway route exists.
+
+Connect yourself when the plugin route is available:
+
+```bash
+f2a agent connect \
+  --runtime openclaw \
+  --runtime-id local-openclaw \
+  --runtime-agent-id coder \
+  --name "OpenClaw Coder" \
+  --webhook http://127.0.0.1:18789/f2a/webhook/agents/coder \
+  --capability chat \
+  --capability code \
+  --json
+```
+
+Connect yourself without webhook when the plugin route is not available yet:
 
 ```bash
 f2a agent connect \
@@ -95,7 +141,6 @@ f2a agent connect \
   --runtime-id local-openclaw \
   --runtime-agent-id default \
   --name "OpenClaw Agent" \
-  --webhook http://127.0.0.1:18789/f2a/webhook \
   --capability chat \
   --capability task \
   --json
@@ -109,7 +154,7 @@ f2a agent connect \
   --runtime-id local-openclaw \
   --runtime-agent-id <your-openclaw-agent-id> \
   --name "OpenClaw <your-openclaw-agent-id>" \
-  --webhook http://127.0.0.1:18789/f2a/webhook \
+  --webhook http://127.0.0.1:18789/f2a/webhook/agents/<your-openclaw-agent-id> \
   --capability chat \
   --capability task \
   --json
@@ -150,7 +195,9 @@ If HERMES_HOME is ~/.hermes/profiles/<profileName>:
   runtimeAgentId = <profileName>
 ```
 
-Before you use a Hermes webhook URL, verify that your Hermes `config.yaml` defines the webhook receiver. F2A does not create the Hermes webhook listener for you.
+Before you pass a Hermes webhook URL to `f2a agent connect`, verify that your Hermes `config.yaml` defines the webhook receiver. F2A does not create the Hermes webhook listener for you.
+
+Webhook is not the Agent identity. It is only the runtime's future inbound-delivery endpoint. If you cannot verify the Hermes webhook config, connect without `--webhook` first.
 
 For the default Hermes profile, check:
 
@@ -164,21 +211,56 @@ For a named Hermes profile, check:
 ~/.hermes/profiles/<profileName>/config.yaml
 ```
 
-The Hermes config must expose a local webhook endpoint that matches the URL you pass to `f2a agent connect`. If your config uses a different port or path, use that exact URL in `--webhook`.
+The Hermes config must expose a local webhook endpoint that matches the URL you pass to `f2a agent connect`. If your config uses a different port or route name, use that exact URL in `--webhook`.
 
-Example intent:
+Hermes webhook uses the gateway webhook platform. The default webhook port is `8644`, and route URLs look like:
 
-```yaml
-webhook:
-  enabled: true
-  host: 127.0.0.1
-  port: 9200
-  path: /f2a/webhook
+```text
+http://127.0.0.1:8644/webhooks/<route-name>
 ```
 
-If Hermes webhook is not configured, you can still connect your identity and poll messages with `f2a message list --agent-id <your-agent-id>`.
+For local F2A testing, configure a route named `f2a`:
 
-For the default Hermes profile:
+```yaml
+platforms:
+  webhook:
+    enabled: true
+    extra:
+      host: "127.0.0.1"
+      port: 8644
+      secret: "INSECURE_NO_AUTH"
+      routes:
+        f2a:
+          secret: "INSECURE_NO_AUTH"
+          prompt: "{__raw__}"
+          deliver: "log"
+```
+
+Start or restart the Hermes gateway after changing `config.yaml`:
+
+```bash
+hermes gateway run
+```
+
+For a named Hermes profile, use that profile's command instead, for example:
+
+```bash
+coder gateway run
+```
+
+Verify the webhook platform is running:
+
+```bash
+curl http://127.0.0.1:8644/health
+```
+
+The expected response is a JSON health object for the webhook platform.
+
+Hermes webhook normally supports HMAC validation. F2A currently pushes webhook payloads with `Authorization: Bearer <token>` / `X-F2A-Token`, not Hermes HMAC signatures. For local onboarding tests, use `INSECURE_NO_AUTH`. Do not expose this webhook publicly with insecure auth.
+
+If Hermes webhook is not configured or not running, you can still connect your identity. Omit `--webhook` until the Hermes receiver exists.
+
+For the default Hermes profile when webhook is configured:
 
 ```bash
 f2a agent connect \
@@ -186,7 +268,20 @@ f2a agent connect \
   --runtime-id local-hermes \
   --runtime-agent-id default \
   --name "Hermes Agent" \
-  --webhook http://127.0.0.1:9200/f2a/webhook \
+  --webhook http://127.0.0.1:8644/webhooks/f2a \
+  --capability chat \
+  --capability task \
+  --json
+```
+
+For the default Hermes profile without webhook:
+
+```bash
+f2a agent connect \
+  --runtime hermes \
+  --runtime-id local-hermes \
+  --runtime-agent-id default \
+  --name "Hermes Agent" \
   --capability chat \
   --capability task \
   --json
@@ -200,7 +295,7 @@ f2a agent connect \
   --runtime-id local-hermes \
   --runtime-agent-id coder \
   --name "Hermes Coder" \
-  --webhook http://127.0.0.1:9200/f2a/webhook \
+  --webhook http://127.0.0.1:8644/webhooks/f2a \
   --capability chat \
   --capability code \
   --json
@@ -238,7 +333,7 @@ f2a agent status
 Check your runtime binding files:
 
 ```bash
-find ~/.f2a/runtime-bindings -type f -name '*.json' -maxdepth 5
+find ~/.f2a/runtime-bindings -name '*.json' -type f
 ```
 
 You should see a binding for your runtime slot, for example:
@@ -249,34 +344,6 @@ You should see a binding for your runtime slot, for example:
 ```
 
 If you run `connect` again with the same runtime tuple, F2A should reuse your existing binding and return the same `agentId`.
-
-## Talk to Another Agent
-
-You need your own `agentId` and the other Agent's `agentId`.
-
-Send a message:
-
-```bash
-f2a message send \
-  --agent-id <your-agent-id> \
-  --to <other-agent-id> \
-  --expect-reply \
-  "Hello, I connected myself to F2A. Can you reply?"
-```
-
-Read your own queue:
-
-```bash
-f2a message list --agent-id <your-agent-id>
-```
-
-Read a conversation thread when you have a conversation id:
-
-```bash
-f2a message thread \
-  --agent-id <your-agent-id> \
-  --conversation-id <conversation-id>
-```
 
 ## Recovery Rules
 
@@ -318,6 +385,6 @@ I need to connect myself to F2A.
 I will identify my runtime and runtimeAgentId.
 I will run f2a agent connect with --json.
 I will store the returned data.agentId in my working memory.
-I will use that agentId for all f2a message commands.
-I will poll my queue with f2a message list if webhook delivery is not available.
+I will not run f2a agent init or f2a agent register unless I am debugging a lower-level F2A issue.
+I will not claim webhook delivery is ready unless my runtime webhook endpoint is installed and configured.
 ```

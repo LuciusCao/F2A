@@ -127,7 +127,7 @@ describe('Webhook E2E Flow (Issue #140 Refactored)', () => {
         createMockRequest(JSON.stringify({ from: 'agent:test', content: 'hello' })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: { authorization: 'Bearer secure-token' }
         }
       );
@@ -156,7 +156,7 @@ describe('Webhook E2E Flow (Issue #140 Refactored)', () => {
         createMockRequest(JSON.stringify({ from: 'agent:test', content: 'hello' })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -185,7 +185,7 @@ describe('Webhook E2E Flow (Issue #140 Refactored)', () => {
         createMockRequest(JSON.stringify({ from: 'agent:test', content: 'hello' })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: { authorization: 'Bearer wrong-token' }
         }
       );
@@ -215,7 +215,7 @@ describe('Webhook E2E Flow (Issue #140 Refactored)', () => {
         createMockRequest(JSON.stringify({ from: 'agent:test-peer', content: 'hello world' })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -251,7 +251,7 @@ describe('Webhook E2E Flow (Issue #140 Refactored)', () => {
         createMockRequest('not valid json'),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -281,7 +281,7 @@ describe('Webhook E2E Flow (Issue #140 Refactored)', () => {
         createMockRequest(JSON.stringify({ from: 'agent:test' })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -312,7 +312,7 @@ describe('Webhook E2E Flow (Issue #140 Refactored)', () => {
         createMockRequest(JSON.stringify({ from: 'agent:12D3KooWtest', content: 'hello' })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -347,7 +347,7 @@ describe('Webhook E2E Flow (Issue #140 Refactored)', () => {
         createMockRequest(JSON.stringify({ from: 'agent:test', content: 'hello' })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -381,7 +381,7 @@ describe('Webhook E2E Flow (Issue #140 Refactored)', () => {
         createMockRequest(JSON.stringify({ from: 'agent:test', content: 'hello' })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -417,7 +417,7 @@ describe('Webhook E2E Flow (Issue #140 Refactored)', () => {
         createMockRequest(JSON.stringify({ from: 'agent:test-peer-id', content: 'hello' })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -459,7 +459,7 @@ describe('Webhook E2E Flow (Issue #140 Refactored)', () => {
         createMockRequest(JSON.stringify({ from: 'agent:test', content: 'hello' })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );
@@ -580,9 +580,9 @@ describe('Webhook E2E Flow (Issue #140 Refactored)', () => {
         _registeredAgentId: ''
       });
 
-      // Issue #140: Webhook URL uses Gateway URL (18789), NOT webhookPort (9002)
+      // Agent-first webhook URL uses Gateway URL plus a runtime-local Agent route.
       expect(capturedBody.webhook).toBeDefined();
-      expect(capturedBody.webhook.url).toBe('http://127.0.0.1:18789/f2a/webhook');
+      expect(capturedBody.webhook.url).toBe('http://127.0.0.1:18789/f2a/webhook/agents/default');
       expect(capturedBody.webhook.token).toBe('test-token');
     });
   });
@@ -640,7 +640,7 @@ describe('Webhook E2E Flow (Issue #140 Refactored)', () => {
         })),
         {
           method: 'POST',
-          url: '/f2a/webhook',
+          url: '/f2a/webhook/agents/default',
           headers: {}
         }
       );

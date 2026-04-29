@@ -78,8 +78,8 @@
       },
       "autoRegister": {
         "type": "boolean",
-        "default": true,
-        "description": "启动时自动注册到 Daemon"
+        "default": false,
+        "description": "启动时自动注册到 Daemon。Agent-first onboarding 建议保持 false，由 Agent 自己运行 f2a agent connect。"
       },
       "registerRetryInterval": {
         "type": "number",

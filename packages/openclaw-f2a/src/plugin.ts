@@ -140,6 +140,24 @@ function readSavedAgentId(): string | null {
   return identity?.agentId || null;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function parseOpenClawAgentWebhookPath(webhookPath: string, urlPath: string): string | null {
+  const normalizedBase = webhookPath.endsWith('/') ? webhookPath.slice(0, -1) : webhookPath;
+  const pattern = new RegExp(`^${escapeRegExp(normalizedBase)}/agents/([^/?#]+)(?:[/?#]|$)`);
+  const match = urlPath.match(pattern);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function isConfiguredOpenClawAgent(config: Required<WebhookConfig>, openclawAgentId: string): boolean {
+  if (config.agents.length === 0) {
+    return true;
+  }
+  return config.agents.some(agent => agent.openclawAgentId === openclawAgentId);
+}
+
 /** Default configuration */
 const DEFAULT_CONFIG: Required<WebhookConfig> = {
   webhookPath: '/f2a/webhook',
@@ -150,7 +168,7 @@ const DEFAULT_CONFIG: Required<WebhookConfig> = {
   agentCapabilities: ['chat', 'task'],
   runtimeId: 'local-openclaw',
   agents: [],
-  autoRegister: true,
+  autoRegister: false,
   registerRetryInterval: 5000,
   registerMaxRetries: 3,
   _registeredAgentId: ''
@@ -246,26 +264,21 @@ async function handleWebhookRequest(
 ): Promise<boolean> {
   const { exec } = await import('child_process');
 
-  // Parse URL path - support both global webhook and agent-specific webhook
-  // Global: /f2a/webhook
-  // Agent-specific: /f2a/webhook/agent:<id_prefix>
   const urlPath = req.url || '';
+  const openclawAgentId = parseOpenClawAgentWebhookPath(config.webhookPath, urlPath);
   
-  // Check for agent-specific webhook path
-  // Agent ID prefix can include lowercase letters, numbers, and uppercase
-  const agentMatch = urlPath.match(/^\/f2a\/webhook\/agent:([a-zA-Z0-9]+)(?:\/|$)/);
-  const isAgentWebhook = agentMatch !== null;
-  const isGlobalWebhook = urlPath === config.webhookPath || urlPath === '/f2a/webhook';
-  
-  // Only handle POST to webhook paths
-  if (req.method !== 'POST' || (!isGlobalWebhook && !isAgentWebhook)) {
+  // Agent-first OpenClaw delivery requires a runtime-local Agent id in the path.
+  if (req.method !== 'POST' || !openclawAgentId) {
     res.statusCode = 404;
     res.end('Not found');
     return true;
   }
-  
-  // Extract agent ID prefix if present
-  const agentIdPrefix = isAgentWebhook ? agentMatch![1] : null;
+
+  if (!isConfiguredOpenClawAgent(config, openclawAgentId)) {
+    res.statusCode = 404;
+    res.end('Unknown OpenClaw agent');
+    return true;
+  }
 
   // Validate token (plugin handles its own auth)
   const authHeader = req.headers['authorization'] || req.headers['x-f2a-token'];
@@ -312,14 +325,10 @@ async function handleWebhookRequest(
     return true;
   }
 
-  // Log with webhook type info
-  const webhookType = isAgentWebhook ? `agent:${agentIdPrefix}` : 'global';
-  api.logger?.info(`[F2A Webhook] Received message (${webhookType}) from ${fromAgentId.slice(0, 16)}, length=${message.length}`);
+  api.logger?.info(`[F2A Webhook] Received message (openclaw:${openclawAgentId}) from ${fromAgentId.slice(0, 16)}, length=${message.length}`);
 
   // Invoke Agent to generate reply
-  // Use agentIdPrefix as session key if available, otherwise use fromAgentId prefix
-  const sessionKeyPrefix = agentIdPrefix || fromAgentId.slice(0, 16);
-  const reply = await invokeAgent(api, sessionKeyPrefix, message, config.agentTimeout);
+  const reply = await invokeAgent(api, openclawAgentId, message, config.agentTimeout);
 
   // Send reply via f2a CLI
   if (reply) {
@@ -355,7 +364,8 @@ export async function registerToDaemon(
   
   // Issue #140: Construct webhook URL using Gateway's base URL
   const gatewayBaseUrl = api.runtime?.gatewayBaseUrl || 'http://127.0.0.1:18789';
-  const webhookUrl = `${gatewayBaseUrl}${config.webhookPath}`;
+  const defaultOpenClawAgentId = config.agents?.[0]?.openclawAgentId || 'default';
+  const webhookUrl = `${gatewayBaseUrl}${config.webhookPath}/agents/${encodeURIComponent(defaultOpenClawAgentId)}`;
   
   // 检测 Daemon 是否运行
   try {

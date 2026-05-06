@@ -31,6 +31,7 @@ export interface ConnectAgentOptions {
   agentId?: string;
   capabilities?: string[];
   webhook?: string;
+  webhookToken?: string;
   force?: boolean;
 }
 
@@ -47,7 +48,7 @@ function updateIdentityAfterRegistration(
   identity: AgentIdentityFile,
   nodeSignature?: string,
   nodeId?: string,
-  webhook?: { url: string }
+  webhook?: { url: string; token?: string }
 ): void {
   if (nodeSignature) {
     identity.nodeSignature = nodeSignature;
@@ -116,7 +117,9 @@ export async function connectAgent(options: ConnectAgentOptions): Promise<Connec
 
   try {
     const identity = await resolveIdentity({ ...options, dataDir });
-    const webhook = options.webhook ? { url: options.webhook } : identity.webhook;
+    const webhook = options.webhook
+      ? { url: options.webhook, ...(options.webhookToken ? { token: options.webhookToken } : {}) }
+      : identity.webhook;
     const capabilities = (options.capabilities || identity.capabilities?.map(c => c.name) || []).map(name => ({
       name,
       version: '1.0.0',

@@ -1,0 +1,33 @@
+{
+  "name": "@f2a/hermes-f2a",
+  "version": "0.1.0",
+  "description": "Hermes runtime installer for F2A Agent onboarding",
+  "type": "module",
+  "main": "./dist/installer.js",
+  "types": "./dist/installer.d.ts",
+  "bin": {
+    "hermes-f2a": "./dist/installer.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf dist .tsbuildinfo"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "f2a",
+    "hermes",
+    "agent",
+    "webhook"
+  ],
+  "license": "MIT"
+}

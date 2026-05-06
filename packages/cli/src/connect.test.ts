@@ -92,6 +92,34 @@ describe('connectAgent', () => {
     expect(sendRequest).not.toHaveBeenCalled();
   });
 
+  it('passes webhook token through registration and runtime binding', async () => {
+    const result = await connectAgent({
+      dataDir,
+      runtimeType: 'hermes',
+      runtimeId: 'local-hermes',
+      runtimeAgentId: 'default',
+      name: 'Hermes Agent',
+      webhook: 'http://127.0.0.1:8644/webhooks/f2a',
+      webhookToken: 'secret'
+    });
+
+    expect(result.success).toBe(true);
+    expect(sendRequest).toHaveBeenCalledWith(
+      'POST',
+      '/api/v1/agents',
+      expect.objectContaining({
+        webhook: { url: 'http://127.0.0.1:8644/webhooks/f2a', token: 'secret' }
+      })
+    );
+
+    const binding = await loadRuntimeBinding(dataDir, {
+      runtimeType: 'hermes',
+      runtimeId: 'local-hermes',
+      runtimeAgentId: 'default'
+    });
+    expect(binding?.webhook?.token).toBe('secret');
+  });
+
   it('rejects invalid existing agentId before reading identity paths', async () => {
     const result = await connectAgent({
       dataDir,

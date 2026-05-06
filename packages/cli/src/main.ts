@@ -83,13 +83,14 @@ Usage: f2a agent <subcommand> [options]
 
 Subcommands:
   connect           Agent-first connect for a runtime-hosted agent slot
-                    f2a agent connect --runtime <openclaw|hermes|other> --runtime-id <id> --runtime-agent-id <id> --name <name> [--agent-id <agentId>] [--webhook <url>] [--capability <cap>]... [--force]
+                    f2a agent connect --runtime <openclaw|hermes|other> --runtime-id <id> --runtime-agent-id <id> --name <name> [--agent-id <agentId>] [--webhook <url>] [--webhook-token <token>] [--capability <cap>]... [--force]
                     --runtime         Runtime type (required)
                     --runtime-id      Runtime instance ID (required)
                     --runtime-agent-id Runtime-local Agent slot ID (required)
                     --name            Agent profile display name (required)
                     --agent-id        Existing F2A Agent ID to bind (optional)
                     --webhook         Webhook URL for receiving messages
+                    --webhook-token   Webhook auth/signing token
                     --capability      Capability tags (multiple allowed)
                     --force           Force re-connect
 
@@ -168,6 +169,7 @@ Required:
 Options:
   --agent-id         Existing F2A Agent ID to bind
   --webhook          Webhook URL for future inbound delivery
+  --webhook-token    Webhook auth/signing token
   --capability       Capability tag, repeatable
   --force            Re-connect and overwrite the runtime binding
   --json             Output machine-readable JSON
@@ -403,7 +405,7 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
             command: 'agent connect',
             usage: 'f2a agent connect --runtime <openclaw|hermes|other> --runtime-id <id> --runtime-agent-id <id> --name <name> [options]',
             required: ['runtime', 'runtime-id', 'runtime-agent-id', 'name'],
-            options: ['agent-id', 'webhook', 'capability', 'force', 'json']
+            options: ['agent-id', 'webhook', 'webhook-token', 'capability', 'force', 'json']
           });
         } else {
           showAgentConnectHelp();
@@ -436,6 +438,7 @@ async function handleAgentCommand(subArgs: string[]): Promise<void> {
         name: connectOpts.name as string,
         agentId: connectOpts['agent-id'] as string | undefined,
         webhook: connectOpts.webhook as string | undefined,
+        webhookToken: connectOpts['webhook-token'] as string | undefined,
         capabilities: Array.isArray(connectOpts.capability)
           ? connectOpts.capability as string[]
           : connectOpts.capability

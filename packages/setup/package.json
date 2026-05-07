@@ -1,0 +1,38 @@
+{
+  "name": "@f2a/setup",
+  "version": "0.1.0",
+  "description": "F2A Agent-first onboarding setup orchestrator",
+  "type": "module",
+  "main": "./dist/main.js",
+  "types": "./dist/main.d.ts",
+  "bin": {
+    "f2a-setup": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf dist .tsbuildinfo"
+  },
+  "dependencies": {
+    "@f2a/cli": "*",
+    "@f2a/hermes-f2a": "*",
+    "@f2a/openclaw-f2a": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "f2a",
+    "setup",
+    "agent",
+    "onboarding"
+  ],
+  "license": "MIT"
+}

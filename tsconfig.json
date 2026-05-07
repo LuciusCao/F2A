@@ -18,6 +18,8 @@
     { "path": "./packages/cli" },
     { "path": "./packages/daemon" },
     { "path": "./packages/openclaw-f2a" },
+    { "path": "./packages/hermes-f2a" },
+    { "path": "./packages/setup" },
     { "path": "./packages/dashboard" }
   ]
 }

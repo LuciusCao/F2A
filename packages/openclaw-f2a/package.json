@@ -5,6 +5,9 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "openclaw-f2a": "./dist/installer.js"
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",

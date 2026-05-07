@@ -11,6 +11,7 @@
 import { Logger } from '@f2a/network';
 import { AgentRegistry } from './agent-registry.js';
 import type { AgentRegistration } from './agent-registry.js';
+import { createHmac } from 'crypto';
 
 /**
  * Registry 接口类型
@@ -139,6 +140,7 @@ export class MessageRouter {
     const start = Date.now();
     
     try {
+      const body = JSON.stringify(payload);
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       };
@@ -148,12 +150,14 @@ export class MessageRouter {
         headers['Authorization'] = `Bearer ${token}`;
         // 或使用 X-F2A-Token 格式
         headers['X-F2A-Token'] = token;
+        // Hermes Generic Webhook: raw HMAC-SHA256 hex digest over request body
+        headers['X-Webhook-Signature'] = createHmac('sha256', token).update(body).digest('hex');
       }
       
       const response = await fetch(webhookUrl, {
         method: 'POST',
         headers,
-        body: JSON.stringify(payload),
+        body,
         signal: AbortSignal.timeout(this.webhookTimeout),
       });
 

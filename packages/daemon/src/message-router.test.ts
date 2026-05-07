@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MessageRouter, RoutableMessage, MessageQueue } from './message-router.js';
 import type { AgentRegistration } from './agent-registry.js';
+import { createHmac } from 'crypto';
 
 // Mock Logger
 vi.mock('@f2a/network', async (importOriginal) => {
@@ -179,6 +180,32 @@ describe('MessageRouter', () => {
 
       const queue = router.getQueue('receiver');
       expect(queue?.messages[0]?.metadata).toEqual({ priority: 'high', custom: 'data' });
+    });
+
+    it('should send Hermes-compatible HMAC signature when webhook token is configured', async () => {
+      const fetchMock = vi.fn(async () => ({ ok: true, status: 200, statusText: 'OK' }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      mockAgentRegistry.set('sender', createAgent('sender'));
+      mockAgentRegistry.set('receiver', {
+        ...createAgent('receiver'),
+        webhook: { url: 'http://127.0.0.1:8644/webhooks/f2a', token: 'secret' }
+      });
+
+      const message = createMessage('msg-1', 'sender', 'receiver');
+      const result = router.route(message);
+
+      expect(result).toBe(true);
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+      const [, request] = fetchMock.mock.calls[0] as [string, { headers: Record<string, string>; body: string }];
+      expect(request.headers['X-F2A-Token']).toBe('secret');
+      expect(request.headers['Authorization']).toBe('Bearer secret');
+      expect(request.headers['X-Webhook-Signature']).toBe(
+        createHmac('sha256', 'secret').update(request.body).digest('hex')
+      );
+
+      vi.unstubAllGlobals();
     });
   });
 

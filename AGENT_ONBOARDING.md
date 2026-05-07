@@ -57,15 +57,73 @@ Then check health again:
 f2a node health
 ```
 
+## Installer-First Onboarding
+
+Prefer the setup installer when it is available. It prepares your runtime integration and then runs `f2a agent connect` for you.
+
+For OpenClaw:
+
+```bash
+npx -y @f2a/setup install \
+  --runtime openclaw \
+  --config <path-to-openclaw-config.json> \
+  --runtime-agent-id <your-openclaw-agent-id> \
+  --name "OpenClaw <your-openclaw-agent-id>" \
+  --capability chat \
+  --json
+```
+
+For Hermes default profile:
+
+```bash
+npx -y @f2a/setup install \
+  --runtime hermes \
+  --name "Hermes Agent" \
+  --capability chat \
+  --json
+```
+
+For Hermes named profile:
+
+```bash
+npx -y @f2a/setup install \
+  --runtime hermes \
+  --profile <profileName> \
+  --name "Hermes <profileName>" \
+  --capability chat \
+  --json
+```
+
+Read the JSON output and remember the connected `agentId`. If setup fails, continue with the runtime-specific sections below.
+
+`@f2a/setup` intentionally runs the runtime installer and `f2a agent connect` synchronously. This keeps onboarding deterministic for Agents: each step must finish and return JSON before the next step starts.
+
 ## If You Are an OpenClaw Agent
 
 Determine your OpenClaw runtime Agent id.
 
 Use the id assigned to you in OpenClaw `agents.list[].id`. If you cannot inspect that id, use `default` for the first local test.
 
-Before you pass an OpenClaw webhook URL to `f2a agent connect`, verify that the OpenClaw F2A plugin is installed and enabled.
+Before you pass an OpenClaw webhook URL to `f2a agent connect`, install and verify the OpenClaw F2A integration:
 
-Webhook is not the Agent identity. It is only the runtime's future inbound-delivery endpoint. If you cannot verify the webhook endpoint, connect without `--webhook` first.
+```bash
+npx -y @f2a/openclaw-f2a install \
+  --config <path-to-openclaw-config.json> \
+  --runtime-agent-id <your-openclaw-agent-id> \
+  --name "OpenClaw <your-openclaw-agent-id>" \
+  --json
+```
+
+Then check it:
+
+```bash
+npx -y @f2a/openclaw-f2a doctor \
+  --config <path-to-openclaw-config.json> \
+  --runtime-agent-id <your-openclaw-agent-id> \
+  --json
+```
+
+Webhook is not the Agent identity. It is the runtime's inbound-delivery endpoint. `f2a agent connect` requires a webhook, so fix the runtime installer or report `webhook_not_ready` instead of running connect without one.
 
 Required condition:
 
@@ -85,6 +143,7 @@ The relevant OpenClaw plugin config should look like this:
         "enabled": true,
         "config": {
           "webhookPath": "/f2a/webhook",
+          "webhookToken": "<generated-secret>",
           "controlPort": 9001,
           "runtimeId": "local-openclaw",
           "autoRegister": false,
@@ -117,9 +176,9 @@ Each Agent must use its own webhook URL:
 http://127.0.0.1:18789/f2a/webhook/agents/<openclawAgentId>
 ```
 
-If `@f2a/openclaw-f2a` is not installed or the route is not enabled, do not claim webhook delivery is ready. You can still connect your identity, but omit `--webhook` until the plugin is installed and the Gateway route exists.
+If `@f2a/openclaw-f2a` is not installed or the route is not enabled, do not claim webhook delivery is ready and do not run connect yet. Run the installer or report `webhook_not_ready`.
 
-Connect yourself when the plugin route is available:
+Connect yourself when the plugin route and webhook token are available:
 
 ```bash
 f2a agent connect \
@@ -128,21 +187,9 @@ f2a agent connect \
   --runtime-agent-id coder \
   --name "OpenClaw Coder" \
   --webhook http://127.0.0.1:18789/f2a/webhook/agents/coder \
+  --webhook-token <generated-secret> \
   --capability chat \
   --capability code \
-  --json
-```
-
-Connect yourself without webhook when the plugin route is not available yet:
-
-```bash
-f2a agent connect \
-  --runtime openclaw \
-  --runtime-id local-openclaw \
-  --runtime-agent-id default \
-  --name "OpenClaw Agent" \
-  --capability chat \
-  --capability task \
   --json
 ```
 
@@ -155,6 +202,7 @@ f2a agent connect \
   --runtime-agent-id <your-openclaw-agent-id> \
   --name "OpenClaw <your-openclaw-agent-id>" \
   --webhook http://127.0.0.1:18789/f2a/webhook/agents/<your-openclaw-agent-id> \
+  --webhook-token <generated-secret> \
   --capability chat \
   --capability task \
   --json
@@ -195,9 +243,25 @@ If HERMES_HOME is ~/.hermes/profiles/<profileName>:
   runtimeAgentId = <profileName>
 ```
 
-Before you pass a Hermes webhook URL to `f2a agent connect`, verify that your Hermes `config.yaml` defines the webhook receiver. F2A does not create the Hermes webhook listener for you.
+Before you pass a Hermes webhook URL to `f2a agent connect`, install and verify the Hermes F2A webhook route:
 
-Webhook is not the Agent identity. It is only the runtime's future inbound-delivery endpoint. If you cannot verify the Hermes webhook config, connect without `--webhook` first.
+```bash
+npx -y @f2a/hermes-f2a install --json
+```
+
+For a named profile:
+
+```bash
+npx -y @f2a/hermes-f2a install --profile <profileName> --json
+```
+
+Then check it:
+
+```bash
+npx -y @f2a/hermes-f2a doctor --json
+```
+
+Webhook is not the Agent identity. It is the runtime's inbound-delivery endpoint. `f2a agent connect` requires a webhook, so fix Hermes webhook setup or report `webhook_not_ready` instead of running connect without one.
 
 For the default Hermes profile, check:
 
@@ -219,21 +283,23 @@ Hermes webhook uses the gateway webhook platform. The default webhook port is `8
 http://127.0.0.1:8644/webhooks/<route-name>
 ```
 
-For local F2A testing, configure a route named `f2a`:
+For local F2A testing, prefer `npx -y @f2a/hermes-f2a install --json`; it writes this managed route and generates a secure local secret. If you configure it manually, use a random secret and pass the same value to `f2a agent connect --webhook-token`.
 
 ```yaml
+# F2A webhook route begin
 platforms:
   webhook:
     enabled: true
     extra:
       host: "127.0.0.1"
       port: 8644
-      secret: "INSECURE_NO_AUTH"
+      secret: "<random-hex-secret>"
       routes:
         f2a:
-          secret: "INSECURE_NO_AUTH"
+          secret: "<random-hex-secret>"
           prompt: "{__raw__}"
           deliver: "log"
+# F2A webhook route end
 ```
 
 Start or restart the Hermes gateway after changing `config.yaml`:
@@ -256,9 +322,9 @@ curl http://127.0.0.1:8644/health
 
 The expected response is a JSON health object for the webhook platform.
 
-Hermes webhook normally supports HMAC validation. F2A currently pushes webhook payloads with `Authorization: Bearer <token>` / `X-F2A-Token`, not Hermes HMAC signatures. For local onboarding tests, use `INSECURE_NO_AUTH`. Do not expose this webhook publicly with insecure auth.
+F2A pushes Hermes-compatible HMAC signatures when the Agent webhook has a token. The daemon sends `Authorization: Bearer <token>`, `X-F2A-Token: <token>`, and `X-Webhook-Signature` as a raw HMAC-SHA256 hex digest over the request body. In this local onboarding flow the same generated token is both the transport credential and the HMAC signing key, so treat it as a secret and do not paste it into chat or logs.
 
-If Hermes webhook is not configured or not running, you can still connect your identity. Omit `--webhook` until the Hermes receiver exists.
+If Hermes webhook is not configured or not running, do not run connect yet. Run the installer, start the Hermes gateway, or report `webhook_not_ready`.
 
 For the default Hermes profile when webhook is configured:
 
@@ -269,19 +335,7 @@ f2a agent connect \
   --runtime-agent-id default \
   --name "Hermes Agent" \
   --webhook http://127.0.0.1:8644/webhooks/f2a \
-  --capability chat \
-  --capability task \
-  --json
-```
-
-For the default Hermes profile without webhook:
-
-```bash
-f2a agent connect \
-  --runtime hermes \
-  --runtime-id local-hermes \
-  --runtime-agent-id default \
-  --name "Hermes Agent" \
+  --webhook-token <random-hex-secret> \
   --capability chat \
   --capability task \
   --json
@@ -296,6 +350,7 @@ f2a agent connect \
   --runtime-agent-id coder \
   --name "Hermes Coder" \
   --webhook http://127.0.0.1:8644/webhooks/f2a \
+  --webhook-token <random-hex-secret> \
   --capability chat \
   --capability code \
   --json

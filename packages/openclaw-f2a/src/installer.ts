@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { randomBytes } from 'crypto';
 import { join, resolve } from 'path';
 
 export interface OpenClawInstallerOptions {
@@ -21,6 +22,7 @@ export interface OpenClawInstallerResult {
   runtimeId: string;
   runtimeAgentId?: string;
   webhookUrl?: string;
+  webhookToken?: string;
   actions: string[];
   missing: string[];
   error?: string;
@@ -30,6 +32,7 @@ interface OpenClawPluginEntry {
   enabled?: boolean;
   config?: {
     webhookPath?: string;
+    webhookToken?: string;
     runtimeId?: string;
     controlPort?: number;
     autoRegister?: boolean;
@@ -75,7 +78,7 @@ function webhookUrl(baseUrl: string, webhookPath: string, runtimeAgentId?: strin
   return `${baseUrl}${webhookPath}/agents/${encodeURIComponent(runtimeAgentId)}`;
 }
 
-function ensureOpenClawConfig(config: OpenClawConfig, options: OpenClawInstallerOptions): { actions: string[]; runtimeId: string; runtimeAgentId?: string; webhookPath: string } {
+function ensureOpenClawConfig(config: OpenClawConfig, options: OpenClawInstallerOptions): { actions: string[]; runtimeId: string; runtimeAgentId?: string; webhookPath: string; webhookToken: string } {
   const actions: string[] = [];
   config.plugins ??= {};
   config.plugins.entries ??= {};
@@ -88,6 +91,7 @@ function ensureOpenClawConfig(config: OpenClawConfig, options: OpenClawInstaller
   entry.enabled = true;
   entry.config ??= {};
   entry.config.webhookPath ??= DEFAULT_WEBHOOK_PATH;
+  entry.config.webhookToken ??= randomBytes(32).toString('hex');
   entry.config.runtimeId = options.runtimeId || entry.config.runtimeId || DEFAULT_RUNTIME_ID;
   entry.config.autoRegister = false;
   entry.config.agents ??= [];
@@ -115,7 +119,8 @@ function ensureOpenClawConfig(config: OpenClawConfig, options: OpenClawInstaller
     actions,
     runtimeId: entry.config.runtimeId,
     runtimeAgentId: options.runtimeAgentId,
-    webhookPath: entry.config.webhookPath
+    webhookPath: entry.config.webhookPath,
+    webhookToken: entry.config.webhookToken
   };
 }
 
@@ -151,6 +156,7 @@ export function installOpenClawF2A(options: OpenClawInstallerOptions = {}): Open
       runtimeId: ensured.runtimeId,
       runtimeAgentId: ensured.runtimeAgentId,
       webhookUrl: webhookUrl(baseUrl, ensured.webhookPath, ensured.runtimeAgentId),
+      webhookToken: ensured.webhookToken,
       actions: ['updated_openclaw_config', ...ensured.actions],
       missing: []
     };
@@ -194,6 +200,7 @@ export function doctorOpenClawF2A(options: OpenClawInstallerOptions = {}): OpenC
     if (entry?.enabled !== true) missing.push('plugin_enabled');
     if (entry?.config?.autoRegister !== false) missing.push('auto_register_false');
     if (!entry?.config?.webhookPath) missing.push('webhook_path');
+    if (!entry?.config?.webhookToken) missing.push('webhook_token');
     if (!entry?.config?.runtimeId) missing.push('runtime_id');
     if (options.runtimeAgentId && !entry?.config?.agents?.some(agent => agent.openclawAgentId === options.runtimeAgentId)) {
       missing.push('runtime_agent_entry');
@@ -210,6 +217,7 @@ export function doctorOpenClawF2A(options: OpenClawInstallerOptions = {}): OpenC
       runtimeId: resolvedRuntimeId,
       runtimeAgentId: options.runtimeAgentId,
       webhookUrl: webhookUrl(baseUrl, webhookPath, options.runtimeAgentId),
+      webhookToken: entry?.config?.webhookToken,
       actions: [],
       missing
     };

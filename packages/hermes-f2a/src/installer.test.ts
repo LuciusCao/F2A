@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { doctorHermesF2A, installHermesF2A, resolveHermesHome } from './installer.js';
@@ -66,5 +66,16 @@ describe('hermes-f2a installer', () => {
     const first = installHermesF2A({ home: dir });
     const second = installHermesF2A({ home: dir });
     expect(second.webhookToken).toBe(first.webhookToken);
+  }));
+
+  it('refuses to append a duplicate top-level platforms section', () => withTempDir(dir => {
+    writeFileSync(join(dir, 'config.yaml'), 'platforms:\n  discord:\n    enabled: true\n');
+
+    const result = installHermesF2A({ home: dir });
+
+    expect(result.success).toBe(false);
+    expect(result.missing).toContain('manual_merge_required');
+    const config = readFileSync(join(dir, 'config.yaml'), 'utf-8');
+    expect(config.match(/^platforms:/gm)).toHaveLength(1);
   }));
 });

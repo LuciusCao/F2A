@@ -121,7 +121,7 @@ npx -y @f2a/openclaw-f2a doctor \
   --json
 ```
 
-Webhook is not the Agent identity. It is only the runtime's future inbound-delivery endpoint. If you cannot verify the webhook endpoint, connect without `--webhook` first.
+Webhook is not the Agent identity. It is the runtime's inbound-delivery endpoint. `f2a agent connect` requires a webhook, so fix the runtime installer or report `webhook_not_ready` instead of running connect without one.
 
 Required condition:
 
@@ -141,6 +141,7 @@ The relevant OpenClaw plugin config should look like this:
         "enabled": true,
         "config": {
           "webhookPath": "/f2a/webhook",
+          "webhookToken": "<generated-secret>",
           "controlPort": 9001,
           "runtimeId": "local-openclaw",
           "autoRegister": false,
@@ -173,9 +174,9 @@ Each Agent must use its own webhook URL:
 http://127.0.0.1:18789/f2a/webhook/agents/<openclawAgentId>
 ```
 
-If `@f2a/openclaw-f2a` is not installed or the route is not enabled, do not claim webhook delivery is ready. You can still connect your identity, but omit `--webhook` until the plugin is installed and the Gateway route exists.
+If `@f2a/openclaw-f2a` is not installed or the route is not enabled, do not claim webhook delivery is ready and do not run connect yet. Run the installer or report `webhook_not_ready`.
 
-Connect yourself when the plugin route is available:
+Connect yourself when the plugin route and webhook token are available:
 
 ```bash
 f2a agent connect \
@@ -184,21 +185,9 @@ f2a agent connect \
   --runtime-agent-id coder \
   --name "OpenClaw Coder" \
   --webhook http://127.0.0.1:18789/f2a/webhook/agents/coder \
+  --webhook-token <generated-secret> \
   --capability chat \
   --capability code \
-  --json
-```
-
-Connect yourself without webhook when the plugin route is not available yet:
-
-```bash
-f2a agent connect \
-  --runtime openclaw \
-  --runtime-id local-openclaw \
-  --runtime-agent-id default \
-  --name "OpenClaw Agent" \
-  --capability chat \
-  --capability task \
   --json
 ```
 
@@ -211,6 +200,7 @@ f2a agent connect \
   --runtime-agent-id <your-openclaw-agent-id> \
   --name "OpenClaw <your-openclaw-agent-id>" \
   --webhook http://127.0.0.1:18789/f2a/webhook/agents/<your-openclaw-agent-id> \
+  --webhook-token <generated-secret> \
   --capability chat \
   --capability task \
   --json
@@ -269,7 +259,7 @@ Then check it:
 npx -y @f2a/hermes-f2a doctor --json
 ```
 
-Webhook is not the Agent identity. It is only the runtime's future inbound-delivery endpoint. If you cannot verify the Hermes webhook config, connect without `--webhook` first.
+Webhook is not the Agent identity. It is the runtime's inbound-delivery endpoint. `f2a agent connect` requires a webhook, so fix Hermes webhook setup or report `webhook_not_ready` instead of running connect without one.
 
 For the default Hermes profile, check:
 
@@ -332,7 +322,7 @@ The expected response is a JSON health object for the webhook platform.
 
 F2A pushes Hermes-compatible HMAC signatures when the Agent webhook has a token. The daemon sends `X-Webhook-Signature` as a raw HMAC-SHA256 hex digest over the request body.
 
-If Hermes webhook is not configured or not running, you can still connect your identity. Omit `--webhook` until the Hermes receiver exists.
+If Hermes webhook is not configured or not running, do not run connect yet. Run the installer, start the Hermes gateway, or report `webhook_not_ready`.
 
 For the default Hermes profile when webhook is configured:
 
@@ -344,19 +334,6 @@ f2a agent connect \
   --name "Hermes Agent" \
   --webhook http://127.0.0.1:8644/webhooks/f2a \
   --webhook-token <random-hex-secret> \
-  --capability chat \
-  --capability task \
-  --json
-```
-
-For the default Hermes profile without webhook:
-
-```bash
-f2a agent connect \
-  --runtime hermes \
-  --runtime-id local-hermes \
-  --runtime-agent-id default \
-  --name "Hermes Agent" \
   --capability chat \
   --capability task \
   --json

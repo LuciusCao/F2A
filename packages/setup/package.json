@@ -16,6 +16,7 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
+    "@f2a/cli": "*",
     "@f2a/hermes-f2a": "*",
     "@f2a/openclaw-f2a": "*"
   },

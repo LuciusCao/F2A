@@ -28,11 +28,13 @@ describe('openclaw-f2a installer', () => {
     expect(result.success).toBe(true);
     expect(result.ready).toBe(true);
     expect(result.webhookUrl).toBe('http://127.0.0.1:18789/f2a/webhook/agents/coder');
+    expect(result.webhookToken).toMatch(/^[a-f0-9]{64}$/);
 
     const config = JSON.parse(readFileSync(configPath, 'utf-8'));
     const plugin = config.plugins.entries['openclaw-f2a'];
     expect(plugin.enabled).toBe(true);
     expect(plugin.config.autoRegister).toBe(false);
+    expect(plugin.config.webhookToken).toBe(result.webhookToken);
     expect(plugin.config.runtimeId).toBe('local-openclaw');
     expect(plugin.config.agents).toEqual([
       {
@@ -52,6 +54,7 @@ describe('openclaw-f2a installer', () => {
             enabled: true,
             config: {
               webhookPath: '/f2a/webhook',
+              webhookToken: 'existing-secret',
               runtimeId: 'local-openclaw',
               autoRegister: false,
               agents: [{ openclawAgentId: 'researcher', name: 'Researcher' }]
@@ -64,6 +67,7 @@ describe('openclaw-f2a installer', () => {
     installOpenClawF2A({ configPath, runtimeAgentId: 'coder' });
 
     const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+    expect(config.plugins.entries['openclaw-f2a'].config.webhookToken).toBe('existing-secret');
     expect(config.plugins.entries['openclaw-f2a'].config.agents.map((agent: { openclawAgentId: string }) => agent.openclawAgentId)).toEqual([
       'researcher',
       'coder'
@@ -85,6 +89,31 @@ describe('openclaw-f2a installer', () => {
     const result = doctorOpenClawF2A({ configPath, runtimeAgentId: 'coder' });
 
     expect(result.ready).toBe(true);
+    expect(result.webhookToken).toMatch(/^[a-f0-9]{64}$/);
     expect(result.missing).toEqual([]);
+  }));
+
+  it('doctor reports missing webhook token', () => withTempDir(dir => {
+    const configPath = join(dir, 'openclaw.config.json');
+    writeFileSync(configPath, JSON.stringify({
+      plugins: {
+        entries: {
+          'openclaw-f2a': {
+            enabled: true,
+            config: {
+              webhookPath: '/f2a/webhook',
+              runtimeId: 'local-openclaw',
+              autoRegister: false,
+              agents: [{ openclawAgentId: 'coder' }]
+            }
+          }
+        }
+      }
+    }));
+
+    const result = doctorOpenClawF2A({ configPath, runtimeAgentId: 'coder' });
+
+    expect(result.ready).toBe(false);
+    expect(result.missing).toContain('webhook_token');
   }));
 });

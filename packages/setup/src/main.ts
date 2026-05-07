@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import { spawnSync } from 'child_process';
+import { createRequire } from 'module';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 
 export type RuntimeType = 'openclaw' | 'hermes';
 
@@ -34,6 +37,19 @@ export interface SetupResult {
 
 export type Runner = (command: string, args: string[]) => CommandResult;
 
+const require = createRequire(import.meta.url);
+const currentDir = dirname(fileURLToPath(import.meta.url));
+
+function resolvePackageFile(packageName: string, relativePath: string): string {
+  try {
+    return join(dirname(require.resolve(`${packageName}/package.json`)), relativePath);
+  } catch {
+    const packageDir = packageName.split('/').at(-1);
+    if (!packageDir) throw new Error(`Unable to resolve ${packageName}`);
+    return join(currentDir, '..', '..', packageDir, relativePath);
+  }
+}
+
 function runCommand(command: string, args: string[]): CommandResult {
   const result = spawnSync(command, args, { encoding: 'utf-8' });
   return {
@@ -59,21 +75,69 @@ function value(data: Record<string, unknown> | undefined, key: string): string |
   return typeof item === 'string' ? item : undefined;
 }
 
+function redactArgs(args: string[]): string[] {
+  const redacted = [...args];
+  for (let i = 0; i < redacted.length; i += 1) {
+    if (redacted[i] === '--webhook-token' && redacted[i + 1]) {
+      redacted[i + 1] = '<redacted>';
+      i += 1;
+    }
+  }
+  return redacted;
+}
+
+function redactValue(key: string, value: unknown): unknown {
+  if (key.toLowerCase().includes('token')) {
+    return '<redacted>';
+  }
+  if (Array.isArray(value)) {
+    return value.map(item => redactSecrets(item));
+  }
+  return redactSecrets(value);
+}
+
+function redactSecrets(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value;
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    result[key] = redactValue(key, item);
+  }
+  return result;
+}
+
+function redactCommand(command: CommandResult): CommandResult {
+  return {
+    ...command,
+    args: redactArgs(command.args),
+    stdout: command.stdout ? '<redacted>' : '',
+    stderr: command.stderr
+  };
+}
+
+export function redactSetupResult(result: SetupResult): SetupResult {
+  return {
+    ...result,
+    commands: result.commands.map(redactCommand),
+    installer: redactSecrets(result.installer) as Record<string, unknown> | undefined,
+    connect: redactSecrets(result.connect) as Record<string, unknown> | undefined
+  };
+}
+
 export function buildInstallerCommand(options: SetupOptions): { command: string; args: string[] } {
   if (options.runtime === 'openclaw') {
-    const args = ['install', '--json'];
+    const args = [resolvePackageFile('@f2a/openclaw-f2a', 'dist/installer.js'), 'install', '--json'];
     if (options.configPath) args.push('--config', options.configPath);
     if (options.runtimeId) args.push('--runtime-id', options.runtimeId);
     if (options.runtimeAgentId) args.push('--runtime-agent-id', options.runtimeAgentId);
     if (options.name) args.push('--name', options.name);
     for (const capability of options.capabilities || []) args.push('--capability', capability);
-    return { command: 'openclaw-f2a', args };
+    return { command: process.execPath, args };
   }
 
-  const args = ['install', '--json'];
+  const args = [resolvePackageFile('@f2a/hermes-f2a', 'dist/installer.js'), 'install', '--json'];
   if (options.hermesHome) args.push('--home', options.hermesHome);
   if (options.profile) args.push('--profile', options.profile);
-  return { command: 'hermes-f2a', args };
+  return { command: process.execPath, args };
 }
 
 export function buildConnectArgs(options: SetupOptions, installer: Record<string, unknown> | undefined): string[] {
@@ -118,7 +182,7 @@ export function runSetup(options: SetupOptions, runner: Runner = runCommand): Se
 
   const installer = parseJsonOutput(installerRun.stdout);
   const connectArgs = buildConnectArgs(options, installer);
-  const connectRun = runner('f2a', connectArgs);
+  const connectRun = runner(process.execPath, [resolvePackageFile('@f2a/cli', 'dist/main.js'), ...connectArgs]);
   commands.push(connectRun);
   if (connectRun.status !== 0) {
     return {
@@ -169,7 +233,8 @@ function parseArgs(argv: string[]): SetupOptions {
 
 function printResult(result: SetupResult, json: boolean | undefined): void {
   if (json) {
-    console.log(JSON.stringify({ success: result.success, data: result }, null, 2));
+    const safeResult = redactSetupResult(result);
+    console.log(JSON.stringify({ success: safeResult.success, data: safeResult }, null, 2));
     return;
   }
   console.log(result.success ? 'F2A setup completed.' : 'F2A setup failed.');

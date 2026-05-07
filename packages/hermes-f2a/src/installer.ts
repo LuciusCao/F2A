@@ -82,6 +82,10 @@ function hasRoute(config: string, route: string): boolean {
   return config.includes('platforms:') && config.includes('webhook:') && config.includes('routes:') && routePattern.test(config);
 }
 
+function hasTopLevelPlatforms(config: string): boolean {
+  return /(^|\n)platforms:\s*(\n|$)/.test(config);
+}
+
 function extractManagedSecret(config: string): string | undefined {
   const pattern = new RegExp(`${F2A_BEGIN}[\\s\\S]*?secret:\\s*"([^"]+)"`);
   return config.match(pattern)?.[1];
@@ -107,6 +111,25 @@ export function installHermesF2A(options: HermesInstallerOptions = {}): HermesIn
   try {
     mkdirSync(hermesHome, { recursive: true });
     const current = existsSync(configPath) ? readFileSync(configPath, 'utf-8') : '';
+    if (current.trim() && hasTopLevelPlatforms(current) && !current.includes(F2A_BEGIN)) {
+      return {
+        success: false,
+        ready: false,
+        runtime: 'hermes',
+        hermesHome,
+        configPath,
+        runtimeId: 'local-hermes',
+        runtimeAgentId,
+        route,
+        port,
+        webhookUrl,
+        webhookToken: '',
+        actions: [],
+        missing: ['manual_merge_required'],
+        error: 'Hermes config already has a top-level platforms section. Merge the F2A webhook route manually or remove the conflicting section before running install.'
+      };
+    }
+
     const secret = extractManagedSecret(current) || randomBytes(32).toString('hex');
     const next = replaceManagedBlock(current, route, port, secret);
     if (next !== current) {

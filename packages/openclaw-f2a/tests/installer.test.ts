@@ -45,6 +45,20 @@ describe('openclaw-f2a installer', () => {
     ]);
   }));
 
+  it('uses custom gateway base URL when reporting per-agent webhook URL', () => withTempDir(dir => {
+    const configPath = join(dir, 'openclaw.config.json');
+    writeFileSync(configPath, '{}');
+
+    const result = installOpenClawF2A({
+      configPath,
+      runtimeAgentId: 'coder',
+      gatewayBaseUrl: 'http://127.0.0.1:28888'
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.webhookUrl).toBe('http://127.0.0.1:28888/f2a/webhook/agents/coder');
+  }));
+
   it('preserves existing agent entries', () => withTempDir(dir => {
     const configPath = join(dir, 'config.json');
     writeFileSync(configPath, JSON.stringify({
@@ -115,5 +129,17 @@ describe('openclaw-f2a installer', () => {
 
     expect(result.ready).toBe(false);
     expect(result.missing).toContain('webhook_token');
+  }));
+
+  it('reports invalid JSON config without rewriting it', () => withTempDir(dir => {
+    const configPath = join(dir, 'openclaw.config.json');
+    writeFileSync(configPath, '{ invalid json');
+
+    const result = installOpenClawF2A({ configPath, runtimeAgentId: 'coder' });
+
+    expect(result.success).toBe(false);
+    expect(result.ready).toBe(false);
+    expect(result.missing).toContain('valid_openclaw_config');
+    expect(readFileSync(configPath, 'utf-8')).toBe('{ invalid json');
   }));
 });

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { connectAgent } from './connect.js';
-import { loadRuntimeBinding } from './runtime-bindings.js';
+import { loadRuntimeBinding, saveRuntimeBinding } from './runtime-bindings.js';
 import { sendRequest } from './http-client.js';
 
 vi.mock('./http-client.js', () => ({
@@ -118,6 +118,80 @@ describe('connectAgent', () => {
       runtimeAgentId: 'default'
     });
     expect(binding?.webhook?.token).toBe('secret');
+  });
+
+  it('preserves an existing webhook token when reconnecting with only a webhook URL', async () => {
+    const first = await connectAgent({
+      dataDir,
+      runtimeType: 'hermes',
+      runtimeId: 'local-hermes',
+      runtimeAgentId: 'default',
+      name: 'Hermes Agent',
+      webhook: 'http://127.0.0.1:8644/webhooks/f2a',
+      webhookToken: 'existing-secret'
+    });
+    expect(first.success).toBe(true);
+
+    vi.mocked(sendRequest).mockClear();
+
+    const second = await connectAgent({
+      dataDir,
+      runtimeType: 'hermes',
+      runtimeId: 'local-hermes',
+      runtimeAgentId: 'default',
+      agentId: first.agentId,
+      name: 'Hermes Agent',
+      webhook: 'http://127.0.0.1:8644/webhooks/f2a',
+      force: true
+    });
+
+    expect(second.success).toBe(true);
+    expect(sendRequest).toHaveBeenCalledWith(
+      'POST',
+      '/api/v1/agents',
+      expect.objectContaining({
+        webhook: { url: 'http://127.0.0.1:8644/webhooks/f2a', token: 'existing-secret' }
+      })
+    );
+    expect(second.binding?.webhook?.token).toBe('existing-secret');
+  });
+
+  it('preserves a token from an existing runtime binding even if the identity lacks one', async () => {
+    const first = await connectAgent({
+      dataDir,
+      runtimeType: 'other',
+      runtimeId: 'local-test',
+      runtimeAgentId: 'agent-a',
+      name: 'Agent A',
+      webhook: 'http://127.0.0.1:9101/f2a/webhook'
+    });
+    expect(first.success).toBe(true);
+
+    await saveRuntimeBinding(dataDir, {
+      agentId: first.agentId!,
+      runtimeType: 'other',
+      runtimeId: 'local-test',
+      runtimeAgentId: 'agent-a',
+      webhook: { url: 'http://127.0.0.1:9101/f2a/webhook', token: 'binding-secret' },
+      status: 'registered',
+      createdAt: new Date().toISOString(),
+      lastSeenAt: new Date().toISOString()
+    });
+    vi.mocked(sendRequest).mockClear();
+
+    const second = await connectAgent({
+      dataDir,
+      runtimeType: 'other',
+      runtimeId: 'local-test',
+      runtimeAgentId: 'agent-a',
+      agentId: first.agentId,
+      name: 'Agent A',
+      webhook: 'http://127.0.0.1:9101/f2a/webhook',
+      force: true
+    });
+
+    expect(second.success).toBe(true);
+    expect(second.binding?.webhook?.token).toBe('binding-secret');
   });
 
   it('rejects invalid existing agentId before reading identity paths', async () => {

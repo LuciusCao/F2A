@@ -30,6 +30,19 @@ describe('hermes-f2a installer', () => {
     expect(result.webhookToken).toMatch(/^[a-f0-9]{64}$/);
   }));
 
+  it('uses custom port and route when requested', () => withTempDir(dir => {
+    const result = installHermesF2A({ home: dir, port: 9876, route: 'f2a.local' });
+
+    expect(result.success).toBe(true);
+    expect(result.port).toBe(9876);
+    expect(result.route).toBe('f2a.local');
+    expect(result.webhookUrl).toBe('http://127.0.0.1:9876/webhooks/f2a.local');
+
+    const after = doctorHermesF2A({ home: dir, port: 9876, route: 'f2a.local' });
+    expect(after.ready).toBe(true);
+    expect(after.missing).toEqual([]);
+  }));
+
   it('resolves named profile home from explicit profile', () => {
     const resolved = resolveHermesHome({ profile: 'coder' });
     expect(resolved.hermesHome).toContain(join('.hermes', 'profiles', 'coder'));
@@ -77,5 +90,24 @@ describe('hermes-f2a installer', () => {
     expect(result.missing).toContain('manual_merge_required');
     const config = readFileSync(join(dir, 'config.yaml'), 'utf-8');
     expect(config.match(/^platforms:/gm)).toHaveLength(1);
+  }));
+
+  it('requires manual merge when config already has a non-F2A webhook route', () => withTempDir(dir => {
+    writeFileSync(join(dir, 'config.yaml'), [
+      'platforms:',
+      '  webhook:',
+      '    enabled: true',
+      '    extra:',
+      '      routes:',
+      '        lark:',
+      '          prompt: "{__raw__}"',
+      ''
+    ].join('\n'));
+
+    const result = installHermesF2A({ home: dir });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('top-level platforms');
+    expect(result.missing).toContain('manual_merge_required');
   }));
 });

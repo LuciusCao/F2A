@@ -65,6 +65,30 @@ function updateIdentityAfterRegistration(
   writeFileSync(identityPath, JSON.stringify(identity, null, 2), { mode: 0o600 });
 }
 
+function webhookToken(webhook: unknown): string | undefined {
+  if (!webhook || typeof webhook !== 'object') return undefined;
+  const token = (webhook as { token?: unknown }).token;
+  return typeof token === 'string' ? token : undefined;
+}
+
+function resolveWebhook(
+  options: ConnectAgentOptions,
+  identity: AgentIdentityFile,
+  existingBinding: RuntimeAgentBinding | null
+): { url: string; token?: string } | undefined {
+  if (options.webhook) {
+    const existingToken = existingBinding?.webhook?.token || webhookToken(identity.webhook);
+    const token = options.webhookToken || existingToken;
+    return { url: options.webhook, ...(token ? { token } : {}) };
+  }
+
+  if (options.webhookToken && identity.webhook?.url) {
+    return { url: identity.webhook.url, token: options.webhookToken };
+  }
+
+  return identity.webhook;
+}
+
 async function resolveIdentity(options: Required<Pick<ConnectAgentOptions, 'dataDir' | 'name'>> & ConnectAgentOptions): Promise<AgentIdentityFile> {
   if (options.agentId) {
     const parsed = parseAgentId(options.agentId);
@@ -117,9 +141,7 @@ export async function connectAgent(options: ConnectAgentOptions): Promise<Connec
 
   try {
     const identity = await resolveIdentity({ ...options, dataDir });
-    const webhook = options.webhook
-      ? { url: options.webhook, ...(options.webhookToken ? { token: options.webhookToken } : {}) }
-      : identity.webhook;
+    const webhook = resolveWebhook(options, identity, existingBinding);
     const capabilities = (options.capabilities || identity.capabilities?.map(c => c.name) || []).map(name => ({
       name,
       version: '1.0.0',

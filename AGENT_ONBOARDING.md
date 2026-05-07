@@ -96,6 +96,8 @@ npx -y @f2a/setup install \
 
 Read the JSON output and remember the connected `agentId`. If setup fails, continue with the runtime-specific sections below.
 
+`@f2a/setup` intentionally runs the runtime installer and `f2a agent connect` synchronously. This keeps onboarding deterministic for Agents: each step must finish and return JSON before the next step starts.
+
 ## If You Are an OpenClaw Agent
 
 Determine your OpenClaw runtime Agent id.
@@ -320,7 +322,7 @@ curl http://127.0.0.1:8644/health
 
 The expected response is a JSON health object for the webhook platform.
 
-F2A pushes Hermes-compatible HMAC signatures when the Agent webhook has a token. The daemon sends `X-Webhook-Signature` as a raw HMAC-SHA256 hex digest over the request body.
+F2A pushes Hermes-compatible HMAC signatures when the Agent webhook has a token. The daemon sends `Authorization: Bearer <token>`, `X-F2A-Token: <token>`, and `X-Webhook-Signature` as a raw HMAC-SHA256 hex digest over the request body. In this local onboarding flow the same generated token is both the transport credential and the HMAC signing key, so treat it as a secret and do not paste it into chat or logs.
 
 If Hermes webhook is not configured or not running, do not run connect yet. Run the installer, start the Hermes gateway, or report `webhook_not_ready`.
 

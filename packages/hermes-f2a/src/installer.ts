@@ -77,9 +77,19 @@ ${F2A_END}
 `;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function extractManagedBlock(config: string): string | undefined {
+  const pattern = new RegExp(`${F2A_BEGIN}[\\s\\S]*?${F2A_END}`);
+  return config.match(pattern)?.[0];
+}
+
 function hasRoute(config: string, route: string): boolean {
-  const routePattern = new RegExp(`(^|\\n)\\s{8}${route}:\\s*(\\n|$)`);
-  return config.includes('platforms:') && config.includes('webhook:') && config.includes('routes:') && routePattern.test(config);
+  const block = extractManagedBlock(config) || config;
+  const routePattern = new RegExp(`(^|\\n)\\s*${escapeRegExp(route)}:\\s*(\\n|$)`);
+  return block.includes('webhook:') && block.includes('routes:') && routePattern.test(block);
 }
 
 function hasTopLevelPlatforms(config: string): boolean {
@@ -87,8 +97,8 @@ function hasTopLevelPlatforms(config: string): boolean {
 }
 
 function extractManagedSecret(config: string): string | undefined {
-  const pattern = new RegExp(`${F2A_BEGIN}[\\s\\S]*?secret:\\s*"([^"]+)"`);
-  return config.match(pattern)?.[1];
+  const block = extractManagedBlock(config);
+  return block?.match(/secret:\s*"([^"]+)"/)?.[1];
 }
 
 function replaceManagedBlock(config: string, route: string, port: number, secret: string): string {
